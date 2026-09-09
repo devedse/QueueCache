@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><AssemblyName>qcache</AssemblyName></PropertyGroup>
+  <PropertyGroup><ApplicationIcon>../../assets/branding/queuecache.ico</ApplicationIcon></PropertyGroup>
   <ItemGroup><ProjectReference Include="../QueueCache.Management/QueueCache.Management.csproj" /></ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />

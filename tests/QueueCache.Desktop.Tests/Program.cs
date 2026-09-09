@@ -17,6 +17,7 @@ Directory.CreateDirectory(output);
 var fixture = new Fixture();
 var window = new MainWindow(fixture);
 window.Show();
+Check(window.Icon is not null, "application window icon is embedded");
 Dispatcher.UIThread.RunJobs();
 using (var frame = window.CaptureRenderedFrame() ?? throw new Exception("No rendered dashboard frame.")) frame.Save(Path.Combine(output, "dashboard.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
 var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();

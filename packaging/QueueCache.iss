@@ -20,6 +20,7 @@ Compression=lzma2
 SolidCompression=yes
 LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\desktop\QueueCache.Desktop.exe
+SetupIconFile=..\assets\branding\queuecache.ico
 
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

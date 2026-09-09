@@ -2,8 +2,11 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><AssemblyName>QueueCache.Desktop</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../../assets/branding/queuecache.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="../../assets/branding/queuecache.ico" LogicalName="QueueCache.Icon" />
+    <EmbeddedResource Include="../../assets/branding/queuecache.png" LogicalName="QueueCache.Artwork" />
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />

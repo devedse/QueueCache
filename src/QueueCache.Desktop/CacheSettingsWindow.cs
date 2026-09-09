@@ -13,6 +13,7 @@ public sealed class CacheSettingsWindow : Window
 {
     public CacheSettingsWindow(DiskDescription disk, WriteCacheState state, bool persistent, int availableMiB = 4096)
     {
+        Icon = AppBranding.CreateIcon();
         Title = state.BudgetBytes == 0 ? "Add cache" : "Cache settings"; Width = 500; Height = 560; CanResize = false; WindowStartupLocation = WindowStartupLocation.CenterOwner; Background = Brushes.White;
         if (availableMiB is < 1 or > 4096) throw new ArgumentOutOfRangeException(nameof(availableMiB));
         var sizes = new[] { 256, 512, 1024, 2048, 4096 }.Where(n => n <= availableMiB).ToArray();

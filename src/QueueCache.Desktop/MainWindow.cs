@@ -25,10 +25,17 @@ public sealed class MainWindow : Window
     public MainWindow(ICacheTaskService service)
     {
         this.service = service;
+        Icon = AppBranding.CreateIcon();
         Title = "QueueCache"; Width = 1080; Height = 790; MinWidth = 820; MinHeight = 620;
         Background = Brush.Parse("#F3F6FA"); FontFamily = new FontFamily("Segoe UI");
         var heading = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(0, 0, 0, 24) };
-        var brand = new StackPanel { Spacing = 7 }; brand.Children.Add(Text("QueueCache", 30, Ink, FontWeight.SemiBold)); brand.Children.Add(summary); heading.Children.Add(brand);
+        var brand = new StackPanel { Spacing = 7 }; brand.Children.Add(Text("QueueCache", 30, Ink, FontWeight.SemiBold)); brand.Children.Add(summary);
+        var brandRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+        var brandImage = AppBranding.CreateHeaderImage();
+        var logo = new Image { Source = brandImage, Width = 64, Height = 64, VerticalAlignment = VerticalAlignment.Center };
+        RenderOptions.SetBitmapInterpolationMode(logo, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
+        brandRow.Children.Add(logo); brandRow.Children.Add(brand); heading.Children.Add(brandRow);
+        Closed += (_, _) => brandImage.Dispose();
         var refresh = Action("Refresh disks", Refresh); Grid.SetColumn(refresh, 1); heading.Children.Add(refresh);
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
         body.Children.Add(heading); body.Children.Add(Text("DISKS & CACHES", 12, Muted, FontWeight.SemiBold)); body.Children.Add(cards); body.Children.Add(message);
