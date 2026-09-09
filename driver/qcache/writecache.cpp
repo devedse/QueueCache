@@ -178,6 +178,18 @@ static void Drainer(PVOID context) {
 }
 NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower) {
     RtlZeroMemory(c, sizeof(*c)); c->Lower = lower;
+    // A disk-class upper filter can accidentally be installed ABOVE partmgr.
+    // Its generated background writes have no filesystem FileObject, so partmgr
+    // rejects writes into mounted partitions. Stay usable as pass-through, but
+    // refuse write-cache enablement before acknowledging any volatile data.
+    UNICODE_STRING partitionManager = RTL_CONSTANT_STRING(L"\\Driver\\partmgr");
+    auto current = lower; ObReferenceObject(current);
+    while (current) {
+        if (RtlEqualUnicodeString(&current->DriverObject->DriverName, &partitionManager, TRUE))
+            c->BlockedPlacement = TRUE;
+        auto next = IoGetLowerDeviceObject(current);
+        ObDereferenceObject(current); current = next;
+    }
     KeInitializeMutex(&c->Mutex, 0); KeInitializeSpinLock(&c->SnapshotLock);
     KeInitializeEvent(&c->Wake, NotificationEvent, FALSE); KeInitializeEvent(&c->Changed, NotificationEvent, FALSE);
     Publish(c);
@@ -285,7 +297,8 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size) {
         else c->UnsafeDefer = command.Value == 1;
         break;
     case QcEnable:
-        if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096)) status = STATUS_DEVICE_NOT_READY;
+        if (c->BlockedPlacement) status = STATUS_INVALID_DEVICE_STATE;
+        else if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096)) status = STATUS_DEVICE_NOT_READY;
         else if (!NT_SUCCESS(c->State.LastError)) status = c->State.LastError;
         else c->Enabled = TRUE;
         break;

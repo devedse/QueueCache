@@ -18,6 +18,23 @@ function UpdatePath([bool]$Remove) {
     if (-not $Remove) { $parts += $entry }
     [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'Machine')
 }
+function Get-QueueCacheClassFilters([string[]]$Existing) {
+    # UpperFilters are attached in list order (last entry is highest).
+    # QueueCache must be BELOW partmgr: generated background writes have no
+    # originating filesystem FileObject and must not re-enter raw-disk checks.
+    # Move only our entry; preserve the relative order of every other filter.
+    $others = @($Existing | Where-Object { $_ -and $_ -ine 'qcachelab' })
+    $result = [Collections.Generic.List[string]]::new()
+    $inserted = $false
+    foreach ($filter in $others) {
+        if (-not $inserted -and $filter -ieq 'partmgr') {
+            $result.Add('qcachelab'); $inserted = $true
+        }
+        $result.Add($filter)
+    }
+    if (-not $inserted) { throw 'Disk-class partmgr filter is missing; refusing an unverified cache placement.' }
+    return $result.ToArray()
+}
 function Assert-RegistryMultiString([string]$Path, [string[]]$Expected) {
     $key = Get-Item -LiteralPath $Path -ErrorAction Stop
     $kind = $key.GetValueKind('UpperFilters')
@@ -135,7 +152,7 @@ public static class QueueCacheCodeIntegrity {
     $filters=@((Get-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
     New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
     Native sc.exe @('config','qcachelab','start=','boot','group=','Filter')
-    if($filters -notcontains 'qcachelab') { $filters+='qcachelab' }
+    [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $classPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $classPath -Expected $filters
     foreach($filter in $deviceFilters) {

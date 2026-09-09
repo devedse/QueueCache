@@ -47,6 +47,7 @@ struct QC_CACHE {
     BOOLEAN Enabled, Barrier, Suspended, Stop;
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
+    BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
     volatile LONG Gone;
     ULONG DelayMs, InjectFault;
 };

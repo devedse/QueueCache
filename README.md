@@ -14,6 +14,15 @@ test runtimes. Repository-only host tests remain under `tests/`.
 
 The current development installer registers a disk-class filter: after the installation reboot, existing and newly enumerated disks are covered, initially with caching off. Creating a cache task does not change filter registration or require a per-task reboot. This architecture is awaiting VM lifecycle/boot validation; this build remains test-signed. Setup never formats disks or enables unsaved cache tasks.
 
+The cache filter must sit below `partmgr` and above `disk`. Setup places its
+`UpperFilters` entry immediately before `partmgr` (Windows attaches this list
+bottom-up), preserving other filters' relative order. Earlier class-wide builds
+appended it above `partmgr`, causing generated background writes to fail with
+`STATUS_ACCESS_DENIED` on mounted partitions. The driver now refuses enablement
+when it detects `partmgr` below itself; inactive pass-through remains available.
+Changing registration cannot repair a currently loaded, faulted cache in-place.
+Do not discard dirty data or reboot a faulted cache as an ordinary upgrade step.
+
 ```powershell
 qcache disk list                      # Q: · PhysicalDrive1 · 200 GiB
 qcache policy apply Q: --save         # default: 4096 MiB, Fast, enabled; persist across restart
