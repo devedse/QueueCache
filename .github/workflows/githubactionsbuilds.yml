@@ -100,5 +100,7 @@ jobs:
           prerelease: true
           generate_release_notes: true
           body: 'Disposable secondary disks only. Test-signed driver; Secure Boot/test-mode prerequisites apply. Successful CI is not kernel correctness certification.'
-          files: release/*
+          files: |
+            release/**/*.exe
+            release/**/*.zip
           fail_on_unmatched_files: true
