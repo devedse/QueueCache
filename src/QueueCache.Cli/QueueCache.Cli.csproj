@@ -3,6 +3,7 @@
   <PropertyGroup><ApplicationIcon>../../assets/branding/queuecache.ico</ApplicationIcon></PropertyGroup>
   <ItemGroup><ProjectReference Include="../QueueCache.Management/QueueCache.Management.csproj" /></ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="../QueueCache.Developer/QueueCache.Developer.csproj" />
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />
     <PackageReference Include="System.CommandLine" Version="2.0.12" />
   </ItemGroup>

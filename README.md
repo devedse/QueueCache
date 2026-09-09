@@ -6,6 +6,12 @@ The native driver is under `driver/qcache/`; historical utilities are under `leg
 `src/QueueCache.Management` owns the driver protocol; `src/QueueCache.Operations` owns shared configuration and file workloads.
 The CLI and Avalonia desktop call these libraries directly. The desktop never shells out to the CLI for cache control.
 
+Advanced integration scenarios live in `src/QueueCache.Developer` and run in-process
+through `qcache developer test`, `file-tests`, `write-tests` and `driver` subcommands.
+See [developer tools](developer/README.md) for modes and target requirements. There
+is one installer: no standalone test executables, shipped lab scripts or duplicate
+test runtimes. Repository-only host tests remain under `tests/`.
+
 The current development installer registers a disk-class filter: after the installation reboot, existing and newly enumerated disks are covered, initially with caching off. Creating a cache task does not change filter registration or require a per-task reboot. This architecture is awaiting VM lifecycle/boot validation; this build remains test-signed. Setup never formats disks or enables unsaved cache tasks.
 
 ```powershell
@@ -102,13 +108,13 @@ The fixed-budget index replaces the payload of an older pending write to the sam
 
 Only full aligned 4 KiB blocks are cached. Sector-aligned partial-block writes drain prior data and pass through unchanged; they never fabricate a full block from partial contents. Version 0.2.4 drained on all TRIM requests; version 0.3 optimizes validated forms as described above. The driver does not see filenames: deletion only permits discarding cached blocks when an appropriate storage notification arrives. There is no retained clean read cache.
 
-`qcache-file-tests ... --test-coalescing` uses a fresh 64 MiB file, writes it repeatedly, checks live unbuffered reads and the bounded dirty working set, then injects a lower-completion error, retries, drains and verifies the independent file hash. It requires strict initial policy and at least 128 MiB payload capacity; it selects unsafe mode for the experiment and restores strict mode and the original file oracle on success. Secondary-NTFS VM validation passed: 2 GiB of repeated writes peaked at about 64.2 MiB dirty, with newest-data reads and recovery hashes intact. Strict/unsafe flush regressions, concurrent capacity/wraparound, a partial-sector overwrite, and normal dirty-cache restart verification also passed. These are experimental lab results, not production certification or sudden-loss durability.
+`qcache developer file-tests ... test-coalescing` uses a fresh 64 MiB file, writes it repeatedly, checks live unbuffered reads and the bounded dirty working set, then injects a lower-completion error, retries, drains and verifies the independent file hash. It requires strict initial policy and at least 128 MiB payload capacity; it selects unsafe mode for the experiment and restores strict mode and the original file oracle on success. Secondary-NTFS VM validation passed: 2 GiB of repeated writes peaked at about 64.2 MiB dirty, with newest-data reads and recovery hashes intact. Strict/unsafe flush regressions, concurrent capacity/wraparound, a partial-sector overwrite, and normal dirty-cache restart verification also passed. These are experimental lab results, not production certification or sudden-loss durability.
 
 For a formatted disk, `Manage-Lab.ps1` requires `-AllowFormattedDisk`. Initial formatted attachment also requires `-ExpectedInstanceId`; identity, exact size, non-OS status and stopped-driver checks remain mandatory. These scripts never format a disk.
 
 ## Repository hygiene
 
-Reusable code, test harnesses, `build/` and `lab/` scripts are source-controlled material. Personal credentials, notes, host keys and ad-hoc test scripts belong only in ignored `.lab/`. Generated outputs (`artifacts/`, `bin/`, `obj/`) and downloaded tool caches (`.packages/`, `.tools/`) are also ignored. Packaging explicitly selects deliverables; never archive the repository root or publish local lab directories. No private signing key belongs in a package.
+Reusable code, test harnesses, `build/` and `developer/` scripts are source-controlled material. Personal credentials, notes, host keys and ad-hoc test scripts belong only in ignored `.lab/`. Generated outputs (`artifacts/`, `bin/`, `obj/`) and downloaded tool caches (`.packages/`, `.tools/`) are also ignored. Packaging explicitly selects deliverables; never archive the repository root or publish local lab directories. No private signing key belongs in a package.
 
 ### Write-cache source map
 
@@ -119,7 +125,7 @@ Reusable code, test harnesses, `build/` and `lab/` scripts are source-controlled
 | `src/QueueCache.Management` | C# device/protocol access and UI-independent telemetry calculations |
 | `src/QueueCache.Cli` | Operator commands and console presentation; no caching algorithm |
 | `tests/` | Protocol regression checks and explicitly guarded disposable-disk workloads |
-| `build/`, `lab/` | Reproducible packaging and explicit installation/recovery tooling |
+| `build/`, `developer/` | Reproducible packaging and explicit installation/recovery tooling |
 
 Keep native request ownership and lifetime changes separate from presentation changes. Protocol changes require matching native/C# size, version and bounds tests. Driver load or successful compilation alone is not a correctness test. Future graphical controls should reuse the management library rather than introduce another driver protocol implementation.
 
@@ -187,6 +193,11 @@ Next: repair initialization/attachment and build a reversible secondary-device l
 
 ## First-load lab harness (no caching)
 
+**Historical bring-up procedure, not current installation instructions.** The scripts
+below now live only in the source checkout's `developer/scripts/` directory. They
+are not included in release packages and must not manage a class-filter install.
+Use the current installer described at the top of this document instead.
+
 `./build/Build.ps1 -LabPassThrough -Configuration Release -Version 0.1.2.0` builds **qcachelab.sys**, a separate minimal PnP pass-through harness in `driver/qcache/lab.cpp`. The legacy cache engine is excluded, not merely switched off. Ordinary reads, writes, flushes, power and shutdown requests go to the lower driver; private enable/off/flush commands return not-supported. Statistics show zero cache capacity and requested read/write byte counts. This tests deployment/control/lifecycle plumbing, not the cache algorithm or its known-issue fixes. No memory queue or worker exists in this build. The original `qcache.sys` remains experimental and must not be substituted into this installation procedure.
 
 The installer uses a C# SetupAPI helper to register the filter on **one exact disk devnode**, never the disk class. The driver additionally checks that device's recorded driver key. Initial install refuses disk 0, boot/system disks, non-RAW/partitioned disks, unexpected sizes, existing per-device upper filters and an existing installation. It requires an explicit snapshot confirmation and active test-signing. All harness code is nonpageable; paging/hibernation/dump usage notifications requesting entry are rejected. These guards reduce risk but are not proof of correct kernel behavior.
@@ -197,13 +208,13 @@ On the disposable VM, extract that signed ZIP into a local folder. Run **64-bit 
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\lab\Manage-Lab.ps1 -Action Preflight
+.\developer\scripts\Manage-Lab.ps1 -Action Preflight
 # After securing BitLocker recovery information and disabling Secure Boot in VM firmware:
-.\lab\Manage-Lab.ps1 -Action EnableTestSigning -SnapshotConfirmed
+.\developer\scripts\Manage-Lab.ps1 -Action EnableTestSigning -SnapshotConfirmed
 # Reboot, then reconfirm disk identity/size before the next command.
-.\lab\Manage-Lab.ps1 -Action Install -DiskNumber <secondary-number> -ExpectedBytes <exact-bytes> -SnapshotConfirmed
+.\developer\scripts\Manage-Lab.ps1 -Action Install -PackageDirectory <historical-package> -DiskNumber <secondary-number> -ExpectedBytes <exact-bytes> -SnapshotConfirmed
 # Reboot from the VM console, then:
-.\lab\Manage-Lab.ps1 -Action Status -DiskNumber <secondary-number>
+.\developer\scripts\Manage-Lab.ps1 -Action Status -PackageDirectory <historical-package> -DiskNumber <secondary-number>
 ```
 
 Secure Boot and test-signing changes are lab-only security reductions; do not delete firmware keys, EFI disks or TPM state. Preserve the whole-VM snapshot and recovery console. Do not disable Memory Integrity speculatively: test-signed binaries are required even with it enabled. See [Microsoft's test-signing prerequisites](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/the-testsigning-boot-configuration-option). No command above automatically reboots, formats a disk or enables caching.
@@ -214,7 +225,7 @@ Secure Boot and test-signing changes are lab-only security reductions; do not de
 
 Add `-LabSerialized` to a `-LabPassThrough` build to queue disk reads/writes/flushes and control requests through a cancel-safe queue and a single passive-level worker. Outputs use the separate `lab-serialized` directory and package metadata records the option. This is still **no caching**: original requests complete only after the lower stack completes them. It isolates request lifetime/ordering plumbing before RAM write-back is integrated.
 
-`tests/QueueCache.WriteTests` is an explicitly destructive C# integration tool, packaged under `write-tests`. It accepts an exact secondary disk number, byte size and PnP instance, then either `--write-disposable-region` or `--verify-only`. The write mode overwrites only the 64 MiB region starting at 1 GiB on an empty RAW secondary disk; it refuses disk 0, boot/system disks, identity/size mismatches, partitions and unsupported sector sizes. It uses aligned unbuffered I/O, deterministic overlapping patterns, exact transfer-count checks, flush and close/reopen verification. Verify-only regenerates the oracle without writing, including after a reboot. Successful execution is not proof of crash durability or cache correctness.
+`src/QueueCache.Developer/WriteTests` implements the explicitly destructive `qcache developer write-tests` command, linked into the CLI. It accepts an exact secondary disk number, byte size and PnP instance, then either `write-disposable-region` or `verify-only`. The write mode overwrites only the 64 MiB region starting at 1 GiB on an empty RAW secondary disk; it refuses disk 0, boot/system disks, identity/size mismatches, partitions and unsupported sector sizes. It uses aligned unbuffered I/O, deterministic overlapping patterns, exact transfer-count checks, flush and close/reopen verification. Verify-only regenerates the oracle without writing, including after a reboot. Successful execution is not proof of crash durability or cache correctness.
 
 To update a lab binary, remove the filter registration and reboot first. `Manage-Lab.ps1 -Action Upgrade` uses the same disk/size/snapshot arguments and validates the new signed package, exact target and stopped service. It backs up the previous SYS, preserves the original recovery identity, copies and verifies the new SYS, then reattaches. Reboot again to load it. Never replace a running driver in place.
 
@@ -241,31 +252,31 @@ Additional C# integration modes use the same exact-identity/RAW-secondary guard 
 
 | Mode | Checks |
 | --- | --- |
-| `--write-and-read-disposable-region` | Immediate RAM reads, overlapping writes, full flush/reopen oracle and cache accounting |
-| `--write-through-check` | Prior dirty writes drained before write-through; needs at least 2 MiB usable cache and a bounded lab delay |
-| `--write-concurrent-check` / `--write-toggle-check` | Four writers/readers with concurrent flush or disable/enable cycles |
-| `--write-cancellation-check` | Cancellation while queued behind flush and waiting for capacity; requires a small 2–8 MiB usable cache |
-| `--write-performance-check` | Alternating off/on, warm-up plus three measured pairs; 2 MiB burst and 64 MiB workload, separate write-return/flush timing, byte verification; requires 4 MiB budget |
-| `--write-dirty-prefix <bytes> <seed>` / `--verify-dirty-prefix <bytes> <seed>` | Establish novel dirty data without explicit flush, then read-only verification after operator-controlled reboot |
+| `write-and-read-disposable-region` | Immediate RAM reads, overlapping writes, full flush/reopen oracle and cache accounting |
+| `write-through-check` | Prior dirty writes drained before write-through; needs at least 2 MiB usable cache and a bounded lab delay |
+| `write-concurrent-check` / `write-toggle-check` | Four writers/readers with concurrent flush or disable/enable cycles |
+| `write-cancellation-check` | Cancellation while queued behind flush and waiting for capacity; requires a small 2–8 MiB usable cache |
+| `write-performance-check` | Alternating off/on, warm-up plus three measured pairs; 2 MiB burst and 64 MiB workload, separate write-return/flush timing, byte verification; requires 4 MiB budget |
+| `write-dirty-prefix --prefix-bytes <bytes> --seed <seed>` / `verify-dirty-prefix --prefix-bytes <bytes> --seed <seed>` | Establish novel dirty data without explicit flush, then read-only verification after operator-controlled reboot |
 
-Ordinary write/verification modes accept trailing `--seed <nonzero-ulong>`; use the same seed for later verification. Critical tests reject an oracle already present on disk so an old successful write cannot hide a lost new one. `lab/Test-CacheFaults.ps1` orchestrates synthetic retention/retry tests. Capture native tester output explicitly (for example, `2>&1 | Tee-Object <log>`); an SSH PowerShell transcript alone may omit it. None of these tests validates OS disks, clean read caching, real hardware failures, or every power transition.
+Ordinary write/verification modes accept trailing `--seed <nonzero-ulong>`; use the same seed for later verification. Critical tests reject an oracle already present on disk so an old successful write cannot hide a lost new one. `developer/scripts/Test-CacheFaults.ps1` orchestrates synthetic retention/retry tests. Capture native tester output explicitly (for example, `2>&1 | Tee-Object <log>`); an SSH PowerShell transcript alone may omit it. None of these tests validates OS disks, clean read caching, real hardware failures, or every power transition.
 
-`tests/QueueCache.FileTests` is a separate NTFS harness, packaged as `file-tests` in new lab builds. Its first cache-enabled file workload and post-reboot hash verification passed on the disposable lab disk; broader filesystem stress remains unvalidated. It never formats or partitions a disk. A pre-prepared NTFS volume must map wholly to the exact non-OS secondary disk (both partition inspection and opened-volume extents are checked). `qcache-file-tests <letter> <disk> <exact bytes> <PnP instance> --write-new-files` creates a uniquely named directory containing two 64 MiB files and a seeded SHA-256 manifest; it tests copy/rename/partial overwrite, flushes the filesystem volume and verifies cache admission and final data. It does not replace or delete pre-existing user files. After reboot, use the same arguments with `--verify-files <run GUID>` for read-only verification. Test directories are deliberately retained for review; remove only an explicitly verified test directory after it is no longer needed.
+`src/QueueCache.Developer/FileTests` implements `qcache developer file-tests`, linked into the CLI. Its first cache-enabled file workload and post-reboot hash verification passed on the disposable lab disk; broader filesystem stress remains unvalidated. It never formats or partitions a disk. A pre-prepared NTFS volume must map wholly to the exact non-OS secondary disk (both partition inspection and opened-volume extents are checked). `qcache developer file-tests <letter> <disk> <exact bytes> <PnP instance> write-new-files` creates a uniquely named directory containing two 64 MiB files and a seeded SHA-256 manifest; it tests copy/rename/partial overwrite, flushes the filesystem volume and verifies cache admission and final data. It does not replace or delete pre-existing user files. After reboot, use the same arguments with `verify-files --run-id <run GUID>` for read-only verification. Test directories are deliberately retained for review; remove only an explicitly verified test directory after it is no longer needed.
 
 File-test variants accept the same target identity arguments:
 
-- `--write-new-files [MiB]`: 64..8192 MiB per file; reports source write-return and file-flush timing separately.
-- `--baseline [MiB]`: the same workload, but requires the cache disabled. Keep the same RAM reservation when comparing on/off results.
-- `--concurrent [MiB]`: two independent writers, with flush/read verification on the second thread; both files receive final hash verification.
-- `--dirty-reboot`: creates and verifies fresh files, persists an independently computed expected manifest, then makes a fresh unbuffered 2 MiB prefix overwrite with a synthetic drain delay. Reports `READY_FOR_NORMAL_REBOOT` only if dirty payload remains. It does not restart automatically. Restart normally and use `--verify-files <run GUID>`; preparation alone is not a persistence PASS. If not rebooting, clear `lab-delay` and explicitly flush; do not leave diagnostic delays enabled for normal use.
-- `--test-flush-policy`: start strict; prepare durable test metadata, opt into unsafe policy, verify dirty payload survives write-through plus application flush, check policy-change rejection and manual-flush error/retry, restore strict and verify the changed file. Passed on the secondary-NTFS test VM.
-- `--dirty-reboot-unsafe`: prepare in strict mode, then opt into unsafe mode before the dirty write-through/application-flush sequence. Requires normal reboot and subsequent hash verification; passed on the secondary-NTFS test VM.
+- `write-new-files [MiB]`: 64..8192 MiB per file; reports source write-return and file-flush timing separately.
+- `baseline [MiB]`: the same workload, but requires the cache disabled. Keep the same RAM reservation when comparing on/off results.
+- `concurrent [MiB]`: two independent writers, with flush/read verification on the second thread; both files receive final hash verification.
+- `dirty-reboot`: creates and verifies fresh files, persists an independently computed expected manifest, then makes a fresh unbuffered 2 MiB prefix overwrite with a synthetic drain delay. Reports `READY_FOR_NORMAL_REBOOT` only if dirty payload remains. It does not restart automatically. Restart normally and use `verify-files --run-id <run GUID>`; preparation alone is not a persistence PASS. If not rebooting, clear `lab-delay` and explicitly flush; do not leave diagnostic delays enabled for normal use.
+- `test-flush-policy`: start strict; prepare durable test metadata, opt into unsafe policy, verify dirty payload survives write-through plus application flush, check policy-change rejection and manual-flush error/retry, restore strict and verify the changed file. Passed on the secondary-NTFS test VM.
+- `dirty-reboot-unsafe`: prepare in strict mode, then opt into unsafe mode before the dirty write-through/application-flush sequence. Requires normal reboot and subsequent hash verification; passed on the secondary-NTFS test VM.
 
 Unbuffered test writes use aligned allocations following Microsoft's [file-buffering requirements](https://learn.microsoft.com/en-us/windows/win32/fileio/file-buffering). They target only the newly created test file, never a raw disk range.
 
 ## Contributing
 
-The repeatable read-only harness is `tests/QueueCache.LabTests`; lab builds package it under `tests`. Run it through `lab/Test-LabReads.ps1 -PackageDirectory <package> -TestExecutable <qcache-lab-tests.exe> -Mode attached` (or `detached` after removal/reboot). It uses the actual `qcache.exe`, validates statistics, compares eight 64 KiB reads, and checks that disk 0 rejects cache statistics. It never opens a write handle. It is a smoke test, not write/flush durability validation.
+The read-only smoke test is `qcache developer test <disk> <exact-bytes> <PnP-instance>` (`--detached` expects no filter). It checks live identity/size, statistics and eight 64 KiB reads on the selected idle disk without issuing writes. It does not assume disk 0 is unfiltered. See [developer commands](developer/README.md); no standalone test executables are installed.
 
 After uninstall/reboot and a successful detached test, use `Manage-Lab.ps1 -Action Reattach` with the same disk/size/snapshot arguments to reuse the recorded identity and verified stopped service/binary. The updated script accepts `-PackageDirectory` when staged separately from the immutable signed package. Reattachment still requires another reboot; do not use it before removal has completed. Runtime removal/reload validation must be recorded separately from registration success.
 

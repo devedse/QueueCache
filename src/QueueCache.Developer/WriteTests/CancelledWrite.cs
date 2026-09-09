@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
+namespace QueueCache.Developer.WriteTests;
+
 // Dedicated thread: cancellation cannot accidentally target unrelated thread-pool I/O.
 internal sealed class CancelledWrite : IDisposable
 {

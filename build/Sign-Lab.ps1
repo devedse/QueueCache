@@ -4,6 +4,7 @@ param([Parameter(Mandatory)][string]$UnsignedPackageDirectory, [switch]$AllowWri
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $source = (Resolve-Path -LiteralPath $UnsignedPackageDirectory).Path
+& "$PSScriptRoot/Test-PackageLayout.ps1" -PackageDirectory $source
 $metadata = Get-Content "$source/build-info.json" -Raw | ConvertFrom-Json
 if ((-not $metadata.labPassThrough -and -not ($metadata.labWriteCache -and $AllowWriteCache)) -or $metadata.driverSigned -or $metadata.configuration -ne 'Release') {
     throw 'Only unsigned Release lab packages may be signed; write-cache builds require explicit -AllowWriteCache.'
@@ -12,7 +13,6 @@ if ((Test-Path "$source/driver/qcache.sys") -or -not (Test-Path "$source/driver/
 $stage = Join-Path $root "artifacts/lab/QueueCache-$($metadata.version)-test-signed-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item "$source/*" $stage -Recurse
-Copy-Item "$root/lab" "$stage/lab" -Recurse
 # Private key remains non-exportable in this user's Windows certificate store.
 # Never generate production trust or place a PFX in a package/repository.
 $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=QueueCache disposable lab $([guid]::NewGuid().ToString('N'))" `

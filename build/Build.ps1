@@ -40,14 +40,7 @@ try {
         '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/controller")
     Invoke-Checked dotnet @('publish', 'src/QueueCache.Desktop', '-c', $Configuration,
         '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/desktop")
-    if ($LabPassThrough) {
-        Invoke-Checked dotnet @('publish', 'tests/QueueCache.LabTests', '-c', $Configuration,
-            '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/tests")
-        Invoke-Checked dotnet @('publish', 'tests/QueueCache.WriteTests', '-c', $Configuration,
-            '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/write-tests")
-        Invoke-Checked dotnet @('publish', 'tests/QueueCache.FileTests', '-c', $Configuration,
-            '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/file-tests")
-    }
+    & "$PSScriptRoot/Test-PackageLayout.ps1" -PackageDirectory $stage
     if (-not $ManagedOnly) {
         & "$PSScriptRoot/Restore-Toolchain.ps1"
         $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"

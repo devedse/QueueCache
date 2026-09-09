@@ -1,6 +1,12 @@
 #Requires -Version 7
 $ErrorActionPreference='Stop'
 $root = Split-Path $PSScriptRoot -Parent
+$build = Get-Content "$root/build/Build.ps1" -Raw
+$sign = Get-Content "$root/build/Sign-Lab.ps1" -Raw
+if ($build -match "'publish', 'tests/" -or $sign -match 'Copy-Item.*root/lab') { throw 'Do not publish standalone test applications or historical lab scripts.' }
+foreach ($project in @('LabTests','WriteTests','FileTests')) {
+    if (Test-Path "$root/tests/QueueCache.$project/QueueCache.$project.csproj") { throw "Standalone test executable project remains: $project" }
+}
 foreach ($name in @('Install-Driver.ps1','Update-QueueCache.ps1')) {
     $path = Join-Path $root "packaging/$name"
     $tokens=$null; $parseErrors=$null

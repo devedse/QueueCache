@@ -133,6 +133,7 @@ internal static class Commands
             filter.Subcommands.Add(command);
         }
         root.Subcommands.Add(filter);
+        root.Subcommands.Add(DeveloperCommands.Create(compatibility));
         return root;
 
         void Add(string name, string[] argumentNames, string[] optionNames, Command? parent = null, string? legacyName = null)

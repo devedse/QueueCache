@@ -4,6 +4,7 @@ param([Parameter(Mandatory)][string]$SignedPackageDirectory, [string]$Compiler)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $package = (Resolve-Path -LiteralPath $SignedPackageDirectory).Path
+& "$PSScriptRoot/Test-PackageLayout.ps1" -PackageDirectory $package
 $metadata = Get-Content -LiteralPath "$package/build-info.json" -Raw | ConvertFrom-Json
 if (-not $metadata.driverSigned -or -not $metadata.labWriteCache) { throw 'Installer requires an explicitly test-signed write-cache package.' }
 if (-not $Compiler) { $Compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }

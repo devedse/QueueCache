@@ -3,7 +3,6 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$PackageDirectory,
-    [Parameter(Mandatory)][string]$TestExecutable,
     [ValidateSet('attached','detached')][string]$Mode = 'attached'
 )
 $ErrorActionPreference = 'Stop'
@@ -24,6 +23,8 @@ New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 $log = Join-Path $logRoot "ReadTest-$Mode-$(Get-Date -Format yyyyMMdd-HHmmss).log"
 Start-Transcript $log | Out-Null
 try {
-    & $TestExecutable $cli $disk.Number $disk.Size $state.DriverKey $Mode
+    $arguments = @('developer','test', [string]$disk.Number, [string]$disk.Size, $state.InstanceId)
+    if ($Mode -eq 'detached') { $arguments += '--detached' }
+    & $cli @arguments
     if ($LASTEXITCODE) { throw "Read test failed: $LASTEXITCODE" }
 } finally { Stop-Transcript | Out-Null; Write-Host "Log: $log" }

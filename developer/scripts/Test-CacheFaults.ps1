@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$PackageDirectory, [Parameter(Mandatory)][string]$TestExecutable)
+param([Parameter(Mandatory)][string]$PackageDirectory)
 $ErrorActionPreference = 'Stop'
 $saved = Get-Content "$env:ProgramData/QueueCacheLab/qcachelab-install.json" -Raw | ConvertFrom-Json
 $devices = @(Get-CimInstance Win32_DiskDrive | Where-Object PNPDeviceID -eq $saved.InstanceId)
@@ -25,14 +25,14 @@ function State {
     return $json | ConvertFrom-Json
 }
 function Workload([string]$Mode, [int]$Expected, [long]$Prefix = 0) {
-    $arguments = @([string]$disk.Number, [string]$disk.Size, $saved.InstanceId, $Mode)
-    if ($Prefix) { $arguments += [string]$Prefix }
+    $arguments = @('developer', 'write-tests', [string]$disk.Number, [string]$disk.Size, $saved.InstanceId, $Mode.TrimStart('-'))
+    if ($Prefix) { $arguments += @('--prefix-bytes', [string]$Prefix) }
     $arguments += @('--seed', [string]$script:scenarioSeed)
     $nativePreference = $ErrorActionPreference
     try {
         # Explicit capture: SSH PowerShell transcripts can omit native stdout.
         $ErrorActionPreference = 'Continue'
-        & $TestExecutable @arguments 2>&1 | Tee-Object -FilePath "$root/CacheFaultWorkload-$script:scenarioSeed-$($Mode.TrimStart('-')).log"
+        & $cli @arguments 2>&1 | Tee-Object -FilePath "$root/CacheFaultWorkload-$script:scenarioSeed-$($Mode.TrimStart('-')).log"
     } finally { $ErrorActionPreference = $nativePreference }
     if ($LASTEXITCODE -ne $Expected) { throw "Unexpected test exit $LASTEXITCODE (expected $Expected)." }
 }

@@ -13,7 +13,10 @@ param(
     [string]$ExpectedInstanceId
 )
 $ErrorActionPreference = 'Stop'
-$package = Split-Path $PSScriptRoot -Parent
+$package = $PackageDirectory
+if (-not $package -and $Action -notin @('Preflight','EnableTestSigning')) {
+    throw 'Historical script now lives outside packages. Supply -PackageDirectory explicitly; use the normal installer for class-filter installations.'
+}
 if ($PackageDirectory) { $package = (Resolve-Path -LiteralPath $PackageDirectory).Path }
 $stateRoot = Join-Path $env:ProgramData 'QueueCacheLab'
 New-Item -ItemType Directory -Path "$stateRoot/Logs" -Force | Out-Null

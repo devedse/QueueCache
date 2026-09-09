@@ -2,6 +2,8 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
+namespace QueueCache.Developer.FileTests;
+
 /// <summary>Writes only a newly created test file's allocated prefix, bypassing Windows' file cache.
 /// Optional write-through/flush requests exercise the selected driver policy.</summary>
 internal static class UnbufferedFileWrite
