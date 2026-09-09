@@ -23,4 +23,7 @@ try {
         if($length -eq 0 -or $offset -lt 118 -or $offset+$length -gt $icon.BaseStream.Length) { throw 'Invalid icon frame bounds.' }
     }
 } finally { $icon.Dispose() }
+& "$env:windir/System32/WindowsPowerShell/v1.0/powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot/Test-RegistryFilters.ps1"
+if ($LASTEXITCODE) { throw 'Windows PowerShell 5.1 registry verification regression failed.' }
+& "$PSScriptRoot/Test-RegistryFilters.ps1"
 Write-Host 'Packaging syntax/contract checks passed. No installer or updater executed.'

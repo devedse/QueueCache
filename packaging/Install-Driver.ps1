@@ -18,6 +18,25 @@ function UpdatePath([bool]$Remove) {
     if (-not $Remove) { $parts += $entry }
     [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'Machine')
 }
+function Assert-RegistryMultiString([string]$Path, [string[]]$Expected) {
+    $key = Get-Item -LiteralPath $Path -ErrorAction Stop
+    $kind = $key.GetValueKind('UpperFilters')
+    # Get-ItemPropertyValue emits REG_MULTI_SZ as one array object in Windows
+    # PowerShell 5.1. Wrapping its output in @() produces a nested array whose
+    # -join representation is "System.String[]", not the actual filter names.
+    [string[]]$actual = (Get-ItemProperty -LiteralPath $Path -Name UpperFilters -ErrorAction Stop).UpperFilters
+    Write-Output ("Class filters: expected={0}; actual={1}; type={2}" -f
+        (ConvertTo-Json -InputObject @($Expected) -Compress),
+        (ConvertTo-Json -InputObject @($actual) -Compress), $kind)
+    if ($kind -ne [Microsoft.Win32.RegistryValueKind]::MultiString -or $actual.Count -ne $Expected.Count) {
+        throw 'Class filter verification failed: registry type or entry count differs.'
+    }
+    for ($i = 0; $i -lt $Expected.Count; $i++) {
+        if (-not [string]::Equals($actual[$i], $Expected[$i], [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Class filter verification failed: entry $i differs (including ordering)."
+        }
+    }
+}
 try {
     if (-not [Environment]::Is64BitProcess) { throw '64-bit setup is required.' }
     if ($Uninstall) {
@@ -117,8 +136,8 @@ public static class QueueCacheCodeIntegrity {
     New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
     Native sc.exe @('config','qcachelab','start=','boot','group=','Filter')
     if($filters -notcontains 'qcachelab') { $filters+='qcachelab' }
-    New-ItemProperty $classPath -Name UpperFilters -PropertyType MultiString -Value $filters -Force | Out-Null
-    if((@(Get-ItemPropertyValue $classPath UpperFilters) -join '|') -ine ($filters -join '|')) { throw 'Class filter verification failed.' }
+    New-ItemProperty $classPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
+    Assert-RegistryMultiString -Path $classPath -Expected $filters
     foreach($filter in $deviceFilters) {
         if($filter.UpperFilters -contains 'qcachelab') { Native $controller @('lab-filter','remove',$filter.InstanceId,$filter.DriverKey,'--lab-installer') }
     }
