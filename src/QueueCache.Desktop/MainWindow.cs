@@ -13,13 +13,14 @@ namespace QueueCache.Desktop;
 [SupportedOSPlatform("windows")]
 public sealed class MainWindow : Window
 {
-    private readonly ComboBox volumes = new() { Width = 130 };
+    private readonly ComboBox volumes = new() { Width = 390 };
+    private readonly Dictionary<string, string> volumeLabels = new();
     private readonly NumericUpDown budget = new() { Minimum = 1, Maximum = 4096, Value = 4096, Increment = 256, Width = 140 };
     private readonly ComboBox preset = new() { ItemsSource = Enum.GetValues<CachePreset>(), SelectedIndex = 0, Width = 130 };
     private readonly CheckBox acknowledge = new() { Content = "I accept loss/corruption after a crash, including acknowledged flushes." };
     private readonly CheckBox save = new() { Content = "Save this configuration for the installed startup task to restore after reboot." };
     private readonly ProgressBar bucket = new() { Minimum = 0, Maximum = 100, Height = 28 };
-    private readonly TextBlock snapshot = new() { Text = "Select a secondary NTFS volume. C: / OS / paging disks are excluded.", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock snapshot = new() { Text = "Select an NTFS volume. Driver registration and cache policy are separate. Boot/paging support is not yet validated.", TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBox log = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Height = 220 };
     private readonly StackPanel actions = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -31,12 +32,25 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "QueueCache — experimental RAM write cache"; Width = 900; Height = 650; MinWidth = 760; MinHeight = 600;
-        volumes.ItemsSource = DriveInfo.GetDrives().Where(d => d.DriveType == DriveType.Fixed).Select(d => d.Name[..2]).ToArray();
+        Title = "QueueCache — RAM write cache (test-signed)"; Width = 1160; Height = 720; MinWidth = 1100; MinHeight = 700;
+        Opened += async (_, _) =>
+        {
+            try
+            {
+                foreach (var disk in await DiskCatalog.ListAsync())
+                    foreach (var volume in disk.Volumes)
+                        volumeLabels[$"{volume} · {disk.Device} · {disk.SizeGiB:0.##} GiB" + (disk.IsBoot || disk.IsSystem ? " [boot/system]" : "")] = volume;
+                volumes.ItemsSource = volumeLabels.Keys.ToArray();
+            }
+            catch (Exception ex) { Append("Disk discovery failed: " + ex.Message); }
+        };
         var select = Button("Inspect", Inspect);
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
         controls.Children.Add(new TextBlock { Text = "Volume", VerticalAlignment = VerticalAlignment.Center }); controls.Children.Add(volumes); controls.Children.Add(select);
         controls.Children.Add(new TextBlock { Text = "Budget MiB", VerticalAlignment = VerticalAlignment.Center }); controls.Children.Add(budget); controls.Children.Add(preset);
+        var registration = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        registration.Children.Add(Button("Register disk (reboot)", async () => Append(await DriverRegistration.ChangeAsync(SelectedVolume(), true, operation!.Token))));
+        registration.Children.Add(Button("Unregister disk (reboot)", async () => Append(await DriverRegistration.ChangeAsync(SelectedVolume(), false, operation!.Token))));
         actions.Children.Add(Button("Apply & enable", async () =>
         {
             var selected = RequireTarget();
@@ -55,7 +69,7 @@ public sealed class MainWindow : Window
         cancel.Click += (_, _) => operation?.Cancel();
         var panel = new StackPanel { Margin = new Thickness(24), Spacing = 16 };
         panel.Children.Add(new TextBlock { Text = "RAM write cache", FontSize = 26 });
-        panel.Children.Add(controls); panel.Children.Add(acknowledge); panel.Children.Add(save); panel.Children.Add(actions); panel.Children.Add(bucket); panel.Children.Add(snapshot);
+        panel.Children.Add(controls); panel.Children.Add(registration); panel.Children.Add(acknowledge); panel.Children.Add(save); panel.Children.Add(actions); panel.Children.Add(bucket); panel.Children.Add(snapshot);
         panel.Children.Add(new TextBlock { Text = "Closing this window does NOT disable caching. Tests retain new files; benchmark is sequential and includes data generation/copy overhead.", TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         panel.Children.Add(cancel); panel.Children.Add(log); Content = panel;
         volumes.SelectionChanged += (_, _) => { target = null; previous = null; bucket.Value = 0; snapshot.Text = "Click Inspect to validate this volume before use."; };
@@ -84,13 +98,15 @@ public sealed class MainWindow : Window
     private async Task Inspect()
     {
         target = null; previous = null;
-        var inspected = await DiskTarget.InspectAsync(volumes.SelectedItem as string ?? "", operation!.Token);
+        var inspected = await DiskTarget.InspectAsync(SelectedVolume(), operation!.Token);
         var state = await Task.Run(() => { using var device = new CacheDevice(inspected.Device); return device.GetWriteCacheState(); });
         ConfigurationManager.EnsureHealthy(state);
         target = inspected;
         Append($"Validated {inspected.Root} → {inspected.Device}, {inspected.Bytes} bytes. Driver attached.");
     }
     private DiskTarget RequireTarget() => target ?? throw new InvalidOperationException("Inspect the selected disk first.");
+    private string SelectedVolume() => volumes.SelectedItem is string label && volumeLabels.TryGetValue(label, out var volume)
+        ? volume : throw new InvalidOperationException("Select a volume first.");
     private Task Control(WriteCacheAction action)
     {
         var selected = RequireTarget();

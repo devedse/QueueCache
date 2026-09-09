@@ -8,7 +8,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations;
 
-/// <summary>Validated single-volume secondary-disk target. No guessed disk numbers or raw test writes.</summary>
+/// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.</summary>
 [SupportedOSPlatform("windows")]
 public sealed record DiskTarget(char Letter, int Number, long Bytes, string Instance)
 {
@@ -25,7 +25,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         info.ArgumentList.Add("-NoProfile"); info.ArgumentList.Add("-Command");
         // Only an already validated ASCII letter enters this script. Native volume extents are checked as well.
-        info.ArgumentList.Add($"$ErrorActionPreference='Stop'; $p=@(Get-Partition -DriveLetter {letter}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; if($d.IsBoot -or $d.IsSystem -or $d.Number -eq 0){{throw 'OS/disk zero excluded'}}; if(@(Get-CimInstance Win32_PageFileUsage | Where-Object {{$_.Name -like '{letter}:*'}}).Count){{throw 'Paging disk excluded'}}; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); [pscustomobject]@{{Letter='{letter}';Number=[int]$d.Number;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID}} | ConvertTo-Json -Compress");
+        info.ArgumentList.Add($"$ErrorActionPreference='Stop'; $p=@(Get-Partition -DriveLetter {letter}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); [pscustomobject]@{{Letter='{letter}';Number=[int]$d.Number;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID}} | ConvertTo-Json -Compress");
         using var process = Process.Start(info) ?? throw new IOException("Cannot inspect disk.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
@@ -35,10 +35,10 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
         if (process.ExitCode != 0) throw new IOException(await stderr);
         var target = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
-        if (target.Number <= 0 || target.Bytes <= 0 || string.IsNullOrWhiteSpace(target.Instance) || target.Letter != letter)
+        if (target.Number < 0 || target.Bytes <= 0 || string.IsNullOrWhiteSpace(target.Instance) || target.Letter != letter)
             throw new IOException("Invalid disk identity.");
         if (!string.Equals(new DriveInfo(target.Root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Only NTFS secondary volumes are currently supported.");
+            throw new IOException("Only NTFS volumes are currently supported.");
         target.CheckExtents();
         return target;
     }

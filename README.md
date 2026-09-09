@@ -6,17 +6,23 @@ The native driver is under `driver/qcache/`; historical utilities are under `leg
 `src/QueueCache.Management` owns the driver protocol; `src/QueueCache.Operations` owns shared configuration and file workloads.
 The CLI and Avalonia desktop call these libraries directly. The desktop never shells out to the CLI for cache control.
 
-After installing on a disposable **secondary NTFS disk**, in elevated PowerShell:
+Install QueueCache, reboot if requested, then select a disk separately using the UI or elevated CLI. The installer never selects or formats disks. This build remains test-signed; boot/paging operation is unvalidated.
 
 ```powershell
-qcache apply Q: --accept-volatile-flush  # default: 4096 MiB, Fast preset, enabled
-qcache apply Q: --preset Strict --budget-mib 256
+qcache disk list                      # Q: · PhysicalDrive1 · 200 GiB
+qcache disk attach Q:                 # first registration only; reboot afterward
+qcache policy apply Q: --accept-volatile-flush  # default: 4096 MiB, Fast preset, enabled
+qcache policy apply Q: --preset Strict --budget-mib 256
 qcache test Q: --report test-result.json
 qcache benchmark Q: --size-mib 256 --passes 4 --report benchmark-result.json
-qcache cache-status Q: --json
-qcache watch Q:
-qcache disable Q:
+qcache policy status Q: --json
+qcache policy watch Q:
+qcache policy disable Q:
 ```
+
+`policy enable` enables an already configured cache; `policy apply` configures budget/preset and enables it together. `policy set Q: strict` or `policy set Q: unsafe-defer --accept-volatile-flush` changes the flush policy while disabled/clean. `disk attach/detach` changes per-device filter registration and requires reboot. Disk 0 is not arbitrarily excluded, and inventory identifies boot/system disks. The current driver supports one selected disk at a time; boot/paging support requires further validation. Existing root-level control commands and the old `policy <device> <preset>` syntax remain compatibility aliases.
+
+Setup creates a **QueueCache desktop shortcut** and **Update QueueCache.cmd** with its PowerShell helper. The updater selects the highest version among the latest 100 published GitHub releases (including prereleases), verifies the release asset's SHA-256 and opens the installer with elevation. It does not silently reboot or configure caching. Downloads are retained in a unique temporary directory.
 
 Fast is the user-facing default, **not silent permission to enable every disk**. It acknowledges eligible writes and application flushes in volatile RAM; loss/corruption after a crash remains possible. Apply requires explicit risk acceptance for Fast. Apply validates the target, drains/disables if needed, applies the budget/preset, enables, and verifies the result. It stops on failure without claiming an atomic rollback. Already matching configuration is a no-op. Optional `--save` stores the applied configuration in administrator-writable HKLM settings; `profiles` lists them and `restore` validates volume/PnP identity/size before applying. The installer registers a SYSTEM startup task with a delay; no saved profiles means no automatic caching. To save a disabled configuration use `apply Q: --disabled --save` with the appropriate preset/acknowledgement. A plain `disable` is temporary and does not edit a saved profile.
 
@@ -38,7 +44,7 @@ Extended snapshots expose `DiscardedBytes`, `LowerWrites`, `BatchedWrites` and `
 
 `build/Build.ps1 -LabWriteCache` builds the driver, both frontends and guarded test tools. GitHub Actions uses a separate build-number job and one shared four-part version across artifacts. Hosted jobs run only host-safe tests, never attach a filter to runner storage. Branch builds publish artifacts; successful master builds publish explicitly experimental prereleases.
 
-`build/Sign-Lab.ps1` produces a test-signed lab package; `build/Build-Installer.ps1` compiles it using Inno Setup 6.7.1. The installer adds the controller to PATH, installs application files, runs guarded interactive driver setup and requests reboot. Existing attached-driver upgrades require detach/reboot followed by resuming setup and another reboot. Initial formatted-disk attachment requires explicit disk identity and confirmation. Nothing is formatted or automatically enabled. Removal drains/detaches before removing application tools; retained kernel service/binary are intentionally kept until safe post-reboot cleanup is implemented.
+`build/Sign-Lab.ps1` produces a test-signed package; `build/Build-Installer.ps1` compiles it using Inno Setup 6.7.1. Product installers are named `QueueCache-<version>-setup.exe`. The installer adds the controller to PATH, creates desktop shortcuts, installs applications and registers the driver without interactive PowerShell or disk-selection prompts. A hidden setup helper writes logs to `%ProgramData%\QueueCache\Logs`. It requires active Windows test-signing and does not alter firmware/security settings. Upgrades stage an immutable version/hash-named SYS and update the service's next-load path, retaining the running binary and existing disk selection. Reboot loads the update; no detach/resume cycle is required. Fresh installation leaves disk selection unconfigured. Removal drains/detaches before removing application tools; retained kernel service/binaries remain for recovery until post-reboot cleanup is implemented. The historical `qcachelab` service name is retained for upgrade compatibility, not exposed as a setup workflow.
 
 This is **not production signing**. Secure Boot/test-signing prerequisites remain explicit, private signing keys are never packaged, and installer/compiler redistribution/licensing must be reviewed before commercial distribution.
 

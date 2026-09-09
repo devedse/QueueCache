@@ -48,7 +48,9 @@ jobs:
         run: ./build/Build.ps1 -LabWriteCache -Configuration '${{ matrix.configuration }}' -Version '${{ needs.generate_version_number.outputs.version }}'
       - name: CLI contract checks (no disk access)
         shell: pwsh
-        run: ./build/Test-Cli.ps1 -Configuration '${{ matrix.configuration }}'
+        run: |
+          ./build/Test-Packaging.ps1
+          ./build/Test-Cli.ps1 -Configuration '${{ matrix.configuration }}'
       - uses: actions/upload-artifact@v4
         with:
           name: QueueCache-x64-${{ matrix.configuration }}-${{ needs.generate_version_number.outputs.version }}-unsigned
@@ -96,10 +98,10 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.generate_version_number.outputs.version }}
-          name: QueueCache ${{ needs.generate_version_number.outputs.version }} — experimental lab
+          name: QueueCache ${{ needs.generate_version_number.outputs.version }} — test-signed
           prerelease: true
           generate_release_notes: true
-          body: 'Disposable secondary disks only. Test-signed driver; Secure Boot/test-mode prerequisites apply. Successful CI is not kernel correctness certification.'
+          body: 'Test-signed driver; Secure Boot/test-mode prerequisites apply. Disk selection is separate from installation. Boot/paging support is unvalidated. Successful CI is not kernel correctness certification.'
           files: |
             release/**/*.exe
             release/**/*.zip

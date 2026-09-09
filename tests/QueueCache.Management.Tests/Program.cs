@@ -19,6 +19,9 @@ Reject(() => new CacheConfiguration(0).Validate(true), "zero configuration budge
 Reject(() => new CacheConfiguration(4097).Validate(true), "oversized configuration budget");
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
 var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
+var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
+Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
+Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 profile.Validate();
 Reject(() => (profile with { Version = 2 }).Validate(), "unknown profile version");
 Reject(() => (profile with { Volume = @"Q:\folder" }).Validate(), "profile requires volume not path");
