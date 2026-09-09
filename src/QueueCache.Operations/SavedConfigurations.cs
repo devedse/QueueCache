@@ -24,6 +24,12 @@ public sealed record RestoreResult(string Volume, bool Applied, string Detail);
 public static class SavedConfigurations
 {
     private const string KeyPath = @"SOFTWARE\QueueCache\Profiles";
+    public static void Remove(string instance)
+    {
+        using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = machine.OpenSubKey(KeyPath, writable: true);
+        key?.DeleteValue(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(instance.ToUpperInvariant()))), throwOnMissingValue: false);
+    }
     public static void Save(DiskTarget target, CacheConfiguration configuration, bool acceptVolatileFlush)
     {
         configuration.Validate(acceptVolatileFlush);

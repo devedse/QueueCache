@@ -35,6 +35,7 @@ try {
     $stage = Join-Path $root "artifacts/packages/$name-$([guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Invoke-Checked dotnet @('run', '--project', 'tests/QueueCache.Management.Tests', '-c', $Configuration)
+    Invoke-Checked dotnet @('run', '--project', 'tests/QueueCache.Desktop.Tests', '-c', $Configuration)
     Invoke-Checked dotnet @('publish', 'src/QueueCache.Cli', '-c', $Configuration,
         '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/controller")
     Invoke-Checked dotnet @('publish', 'src/QueueCache.Desktop', '-c', $Configuration,

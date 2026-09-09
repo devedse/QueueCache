@@ -6,31 +6,32 @@ The native driver is under `driver/qcache/`; historical utilities are under `leg
 `src/QueueCache.Management` owns the driver protocol; `src/QueueCache.Operations` owns shared configuration and file workloads.
 The CLI and Avalonia desktop call these libraries directly. The desktop never shells out to the CLI for cache control.
 
-Install QueueCache, reboot if requested, then select a disk separately using the UI or elevated CLI. The installer never selects or formats disks. This build remains test-signed; boot/paging operation is unvalidated.
+The current development installer registers a disk-class filter: after the installation reboot, existing and newly enumerated disks are covered, initially with caching off. Creating a cache task does not change filter registration or require a per-task reboot. This architecture is awaiting VM lifecycle/boot validation; this build remains test-signed. Setup never formats disks or enables unsaved cache tasks.
 
 ```powershell
 qcache disk list                      # Q: · PhysicalDrive1 · 200 GiB
-qcache disk attach Q:                 # first registration only; reboot afterward
-qcache policy apply Q: --accept-volatile-flush  # default: 4096 MiB, Fast preset, enabled
+qcache policy apply Q: --save         # default: 4096 MiB, Fast, enabled; persist across restart
 qcache policy apply Q: --preset Strict --budget-mib 256
 qcache test Q: --report test-result.json
 qcache benchmark Q: --size-mib 256 --passes 4 --report benchmark-result.json
 qcache policy status Q: --json
 qcache policy watch Q:
-qcache policy disable Q:
+qcache policy pause Q:               # drain; preserve/update task persistence
+qcache policy resume Q:
+qcache policy remove Q:              # drain, free RAM, remove saved task; files untouched
 ```
 
-`policy enable` enables an already configured cache; `policy apply` configures budget/preset and enables it together. `policy set Q: strict` or `policy set Q: unsafe-defer --accept-volatile-flush` changes the flush policy while disabled/clean. `disk attach/detach` changes per-device filter registration and requires reboot. Disk 0 is not arbitrarily excluded, and inventory identifies boot/system disks. The current driver supports one selected disk at a time; boot/paging support requires further validation. Existing root-level control commands and the old `policy <device> <preset>` syntax remain compatibility aliases.
+`policy enable` enables an already configured cache; `policy apply` configures budget/preset and enables it together. `policy set Q: strict` or `policy set Q: unsafe-defer --accept-volatile-flush` changes the flush policy while disabled/clean. Legacy `disk attach/detach` is unnecessary in class-coverage mode and does not alter registration in that mode. Tasks have per-disk state with a shared 4096 MiB reservation ceiling. Boot/paging and multi-device runtime support require further validation. Existing root-level commands remain compatibility aliases.
 
 Setup creates a **QueueCache desktop shortcut** and **Update QueueCache.cmd** with its PowerShell helper. The updater selects the highest version among the latest 100 published GitHub releases (including prereleases), verifies the release asset's SHA-256 and opens the installer with elevation. It does not silently reboot or configure caching. Downloads are retained in a unique temporary directory.
 
-Fast is the user-facing default, **not silent permission to enable every disk**. It acknowledges eligible writes and application flushes in volatile RAM; loss/corruption after a crash remains possible. Apply requires explicit risk acceptance for Fast. Apply validates the target, drains/disables if needed, applies the budget/preset, enables, and verifies the result. It stops on failure without claiming an atomic rollback. Already matching configuration is a no-op. Optional `--save` stores the applied configuration in administrator-writable HKLM settings; `profiles` lists them and `restore` validates volume/PnP identity/size before applying. The installer registers a SYSTEM startup task with a delay; no saved profiles means no automatic caching. To save a disabled configuration use `apply Q: --disabled --save` with the appropriate preset/acknowledgement. A plain `disable` is temporary and does not edit a saved profile.
+Fast acknowledges eligible writes and application flushes in volatile RAM; loss/corruption after a crash remains possible. The selected preset defines the behaviour; the task UI and `policy apply` do not require a consent checkbox/flag. Apply validates the target, drains/disables if needed, applies settings, and verifies the result. It stops on failure without claiming atomic rollback. Optional `--save` stores the task in administrator-writable HKLM; applying without it removes that task's saved startup profile. `policy profiles` lists saved tasks; `policy restore` validates volume/PnP identity/size before applying. The installer registers a delayed SYSTEM startup task. No saved profiles means no automatic caching. `policy pause/resume` preserves persistence while updating enabled state; legacy `policy disable/enable` is temporary. Newly hot-added disks start uncached; saved profiles currently restore at startup, not on hot-plug.
 
 `qcache test` is a file-only, current-boot suite: no formatting, raw writes, reboot, fault injection or policy changes. It checks sequential and random 4 KiB overwrites/live reads, explicit drain/reopen, copy/rename hashes, file-relative TRIM with untouched guards and rewritten contents, and settings/health. It deletes only its newly created discard probe, retaining source/copy files and a SHA-256 manifest. Unsupported TRIM or unobserved notifications are marked SKIP. Reports explicitly mark skipped coverage; a pass is not 100% driver coverage. Run on an otherwise idle test disk, because global cache counters and manual draining also reflect other applications.
 
 The built-in benchmark is a deterministic sequential file workload, **not a CrystalDiskMark score**: timing includes pattern generation and buffer copying; each overwrite pass is verified. A large unique-data working set measures different behaviour from repeatedly overwriting a small file. Final driver drain time is reported separately. Use matching policy, RAM budget and workload for comparisons. Cancellation retains files and leaves caching running; a lower-storage drain already in progress cannot safely be cancelled by discarding data.
 
-Run `QueueCache.Desktop.exe` for the elevated Avalonia frontend: select a volume, Inspect, choose budget/preset, acknowledge Fast-mode risk, and Apply. It provides a live dirty bucket, status, flush/disable and shared test/benchmark actions. Optional saving applies to the Apply action; temporary flush/disable does not edit saved profiles. Closing the window does not disable caching. This initial UI has no historical graphs or clean-read bucket yet.
+Run `QueueCache.Desktop.exe` for disk discovery and cache cards. Add cache opens memory, Fast/Strict and startup settings; active tasks show pending writes and incoming/drain rates. Pause drains, Resume starts, and Remove drains/releases RAM without deleting files. File tests and benchmarks live under Diagnostics. Closing the window does not disable caching. Clean-read caching and historical graphs are not implemented. `tests/QueueCache.Desktop.Tests` renders these same screens with fake disks and exercises actions without device access; build artifacts contain the rendered PNGs, not real disk data.
 
 ### Gathered writes and TRIM (0.3, experimental)
 
@@ -113,7 +114,7 @@ Reusable code, test harnesses, `build/` and `lab/` scripts are source-controlled
 
 | Component | Responsibility |
 | --- | --- |
-| `driver/qcache/lab.cpp` | Exact-device attachment, request serialization, Windows device lifecycle |
+| `driver/qcache/lab.cpp` | Class/legacy attachment, idle pass-through, ordered cache transitions, Windows device lifecycle |
 | `driver/qcache/writecache.cpp` | Native bounded memory, admission, background drain, read coherence and barriers |
 | `src/QueueCache.Management` | C# device/protocol access and UI-independent telemetry calculations |
 | `src/QueueCache.Cli` | Operator commands and console presentation; no caching algorithm |

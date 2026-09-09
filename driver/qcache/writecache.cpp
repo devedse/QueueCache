@@ -55,7 +55,7 @@ static void ReleaseCache(QC_CACHE* c) { KeReleaseMutex(&c->Mutex, FALSE); }
 static void Publish(QC_CACHE* c) {
     c->State.Version = 1; c->State.Size = sizeof(QC_STATE);
     c->State.Flags = (c->Enabled ? 1UL : 0UL) | (!NT_SUCCESS(c->State.LastError) ? 2UL : 0UL) |
-        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL;
+        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL; // 128: drain-and-release task support.
     c->State.OccupiedSlots = c->Count;
     KIRQL irql; KeAcquireSpinLock(&c->SnapshotLock, &irql);
     c->Snapshot = c->State;
@@ -184,7 +184,10 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower) {
     OBJECT_ATTRIBUTES attrs; InitializeObjectAttributes(&attrs, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
     return PsCreateSystemThread(&c->Thread, THREAD_ALL_ACCESS, &attrs, nullptr, nullptr, Drainer, c);
 }
+// Shared across disk instances, not a separate 4 GiB reservation per disk.
+static volatile LONG64 GlobalBudget;
 static void FreeSlots(QC_CACHE* c) {
+    if (c->State.BudgetBytes) InterlockedAdd64(&GlobalBudget, -static_cast<LONG64>(c->State.BudgetBytes));
     if (c->Slots) {
         for (ULONG i = 0; i < c->Capacity; i += SlotsPerSlab) if (c->Slots[i].Buffer) ExFreePoolWithTag(c->Slots[i].Buffer, Tag);
         ExFreePoolWithTag(c->Slots, Tag);
@@ -227,12 +230,18 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget) {
     const auto allocationFault = c->InjectFault == 6 || c->InjectFault == 7 ? c->InjectFault : 0;
     if (allocationFault) c->InjectFault = 0;
     FreeSlots(c);
+    for (;;) {
+        auto total = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
+        if (budget > (4ULL << 30) - static_cast<ULONGLONG>(total)) { Publish(c); ReleaseCache(c); return STATUS_INSUFFICIENT_RESOURCES; }
+        if (InterlockedCompareExchange64(&GlobalBudget, total + budget, total) == total) break;
+    }
+    c->State.BudgetBytes = budget;
     // Include both page-rounded descriptor and hash-index allocations in the hard budget.
     auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - SlabBytes) / (Chunk + sizeof(QC_SLOT) + sizeof(ULONG)));
     n = n / SlotsPerSlab * SlotsPerSlab;
     auto descriptors = (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots = allocationFault == 6 ? nullptr : static_cast<QC_SLOT*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, descriptors, Tag));
-    if (!c->Slots) { Publish(c); ReleaseCache(c); return STATUS_INSUFFICIENT_RESOURCES; }
+    if (!c->Slots) { FreeSlots(c); Publish(c); ReleaseCache(c); return STATUS_INSUFFICIENT_RESOURCES; }
     c->Capacity = n;
     auto indexBytes = (static_cast<SIZE_T>(n) * sizeof(ULONG) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Buckets = static_cast<ULONG*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, indexBytes, Tag));
@@ -257,6 +266,11 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size) {
     const auto command = *static_cast<QC_COMMAND*>(irp->AssociatedIrp.SystemBuffer);
     if (command.Version != 1 || command.Size != sizeof(command) || command.Reserved || size <= 0) return STATUS_INVALID_PARAMETER;
     if (command.Action == QcConfigure) return Configure(c, command.BudgetBytes);
+    if (command.Action == QcRelease) {
+        auto status = QcCacheBarrier(c, TRUE);
+        if (!NT_SUCCESS(status)) return status;
+        AcquireCache(c); FreeSlots(c); Publish(c); ReleaseCache(c); return STATUS_SUCCESS;
+    }
     if (command.Action == QcFlush || command.Action == QcDisable) {
         AcquireCache(c); ++c->Diagnostics.ControlBarriers; Publish(c); ReleaseCache(c);
         return QcCacheBarrier(c, command.Action == QcDisable);
@@ -465,7 +479,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {
         AcquireCache(c); ++c->Diagnostics.ShutdownBarriers; Publish(c); ReleaseCache(c);
         auto status = QcCacheBarrier(c, TRUE);
         AcquireCache(c); c->Suspended = TRUE; Publish(c); ReleaseCache(c);
-        return status;
+        return NT_SUCCESS(status) ? OriginalIo(c, irp) : status;
     }
     if (stack->MajorFunction == IRP_MJ_POWER) {
         if (stack->Parameters.Power.State.DeviceState != PowerDeviceD0) {

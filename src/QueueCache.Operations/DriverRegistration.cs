@@ -16,6 +16,8 @@ public static class DriverRegistration
         using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var service = machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\qcachelab", writable: true)
             ?? throw new IOException("Install QueueCache first.");
+        if (service.GetValue("ClassCoverage") is int coverage && coverage == 1)
+            return $"{selected.Display}: covered automatically by QueueCache. Use cache tasks to enable or disable caching; individual disk registration is not required.";
         var snapshot = DeviceFilters.Inspect(target.Instance);
         if (attach)
         {

@@ -21,15 +21,23 @@ function UpdatePath([bool]$Remove) {
 try {
     if (-not [Environment]::Is64BitProcess) { throw '64-bit setup is required.' }
     if ($Uninstall) {
+        $classPath='HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
+        $classInstalled=@((Get-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters) -contains 'qcachelab'
         foreach ($disk in Get-CimInstance Win32_DiskDrive) {
             $filter = & $controller lab-filter inspect $disk.PNPDeviceID | ConvertFrom-Json
             if ($LASTEXITCODE) { throw 'Cannot inspect disk filters; retaining recovery tools.' }
-            if ($filter.UpperFilters -contains 'qcachelab') {
+            if ($classInstalled -or $filter.UpperFilters -contains 'qcachelab') {
                 # Driver remains loaded until reboot. Do not remove its service or binary.
                 Native $controller @('disable', "PhysicalDrive$($disk.Index)")
+            }
+            if ($filter.UpperFilters -contains 'qcachelab') {
                 Native $controller @('lab-filter','remove',$filter.InstanceId,$filter.DriverKey,'--lab-installer')
             }
         }
+        $classPath='HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
+        $filters=@((Get-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ -and $_ -ine 'qcachelab' })
+        if($filters.Count) { New-ItemProperty $classPath -Name UpperFilters -PropertyType MultiString -Value $filters -Force | Out-Null }
+        else { Remove-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue }
         UpdatePath $true
         Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
         Write-Output 'Filters removed. Reboot to unload; driver binaries/service retained for recovery.'
@@ -65,6 +73,21 @@ public static class QueueCacheCodeIntegrity {
     $signature = Get-AuthenticodeSignature -LiteralPath $source
     if (-not $signature.SignerCertificate -or $signature.SignerCertificate.Thumbprint -ne $metadata.testCertificateThumbprint -or
         $signature.Status -notin @('Valid','UnknownError','NotTrusted')) { throw 'Driver signature mismatch.' }
+    # Capture recovery data BEFORE changing the service or any registration.
+    # Keep it outside the installation directory so uninstall cannot remove it.
+    $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
+    $classPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
+    $filters = @((Get-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
+    $previousService = if(Test-Path $servicePath) { Get-ItemProperty $servicePath | Select-Object ImagePath,Start,Type,Group,ErrorControl,ClassCoverage,LabAllowedDriverKey } else { $null }
+    $deviceFilters = @(foreach($disk in Get-CimInstance Win32_DiskDrive) {
+        $filter = & $controller lab-filter inspect $disk.PNPDeviceID | ConvertFrom-Json
+        if($LASTEXITCODE) { throw 'Cannot capture existing disk registration; no registration changed.' }
+        $filter
+    })
+    $backup = "$stateRoot\Registration-before-$([guid]::NewGuid().ToString('N')).json"
+    [pscustomobject]@{ Version=1; CreatedUtc=[DateTime]::UtcNow.ToString('O'); Service=$previousService; ClassUpperFilters=$filters; Devices=$deviceFilters } |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $backup -Encoding UTF8
+    Write-Output "Original registration saved to $backup"
     # An immutable version/hash filename can be staged while the old driver is
     # loaded. SCM uses the new ImagePath on the next boot; no live replacement.
     $hash = (Get-FileHash -LiteralPath $source).Hash
@@ -87,12 +110,24 @@ public static class QueueCacheCodeIntegrity {
         Native sc.exe @('config','qcachelab','binPath=',$relative,'DisplayName=','QueueCache')
     }
     UpdatePath $false
+    # Class registration covers disks enumerated in future as well as existing
+    # disks after restart. Preserve every unrelated filter and its ordering.
+    $classPath='HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
+    $filters=@((Get-ItemProperty $classPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
+    New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
+    Native sc.exe @('config','qcachelab','start=','boot','group=','Filter')
+    if($filters -notcontains 'qcachelab') { $filters+='qcachelab' }
+    New-ItemProperty $classPath -Name UpperFilters -PropertyType MultiString -Value $filters -Force | Out-Null
+    if((@(Get-ItemPropertyValue $classPath UpperFilters) -join '|') -ine ($filters -join '|')) { throw 'Class filter verification failed.' }
+    foreach($filter in $deviceFilters) {
+        if($filter.UpperFilters -contains 'qcachelab') { Native $controller @('lab-filter','remove',$filter.InstanceId,$filter.DriverKey,'--lab-installer') }
+    }
     $action = New-ScheduledTaskAction -Execute $controller -Argument 'policy restore'
     $trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay='PT30S'
     $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
     Register-ScheduledTask -TaskName QueueCache-Restore -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-    Write-Output "Driver staged at $destination. Reboot to load. No new disk selected or cache enabled. Test-signing prerequisites still apply."
+    Write-Output "Driver staged at $destination. Reboot to load automatic disk coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 } catch {
     Write-Output "SETUP FAILED: $_"

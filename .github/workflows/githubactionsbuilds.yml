@@ -30,7 +30,7 @@ jobs:
         run: |
           test "$BUILD_NUMBER" -le 65535
           test "$GITHUB_RUN_ATTEMPT" -le 65535
-          echo "version=0.3.${BUILD_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "version=0.4.${BUILD_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
   build:
     needs: generate_version_number
     runs-on: windows-2025-vs2026
@@ -101,7 +101,7 @@ jobs:
           name: QueueCache ${{ needs.generate_version_number.outputs.version }} — test-signed
           prerelease: true
           generate_release_notes: true
-          body: 'Test-signed driver; Secure Boot/test-mode prerequisites apply. Disk selection is separate from installation. Boot/paging support is unvalidated. Successful CI is not kernel correctness certification.'
+          body: 'Development build with new disk-class coverage and cache-task UI. Installation registers the filter for all disks after reboot; caching stays off unless explicitly configured or restored from saved settings. VM validation of class-wide attachment, boot/paging and multiple-disk lifecycle is pending. Test-signing prerequisites apply. Successful CI is not kernel correctness certification.'
           files: |
             release/**/*.exe
             release/**/*.zip

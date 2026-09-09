@@ -11,7 +11,11 @@ internal static class Program
 }
 public sealed class App : Application
 {
-    public override void Initialize() => Styles.Add(new FluentTheme());
+    public override void Initialize()
+    {
+        RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+        Styles.Add(new FluentTheme());
+    }
     public override void OnFrameworkInitializationCompleted()
     {
         if (OperatingSystem.IsWindows() && ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

@@ -6,6 +6,7 @@
     <Project Path="src/QueueCache.Cli/QueueCache.Cli.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/QueueCache.Desktop.Tests/QueueCache.Desktop.Tests.csproj" />
     <Project Path="tests/QueueCache.Management.Tests/QueueCache.Management.Tests.csproj" />
     <Project Path="tests/QueueCache.LabTests/QueueCache.LabTests.csproj" />
     <Project Path="tests/QueueCache.WriteTests/QueueCache.WriteTests.csproj" />

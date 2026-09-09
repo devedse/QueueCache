@@ -24,10 +24,15 @@ struct LAB_EXTENSION {
     KEVENT WorkAvailable;
     HANDLE Worker;
     BOOLEAN Closing; // Protected by QueueLock, including the CSQ insertion gate.
+    BOOLEAN Routing; // QueueLock: transition gate between direct I/O and cached I/O.
+    LONG DirectCount;
+    LONG PendingControls;
+    KEVENT DirectIdle;
 #endif
 };
 static WCHAR ExpectedDriverKey[512];
 static UNICODE_STRING AllowedDriverKey;
+static BOOLEAN ClassCoverage;
 extern "C" DRIVER_INITIALIZE DriverEntry;
 DRIVER_ADD_DEVICE LabAddDevice;
 DRIVER_DISPATCH LabDispatch;
@@ -61,12 +66,25 @@ static NTSTATUS Forward(LAB_EXTENSION* ext, PIRP irp) {
 }
 
 #if QCACHE_SERIALIZED_LAB
+static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context) {
+    auto ext = static_cast<LAB_EXTENSION*>(context);
+    if (irp->PendingReturned) IoMarkIrpPending(irp);
+    KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (--ext->DirectCount == 0) KeSetEvent(&ext->DirectIdle, IO_NO_INCREMENT, FALSE);
+    KeReleaseSpinLock(&ext->QueueLock, irql);
+    IoReleaseRemoveLock(&ext->RemoveLock, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+#endif
+
+#if QCACHE_SERIALIZED_LAB
 // Worker foundation: original requests only, NO early acknowledgements or cached data.
 // CSQ owns cancellation while queued; the lower driver owns it after dequeue/forward.
 static LAB_EXTENSION* QueueOwner(PIO_CSQ csq) { return CONTAINING_RECORD(csq, LAB_EXTENSION, Csq); }
 static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID) {
     auto ext = QueueOwner(csq);
     if (ext->Closing) return STATUS_DELETE_PENDING;
+    ext->Routing = TRUE;
     InsertTailList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
     KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
     return STATUS_SUCCESS;
@@ -88,6 +106,9 @@ static void RequestWorker(PVOID context) {
     for (;;) {
         auto irp = IoCsqRemoveNextIrp(&ext->Csq, nullptr);
         if (irp) {
+            // A control request closes direct admission under QueueLock. Complete
+            // older direct I/O before any queued request changes cache state.
+            KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
 #if QCACHE_WRITE_LAB
             auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0));
             auto bytes = NT_SUCCESS(status) ? irp->IoStatus.Information : 0;
@@ -112,6 +133,14 @@ static void RequestWorker(PVOID context) {
         KeAcquireSpinLock(&ext->QueueLock, &irql);
         const bool empty = IsListEmpty(&ext->Pending) != FALSE;
         const bool stop = ext->Closing && empty;
+        if (empty) {
+#if QCACHE_WRITE_LAB
+            QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
+            if (!ext->PendingControls && !(state.Flags & (1UL | 4UL | 16UL)) && !state.DirtyBytes && NT_SUCCESS(state.LastError)) ext->Routing = FALSE;
+#else
+            ext->Routing = FALSE;
+#endif
+        }
         if (empty) KeClearEvent(&ext->WorkAvailable);
         KeReleaseSpinLock(&ext->QueueLock, irql);
         if (stop) break;
@@ -123,12 +152,44 @@ static void RequestWorker(PVOID context) {
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp) {
+#if QCACHE_WRITE_LAB
+    // Save before insertion: cancellation may complete/free the IRP inline.
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
+        stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1;
+#endif
+    // The CSQ/worker can complete the original IRP before insertion returns.
+    // Keep the extension alive for the admission-accounting epilogue.
+    UCHAR submissionTag = 0;
+    auto admission = IoAcquireRemoveLock(&ext->RemoveLock, &submissionTag);
+    if (!NT_SUCCESS(admission)) {
+#if QCACHE_WRITE_LAB
+        if (control) {
+            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+            --ext->PendingControls;
+            KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
+            KeReleaseSpinLock(&ext->QueueLock, irql);
+        }
+#endif
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        return Complete(irp, admission);
+    }
     IoMarkIrpPending(irp);
     auto status = IoCsqInsertIrpEx(&ext->Csq, irp, nullptr, nullptr);
+#if QCACHE_WRITE_LAB
+    if (control) {
+        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+        --ext->PendingControls;
+        // Also wake on cancellation/rejection, when QueueInsert may not run.
+        KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
+        KeReleaseSpinLock(&ext->QueueLock, irql);
+    }
+#endif
     if (!NT_SUCCESS(status)) {
         IoReleaseRemoveLock(&ext->RemoveLock, irp);
         Complete(irp, status);
     }
+    IoReleaseRemoveLock(&ext->RemoveLock, &submissionTag);
     // Pending was marked even if insertion rejected or cancellation completed inline.
     return STATUS_PENDING;
 }
@@ -171,16 +232,20 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             KeSetEvent(&ext->Cache.Changed, IO_NO_INCREMENT, FALSE);
             KeSetEvent(&ext->Cache.Wake, IO_NO_INCREMENT, FALSE);
         }
-        if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
-            return QueueRequest(ext, irp);
+        if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE) {
+            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql); const bool routed = ext->Routing; KeReleaseSpinLock(&ext->QueueLock, irql);
+            return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
+        }
 #endif
         if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION &&
             stack->Parameters.UsageNotification.InPath &&
             (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
              stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
              stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile)) {
-            IoReleaseRemoveLock(&ext->RemoveLock, irp);
-            return Complete(irp, STATUS_NOT_SUPPORTED);
+            // System storage must remain usable while this filter is inactive.
+            // These notifications also establish the nonpageable power path;
+            // our dispatch and extension are always nonpageable.
+            return Forward(ext, irp);
         }
         if (stack->MinorFunction == IRP_MN_START_DEVICE) {
             KEVENT event;
@@ -279,6 +344,26 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     if (stack->MajorFunction == IRP_MJ_READ) InterlockedAdd64(&ext->ReadBytes, stack->Parameters.Read.Length);
     if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedAdd64(&ext->WrittenBytes, stack->Parameters.Write.Length);
 #if QCACHE_SERIALIZED_LAB
+    // Inactive devices have true pass-through semantics, including METHOD_NEITHER
+    // requests which must retain the original caller context. A control request
+    // atomically switches subsequent traffic to the ordered worker.
+    if (stack->MajorFunction != IRP_MJ_PNP) {
+        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+#if QCACHE_WRITE_LAB
+        const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL && stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1;
+#else
+        const bool control = FALSE;
+#endif
+        if (control) { ext->Routing = TRUE; ++ext->PendingControls; }
+        const bool direct = !ext->Routing && !ext->Closing;
+        if (direct && ++ext->DirectCount == 1) KeClearEvent(&ext->DirectIdle);
+        KeReleaseSpinLock(&ext->QueueLock, irql);
+        if (direct) {
+            IoCopyCurrentIrpStackLocationToNext(irp);
+            IoSetCompletionRoutine(irp, DirectCompletion, ext, TRUE, TRUE, TRUE);
+            return IoCallDriver(ext->Lower, irp);
+        }
+    }
 #if QCACHE_WRITE_LAB
     if (stack->MajorFunction == IRP_MJ_SHUTDOWN ||
         (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER && stack->Parameters.Power.Type == DevicePowerState))
@@ -295,6 +380,14 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
 }
 
 NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
+    // Idempotent migration: class and old per-device registrations may coexist
+    // if setup was interrupted. Never attach this driver twice to the same stack.
+    auto existing = IoGetAttachedDeviceReference(pdo);
+    while (existing) {
+        if (existing->DriverObject == driver) { ObDereferenceObject(existing); return STATUS_SUCCESS; }
+        auto next = IoGetLowerDeviceObject(existing);
+        ObDereferenceObject(existing); existing = next;
+    }
     WCHAR key[512] = {};
     ULONG required = 0;
     auto status = IoGetDeviceProperty(pdo, DevicePropertyDriverKeyName, sizeof(key), key, &required);
@@ -302,7 +395,7 @@ NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
         key[required / sizeof(WCHAR) - 1] != 0) return STATUS_SUCCESS;
     UNICODE_STRING actual;
     RtlInitUnicodeString(&actual, key);
-    if (!RtlEqualUnicodeString(&actual, &AllowedDriverKey, TRUE)) return STATUS_SUCCESS;
+    if (!ClassCoverage && !RtlEqualUnicodeString(&actual, &AllowedDriverKey, TRUE)) return STATUS_SUCCESS;
     PDEVICE_OBJECT device = nullptr;
     status = IoCreateDevice(driver, sizeof(LAB_EXTENSION), nullptr, FILE_DEVICE_DISK,
         FILE_DEVICE_SECURE_OPEN, FALSE, &device);
@@ -322,6 +415,7 @@ NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
 #endif
 #if QCACHE_SERIALIZED_LAB
     KeInitializeSpinLock(&ext->QueueLock);
+    KeInitializeEvent(&ext->DirectIdle, NotificationEvent, TRUE);
     InitializeListHead(&ext->Pending);
     KeInitializeEvent(&ext->WorkAvailable, NotificationEvent, FALSE);
     status = IoCsqInitializeEx(&ext->Csq, QueueInsert, QueueRemove, QueuePeek,
@@ -355,6 +449,15 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
     alignas(KEY_VALUE_PARTIAL_INFORMATION) UCHAR buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ExpectedDriverKey)] = {};
     ULONG required;
     status = ZwQueryValueKey(key, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &required);
+    // Preserve compatibility with per-device packages while class coverage is
+    // validated. An explicit installer DWORD selects the new attachment model.
+    UNICODE_STRING className = RTL_CONSTANT_STRING(L"ClassCoverage");
+    alignas(KEY_VALUE_PARTIAL_INFORMATION) UCHAR classBuffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)] = {};
+    ULONG classRequired;
+    if (NT_SUCCESS(ZwQueryValueKey(key, &className, KeyValuePartialInformation, classBuffer, sizeof(classBuffer), &classRequired))) {
+        auto classValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
+        ClassCoverage = classValue->Type == REG_DWORD && classValue->DataLength == sizeof(ULONG) && *reinterpret_cast<ULONG*>(classValue->Data) == 1;
+    }
     ZwClose(key);
     if (!NT_SUCCESS(status)) return status;
     auto value = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(buffer);

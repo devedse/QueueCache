@@ -34,7 +34,7 @@ internal static class Commands
             disks.Subcommands.Add(command);
         }
         root.Subcommands.Add(disks);
-        var apply = new Command("apply", "Apply a complete configuration. Fast is the default preset; explicit risk acknowledgement required.");
+        var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
         var volume = new Argument<string>("volume") { Description = "NTFS volume, e.g. Q:" };
         ValidateVolume(volume);
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 4096 };
@@ -47,14 +47,31 @@ internal static class Commands
         apply.SetAction(async (p, token) =>
         {
             var configuration = new CacheConfiguration(p.GetValue(budget), p.GetValue(preset), !p.GetValue(disabled));
-            configuration.Validate(p.GetValue(accept)); // Fail before opening a disk.
-            var target = await DiskTarget.InspectAsync(p.GetValue(volume)!, token);
-            var state = await Task.Run(() => ConfigurationManager.Apply(target, configuration, p.GetValue(accept), new ConsoleProgress()), token);
-            if (p.GetValue(save)) SavedConfigurations.Save(target, configuration, p.GetValue(accept));
+            configuration.Validate(true); // Validate before opening a disk. The selected preset defines semantics.
+            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token);
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
         });
         policy.Subcommands.Add(apply);
+        foreach (var name in new[] { "pause", "resume", "remove" })
+        {
+            var command = new Command(name, name == "remove" ? "Drain and free cache memory, then remove the saved task. Files are untouched." : "Pause/drain or resume a task, preserving its startup setting.");
+            var drive = new Argument<string>("volume"); ValidateVolume(drive); command.Arguments.Add(drive);
+            command.SetAction(async (p, token) =>
+            {
+                var selected = p.GetValue(drive)!;
+                if (name == "remove") await CacheTasks.RemoveAsync(selected, token);
+                else
+                {
+                    var target = await DiskTarget.InspectAsync(selected, token);
+                    var persistent = SavedConfigurations.List().Any(profile => profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase));
+                    await CacheTasks.SetEnabledAsync(selected, name == "resume", persistent, token);
+                }
+                Console.WriteLine($"Cache task {name} completed.");
+                return 0;
+            });
+            policy.Subcommands.Add(command);
+        }
         var profiles = new Command("profiles", "Show saved machine configurations without applying them.");
         profiles.SetAction(_ => { Console.WriteLine(JsonSerializer.Serialize(SavedConfigurations.List(), JsonOptions)); return 0; });
         policy.Subcommands.Add(profiles);

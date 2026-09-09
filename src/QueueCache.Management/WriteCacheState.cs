@@ -21,6 +21,7 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
     public bool Draining => (Flags & 8) != 0;
     public bool Removed => (Flags & 16) != 0;
     public bool UnsafeDefer => (Flags & 32) != 0;
+    public bool SupportsRelease => (Flags & 128) != 0;
     public string FlushPolicy => UnsafeDefer ? "UNSAFE-DEFER" : "STRICT";
     /// <summary>Accepted bytes superseded in RAM, not bytes written to the lower disk.</summary>
     public ulong CoalescedBytes => AcceptedBytes >= DrainedBytes && AcceptedBytes - DrainedBytes >= DirtyBytes &&
@@ -55,4 +56,4 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
         return result;
     }
 }
-public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy }
+public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release }

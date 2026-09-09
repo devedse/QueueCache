@@ -23,7 +23,7 @@ static_assert(sizeof(QC_STATE) == 128);
 struct QC_STATE_V2 { QC_STATE Base; ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests; };
 static_assert(sizeof(QC_STATE_V2) == 160);
 static_assert(sizeof(QC_COMMAND) == 32);
-enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy };
+enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy, QcRelease };
 struct QC_SLOT {
     PUCHAR Buffer;
     LARGE_INTEGER Offset;

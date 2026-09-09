@@ -12,10 +12,16 @@ foreach ($arguments in @(@('--help'),@('apply','--help'),@('policy','--help'),@(
 }
 & $cli test --does-not-exist 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 2) { throw 'Invalid arguments must return 2 before device access.' }
-& $cli apply 'Q:' 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 1) { throw 'Fast preset without acceptance must fail before device access.' }
-& $cli policy apply 'Q:' 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 1) { throw 'Grouped fast preset must also require acceptance.' }
+& $cli apply 'Q:' --budget-mib 0 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 1) { throw 'Invalid budget must fail before device access.' }
+& $cli policy apply 'Q:' --budget-mib 4097 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 1) { throw 'Grouped invalid budget must fail before device access.' }
+foreach($name in @('pause','resume','remove')) {
+    & $cli policy $name --help
+    if($LASTEXITCODE) { throw "Task help failed: $name" }
+    & $cli policy $name 'Q:\not-a-volume' 2>&1 | Out-Host
+    if($LASTEXITCODE -ne 2) { throw 'Invalid task volume must fail before disk access.' }
+}
 & $cli disk attach 'Q:\not-a-volume' 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 2) { throw 'Invalid attachment target must fail during parsing.' }
 Write-Host 'CLI contract checks passed. No disk handle opened.'
