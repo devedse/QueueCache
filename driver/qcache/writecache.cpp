@@ -3,6 +3,7 @@
 #include "writecache.h"
 #include <ntddstor.h>
 #include <ntdddisk.h>
+#include <ntddscsi.h>
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
@@ -597,7 +598,8 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {
         return QcCacheBarrier(c, FALSE);
     }
     // These metadata queries cannot modify media. Keeping them out of the barrier path
-    // also means disk discovery does not flush or evict an otherwise idle read cache.
+    // also means disk discovery, health polling and volume housekeeping do not flush or
+    // evict an otherwise idle read cache; only newly admitted data should displace it.
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
         switch (stack->Parameters.DeviceIoControl.IoControlCode) {
         case IOCTL_DISK_GET_DRIVE_GEOMETRY:
@@ -609,8 +611,22 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {
         case IOCTL_DISK_GET_DRIVE_LAYOUT_EX:
         case IOCTL_DISK_IS_WRITABLE:
         case IOCTL_DISK_GET_DISK_ATTRIBUTES:
+        case IOCTL_DISK_GET_CACHE_INFORMATION:
+        case IOCTL_DISK_GET_MEDIA_TYPES:
         case IOCTL_STORAGE_GET_DEVICE_NUMBER:
         case IOCTL_STORAGE_GET_HOTPLUG_INFO:
+        // Read-only presence, media and health polling. Windows, NTFS and monitoring
+        // tools issue these repeatedly; a conservative drain-and-invalidate here emptied
+        // the read cache within seconds of an otherwise idle disk.
+        case IOCTL_STORAGE_CHECK_VERIFY:
+        case IOCTL_STORAGE_CHECK_VERIFY2:
+        case IOCTL_STORAGE_GET_MEDIA_TYPES:
+        case IOCTL_STORAGE_GET_MEDIA_TYPES_EX:
+        case IOCTL_STORAGE_GET_MEDIA_SERIAL_NUMBER:
+        case IOCTL_STORAGE_PREDICT_FAILURE:
+        case IOCTL_STORAGE_GET_DEVICE_NUMBER_EX:
+        case IOCTL_SCSI_GET_ADDRESS:
+        case IOCTL_SCSI_GET_CAPABILITIES:
             return OriginalIo(c, irp);
         case IOCTL_STORAGE_QUERY_PROPERTY: {
             if (irp->AssociatedIrp.SystemBuffer &&

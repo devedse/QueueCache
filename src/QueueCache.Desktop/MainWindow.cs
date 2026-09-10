@@ -85,9 +85,10 @@ public sealed class MainWindow : Window
         heading.Children.Add(name); Grid.SetColumn(card.Badge, 1); heading.Children.Add(card.Badge); content.Children.Add(heading);
         content.Children.Add(card.Description); card.Activity.Children.Add(card.Bucket);
         card.Activity.Children.Add(Text("RAM occupancy · blue: read cache · teal: retained writes · purple: pending writes", 11, Muted));
-        var metrics = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*") };
-        metrics.Children.Add(Metric("PENDING WRITES", card.Dirty)); var incoming = Metric("INCOMING", card.Incoming); Grid.SetColumn(incoming, 1); metrics.Children.Add(incoming);
-        var draining = Metric("WRITING TO DISK", card.Draining); Grid.SetColumn(draining, 2); metrics.Children.Add(draining); card.Activity.Children.Add(metrics); content.Children.Add(card.Activity);
+        var metrics = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*,*") };
+        metrics.Children.Add(Metric("CACHED READS", card.Cached)); var dirty = Metric("PENDING WRITES", card.Dirty); Grid.SetColumn(dirty, 1); metrics.Children.Add(dirty);
+        var incoming = Metric("INCOMING", card.Incoming); Grid.SetColumn(incoming, 2); metrics.Children.Add(incoming);
+        var draining = Metric("WRITING TO DISK", card.Draining); Grid.SetColumn(draining, 3); metrics.Children.Add(draining); card.Activity.Children.Add(metrics); content.Children.Add(card.Activity);
         card.Activity.Children.Add(card.Residency); card.Activity.Children.Add(card.History);
         card.Activity.Children.Add(Text("Last 60 samples · blue: reads · teal: incoming writes · purple: draining · auto-scaled", 11, Muted));
         var actions = new WrapPanel();
@@ -119,9 +120,11 @@ public sealed class MainWindow : Window
             card.Activity.IsVisible = exists;
             card.Badge.Text = state.RuntimeStatus;
             card.Description.Text = exists ? $"{state.BudgetBytes / 1048576:0} MiB RAM cache · {(state.UnsafeDefer ? "Fast" : "Strict")} · {state.Options?.Allocation.ToString() ?? "Legacy"} · {state.Options?.Drain.ToString() ?? "Eager"}" : "Ready for a cache. Choose a memory budget to get started.";
-            card.Residency.Text = $"Read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · Retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · Free {state.FreeBytes / 1048576.0:0.0} MiB\nRead hits {state.ReadHitPercent:0.0}% · Oldest pending write {state.OldestDirtyMs / 1000.0:0.0}s · Reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s · Driver instance {state.Instance}, revision {state.Generation}";
+            card.Residency.Text = $"Read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · Retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · Free {state.FreeBytes / 1048576.0:0.0} MiB\nRead hits {state.ReadHitPercent:0.0}% · Evicted blocks {state.Evictions:N0} · Oldest pending write {state.OldestDirtyMs / 1000.0:0.0}s · Reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s · Driver instance {state.Instance}, revision {state.Generation}";
             card.History.Add(rates?.AcceptedMiBPerSecond ?? 0, rates?.DrainedMiBPerSecond ?? 0, rates?.ReadMiBPerSecond ?? 0, rates?.CountersReset ?? true);
             card.Bucket.Update(state.CleanReadBytes, state.CleanWriteBytes, state.DirtyBytes, state.PayloadCapacity);
+            // Cached reads: clean read-fill blocks plus retained drained writes, both readable from RAM.
+            card.Cached.Text = $"{(state.CleanReadBytes + state.CleanWriteBytes) / 1048576.0:0.0} MB";
             card.Dirty.Text = $"{state.DirtyBytes / 1048576.0:0.0} MB"; card.Incoming.Text = $"{rates?.AcceptedMiBPerSecond ?? 0:0.0} MB/s"; card.Draining.Text = $"{rates?.DrainedMiBPerSecond ?? 0:0.0} MB/s";
             card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !busy && state.SupportsReadWrite && card.Disk.Volumes.Length > 0;
             card.Pause.Content = state.Enabled ? "Pause" : "Resume"; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
@@ -188,7 +191,7 @@ public sealed class MainWindow : Window
     {
         public bool Sampling;
         public DiskDescription Disk = disk; public WriteCacheState? State; public DateTimeOffset Sampled;
-        public TextBlock Badge = Text("Connecting", 13, Accent, FontWeight.SemiBold), Description = Text("", 14, Muted), Dirty = Text("—", 24), Incoming = Text("—", 24), Draining = Text("—", 24);
+        public TextBlock Badge = Text("Connecting", 13, Accent, FontWeight.SemiBold), Description = Text("", 14, Muted), Cached = Text("—", 24), Dirty = Text("—", 24), Incoming = Text("—", 24), Draining = Text("—", 24);
         public CacheOccupancy Bucket = new();
         public TextBlock Residency = Text("", 13, Muted);
         public RateHistory History = new();

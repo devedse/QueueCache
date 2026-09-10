@@ -12,6 +12,8 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 | Promote on read (default) | Reading a retained clean write moves it into the read quota without copying its payload. Dirty writes remain in the write quota until drained. |
 | Discard drained | Release successful writes immediately. Read misses can still populate the read quota. |
 
+Clean data is meant to stay resident for as long as the workload keeps it useful: a game's files can remain in RAM for hours of play. Clean blocks leave the cache only when (1) newly admitted reads or writes need the slot, LRU order first, (2) a write, TRIM or unknown media-changing control makes them stale, or (3) the cache is paused, removed, resized or reconfigured. There is no time-based expiry. Routine read-only queries — geometry, layout, attributes, media presence/`CHECK_VERIFY`, SMART/`PREDICT_FAILURE`, device number, SCSI address/capabilities — are forwarded without a drain or invalidation, because a conservative barrier there previously emptied the read cache within seconds on an otherwise idle disk. This widened read-only list is a source change awaiting live-driver verification.
+
 For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB installation, even after it reaches disk. Subsequent reads use that data from RAM and can promote it to the read quota. Metadata and staging buffers count against the total budget, so payload is slightly smaller than 8 GiB. Another workload may evict clean data; retention is not pinning.
 
 ## Background draining versus durability
@@ -65,6 +67,8 @@ Mixed-hit reads currently use an original lower read plus cached-block overlays;
 ## Dashboard
 
 Validation status: the file-only retention regression still observed eviction after an unrelated small-file write and disk discovery. Additional read-only-control handling and diagnostic detail are included, but have not yet passed that scenario on a live driver. Treat this as an open retention issue, not a verified fix.
+
+Each card shows **Cached reads** (clean read-fill plus retained drained writes, both served from RAM), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 
 The occupancy bar shows resident RAM: blue for clean read data, teal for retained clean writes, purple for pending writes. Draining changes pending writes into retained writes when retention is enabled; it does not empty the read cache. The history chart separately shows read, incoming-write and drain throughput.
 
