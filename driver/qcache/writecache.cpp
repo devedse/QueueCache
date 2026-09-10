@@ -103,6 +103,45 @@ static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG
     if (slot && iosb.Information != slot->Length) return STATUS_DEVICE_DATA_ERROR;
     return STATUS_SUCCESS;
 }
+// Read-only queries versus controls that can change stored data. The access bits of a
+// control code state whether its caller may modify the device; every media-modifying
+// storage/disk control declares FILE_WRITE_ACCESS, except the media-swap, bus/device
+// reset and data-set-attribute (TRIM) codes listed explicitly below.
+constexpr bool QcMayChangeMedia(ULONG code) {
+    if (((code >> 14) & 3) & FILE_WRITE_ACCESS) return true;
+    switch (code) {
+    case IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES: // TRIM shapes TryTrim did not optimize.
+    case IOCTL_STORAGE_EJECT_MEDIA:
+    case IOCTL_STORAGE_LOAD_MEDIA:
+    case IOCTL_STORAGE_LOAD_MEDIA2:
+    case IOCTL_STORAGE_MEDIA_REMOVAL:
+    case IOCTL_STORAGE_EJECTION_CONTROL:
+    case IOCTL_STORAGE_RESET_BUS:
+    case IOCTL_STORAGE_RESET_DEVICE:
+    case IOCTL_DISK_EJECT_MEDIA:
+    case IOCTL_DISK_LOAD_MEDIA:
+    case IOCTL_DISK_MEDIA_REMOVAL:
+    case IOCTL_DISK_REASSIGN_BLOCKS:
+        return true;
+    default: return false;
+    }
+}
+// Compile-time contract: the polled queries that previously wiped the cache stay read-only,
+// and destructive controls keep draining and invalidating.
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_GET_INFO));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_QUERY_PROPERTY));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_PREDICT_FAILURE));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_CHECK_VERIFY));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_GET_DEVICE_NUMBER));
+static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_GEOMETRY_EX));
+static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_LAYOUT_EX));
+static_assert(QcMayChangeMedia(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
+static_assert(QcMayChangeMedia(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
+static_assert(QcMayChangeMedia(IOCTL_DISK_SET_DISK_ATTRIBUTES));
+static_assert(QcMayChangeMedia(IOCTL_DISK_FORMAT_TRACKS));
+static_assert(QcMayChangeMedia(IOCTL_SCSI_PASS_THROUGH));
+static_assert(QcMayChangeMedia(IOCTL_STORAGE_EJECT_MEDIA));
+static_assert(QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_DOWNLOAD));
 static NTSTATUS RetainCompletion(PDEVICE_OBJECT, PIRP, PVOID event) {
     KeSetEvent(static_cast<PKEVENT>(event), IO_NO_INCREMENT, FALSE);
     return STATUS_MORE_PROCESSING_REQUIRED;
@@ -597,62 +636,16 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {
         if (defer) return error;
         return QcCacheBarrier(c, FALSE);
     }
-    // These metadata queries cannot modify media. Keeping them out of the barrier path
-    // also means disk discovery, health polling and volume housekeeping do not flush or
-    // evict an otherwise idle read cache; only newly admitted data should displace it.
-    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
-        switch (stack->Parameters.DeviceIoControl.IoControlCode) {
-        case IOCTL_DISK_GET_DRIVE_GEOMETRY:
-        case IOCTL_DISK_GET_DRIVE_GEOMETRY_EX:
-        case IOCTL_DISK_GET_LENGTH_INFO:
-        case IOCTL_DISK_GET_PARTITION_INFO:
-        case IOCTL_DISK_GET_PARTITION_INFO_EX:
-        case IOCTL_DISK_GET_DRIVE_LAYOUT:
-        case IOCTL_DISK_GET_DRIVE_LAYOUT_EX:
-        case IOCTL_DISK_IS_WRITABLE:
-        case IOCTL_DISK_GET_DISK_ATTRIBUTES:
-        case IOCTL_DISK_GET_CACHE_INFORMATION:
-        case IOCTL_DISK_GET_MEDIA_TYPES:
-        case IOCTL_STORAGE_GET_DEVICE_NUMBER:
-        case IOCTL_STORAGE_GET_HOTPLUG_INFO:
-        // Read-only presence, media and health polling. Windows, NTFS and monitoring
-        // tools issue these repeatedly; a conservative drain-and-invalidate here emptied
-        // the read cache within seconds of an otherwise idle disk.
-        case IOCTL_STORAGE_CHECK_VERIFY:
-        case IOCTL_STORAGE_CHECK_VERIFY2:
-        case IOCTL_STORAGE_GET_MEDIA_TYPES:
-        case IOCTL_STORAGE_GET_MEDIA_TYPES_EX:
-        case IOCTL_STORAGE_GET_MEDIA_SERIAL_NUMBER:
-        case IOCTL_STORAGE_PREDICT_FAILURE:
-        case IOCTL_STORAGE_GET_DEVICE_NUMBER_EX:
-        case IOCTL_SCSI_GET_ADDRESS:
-        case IOCTL_SCSI_GET_CAPABILITIES:
-            return OriginalIo(c, irp);
-        case IOCTL_STORAGE_QUERY_PROPERTY: {
-            if (irp->AssociatedIrp.SystemBuffer &&
-                stack->Parameters.DeviceIoControl.InputBufferLength >= sizeof(STORAGE_PROPERTY_QUERY)) {
-                auto query = static_cast<PSTORAGE_PROPERTY_QUERY>(irp->AssociatedIrp.SystemBuffer);
-                if (query->QueryType == PropertyStandardQuery || query->QueryType == PropertyExistsQuery) {
-                    switch (query->PropertyId) {
-                    case StorageDeviceProperty:
-                    case StorageAdapterProperty:
-                    case StorageDeviceIdProperty:
-                    case StorageDeviceUniqueIdProperty:
-                    case StorageAccessAlignmentProperty:
-                    case StorageDeviceWriteCacheProperty:
-                    case StorageDeviceSeekPenaltyProperty:
-                    case StorageDeviceTrimProperty:
-                        return OriginalIo(c, irp);
-                    default: break; // Protocol-specific/unknown properties remain conservative.
-                    }
-                }
-            }
-            break;
-        }
-        default: break;
-        }
+    // A query cannot modify media, so it must neither drain nor invalidate cached data.
+    // Windows' storage service, NTFS and monitoring tools poll read-only controls (disk
+    // geometry/layout, media presence, SMART, IOCTL_STORAGE_FIRMWARE_GET_INFO) every few
+    // seconds; treating each one as "unknown, therefore possibly destructive" emptied the
+    // whole clean cache within seconds on an otherwise idle disk. Only newly admitted
+    // data, real modifications and explicit pause/remove/reconfigure may displace it.
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) {
+        if (!QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode)) return OriginalIo(c, irp);
     }
-    // Unknown controls (including unsupported TRIM) must not overtake accepted dirty writes.
+    // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty writes.
     AcquireCache(c); bool dirty = c->State.DirtyBytes != 0;
     bool resident = c->CleanCount[0] != 0 || c->CleanCount[1] != 0;
     auto error = c->State.LastError; ReleaseCache(c);

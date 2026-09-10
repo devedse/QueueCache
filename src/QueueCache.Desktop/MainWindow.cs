@@ -13,6 +13,9 @@ namespace QueueCache.Desktop;
 public sealed class MainWindow : Window
 {
     internal static readonly IBrush Ink = Brush.Parse("#172B42"), Muted = Brush.Parse("#66788A"), Accent = Brush.Parse("#087F8C");
+    // Chart palette lives on CacheOccupancy so the bar, the chart and the legends agree.
+    internal static readonly IBrush ReadFill = CacheOccupancy.ReadFill, RetainedFill = CacheOccupancy.RetainedFill,
+        PendingFill = CacheOccupancy.PendingFill, FreeFill = CacheOccupancy.FreeFill;
     private readonly StackPanel cards = new() { Spacing = 16 };
     private readonly TextBlock message = Text("Discovering your disks…", 14, Muted), summary = Text("Your storage, accelerated.", 16, Muted);
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
@@ -84,13 +87,15 @@ public sealed class MainWindow : Window
         name.Children.Add(Text($"{card.Disk.Name}  /  {card.Disk.Device}  /  {card.Disk.SizeGiB:0.##} GiB", 13, Muted));
         heading.Children.Add(name); Grid.SetColumn(card.Badge, 1); heading.Children.Add(card.Badge); content.Children.Add(heading);
         content.Children.Add(card.Description); card.Activity.Children.Add(card.Bucket);
-        card.Activity.Children.Add(Text("RAM occupancy · blue: read cache · teal: retained writes · purple: pending writes", 11, Muted));
+        card.Activity.Children.Add(Legend((ReadFill, "Read cache (blocks read from disk)"), (RetainedFill, "Retained writes (already on disk, kept for reads)"),
+            (PendingFill, "Pending writes (still only in RAM)"), (FreeFill, "Free RAM budget")));
         var metrics = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*,*") };
-        metrics.Children.Add(Metric("CACHED READS", card.Cached)); var dirty = Metric("PENDING WRITES", card.Dirty); Grid.SetColumn(dirty, 1); metrics.Children.Add(dirty);
+        metrics.Children.Add(Metric("READABLE FROM RAM", card.Cached)); var dirty = Metric("PENDING WRITES", card.Dirty); Grid.SetColumn(dirty, 1); metrics.Children.Add(dirty);
         var incoming = Metric("INCOMING", card.Incoming); Grid.SetColumn(incoming, 2); metrics.Children.Add(incoming);
         var draining = Metric("WRITING TO DISK", card.Draining); Grid.SetColumn(draining, 3); metrics.Children.Add(draining); card.Activity.Children.Add(metrics); content.Children.Add(card.Activity);
         card.Activity.Children.Add(card.Residency); card.Activity.Children.Add(card.History);
-        card.Activity.Children.Add(Text("Last 60 samples · blue: reads · teal: incoming writes · purple: draining · auto-scaled", 11, Muted));
+        card.Activity.Children.Add(Legend((ReadFill, "Reads"), (RetainedFill, "Incoming writes"), (PendingFill, "Writing to disk")));
+        card.Activity.Children.Add(Text("Last 60 samples · auto-scaled", 11, Muted));
         var actions = new WrapPanel();
         card.Settings = Action("Add cache", () => Edit(card)); actions.Children.Add(card.Settings);
         card.Settings.Background = Accent; card.Settings.Foreground = Brushes.White;
@@ -186,6 +191,19 @@ public sealed class MainWindow : Window
         finally { busy = false; if (!closed) await Sample(); }
     }
     private static Control Metric(string label, TextBlock value) { var panel = new StackPanel { Spacing = 6 }; panel.Children.Add(Text(label, 11, Muted, FontWeight.SemiBold)); panel.Children.Add(value); return panel; }
+    /// <summary>Colour key using the same brushes the charts draw with.</summary>
+    private static Control Legend(params (IBrush Fill, string Label)[] items)
+    {
+        var panel = new WrapPanel();
+        foreach (var (fill, label) in items)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5, Margin = new Thickness(0, 0, 14, 0) };
+            row.Children.Add(new Border { Background = fill, Width = 11, Height = 11, CornerRadius = new CornerRadius(3), BorderBrush = Brush.Parse("#C9D6E2"), BorderThickness = new Thickness(1), VerticalAlignment = VerticalAlignment.Center });
+            row.Children.Add(Text(label, 11, Muted));
+            panel.Children.Add(row);
+        }
+        return panel;
+    }
     internal static TextBlock Text(string text, double size, IBrush? brush = null, FontWeight? weight = null) => new() { Text = text, FontSize = size, Foreground = brush ?? Ink, FontWeight = weight ?? FontWeight.Normal, TextWrapping = TextWrapping.Wrap };
     private sealed class Card(DiskDescription disk)
     {

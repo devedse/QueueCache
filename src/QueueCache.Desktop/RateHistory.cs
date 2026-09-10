@@ -22,9 +22,9 @@ internal sealed class RateHistory : Control
         base.Render(context);
         var points = samples.ToArray(); if (points.Length < 2) return;
         var scale = Math.Max(1, points.Max(p => Math.Max(p.Read, Math.Max(p.Incoming, p.Draining))));
-        var reading = new Pen(Brush.Parse("#3489DB"), 2);
-        var incoming = new Pen(MainWindow.Accent, 2);
-        var draining = new Pen(Brush.Parse("#9A66CC"), 2);
+        var reading = new Pen(MainWindow.ReadFill, 2);
+        var incoming = new Pen(MainWindow.RetainedFill, 2);
+        var draining = new Pen(MainWindow.PendingFill, 2);
         for (int i = 1; i < points.Length; i++)
         {
             double x1 = Bounds.Width * (i - 1) / 59, x2 = Bounds.Width * i / 59;

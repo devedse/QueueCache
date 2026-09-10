@@ -23,6 +23,11 @@ using (var frame = window.CaptureRenderedFrame() ?? throw new Exception("No rend
 var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();
 Check(labels.Contains("Active") && labels.Contains("Available"), "active and available disks render");
 Check(!labels.Any(t => t?.Contains("Inspect") == true), "no manual inspect step");
+// Colour keys use the same brushes the bar and chart draw with.
+var swatches = window.GetVisualDescendants().OfType<Border>().Where(b => b.Width == 11 && b.Background is not null).ToArray();
+Check(labels.Contains("READABLE FROM RAM") && swatches.Length >= 7, "legend swatches label every chart colour");
+var colours = swatches.Select(b => (b.Background as Avalonia.Media.ISolidColorBrush)?.Color).ToArray();
+Check(new[] { "#3489DB", "#087F8C", "#9A66CC", "#E8F1F2" }.All(hex => colours.Contains(Avalonia.Media.Color.Parse(hex))), "legend colours match the occupancy palette");
 var buttons = window.GetVisualDescendants().OfType<Button>().ToArray();
 var pause = buttons.Single(b => Equals(b.Content, "Pause") && b.IsVisible);
 pause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
