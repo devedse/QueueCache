@@ -15,16 +15,22 @@ certification. Read [cache policies](CACHE_POLICIES.md) for the settings these r
 | Counters | `qcache policy status --json` deltas around each run: accepted, drained, coalesced, lower/batched writes, read hits/misses, throttle waits, evictions |
 | Drain | Explicit `qcache policy flush` after each measured window, timed separately from the score |
 
-Reproduce with the lab harness (ignored, machine-specific paths): `.lab/Bench-QueueCache.ps1`,
-raw results in `.lab/bench-<timestamp>.csv` plus one DiskSpd transcript per cell.
+The baseline below came from a one-off lab script (`.lab/Bench-QueueCache.ps1`, machine-specific
+paths, results in `.lab/bench-<timestamp>.csv`). **New measurements should use the maintained
+harness instead:** `developer/scripts/Measure-Performance.ps1`, described under
+[Running the harness](#running-the-harness).
 
-Two practical notes for anyone repeating this:
+Three practical notes for anyone repeating this:
 
 - A benchmark launched over SSH must be **detached** (scheduled task, run as SYSTEM), otherwise
   Windows terminates it when the SSH session ends and the matrix stops halfway.
-- Write scores are **RAM acceptance scores, not disk throughput**. In the sequential run below,
-  146,058 MiB were accepted while 3,028 MiB reached disk: 98% was coalesced by repeatedly
-  overwriting one 2 GiB file. Always report accepted, coalesced and drained bytes next to a score.
+- Large write scores are **application-acknowledged throughput, not disk throughput**. In the
+  sequential run below, 146,058 MiB were accepted while 3,028 MiB reached disk: 98% was
+  coalesced by repeatedly overwriting one 2 GiB file. Repeatedly replacing the same cached
+  blocks is useful caching behaviour, but it is a different workload from installing new data
+  larger than RAM. Always report accepted, coalesced and drained bytes next to a score.
+- One sample proves nothing on this hardware. See the drift figures under
+  [What this baseline does not show](#what-this-baseline-does-not-show).
 
 ## Baseline, 2026-09-10 (driver 0.4.14.1)
 
@@ -42,30 +48,43 @@ One sample per cell. `off` means the cache is paused, same disk and file.
 | rnd read 4 KiB QD32 T4 | 2,871 IOPS | 285,275 IOPS | 283,735 IOPS | 277,568 IOPS |
 | mixed 70/30 4 KiB QD8 T4 | 2,018 IOPS | 55,805 IOPS | 54,563 IOPS | 54,433 IOPS |
 
-### Request-path serialization
+### Request-path scaling
 
-All cached I/O for one disk runs on a single request worker thread
-(`RequestWorker`, `driver/qcache/lab.cpp`). The measurements match that exactly:
+All cached I/O for one disk is executed by a single request worker thread
+(`RequestWorker`, `driver/qcache/lab.cpp`) — that is a fact of the source, not an inference.
+The measurements are consistent with it:
 
 | Measure | Value |
 |---|---|
 | 4 KiB write scaling, QD1 → QD32 | 20,070 → 27,931 IOPS (**1.4x for 32x the queue depth**) |
 | 4 KiB write, 4 threads versus 1 at equal total queue depth | 25,204 versus 27,931 IOPS (**worse**) |
 | Little's law check, QD32 | 32 / 27,931 IOPS = 1.145 ms versus **1.137 ms measured average** |
-| Cost per cached write | **~35 µs** (QD1 average latency 0.049 ms) |
-| Cost per cached read | **~3.5 µs** (128 / 285,275 IOPS = 0.449 ms versus 0.436 ms measured) |
+| Implied service time per cached write | **~35 µs** (reciprocal of 28,000 IOPS; QD1 average latency 0.049 ms) |
+| Implied service time per cached read | **~3.5 µs** (128 / 285,275 IOPS = 0.449 ms versus 0.436 ms measured) |
 
-Observed latency is therefore almost entirely queueing behind that one worker, not device or
-copy time. A 4 KiB payload copy costs roughly 0.3 µs, so the ~35 µs write cost is dominated by
-**fixed per-request work**: cache mutex acquisition, the per-block admission preflight, a full
-`Publish()` state snapshot under a spin lock, and a `KeSetEvent` drain wake-up on every write.
-Reducing per-request overhead matters more for small writes than moving payload copies out of
-the lock; the copy dominates only for large blocks.
+Be careful with what this does and does not establish.
 
-Implication for faster storage: 4 KiB cached writes cap at roughly 28,000 IOPS (~110 MiB/s)
-regardless of queue depth or process count. That is about 20x this virtual disk, but *below*
-what a current NVMe device does unaided, so the cache would slow such a device down for small
-random writes until the request path scales.
+- **Established:** small cached requests hit a throughput ceiling that added queue depth and
+  added submitting threads do not lift, and the code has exactly one execution path that can
+  produce such a ceiling.
+- **Not established:** that latency is "100% queueing". Little's law relates outstanding
+  requests, throughput and latency in parallel systems too; consistency is not proof.
+- **Not established:** that ~35 µs is CPU time spent inside the driver. It is the reciprocal of
+  aggregate throughput for that cell, which also contains scheduling, interrupt and lower-device
+  effects.
+- **Hypothesis to test, not a finding:** that fixed per-request work dominates the small-write
+  path — cache mutex acquisition, the per-block admission preflight, the full `Publish()`
+  snapshot under a spin lock, and a `KeSetEvent` drain wake-up issued on every write. A 4 KiB
+  copy should cost well under a microsecond, but nothing here *measures* the split between
+  locking, bookkeeping, signalling and background interference. Phase 1 of the
+  [performance plan](PERFORMANCE_PLAN.md) exists to settle this before anything is optimized.
+- **Not established:** that four threads are consistently slower than one. That is a single
+  sample; the size and repeatability of the penalty are unknown.
+
+Implication worth keeping in view: if the ceiling holds, 4 KiB cached writes stay near 28,000
+IOPS (~110 MiB/s) regardless of queue depth or process count. That is about 20x this virtual
+disk, but *below* what a current NVMe device does unaided, so the cache would slow such a device
+down for small random writes until the request path scales.
 
 ### Drain behaviour
 
@@ -95,23 +114,53 @@ Be explicit about these when quoting any number above.
    shared host pool. The 4 KiB cells differ by at most 9% with no consistent winner.
 2. **No capacity pressure.** `ThrottleWaits` and `Evictions` were 0 in every cell: a 2 GiB
    working set inside a 4 GiB cache never throttles a writer or evicts a clean block.
-3. **No foreground/background interference measurement.** Each cell ran one workload at a time,
-   with no concurrent reader and writer and no deliberately slowed lower device.
+3. **No foreground/background interference measurement.** Each cell ran one DiskSpd workload at
+   a time, with no concurrent reader and writer and no deliberately slowed lower device. This
+   does **not** mean no overlap occurred — Eager drains while foreground traffic is running, so
+   background work was present in the write cells. The experiment simply could not isolate or
+   quantify its cost.
 4. **Single samples, single machine, virtual disk.** No medians, no confidence interval, and a
    host storage pool shared with other activity.
 5. **Nothing about durability.** Fast-preset scores partly reflect volatile acknowledgement.
 
-## Required method changes for the next round
+## Running the harness
 
-Interference work must not be evaluated with the matrix above. Before drawing conclusions:
+`developer/scripts/Measure-Performance.ps1` implements the method the next round requires. It
+refuses disk 0 and boot/system volumes, keeps every test file in one directory on the target
+volume, and restores the original policy and clears the lab delay hook even after a failure.
 
-1. **Interleave and repeat** configurations (A/B/A/B), at least three samples, report medians and
-   spread. Mandatory given the 2.2x same-config drift.
-2. **Exceed the budget**: working set larger than the cache (for example an 8 GiB file with a
-   4 GiB cache) so throttling and eviction actually occur.
-3. **Run two workloads at once**: a hot RAM-resident reader alongside a sequential writer, and
-   report the *reader's* p99 latency with and without the writer.
-4. **Slow the lower device deliberately** with the lab delay hook to separate avoidable
-   serialization from unavoidable device latency.
-5. **Report latency, CPU and actually-drained bytes**, not only headline throughput, when
-   comparing Eager, Balanced and Idle.
+```powershell
+# Full set: interleaved configurations, three repeats, medians and spread.
+./developer/scripts/Measure-Performance.ps1 -Volume Q: -DiskSpd C:\tools\diskspd.exe -Repeats 3
+
+# One question at a time.
+./developer/scripts/Measure-Performance.ps1 -Volume Q: -DiskSpd C:\tools\diskspd.exe `
+    -Experiments interference,slow-storage -Configs Eager,Idle -Repeats 3
+```
+
+| Experiment | What it answers |
+|---|---|
+| `small-request` | Cached 4 KiB read/write cost at QD1 T1, QD32 T1 and QD8 T4 (equal total outstanding I/O for the last two) |
+| `interference` | Hot RAM-hit reader alone versus the same reader with an independent writer on another file: reader p95/p99 |
+| `capacity` | Fresh data larger than the payload; warns loudly if the run failed to throttle |
+| `slow-storage` | The interference pair repeated with the lab delay hook, to see whether RAM operations inherit lower-I/O latency |
+| `random-drain` | Random write phase followed by a timed explicit drain: MiB/s, lower-write count, batched share |
+| `drain-parallelism` | The same drain measured at parallelism 1, 2 and 4 before changing any default |
+| `flush-under-load` | Flush issued while producers keep writing, versus flush after they stop |
+
+Harness rules that matter more than the experiment list:
+
+- Configurations are **interleaved and repeated**; the summary reports median, min and max.
+  A single sample cannot separate a change from 2.2x drift.
+- Each measured window records **driver counter deltas** (accepted, drained, coalesced, read
+  hit/miss, lower and batched writes, throttle waits, evictions) alongside the DiskSpd numbers.
+- Every run starts from a **comparable state**: explicit flush plus `drop-clean`, then an
+  explicit warm pass for read experiments.
+- The hot reader is **verified to stay a RAM-hit workload** by its read-miss delta; if it is not,
+  the row must be read as including misses and eviction.
+- Increasing the file size is not enough for capacity pressure: the run must actually touch
+  enough distinct blocks, which is why the harness warns when `ThrottleWaits` stays 0.
+
+What the harness still cannot do: attribute time inside the driver. Queue wait, cache-lock
+contention, staging-copy time and lower-device time are not separable from user space. That is
+Phase 1 instrumentation work — see the [performance plan](PERFORMANCE_PLAN.md).

@@ -31,6 +31,14 @@ prove crash durability or complete kernel coverage.
 
 ## Repository-only scripts and recovery
 
+`scripts/Measure-Performance.ps1` runs the repeatable performance experiments: small-request
+cost, foreground/background interference, capacity pressure, controlled slow storage,
+random-drain efficiency, drain parallelism and flush-under-load. It interleaves configurations,
+repeats them, reports medians with spread, and restores the original policy and clears the lab
+delay hook even after a failure. It refuses disk 0 and boot/system volumes and only touches its
+own files under `<volume>\QueueCache-Perf`. See [performance baseline and method](../docs/PERFORMANCE.md)
+and the [performance and concurrency plan](../docs/PERFORMANCE_PLAN.md).
+
 `scripts/Test-CacheFaults.ps1` retains the historical multi-scenario fault sequence
 and now invokes `qcache developer write-tests`, not another executable. It requires
 the recorded identity from the earlier per-device test setup. `Test-LabReads.ps1`
