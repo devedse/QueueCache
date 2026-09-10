@@ -302,4 +302,6 @@ The original credit to Mayur Thigale's LoopBack Filter Driver is retained as an 
 See [Licensing and provenance](docs/LICENSING_REVIEW.md) for source comparisons and the basis for the exceptions.
 # RAM read/write policies
 
+Measured throughput/latency, the request-path serialization ceiling and the method behind them are in [performance baseline and method](docs/PERFORMANCE.md).
+
 See [cache policies and CLI examples](docs/CACHE_POLICIES.md) for read caching, retained writes, fixed/automatic allocation, background drain algorithms, memory budgets and driver-confirmed state.
