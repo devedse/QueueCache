@@ -32,6 +32,13 @@ var buttons = window.GetVisualDescendants().OfType<Button>().ToArray();
 var pause = buttons.Single(b => Equals(b.Content, "Pause") && b.IsVisible);
 pause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Check(fixture.Pauses == 1, "Pause uses shared task service");
+var clear = buttons.Single(b => Equals(b.Content, "Clear read cache") && b.IsVisible);
+clear.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+Check(fixture.CleanDrops == 1, "Clear read cache releases clean blocks only");
+var frequency = window.GetVisualDescendants().OfType<ComboBox>().Single(c => (c.SelectedItem as string)?.StartsWith("Update every") == true);
+frequency.SelectedIndex = 3;
+Dispatcher.UIThread.RunJobs();
+Check(Equals(frequency.SelectedItem, "Update every 5s"), "one selector sets the live update interval");
 var remove = buttons.Single(b => Equals(b.Content, "Remove cache") && b.IsVisible);
 remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Check(fixture.Removes == 1, "Remove uses draining task operation");
@@ -84,10 +91,10 @@ static void Check(bool result, string description)
 sealed class Fixture : ICacheTaskService
 {
     public DiskDescription[] Disks = [new(0, "System SSD", 100L << 30, "fixture-system", ["C:"], true, true), new(1, "Game library SSD", 200L << 30, "fixture-data", ["Q:"], false, false)];
-    public WriteCacheState State = new(929, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
+    public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
         { Options = new(), CleanReadBytes = 1024UL << 20, CleanWriteBytes = 256UL << 20,
             Instance = 1, Generation = 2, GlobalLimitBytes = 6UL << 30, GlobalReservedBytes = 4UL << 30 };
-    public int Pauses, Removes, DataReads, BlockedReads;
+    public int Pauses, Removes, CleanDrops, DataReads, BlockedReads;
     public TaskCompletionSource<IReadOnlyList<DiskDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
     public Task<IReadOnlyList<DiskDescription>> ListAsync() => PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks);
@@ -101,6 +108,7 @@ sealed class Fixture : ICacheTaskService
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) { if (!enabled) Pauses++; return Task.CompletedTask; }
     public Task RemoveAsync(string volume) { Removes++; return Task.CompletedTask; }
     public Task FlushAsync(DiskDescription disk) => Task.CompletedTask;
+    public Task DropCleanAsync(DiskDescription disk) { CleanDrops++; return Task.CompletedTask; }
     public Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
     public Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token) => throw new NotSupportedException("Fixture never opens disks.");
 }

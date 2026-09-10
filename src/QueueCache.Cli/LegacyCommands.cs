@@ -81,10 +81,10 @@ try
         Console.WriteLine(args.Length == 3 ? JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }) : RenderCache(state));
         return 0;
     }
-    if (args.Length == 2 && args[0] is "enable" or "flush" or "disable" or "retry")
+    if (args.Length == 2 && args[0] is "enable" or "flush" or "disable" or "retry" or "drop-clean")
     {
         using var device = new CacheDevice(args[1], writable: true);
-        device.Control(Enum.Parse<WriteCacheAction>(args[0], ignoreCase: true));
+        device.Control(Enum.Parse<WriteCacheAction>(args[0].Replace("-", ""), ignoreCase: true));
         Console.WriteLine(RenderCache(device.GetWriteCacheState())); return 0;
     }
     if (args.Length == 3 && args[0] is "configure" or "start" or "lab-delay" or "lab-fault")

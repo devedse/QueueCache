@@ -14,6 +14,7 @@ public interface ICacheTaskService
     Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
     Task SetEnabledAsync(string volume, bool enabled, bool persistent);
     Task FlushAsync(DiskDescription disk);
+    Task DropCleanAsync(DiskDescription disk);
     Task RemoveAsync(string volume);
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
 }
@@ -35,6 +36,12 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     {
         using var device = new CacheDevice(disk.Device, true);
         device.Control(WriteCacheAction.Flush);
+    });
+    // Clean blocks only: no drain, no effect on pending writes.
+    public Task DropCleanAsync(DiskDescription disk) => Task.Run(() =>
+    {
+        using var device = new CacheDevice(disk.Device, true);
+        device.Control(WriteCacheAction.DropClean);
     });
     public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);
     public async Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token)

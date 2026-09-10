@@ -129,9 +129,9 @@ internal static class Commands
         // Preserve existing installer and operator scripts while moving their presentation incrementally.
         Add("list", [], []);
         foreach (var name in new[] { "status", "cache-status" }) Add(name, ["device"], ["--json"]);
-        foreach (var name in new[] { "watch", "diagnostics", "enable", "flush", "disable", "retry" }) Add(name, ["device"], []);
+        foreach (var name in new[] { "watch", "diagnostics", "enable", "flush", "disable", "retry", "drop-clean" }) Add(name, ["device"], []);
         foreach (var name in new[] { "configure", "start", "lab-delay", "lab-fault" }) Add(name, ["device", "value"], []);
-        foreach (var name in new[] { "enable", "disable", "flush", "retry", "watch", "diagnostics" })
+        foreach (var name in new[] { "enable", "disable", "flush", "retry", "watch", "diagnostics", "drop-clean" })
             Add(name, ["device"], [], policy);
         Add("status", ["device"], ["--json"], policy, "cache-status");
         Add("configure", ["device", "value"], [], policy);

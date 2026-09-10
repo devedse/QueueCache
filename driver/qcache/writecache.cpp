@@ -25,7 +25,7 @@ static void ReleaseCache(QC_CACHE* c) { KeReleaseMutex(&c->Mutex, FALSE); }
 static void Publish(QC_CACHE* c) {
     c->State.Version = 1; c->State.Size = sizeof(QC_STATE);
     c->State.Flags = (c->Enabled ? 1UL : 0UL) | (!NT_SUCCESS(c->State.LastError) ? 2UL : 0UL) |
-        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL | 256UL; // 128: drain-and-release task support.
+        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL | 256UL | 1024UL; // 128: drain-and-release task support. 1024: QcDropClean support.
     c->State.OccupiedSlots = c->Count;
     KIRQL irql; KeAcquireSpinLock(&c->SnapshotLock, &irql);
     c->Snapshot = c->State;
@@ -374,6 +374,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size) {
         if (c->Gone || c->Suspended) { status = STATUS_DEVICE_NOT_READY; break; }
         ++c->Diagnostics.ControlBarriers;
         c->State.LastError = STATUS_SUCCESS; KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE); break;
+    case QcDropClean:
+        // Release clean read/retained-write blocks on request. Dirty and in-flight payload
+        // is untouched: this is not a flush and never discards data the disk has not taken.
+        if (command.Value || command.BudgetBytes) status = STATUS_INVALID_PARAMETER;
+        else ClearClean(c);
+        break;
     case QcLabDelay:
         if (command.Value > 2000) status = STATUS_INVALID_PARAMETER;
         else c->DelayMs = static_cast<ULONG>(command.Value);

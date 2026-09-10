@@ -23,6 +23,7 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
     public ulong GlobalLimitBytes { get; init; }
     public ulong GlobalReservedBytes { get; init; }
     public bool SupportsReadWrite => (Flags & 256) != 0;
+    public bool SupportsDropClean => (Flags & 1024) != 0;
     public bool RoutingConfirmed => SupportsReadWrite && (Flags & 512) != 0;
     public bool Operational => Enabled && !Faulted && LastError == 0 && !Removed && !Suspended && !Draining &&
         BudgetBytes > 0 && ReservedBytes > 0 && PayloadCapacity > 0 && (!SupportsReadWrite || RoutingConfirmed);
@@ -93,4 +94,4 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
         return result;
     }
 }
-public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release }
+public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean }

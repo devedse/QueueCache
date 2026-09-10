@@ -33,7 +33,8 @@ struct QC_STATE_V3 {
 };
 static_assert(sizeof(QC_STATE_V3) == 288);
 static_assert(sizeof(QC_COMMAND) == 32);
-enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy, QcRelease };
+enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy, QcRelease,
+    QcDropClean }; // QcDropClean releases clean cached blocks only; pending writes keep draining.
 struct QC_SLOT {
     PUCHAR Buffer;
     LARGE_INTEGER Offset;

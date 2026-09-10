@@ -39,23 +39,32 @@ public sealed class MainWindow : Window
         RenderOptions.SetBitmapInterpolationMode(logo, Avalonia.Media.Imaging.BitmapInterpolationMode.None);
         brandRow.Children.Add(logo); brandRow.Children.Add(brand); heading.Children.Add(brandRow);
         Closed += (_, _) => brandImage.Dispose();
-        var refresh = Action("Refresh disks", Refresh); Grid.SetColumn(refresh, 1); heading.Children.Add(refresh);
+        // One selector drives every live value: metrics, residency line and the history chart,
+        // which stores one point per sample, so the visible window is 60 x this interval.
+        var rates = new[] { 0.5, 1, 2, 5, 10 };
+        var frequency = new ComboBox { ItemsSource = rates.Select(s => $"Update every {s:0.#}s").ToArray(), SelectedIndex = 1, VerticalAlignment = VerticalAlignment.Center };
+        frequency.SelectionChanged += (_, _) => timer.Interval = TimeSpan.FromSeconds(rates[Math.Max(0, frequency.SelectedIndex)]);
+        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+        controls.Children.Add(frequency); controls.Children.Add(Action("Refresh disks", Refresh));
+        Grid.SetColumn(controls, 1); heading.Children.Add(controls);
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
         body.Children.Add(heading); body.Children.Add(Text("DISKS & CACHES", 12, Muted, FontWeight.SemiBold)); body.Children.Add(cards); body.Children.Add(message);
         Content = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         Opened += async (_, _) => { timer.Start(); await Refresh(); };
         timer.Tick += async (_, _) =>
         {
-            foreach (var card in views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled > TimeSpan.FromSeconds(3)))
+            // Staleness and inventory rediscovery follow the chosen interval, never a fixed tick count.
+            var stale = TimeSpan.FromSeconds(Math.Max(3, timer.Interval.TotalSeconds * 3));
+            foreach (var card in views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled > stale))
             {
                 card.Badge.Text = "State unavailable"; card.Activity.IsVisible = false;
                 card.Description.Text = "Waiting for a fresh driver response. Last known state is not being shown as live.";
-                card.Settings.IsEnabled = card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = false;
+                card.Settings.IsEnabled = card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = card.DropClean.IsEnabled = false;
             }
             UpdateSummary();
             if (closed) return;
             // Discovery never holds up telemetry; each disk has at most one outstanding sample.
-            if (++ticks % 10 == 0 && !busy) _ = Refresh();
+            if (++ticks % Math.Max(1, (int)(10 / timer.Interval.TotalSeconds)) == 0 && !busy) _ = Refresh();
             await Sample();
         };
         Closing += (_, e) => { if (busy) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
@@ -101,6 +110,8 @@ public sealed class MainWindow : Window
         card.Settings.Background = Accent; card.Settings.Foreground = Brushes.White;
         card.Pause = Action("Pause", () => service.SetEnabledAsync(Volume(card), !(card.State?.Enabled ?? false), Persistent(card))); actions.Children.Add(card.Pause);
         card.Flush = Action("Flush now", () => service.FlushAsync(card.Disk)); actions.Children.Add(card.Flush);
+        card.DropClean = Action("Clear read cache", async () => { await service.DropCleanAsync(card.Disk); message.Text = "Cached clean blocks released. Pending writes were not touched."; });
+        actions.Children.Add(card.DropClean);
         card.Remove = Action("Remove cache", async () => { message.Text = "Draining and removing cache…"; await service.RemoveAsync(Volume(card)); }); actions.Children.Add(card.Remove); content.Children.Add(actions);
         var details = new Expander { Header = "Diagnostics" }; var diagnostics = new StackPanel { Spacing = 10 }; var tools = new WrapPanel();
         tools.Children.Add(Action("File tests", () => Test(card, false))); tools.Children.Add(Action("Benchmark", () => Test(card, true)));
@@ -134,6 +145,8 @@ public sealed class MainWindow : Window
             card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !busy && state.SupportsReadWrite && card.Disk.Volumes.Length > 0;
             card.Pause.Content = state.Enabled ? "Pause" : "Resume"; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
             card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !busy;
+            card.DropClean.IsVisible = exists && state.SupportsDropClean;
+            card.DropClean.IsEnabled = !busy && state.CleanReadBytes + state.CleanWriteBytes > 0;
             card.Remove.IsEnabled = !busy && state.SupportsRelease;
             if (state.Faulted) card.Description.Text = $"Disk I/O failed (0x{state.LastError:X8}). Pending writes are retained; check the disk before retrying.";
         }
@@ -141,7 +154,7 @@ public sealed class MainWindow : Window
         {
             card.State = null; card.Badge.Text = "Not connected"; card.Description.Text = "Driver unavailable. Finish installation and restart Windows, then refresh.";
             card.Activity.IsVisible = false;
-            card.Settings.IsEnabled = false; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = false; card.Details.Text = ex.Message;
+            card.Settings.IsEnabled = false; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = card.DropClean.IsVisible = false; card.Details.Text = ex.Message;
         }
         finally { card.Sampling = false; }
         UpdateSummary();
@@ -215,6 +228,6 @@ public sealed class MainWindow : Window
         public RateHistory History = new();
         public StackPanel Activity = new() { Spacing = 18 };
         public TextBox Details = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 190 };
-        public Button Settings = null!, Pause = null!, Flush = null!, Remove = null!;
+        public Button Settings = null!, Pause = null!, Flush = null!, DropClean = null!, Remove = null!;
     }
 }
