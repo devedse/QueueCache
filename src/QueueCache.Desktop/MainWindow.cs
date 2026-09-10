@@ -17,7 +17,7 @@ public sealed class MainWindow : Window
     private readonly TextBlock message = Text("Discovering your disks…", 14, Muted), summary = Text("Your storage, accelerated.", 16, Muted);
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly List<Card> views = [];
-    private bool busy, sampling, closed;
+    private bool busy, discovering, closed;
     private int ticks;
     private CancellationTokenSource? workload;
     private readonly ICacheTaskService service;
@@ -40,26 +40,40 @@ public sealed class MainWindow : Window
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
         body.Children.Add(heading); body.Children.Add(Text("DISKS & CACHES", 12, Muted, FontWeight.SemiBold)); body.Children.Add(cards); body.Children.Add(message);
         Content = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        Opened += async (_, _) => { await Run(Refresh); timer.Start(); };
+        Opened += async (_, _) => { timer.Start(); await Refresh(); };
         timer.Tick += async (_, _) =>
         {
-            if (sampling || closed) return; sampling = true;
-            try { if (++ticks % 10 == 0 && !busy) await Refresh(); else await Sample(); }
-            catch (Exception ex) { message.Text = ex.Message; }
-            finally { sampling = false; }
+            foreach (var card in views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled > TimeSpan.FromSeconds(3)))
+            {
+                card.Badge.Text = "State unavailable"; card.Activity.IsVisible = false;
+                card.Description.Text = "Waiting for a fresh driver response. Last known state is not being shown as live.";
+                card.Settings.IsEnabled = card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = false;
+            }
+            UpdateSummary();
+            if (closed) return;
+            // Discovery never holds up telemetry; each disk has at most one outstanding sample.
+            if (++ticks % 10 == 0 && !busy) _ = Refresh();
+            await Sample();
         };
         Closing += (_, e) => { if (busy) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
     }
     private async Task Refresh()
     {
-        var disks = await service.ListAsync(); if (closed) return;
-        var signature = string.Join("|", disks.Select(d => d.Instance + string.Join(",", d.Volumes)));
-        if (signature != string.Join("|", views.Select(v => v.Disk.Instance + string.Join(",", v.Disk.Volumes))))
+        if (discovering) return;
+        discovering = true;
+        try
         {
-            cards.Children.Clear(); views.Clear();
-            foreach (var disk in disks) { var card = new Card(disk); views.Add(card); cards.Children.Add(BuildCard(card)); }
+            var disks = await service.ListAsync(); if (closed) return;
+            var signature = string.Join("|", disks.Select(d => d.Instance + string.Join(",", d.Volumes)));
+            if (signature != string.Join("|", views.Select(v => v.Disk.Instance + string.Join(",", v.Disk.Volumes))))
+            {
+                cards.Children.Clear(); views.Clear();
+                foreach (var disk in disks) { var card = new Card(disk); views.Add(card); cards.Children.Add(BuildCard(card)); }
+            }
+            await Sample(); message.Text = disks.Count == 0 ? "No disks found." : "";
         }
-        await Sample(); message.Text = disks.Count == 0 ? "No disks found." : "";
+        catch (Exception ex) { if (!closed) message.Text = $"Disk discovery: {ex.Message}"; }
+        finally { discovering = false; }
     }
     private Control BuildCard(Card card)
     {
@@ -70,9 +84,12 @@ public sealed class MainWindow : Window
         name.Children.Add(Text($"{card.Disk.Name}  /  {card.Disk.Device}  /  {card.Disk.SizeGiB:0.##} GiB", 13, Muted));
         heading.Children.Add(name); Grid.SetColumn(card.Badge, 1); heading.Children.Add(card.Badge); content.Children.Add(heading);
         content.Children.Add(card.Description); card.Activity.Children.Add(card.Bucket);
+        card.Activity.Children.Add(Text("RAM occupancy · blue: read cache · teal: retained writes · purple: pending writes", 11, Muted));
         var metrics = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*,*") };
         metrics.Children.Add(Metric("PENDING WRITES", card.Dirty)); var incoming = Metric("INCOMING", card.Incoming); Grid.SetColumn(incoming, 1); metrics.Children.Add(incoming);
         var draining = Metric("WRITING TO DISK", card.Draining); Grid.SetColumn(draining, 2); metrics.Children.Add(draining); card.Activity.Children.Add(metrics); content.Children.Add(card.Activity);
+        card.Activity.Children.Add(card.Residency); card.Activity.Children.Add(card.History);
+        card.Activity.Children.Add(Text("Last 60 samples · blue: reads · teal: incoming writes · purple: draining · auto-scaled", 11, Muted));
         var actions = new WrapPanel();
         card.Settings = Action("Add cache", () => Edit(card)); actions.Children.Add(card.Settings);
         card.Settings.Background = Accent; card.Settings.Foreground = Brushes.White;
@@ -87,41 +104,57 @@ public sealed class MainWindow : Window
     }
     private async Task Sample()
     {
-        int active = 0; ulong memory = 0;
-        foreach (var card in views.ToArray())
+        await Task.WhenAll(views.ToArray().Select(SampleCard));
+    }
+    private async Task SampleCard(Card card)
+    {
+        if (card.Sampling || closed) return;
+        card.Sampling = true;
+        try
         {
-            try
-            {
-                var state = await service.ReadAsync(card.Disk); if (closed) return;
-                var now = DateTimeOffset.UtcNow; var rates = card.State is null ? null : CacheTelemetry.Between(card.State, state, now - card.Sampled);
-                card.State = state; card.Sampled = now; memory += state.ReservedBytes; if (state.Enabled) active++;
-                bool exists = state.BudgetBytes > 0;
-                card.Activity.IsVisible = exists;
-                card.Badge.Text = state.Faulted ? "Needs attention" : state.Draining ? "Draining" : state.Enabled ? "Active" : exists ? "Paused" : "Available";
-                card.Description.Text = exists ? $"{state.BudgetBytes / 1048576:0} MB write cache · {(state.UnsafeDefer ? "Fast" : "Strict")} behaviour" : "Ready for a cache. Choose a memory budget to get started.";
-                card.Bucket.Value = state.PayloadCapacity == 0 ? 0 : 100.0 * state.DirtyBytes / state.PayloadCapacity;
-                card.Dirty.Text = $"{state.DirtyBytes / 1048576.0:0.0} MB"; card.Incoming.Text = $"{rates?.AcceptedMiBPerSecond ?? 0:0.0} MB/s"; card.Draining.Text = $"{rates?.DrainedMiBPerSecond ?? 0:0.0} MB/s";
-                card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !busy && card.Disk.Volumes.Length > 0;
-                card.Pause.Content = state.Enabled ? "Pause" : "Resume"; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
-                card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !busy;
-                card.Remove.IsEnabled = !busy && state.SupportsRelease;
-                if (state.Faulted) card.Description.Text = $"Disk I/O failed (0x{state.LastError:X8}). Pending writes are retained; check the disk before retrying.";
-            }
-            catch (Exception ex)
-            {
-                card.State = null; card.Badge.Text = "Not connected"; card.Description.Text = "Driver unavailable. Finish installation and restart Windows, then refresh.";
-                card.Settings.IsEnabled = false; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = false; card.Details.Text = ex.Message;
-            }
+            var state = await service.ReadAsync(card.Disk); if (closed || !views.Contains(card)) return;
+            var now = DateTimeOffset.UtcNow; var rates = card.State is null ? null : CacheTelemetry.Between(card.State, state, now > card.Sampled ? now - card.Sampled : TimeSpan.FromTicks(1));
+            card.State = state; card.Sampled = now;
+            bool exists = state.BudgetBytes > 0;
+            card.Activity.IsVisible = exists;
+            card.Badge.Text = state.RuntimeStatus;
+            card.Description.Text = exists ? $"{state.BudgetBytes / 1048576:0} MiB RAM cache · {(state.UnsafeDefer ? "Fast" : "Strict")} · {state.Options?.Allocation.ToString() ?? "Legacy"} · {state.Options?.Drain.ToString() ?? "Eager"}" : "Ready for a cache. Choose a memory budget to get started.";
+            card.Residency.Text = $"Read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · Retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · Free {state.FreeBytes / 1048576.0:0.0} MiB\nRead hits {state.ReadHitPercent:0.0}% · Oldest pending write {state.OldestDirtyMs / 1000.0:0.0}s · Reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s · Driver instance {state.Instance}, revision {state.Generation}";
+            card.History.Add(rates?.AcceptedMiBPerSecond ?? 0, rates?.DrainedMiBPerSecond ?? 0, rates?.ReadMiBPerSecond ?? 0, rates?.CountersReset ?? true);
+            card.Bucket.Update(state.CleanReadBytes, state.CleanWriteBytes, state.DirtyBytes, state.PayloadCapacity);
+            card.Dirty.Text = $"{state.DirtyBytes / 1048576.0:0.0} MB"; card.Incoming.Text = $"{rates?.AcceptedMiBPerSecond ?? 0:0.0} MB/s"; card.Draining.Text = $"{rates?.DrainedMiBPerSecond ?? 0:0.0} MB/s";
+            card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !busy && state.SupportsReadWrite && card.Disk.Volumes.Length > 0;
+            card.Pause.Content = state.Enabled ? "Pause" : "Resume"; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
+            card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !busy;
+            card.Remove.IsEnabled = !busy && state.SupportsRelease;
+            if (state.Faulted) card.Description.Text = $"Disk I/O failed (0x{state.LastError:X8}). Pending writes are retained; check the disk before retrying.";
         }
+        catch (Exception ex)
+        {
+            card.State = null; card.Badge.Text = "Not connected"; card.Description.Text = "Driver unavailable. Finish installation and restart Windows, then refresh.";
+            card.Activity.IsVisible = false;
+            card.Settings.IsEnabled = false; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = false; card.Details.Text = ex.Message;
+        }
+        finally { card.Sampling = false; }
+        UpdateSummary();
+    }
+    private void UpdateSummary()
+    {
+        var fresh = views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled <= TimeSpan.FromSeconds(3)).ToArray();
+        var active = fresh.Count(v => v.State!.Operational);
+        var memory = fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes);
         summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} disks";
     }
     private async Task Edit(Card card)
     {
-        var available = 4096 - views.Where(v => v != card).Sum(v => (long)((v.State?.BudgetBytes ?? 0) >> 20));
-        if (available < 1) throw new IOException("All 4 GiB of shared cache memory is allocated. Reduce or remove another cache first.");
+        var current = card.State ?? throw new IOException("Driver unavailable.");
+        var globalFree = current.GlobalLimitBytes - Math.Min(current.GlobalLimitBytes, current.GlobalReservedBytes);
+        var available = (long)(Math.Min(globalFree, MemoryBudget.AvailableForCache()) >> 20) + (long)(current.BudgetBytes >> 20);
+        available = Math.Min(MemoryBudget.MaximumMiB, available);
+        if (available < 1) throw new IOException("No RAM is currently available for a cache. Reduce another cache or free memory first.");
         var result = await new CacheSettingsWindow(card.Disk, card.State ?? throw new IOException("Driver unavailable."), Persistent(card), (int)available).ShowDialog<CacheSettingsResult?>(this);
         if (result is null) return; message.Text = "Applying cache settings…";
-        await service.SaveAsync(Volume(card), new(result.BudgetMiB, result.Preset, card.State!.BudgetBytes == 0 || card.State.Enabled), result.Persistent, new Progress<string>(text => message.Text = text));
+        await service.SaveAsync(Volume(card), result.Configuration, result.Persistent, new Progress<string>(text => message.Text = text));
         message.Text = "Cache settings saved.";
     }
     private async Task Test(Card card, bool benchmark)
@@ -153,9 +186,12 @@ public sealed class MainWindow : Window
     internal static TextBlock Text(string text, double size, IBrush? brush = null, FontWeight? weight = null) => new() { Text = text, FontSize = size, Foreground = brush ?? Ink, FontWeight = weight ?? FontWeight.Normal, TextWrapping = TextWrapping.Wrap };
     private sealed class Card(DiskDescription disk)
     {
+        public bool Sampling;
         public DiskDescription Disk = disk; public WriteCacheState? State; public DateTimeOffset Sampled;
         public TextBlock Badge = Text("Connecting", 13, Accent, FontWeight.SemiBold), Description = Text("", 14, Muted), Dirty = Text("—", 24), Incoming = Text("—", 24), Draining = Text("—", 24);
-        public ProgressBar Bucket = new() { Minimum = 0, Maximum = 100, Height = 12, Foreground = Accent, Background = Brush.Parse("#E8F1F2") };
+        public CacheOccupancy Bucket = new();
+        public TextBlock Residency = Text("", 13, Muted);
+        public RateHistory History = new();
         public StackPanel Activity = new() { Spacing = 18 };
         public TextBox Details = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 190 };
         public Button Settings = null!, Pause = null!, Flush = null!, Remove = null!;

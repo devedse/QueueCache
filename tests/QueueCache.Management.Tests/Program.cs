@@ -13,10 +13,40 @@ BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(136), 3L << 30);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(176), 4L << 30);
 var s = CacheStatistics.Decode(data);
 new CacheConfiguration().Validate(true);
+foreach (var allocation in Enum.GetValues<CacheAllocation>())
+foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
+foreach (var share in new[] { 0, 50, 100 })
+{
+    var options = new CacheOptions(allocation, share, Drain: algorithm, Parallelism: 4);
+    Check(CacheOptions.Decode(options.Encode()) == options, "policy wire roundtrip");
+}
+Reject(() => new CacheOptions(WritePercent: 101).Validate(), "invalid share");
+Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inverted watermarks");
+Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
+Reject(() => new CacheOptions(Parallelism: 5).Validate(), "unbounded parallelism");
+Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
+var rw = new byte[WriteCacheState.ReadWriteWireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(rw, 3); BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(4), 288);
+BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(8), 256 | 512 | 1);
+BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(24), 8192UL << 20);
+BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(32), 8192UL << 20);
+BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(56), 8000UL << 20);
+new CacheOptions().Encode().CopyTo(rw, 160);
+BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(264), 42);
+var confirmed = WriteCacheState.DecodeReadWrite(rw);
+Check(confirmed.Operational && confirmed.RuntimeStatus == "Active", "live routing plus allocation confirms Active");
+Check(!(confirmed with { Flags = 257 }).Operational, "enabled without routing cannot report Active");
+Check(!(confirmed with { ReservedBytes = 0 }).Operational, "enabled without RAM cannot report Active");
+Check(!(confirmed with { LastError = -1 }).Operational, "enabled but faulted cannot report Active");
+Check(CacheConfiguration.FromState(confirmed).Options == confirmed.Options, "pause/resume preserves policies");
+Reject(() => WriteCacheState.DecodeReadWrite(rw.AsSpan(0, 287)), "short read/write state");
+BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(208), 9000UL << 20);
+Reject(() => WriteCacheState.DecodeReadWrite(rw), "clean plus dirty exceeds payload");
 new CacheConfiguration(64, CachePreset.Strict).Validate(false);
 Reject(() => new CacheConfiguration().Validate(false), "fast preset requires risk acceptance");
 Reject(() => new CacheConfiguration(0).Validate(true), "zero configuration budget");
-Reject(() => new CacheConfiguration(4097).Validate(true), "oversized configuration budget");
+new CacheConfiguration(8192).Validate(true);
+Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configuration budget");
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
 var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
@@ -62,6 +92,9 @@ var resetRates = CacheTelemetry.Between(nextState, writeState, TimeSpan.FromSeco
 Check(resetRates.CountersReset && resetRates.AcceptedMiBPerSecond == 0 && resetRates.DrainedMiBPerSecond == 0, "counter reset avoids unsigned underflow");
 Reject(() => CacheTelemetry.Between(writeState, nextState, TimeSpan.Zero), "zero sample interval");
 Console.WriteLine("Telemetry regression checks passed.");
+var readRates = CacheTelemetry.Between(writeState, writeState with { ReadHitBytes = 3UL << 20, ReadMissBytes = 1UL << 20 }, TimeSpan.FromSeconds(2));
+Check(readRates.ReadMiBPerSecond == 2, "read graph includes RAM hits and lower-device misses");
+Check(CacheTelemetry.Between(writeState with { ReadHitBytes = 1 }, writeState, TimeSpan.FromSeconds(1)).CountersReset, "read counter reset avoids underflow");
 Check(writeState.CoalescedBytes == 0, "legacy accepted/drained/dirty conservation");
 Check((writeState with { AcceptedBytes = writeState.AcceptedBytes + (2UL << 30) }).CoalescedBytes == 2UL << 30, "coalesced bytes are not drained bytes");
 Check((writeState with { AcceptedBytes = 0 }).CoalescedBytes == 0, "coalesced counter reset avoids underflow");

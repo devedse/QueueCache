@@ -91,7 +91,7 @@ try
     {
         var configure = args[0] is "configure" or "start";
         if (!ulong.TryParse(args[2], NumberStyles.None, CultureInfo.InvariantCulture, out var amount)) throw new ArgumentException("Expected a non-negative integer.");
-        if (configure && (amount < 1 || amount > 4096)) throw new ArgumentException("Budget must be 1..4096 MiB.");
+        if (configure && (amount < 1 || amount > 131072)) throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
         if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 7) throw new ArgumentException("Lab hook value is outside its range.");
         using var device = new CacheDevice(args[1], writable: true);
         device.Control(configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
@@ -168,6 +168,6 @@ static string RenderCache(WriteCacheState s)
 {
     var filled = s.PayloadCapacity == 0 ? 0 : (int)Math.Clamp(Math.Round(20.0 * s.DirtyBytes / s.PayloadCapacity), 0, 20);
     return string.Create(CultureInfo.InvariantCulture,
-        $"[{new string('#', filled)}{new string('-', 20 - filled)}] Dirty {s.DirtyBytes / 1048576.0:F2}/{s.PayloadCapacity / 1048576.0:F2} MiB | In flight {s.InFlightBytes / 1048576.0:F2} | Reserved {s.ReservedBytes / 1048576.0:F2}/{s.BudgetBytes / 1048576.0:F2} | {s.FlushPolicy} Enabled {s.Enabled} Barrier {s.Draining} | Error 0x{s.LastError:X8} | Throttle waits {s.ThrottleWaits} | Coalesced {s.CoalescedBytes / 1048576.0:F1} MiB");
+        $"[{new string('#', filled)}{new string('-', 20 - filled)}] Dirty {s.DirtyBytes / 1048576.0:F2}/{s.PayloadCapacity / 1048576.0:F2} MiB | In flight {s.InFlightBytes / 1048576.0:F2} | Reserved {s.ReservedBytes / 1048576.0:F2}/{s.BudgetBytes / 1048576.0:F2} | {s.FlushPolicy} State {s.RuntimeStatus} Barrier {s.Draining} | Error 0x{s.LastError:X8} | Throttle waits {s.ThrottleWaits} | Coalesced {s.CoalescedBytes / 1048576.0:F1} MiB | Read hits {s.ReadHitPercent:F1}% | Clean R/W {s.CleanReadBytes / 1048576.0:F1}/{s.CleanWriteBytes / 1048576.0:F1} MiB | Instance {s.Instance}/{s.Generation}");
 }
 }

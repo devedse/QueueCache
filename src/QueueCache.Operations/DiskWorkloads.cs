@@ -165,7 +165,7 @@ public static class DiskWorkloads
                         }
                         checks.Add(new("file-trim/guards/reuse", "PASS", "File-relative trim on the new probe only; untrimmed guards and rewritten contents verified."));
                     }
-                    catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50)
+                    catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 326)
                     { checks.Add(new("file-trim/guards/reuse", "SKIP", "Filesystem/storage does not support file-level TRIM.")); }
                 }
                 File.Delete(trimFile);
@@ -177,7 +177,8 @@ public static class DiskWorkloads
             var finalDrain = Stopwatch.StartNew(); cache.Control(WriteCacheAction.Flush); drainSeconds += finalDrain.Elapsed.TotalSeconds;
             var after = cache.GetWriteCacheState();
             ConfigurationManager.EnsureHealthy(after);
-            if (after.Errors != before.Errors || after.Enabled != before.Enabled || after.UnsafeDefer != before.UnsafeDefer || after.BudgetBytes != before.BudgetBytes)
+            if (after.Errors != before.Errors || after.Enabled != before.Enabled || after.UnsafeDefer != before.UnsafeDefer || after.BudgetBytes != before.BudgetBytes ||
+                after.Instance != before.Instance || after.Generation != before.Generation || after.Options != before.Options || (before.Enabled && !after.Operational))
                 throw new IOException("Errors increased or configuration changed during the run.");
             checks.Add(new("settings/health", "PASS", "No new errors; enabled state, policy and budget preserved."));
             checks.Add(new("reboot/faults/raw-disk/policy-toggle", "SKIP", "Deliberately excluded from the current-boot file-only suite."));

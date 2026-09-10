@@ -10,6 +10,16 @@ internal static class DeveloperCommands
     public static Command Create(Func<string[], Task<int>> compatibility)
     {
         var root = new Command("developer", "Advanced integration tests and driver hooks. Ordinary file-only checks: qcache test.");
+        var scenarios = new Command("cache-scenarios", "Current-boot RAM-cache policy scenarios on new files. Temporarily changes runtime policies, drains, verifies disk bytes and restores settings; no reboot or format.");
+        var scenarioVolume = new Argument<string>("volume"); scenarios.Arguments.Add(scenarioVolume);
+        scenarios.SetAction(async (p, token) =>
+        {
+            var target = await QueueCache.Operations.DiskTarget.InspectAsync(p.GetValue(scenarioVolume)!, token);
+            var results = await QueueCache.Operations.CacheScenarios.RunAsync(target, new Progress<string>(Console.Error.WriteLine), token);
+            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(results, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            return results.All(r => r.Result != "FAIL") ? 0 : 1;
+        });
+        root.Subcommands.Add(scenarios);
         var reads = new Command("test", "Read-only pass-through smoke test on an idle disk; validates exact identity and size.");
         var readDisk = new Argument<int>("disk");
         var readBytes = new Argument<long>("expected-bytes");

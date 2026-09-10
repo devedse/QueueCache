@@ -15,6 +15,8 @@ public sealed class CacheDevice : IDisposable
     public const uint WriteControlIoctl = (0x8844u << 16) | (3u << 14) | (0xD11u << 2);
     public const uint DiagnosticsIoctl = (0x8844u << 16) | (0xD12u << 2);
     public const uint ExtendedStateIoctl = (0x8844u << 16) | (0xD13u << 2);
+    public const uint ReadWriteStateIoctl = (0x8844u << 16) | (0xD14u << 2);
+    public const uint OptionsIoctl = (0x8844u << 16) | (3u << 14) | (0xD15u << 2);
     private readonly SafeFileHandle handle;
 
     public CacheDevice(string device, bool writable = false)
@@ -47,6 +49,14 @@ public sealed class CacheDevice : IDisposable
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Write-cache state unavailable.");
         if (returned != data.Length) throw new InvalidDataException("Invalid write-cache snapshot length.");
         var legacy = WriteCacheState.Decode(data);
+        if (legacy.SupportsReadWrite)
+        {
+            var current = new byte[WriteCacheState.ReadWriteWireSize];
+            if (!Native.DeviceIoControl(handle, ReadWriteStateIoctl, IntPtr.Zero, 0, current, (uint)current.Length, out var count, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Advertised read/write cache state unavailable.");
+            if (count != current.Length) throw new InvalidDataException("Invalid read/write snapshot length.");
+            return WriteCacheState.DecodeReadWrite(current);
+        }
         // Never probe an unknown IOCTL on an old driver: unknown controls may be
         // real drain barriers. New drivers advertise extended state in flag 64.
         if ((legacy.Flags & 64) != 0)
@@ -75,6 +85,14 @@ public sealed class CacheDevice : IDisposable
         if (!Native.DeviceIoControlCommand(handle, WriteControlIoctl, command, (uint)command.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"Cache {action} failed. Inspect cache-status; dirty buffers may be retained.");
         if (returned != 0) throw new InvalidDataException("Unexpected cache control response.");
+    }
+    public void SetOptions(CacheOptions options)
+    {
+        var data = options.Encode();
+        if (!GetWriteCacheState().SupportsReadWrite) throw new NotSupportedException("Install the read/write-cache driver and restart Windows first.");
+        if (!Native.DeviceIoControlCommand(handle, OptionsIoctl, data, (uint)data.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache policy update failed.");
+        if (returned != 0) throw new InvalidDataException("Unexpected policy response.");
     }
 
     public CacheStatistics GetStatistics()

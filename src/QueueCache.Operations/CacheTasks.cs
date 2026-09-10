@@ -11,28 +11,41 @@ public static class CacheTasks
         var target = await DiskTarget.InspectAsync(volume, token);
         await Task.Run(() =>
         {
+            using var gate = ConfigurationGate.Enter();
             using var device = new CacheDevice(target.Device, writable: true);
             if (!device.GetWriteCacheState().SupportsRelease)
                 throw new IOException("The loaded driver does not support removing cache tasks. Install the matching driver and restart Windows.");
             device.Control(WriteCacheAction.Release);
+            SavedConfigurations.Remove(target.Instance);
         }, token);
-        SavedConfigurations.Remove(target.Instance);
     }
     public static async Task<WriteCacheState> SaveAsync(string volume, CacheConfiguration configuration, bool persistent,
         IProgress<string>? progress = null, CancellationToken token = default)
     {
         var target = await DiskTarget.InspectAsync(volume, token);
-        var state = await Task.Run(() => ConfigurationManager.Apply(target, configuration, true, progress), token);
-        if (persistent) SavedConfigurations.Save(target, configuration, true);
-        else SavedConfigurations.Remove(target.Instance);
-        return state;
+        return await Task.Run(() =>
+        {
+            // One management transaction across CLI/UI processes, including persistence.
+            using var gate = ConfigurationGate.Enter();
+            token.ThrowIfCancellationRequested();
+            var state = ConfigurationManager.Apply(target, configuration, true, progress);
+            if (persistent) SavedConfigurations.Save(target, configuration, true);
+            else SavedConfigurations.Remove(target.Instance);
+            return state;
+        }, token);
     }
 
     public static async Task SetEnabledAsync(string volume, bool enabled, bool persistent, CancellationToken token = default)
     {
         var target = await DiskTarget.InspectAsync(volume, token);
-        using var device = new CacheDevice(target.Device);
-        var state = device.GetWriteCacheState();
-        await SaveAsync(volume, new((int)(state.BudgetBytes >> 20), state.UnsafeDefer ? CachePreset.Fast : CachePreset.Strict, enabled), persistent, token: token);
+        await Task.Run(() =>
+        {
+            using var gate = ConfigurationGate.Enter();
+            using var device = new CacheDevice(target.Device);
+            var configuration = CacheConfiguration.FromState(device.GetWriteCacheState()) with { Enabled = enabled };
+            ConfigurationManager.Apply(target, configuration, true);
+            if (persistent) SavedConfigurations.Save(target, configuration, true);
+            else SavedConfigurations.Remove(target.Instance);
+        }, token);
     }
 }

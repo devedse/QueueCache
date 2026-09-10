@@ -44,9 +44,25 @@ internal static class Commands
         var save = new Option<bool>("--save") { Description = "Save to administrator-only machine settings after successful Apply; installer startup task restores saved profiles." };
         apply.Arguments.Add(volume); apply.Options.Add(budget); apply.Options.Add(preset); apply.Options.Add(accept); apply.Options.Add(disabled);
         apply.Options.Add(save);
+        var allocation = new Option<CacheAllocation>("--allocation") { DefaultValueFactory = _ => CacheAllocation.Automatic };
+        var writePercent = new Option<int>("--write-percent") { DefaultValueFactory = _ => 50, Description = "Fixed allocation: 0 = read-only, 100 = write-only." };
+        var drain = new Option<DrainAlgorithm>("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Eager };
+        var discard = new Option<bool>("--discard-drained") { Description = "Release written blocks after draining instead of retaining them for reads." };
+        var noPromotion = new Option<bool>("--no-promotion") { Description = "Keep retained writes in the write quota when read." };
+        var low = new Option<int>("--low-percent") { DefaultValueFactory = _ => 40 };
+        var high = new Option<int>("--high-percent") { DefaultValueFactory = _ => 80 };
+        var age = new Option<int>("--max-dirty-age-ms") { DefaultValueFactory = _ => 5000 };
+        var idle = new Option<int>("--idle-ms") { DefaultValueFactory = _ => 250 };
+        var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 256 };
+        var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 1 };
+        foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel }) apply.Options.Add(option);
         apply.SetAction(async (p, token) =>
         {
-            var configuration = new CacheConfiguration(p.GetValue(budget), p.GetValue(preset), !p.GetValue(disabled));
+            var configuration = new CacheConfiguration(p.GetValue(budget), p.GetValue(preset), !p.GetValue(disabled))
+            {
+                Options = new(p.GetValue(allocation), p.GetValue(writePercent), !p.GetValue(discard), !p.GetValue(noPromotion),
+                    p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel))
+            };
             configuration.Validate(true); // Validate before opening a disk. The selected preset defines semantics.
             var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token);
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));

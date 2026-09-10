@@ -14,7 +14,7 @@ foreach ($arguments in @(@('--help'),@('apply','--help'),@('policy','--help'),@(
 if ($LASTEXITCODE -ne 2) { throw 'Invalid arguments must return 2 before device access.' }
 & $cli apply 'Q:' --budget-mib 0 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 1) { throw 'Invalid budget must fail before device access.' }
-& $cli policy apply 'Q:' --budget-mib 4097 2>&1 | Out-Host
+& $cli policy apply 'Q:' --budget-mib 131073 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 1) { throw 'Grouped invalid budget must fail before device access.' }
 foreach($name in @('pause','resume','remove')) {
     & $cli policy $name --help

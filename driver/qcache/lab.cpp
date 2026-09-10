@@ -156,7 +156,7 @@ static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp) {
     // Save before insertion: cancellation may complete/free the IRP inline.
     auto stack = IoGetCurrentIrpStackLocation(irp);
     const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
-        stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1;
+        (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 || stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
 #endif
     // The CSQ/worker can complete the original IRP before insertion returns.
     // Keep the extension alive for the admission-accounting epilogue.
@@ -286,6 +286,19 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
 #if QCACHE_WRITE_LAB
+        if (code == IOCTL_QCACHE_STATE_V3) {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V3)) {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+            }
+            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+            QC_STATE_V3 state; QcCacheSnapshotV3(&ext->Cache, &state);
+            if (ext->Routing && !ext->Closing) state.Base.Base.Flags |= 512;
+            KeReleaseSpinLock(&ext->QueueLock, irql);
+            state.Base.Base.DeviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
+            if (ext->Cache.Gone) state.Base.Base.Flags |= 16;
+            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &state, sizeof(state));
+            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(state));
+        }
         if (code == IOCTL_QCACHE_STATE_V2) {
             if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V2)) {
                 IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
@@ -350,7 +363,7 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     if (stack->MajorFunction != IRP_MJ_PNP) {
         KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
 #if QCACHE_WRITE_LAB
-        const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL && stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1;
+        const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL && (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 || stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
 #else
         const bool control = FALSE;
 #endif
