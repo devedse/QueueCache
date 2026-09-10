@@ -55,6 +55,16 @@ Check(memory.SelectedIndex == 4, "existing 4 GiB memory selected");
 memory.SelectedIndex = 5;
 Dispatcher.UIThread.RunJobs();
 Check(settings.GetVisualDescendants().OfType<NumericUpDown>().Single(n => n.Name == "CustomBudget").IsVisible, "custom memory input appears");
+// Only the settings the selected drain algorithm actually uses are shown, in one panel.
+var drain = settings.GetVisualDescendants().OfType<ComboBox>().Single(c => Equals(c.SelectedItem, "Eager"));
+bool Visible(string label) => settings.GetVisualDescendants().OfType<TextBlock>()
+    .Any(t => t.Text?.StartsWith(label) == true && t.IsVisible && t.GetVisualAncestors().All(a => a is not Control c || c.IsVisible));
+Check(Visible("Eager:") && !Visible("Start pressure") && !Visible("Maximum dirty age") && !Visible("Write-idle"), "Eager describes itself and hides watermark, age and idle settings");
+Check(Visible("Maximum adjacent-write batch") && Visible("Maximum simultaneous disk writes"), "batch and parallelism apply to every algorithm");
+drain.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+Check(Visible("Balanced:") && Visible("Start pressure") && Visible("Maximum dirty age") && !Visible("Write-idle"), "Balanced adds watermarks and age but not the idle interval");
+drain.SelectedIndex = 2; Dispatcher.UIThread.RunJobs();
+Check(Visible("Idle:") && Visible("Write-idle") && Visible("Maximum dirty age"), "Idle adds the write-idle interval");
 settings.Close();
 Console.WriteLine("Desktop fixture checks passed; no real disk operations performed.");
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;

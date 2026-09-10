@@ -16,11 +16,20 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 
 ## Background draining versus durability
 
-| Algorithm | Starts draining when |
+| Algorithm | Behaviour |
 |---|---|
-| Eager (default) | Dirty writes arrive. |
-| Balanced | Dirty usage reaches the high watermark, or the oldest dirty block reaches its maximum age. Pressure draining continues down to the low watermark. |
-| Idle | Balanced conditions, or no new cached writes have arrived for the configured idle interval. |
+| Eager (default) | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
+| Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
+| Idle | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. Keeps the disk quiet during a burst and catches up between bursts. |
+
+Each algorithm reads only some tuning settings; the desktop editor shows the relevant ones in its Background draining panel.
+
+| Setting | Eager | Balanced | Idle |
+|---|---|---|---|
+| `--low-percent` / `--high-percent` | not used | yes | yes |
+| `--max-dirty-age-ms` | not used | yes | yes |
+| `--idle-ms` | not used | not used | yes |
+| `--batch-kib` / `--drain-parallelism` | yes | yes | yes |
 
 All algorithms yield to explicit flushes, shutdown barriers and writers waiting for capacity. Maximum age is a scheduling trigger, not a promise that slow/failing storage will finish by a deadline. No mandatory 30-second delay is imposed.
 

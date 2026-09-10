@@ -3,9 +3,25 @@ using System.Buffers.Binary;
 namespace QueueCache.Management;
 
 public enum CacheAllocation { Automatic, Fixed }
-public enum DrainAlgorithm { Eager, Balanced, Idle }
 
-/// <summary>Independent allocation, retention and background scheduling policies. Matches QC_OPTIONS.</summary>
+/// <summary>Background drain trigger. Settings each algorithm actually uses (see QcShouldDrain in driver/qcache/cachepolicy.h):</summary>
+public enum DrainAlgorithm
+{
+    /// <summary>Drain a pending write as soon as it is accepted. Ignores <see cref="CacheOptions.LowPercent"/>,
+    /// <see cref="CacheOptions.HighPercent"/>, <see cref="CacheOptions.MaxDirtyAgeMs"/> and <see cref="CacheOptions.IdleMs"/>.</summary>
+    Eager,
+    /// <summary>Drain at the high watermark or when the oldest pending block exceeds its maximum age, down to the low
+    /// watermark. Uses <see cref="CacheOptions.LowPercent"/>, <see cref="CacheOptions.HighPercent"/> and
+    /// <see cref="CacheOptions.MaxDirtyAgeMs"/>; ignores <see cref="CacheOptions.IdleMs"/>.</summary>
+    Balanced,
+    /// <summary>Balanced triggers plus a write-idle trigger. Uses every scheduling setting, including
+    /// <see cref="CacheOptions.IdleMs"/>.</summary>
+    Idle,
+}
+
+/// <summary>Independent allocation, retention and background scheduling policies. Matches QC_OPTIONS.
+/// <see cref="BatchKiB"/> and <see cref="Parallelism"/> describe how a drain is issued and apply to every algorithm;
+/// the watermark/age/idle settings are algorithm-specific as documented on <see cref="DrainAlgorithm"/>.</summary>
 public sealed record CacheOptions(CacheAllocation Allocation = CacheAllocation.Automatic, int WritePercent = 50,
     bool RetainWrites = true, bool PromoteOnRead = true, DrainAlgorithm Drain = DrainAlgorithm.Eager,
     int LowPercent = 40, int HighPercent = 80, int MaxDirtyAgeMs = 5000, int IdleMs = 250, int BatchKiB = 256, int Parallelism = 1)

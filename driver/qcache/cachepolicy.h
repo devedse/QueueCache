@@ -2,6 +2,11 @@
 #pragma once
 // Wire policy and deterministic scheduling decisions. No allocation or I/O here.
 enum : ULONG { QcAutomatic = 0, QcFixed = 1 };
+// Drain triggers, and the settings each one reads in QcShouldDrain below:
+//   QcEager    - drain while any dirty block exists; watermarks, MaxAgeMs and IdleMs unused.
+//   QcBalanced - drain from HighPercent down to LowPercent, or when the oldest dirty block reaches MaxAgeMs.
+//   QcIdle     - QcBalanced triggers, plus IdleMs without a newly cached write.
+// BatchKiB and Parallelism shape each drain and apply to all three.
 enum : ULONG { QcEager = 0, QcBalanced = 1, QcIdle = 2 };
 enum : ULONG { QcRetainWrites = 1, QcPromoteReads = 2 };
 struct QC_OPTIONS {

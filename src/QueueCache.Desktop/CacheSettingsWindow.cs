@@ -42,7 +42,13 @@ public sealed class CacheSettingsWindow : Window
         var behaviour = MainWindow.Text("", 13, MainWindow.Muted);
         void DescribePreset() => behaviour.Text = preset.SelectedIndex == 0 ? "Writes and application flushes can finish in RAM. Flush now always drains to disk." : "Application flushes and write-through writes wait for disk.";
         preset.SelectionChanged += (_, _) => DescribePreset(); DescribePreset();
-        var algorithm = Choice(["Eager — drain immediately", "Balanced — drain at pressure or maximum age", "Idle — also drain when writes become idle"], (int)options.Drain);
+        // Background draining. Which tuning settings actually affect the driver depends on the
+        // selected algorithm (QcShouldDrain in driver/qcache/cachepolicy.h):
+        //   Eager    — always drains while dirty; watermarks, maximum age and idle interval are unused.
+        //   Balanced — watermarks + maximum age.
+        //   Idle     — watermarks + maximum age + write-idle interval.
+        // Batch size and parallelism describe how a drain is issued and apply to every algorithm.
+        var algorithm = Choice(["Eager", "Balanced", "Idle"], (int)options.Drain);
         var low = Number(0, 99, options.LowPercent); var high = Number(1, 100, options.HighPercent);
         var parallel = Number(1, 4, options.Parallelism);
         var age = Number(10, 300000, options.MaxDirtyAgeMs); var idle = Number(10, 60000, options.IdleMs);
@@ -59,14 +65,33 @@ public sealed class CacheSettingsWindow : Window
         Add(panel, "Memory allocation", allocation); Add(panel, "Write share (%)", write); panel.Children.Add(split);
         panel.Children.Add(retain); panel.Children.Add(promote);
         Add(panel, "Write behaviour", preset); panel.Children.Add(behaviour);
-        Add(panel, "Background draining", algorithm);
-        var advanced = new StackPanel { Spacing = 10 };
-        Add(advanced, "Stop pressure draining at (%)", low); Add(advanced, "Start pressure draining at (%)", high);
-        Add(advanced, "Maximum dirty age before draining starts (ms)", age); Add(advanced, "Write-idle interval (ms)", idle);
-        Add(advanced, "Maximum adjacent-write batch", batch); advanced.Children.Add(batchCustom);
-        Add(advanced, "Maximum simultaneous disk writes", parallel);
-        advanced.Children.Add(MainWindow.Text("Age is a scheduling trigger, not a durability deadline. Full-cache writers and explicit flushes bypass background delays.", 12, MainWindow.Muted));
-        panel.Children.Add(new Expander { Header = "Advanced tuning", Content = advanced });
+        var draining = new StackPanel { Spacing = 10 };
+        Add(draining, "Algorithm", algorithm);
+        var describe = MainWindow.Text("", 13, MainWindow.Muted); draining.Children.Add(describe);
+        // Watermarks and maximum age: Balanced and Idle only.
+        var watermarks = Field("Start pressure draining at (%)", high, Field("Stop pressure draining at (%)", low),
+            Field("Maximum dirty age before draining starts (ms)", age));
+        // Write-idle interval: Idle only.
+        var idleField = Field("Write-idle interval (ms)", idle);
+        // Always relevant: how each drain is issued to the disk.
+        draining.Children.Add(watermarks); draining.Children.Add(idleField);
+        draining.Children.Add(Field("Maximum adjacent-write batch", batch, batchCustom));
+        draining.Children.Add(Field("Maximum simultaneous disk writes", parallel));
+        draining.Children.Add(MainWindow.Text("Age is a scheduling trigger, not a durability deadline. Every algorithm yields to explicit flushes, shutdown barriers and writers waiting for capacity.", 12, MainWindow.Muted));
+        void DescribeDraining()
+        {
+            describe.Text = algorithm.SelectedIndex switch
+            {
+                0 => "Eager: each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites are still coalesced in RAM, but watermarks, maximum age and the idle interval are ignored.",
+                1 => "Balanced: pending writes stay in RAM until the write pool reaches the start watermark or the oldest pending block exceeds its maximum age; draining then continues down to the stop watermark. Absorbs repeated overwrites and write bursts, at the cost of more data waiting in volatile RAM.",
+                _ => "Idle: the Balanced triggers, plus draining whenever no new cached write has arrived for the write-idle interval. Keeps the disk quiet during a burst and catches up between bursts.",
+            };
+            watermarks.IsVisible = algorithm.SelectedIndex != 0;
+            idleField.IsVisible = algorithm.SelectedIndex == 2;
+        }
+        algorithm.SelectionChanged += (_, _) => DescribeDraining(); DescribeDraining();
+        panel.Children.Add(MainWindow.Text("Background draining", 13, null, FontWeight.SemiBold));
+        panel.Children.Add(new Border { BorderBrush = Brush.Parse("#DDDDDD"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(14), Child = draining });
         panel.Children.Add(startup);
         var error = MainWindow.Text("", 13, Brush.Parse("#B33C36")); panel.Children.Add(error);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 10 };
@@ -96,4 +121,12 @@ public sealed class CacheSettingsWindow : Window
     private static ComboBox Choice(string[] values, int selected) => new() { ItemsSource = values, SelectedIndex = selected, HorizontalAlignment = HorizontalAlignment.Stretch };
     private static NumericUpDown Number(int min, int max, int value) => new() { Minimum = min, Maximum = max, Value = value, Increment = 1 };
     private static void Add(StackPanel panel, string label, Control control) { panel.Children.Add(MainWindow.Text(label, 13, null, FontWeight.SemiBold)); panel.Children.Add(control); }
+    /// <summary>One labelled setting, optionally grouped with related controls so they show and hide together.</summary>
+    private static StackPanel Field(string label, Control control, params Control[] more)
+    {
+        var group = new StackPanel { Spacing = 10 };
+        Add(group, label, control);
+        foreach (var extra in more) group.Children.Add(extra);
+        return group;
+    }
 }
