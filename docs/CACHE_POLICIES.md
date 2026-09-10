@@ -22,7 +22,9 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
 | Idle | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. Keeps the disk quiet during a burst and catches up between bursts. |
 
-Each algorithm reads only some tuning settings; the desktop editor shows the relevant ones in its Background draining panel.
+Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
+
+Each algorithm reads only some tuning settings; the desktop editor shows the relevant ones in its Background draining panel, each with hover help.
 
 | Setting | Eager | Balanced | Idle |
 |---|---|---|---|

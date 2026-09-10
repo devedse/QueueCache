@@ -65,6 +65,8 @@ drain.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
 Check(Visible("Balanced:") && Visible("Start pressure") && Visible("Maximum dirty age") && !Visible("Write-idle"), "Balanced adds watermarks and age but not the idle interval");
 drain.SelectedIndex = 2; Dispatcher.UIThread.RunJobs();
 Check(Visible("Idle:") && Visible("Write-idle") && Visible("Maximum dirty age"), "Idle adds the write-idle interval");
+var marks = settings.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Text == "?").Select(t => t.Parent as Control).ToArray();
+Check(marks.Length >= 8 && marks.All(m => ToolTip.GetTip(m!) is TextBlock { Text.Length: > 40 }), "each help badge carries explanatory hover text");
 settings.Close();
 Console.WriteLine("Desktop fixture checks passed; no real disk operations performed.");
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
