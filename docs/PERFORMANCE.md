@@ -103,22 +103,96 @@ evictions, and no clean-cache invalidation occurred during the whole 42-minute m
 confirms on a live driver that read-only storage controls (notably the storage service's
 `IOCTL_STORAGE_FIRMWARE_GET_INFO` poll) no longer discard cached blocks.
 
+## Phase 2 results, 2026-09-11 (driver 0.4.14.1)
+
+The first properly controlled round: `Measure-Performance.ps1`, **3 repeats**, Eager and Idle
+interleaved, 1024 MiB budget (small enough that capacity pressure is reachable), 8 s windows,
+256 MiB hot read set, 4 GiB fresh-data set, 102 minutes total. Values are **medians of 3**.
+
+### Foreground/background interference: the dominant problem
+
+A hot RAM-resident reader, and an independent writer on a *different* file:
+
+| Case | Reader IOPS | Reader p99 | Reader read misses |
+|---|---|---|---|
+| Reader alone | 317,797 | **0.087 ms** | 0 MiB |
+| Reader + writer | 52.8 | **320.6 ms** | 2.3 MiB |
+| Reader + writer, lower device slowed 25 ms | 14.0 | **1,034 ms** | 0.7 MiB |
+
+That is a **6,000x throughput collapse and a 3,700x p99 increase** from an unrelated writer, and
+the reader's p99 **tracks the injected lower-device delay** (0.087 ms → 320 ms → 1,034 ms). A RAM
+hit inherits disk latency. Identical for Eager and Idle in all three repeats, so this is
+architecture, not policy. Acceptance scenario 1 in the [plan](PERFORMANCE_PLAN.md) currently
+fails by three orders of magnitude.
+
+Two mechanisms are mixed here and the next round must separate them: queueing behind the writer's
+lower I/O (dominant — eviction alone cannot explain a 1 second p99 when a miss costs ~1–2 ms),
+and the writer evicting the hot set under Automatic allocation (~81,000 evicted blocks, the whole
+256 MiB read set). The second is worth testing against a Fixed allocation with a reserved read
+share.
+
+### Reads scale with threads, writes do not
+
+| Cached 4 KiB workload | QD1 T1 | QD32 T1 | QD8 T4 |
+|---|---|---|---|
+| Read | 26,061 IOPS | 103,846 IOPS | **286,899 IOPS** |
+| Write | 20,201 IOPS | 29,137 IOPS | 25,823 IOPS |
+
+This refines the earlier baseline. The **write** admission path plateaus near 29,000 IOPS
+(~114 MiB/s) with ~30 requests outstanding, which is genuine queueing. The **read** path does not
+hit that plateau: it reaches 287,000 IOPS, consistent with one worker thread saturating one core
+at a few microseconds per request. The single-thread read cells are limited by the *submitter*
+(average latency implies only ~2.4 outstanding at QD32 T1), not by the driver — so QD32 T1 read
+numbers must not be read as a driver ceiling.
+
+### Drain parallelism: 2 helps, 4 wrecks the foreground
+
+Same random write phase, then a timed drain:
+
+| Parallelism | Foreground write | Throttle waits | Drain rate |
+|---|---|---|---|
+| 1 (default) | 25,579 IOPS | 0 | 5.31 MiB/s |
+| 2 | **34,662 IOPS** | 605 | 6.05 MiB/s |
+| 4 | **4,302 IOPS** | 7,998 | 7.29 MiB/s |
+
+Four drain threads drain 37% faster and cost the foreground **83% of its throughput**. This is
+direct evidence that background work competes with foreground admission for shared resources, and
+the reason drain concurrency must become a scheduling decision separate from the Eager/Balanced/
+Idle eligibility policy. Do not raise the default on the strength of drain rate alone.
+
+### Capacity pressure, now actually exercised
+
+Fresh data larger than the payload: 15,573 IOPS (versus ~25,500 unthrottled), p99 18.2 ms,
+7,785 throttle waits, then a drain of 1,003 MiB at 5.17 MiB/s using 222,051 lower writes of which
+only 28,833 (13%) were batched. Flush issued while producers keep writing drains at 4.3 MiB/s.
+
+### Eager versus Idle, controlled
+
+Still no throughput winner: every cell is within run-to-run spread (write QD32 T1: 29,137 versus
+28,066 IOPS; interference identical). One real difference did show up in the counters: at equal
+throughput, **Idle issued roughly half the lower writes** of Eager in the small-request cells
+(4,450 versus 9,717 at QD1 T1), i.e. more RAM coalescing and less disk traffic. That is the
+expected behaviour and a better argument for Idle than any score in this matrix.
+
 ## What this baseline does not show
 
 Be explicit about these when quoting any number above.
 
+0. **Scope.** Items 1–5 describe the first (2026-09-10) matrix. The Phase 2 round settled items 2
+   and 3; items 1, 4 and 5 still stand, and interference results still come from one machine.
 1. **Drain-policy comparison is inconclusive.** Sequential write suggests Eager is 40% faster
    than Idle, but sequential *read*, which performs no draining at all, shows the same 11,835 /
    7,986 / 7,571 pattern. The spread is run-order drift. Confirmed independently: the identical
    uncached sequential write measured 249.67 MiB/s and 111.47 MiB/s eleven minutes apart on a
    shared host pool. The 4 KiB cells differ by at most 9% with no consistent winner.
-2. **No capacity pressure.** `ThrottleWaits` and `Evictions` were 0 in every cell: a 2 GiB
-   working set inside a 4 GiB cache never throttles a writer or evicts a clean block.
-3. **No foreground/background interference measurement.** Each cell ran one DiskSpd workload at
-   a time, with no concurrent reader and writer and no deliberately slowed lower device. This
-   does **not** mean no overlap occurred — Eager drains while foreground traffic is running, so
-   background work was present in the write cells. The experiment simply could not isolate or
-   quantify its cost.
+2. **No capacity pressure** *(addressed by the Phase 2 round above)*. `ThrottleWaits` and
+   `Evictions` were 0 in every cell: a 2 GiB working set inside a 4 GiB cache never throttles a
+   writer or evicts a clean block.
+3. **No foreground/background interference measurement** *(addressed by the Phase 2 round above;
+   the caveat applies to the first matrix only)*. Each cell ran one DiskSpd workload at a time,
+   with no concurrent reader and writer and no deliberately slowed lower device. This does **not**
+   mean no overlap occurred — Eager drains while foreground traffic is running, so background work
+   was present in the write cells. The experiment simply could not isolate or quantify its cost.
 4. **Single samples, single machine, virtual disk.** No medians, no confidence interval, and a
    host storage pool shared with other activity.
 5. **Nothing about durability.** Fast-preset scores partly reflect volatile acknowledgement.

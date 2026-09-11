@@ -299,8 +299,15 @@ finally {
     Qc 'lab-delay' $Volume 0 | Out-Null
     $restore = switch ($originalDrain) { '1' { 'Balanced' } '2' { 'Idle' } default { 'Eager' } }
     if ($original.BudgetBytes -gt 0) {
-        Qc 'policy' 'apply' $Volume '--budget-mib' ([int]($original.BudgetBytes / 1MB)) '--preset' `
+        $wanted = [int]($original.BudgetBytes / 1MB)
+        Qc 'policy' 'apply' $Volume '--budget-mib' $wanted '--preset' `
             $(if ($original.UnsafeDefer) { 'Fast' } else { 'Strict' }) '--drain' $restore '--save' | Out-Null
+        # Restoring a larger budget can legitimately fail the available-memory preflight.
+        # Never let that pass silently: the disk would keep the benchmark's settings.
+        $now = Get-State
+        if (-not $now -or [int]($now.BudgetBytes / 1MB) -ne $wanted) {
+            Say "WARNING: could not restore the original budget of $wanted MiB (now $([int]($now.BudgetBytes / 1MB)) MiB). Re-apply it manually when enough RAM is free: qcache policy apply $Volume --budget-mib $wanted --save"
+        }
     }
     if ($script:rows.Count) {
         $csv = Join-Path $OutputDirectory 'results.csv'

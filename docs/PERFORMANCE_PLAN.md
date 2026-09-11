@@ -16,7 +16,36 @@ background activity. Foreground and background paths still share CPU and memory 
 full dirty cache must still throttle writers, and a real Flush must still wait for storage. The
 distinction to optimize is **unavoidable resource sharing versus avoidable serialization**.
 
-## 1. What the baseline settled, and what it did not
+## 0. Status after the Phase 2 round (2026-09-11)
+
+Phase 2 has been executed once (3 repeats, Eager versus Idle interleaved, medians reported; see
+[PERFORMANCE.md](PERFORMANCE.md)). It changes the priority order below:
+
+| Now established | Number |
+|---|---|
+| An unrelated writer destroys RAM-hit read performance | 317,797 → **52.8 IOPS**, p99 0.087 → **320 ms** |
+| RAM hits inherit lower-device latency | reader p99 **1,034 ms** with a 25 ms lower-write delay |
+| Identical under Eager and Idle | architecture, not policy |
+| Background drain concurrency trades directly against foreground | parallelism 4: drain +37%, foreground **−83%** |
+| The write admission path has a real ceiling; the read path does not | write ~29,000 IOPS plateau; read 287,000 IOPS |
+| Capacity pressure is now reachable and measured | 7,785 throttle waits, p99 18.2 ms |
+| Idle coalesces more than Eager at equal throughput | ~half the lower writes |
+
+Still open: the **split between queueing behind the writer's lower I/O and the writer evicting the
+hot read set** under Automatic allocation (both happened in the interference run), and all
+in-driver time attribution. Phase 1 instrumentation remains the prerequisite for the latter.
+
+Two additions to the plan from these results:
+
+- **Phase 2 follow-up (cheap, do first):** repeat the interference experiment with Fixed
+  allocation and a reserved read share. If a protected read quota restores reader latency, part
+  of the problem is eviction policy rather than scheduling, and the fix is far cheaper than
+  Phase 6.
+- **Phase 4 gains a concrete target:** drain parallelism 2 already improves both foreground
+  throughput (+36%) and drain rate (+14%) over the default of 1. Treat raising the default to 2
+  as a measured candidate, but only once Phase 1 can show why 4 collapses the foreground.
+
+## 1. What the first baseline settled, and what it did not
 
 | Finding | Conclusion supported | Conclusion **not** supported yet |
 |---|---|---|
@@ -25,7 +54,7 @@ distinction to optimize is **unavoidable resource sharing versus avoidable seria
 | Little's law matches measured latency | Outstanding requests, throughput and latency are mutually consistent | That latency is "100% queueing"; Little's law holds for parallel systems too |
 | ~35 µs per completed random write | It is the reciprocal of aggregate throughput for that cell | That it is 35 µs of CPU inside the driver, or that an assumed memcpy cost proves "99% fixed overhead" |
 | Eager, Balanced and Idle within 9% at 4 KiB | No demonstrated policy winner | That the larger sequential differences come from policy; order, workload history and host drift were uncontrolled |
-| Zero throttling and zero eviction | Capacity-pressure paths were never exercised | That no foreground/background overlap happened — Eager drains while foreground traffic runs; the experiment just could not isolate it |
+| Zero throttling and zero eviction | Capacity-pressure paths were never exercised *(since measured in Phase 2)* | That no foreground/background overlap happened — Eager drains while foreground traffic runs; the experiment just could not isolate it |
 | Random drain 6.6 MiB/s | A serious practical problem for sustained random writes and for Flush duration | How that splits between small lower writes, submission depth, storage latency and driver scheduling |
 | Clean data survived the whole run | Good evidence the earlier invalidation defect does not recur in this workload | Comprehensive validation of every invalidation, TRIM and media-changing path |
 
@@ -44,7 +73,7 @@ reschedule. Do **not** open with a multithreading rewrite.
 | Phase | Goal | Gate to the next phase |
 |---|---|---|
 | 1 | Make waiting and contention observable | A slow operation can be explained as queue wait, capacity wait, lock contention or lower-device time |
-| 2 | Controlled interference and capacity baseline | Repeated results separate policy differences from run-to-run variation |
+| 2 | Controlled interference and capacity baseline | **Done 2026-09-11**; follow-up: Fixed-allocation interference variant |
 | 3 | Reduce avoidable per-request overhead | Repeatable small-request gain with unchanged correctness |
 | 4 | Improve random draining | Fewer lower requests or better drain throughput, no starvation |
 | 5 | Stable block ownership, short critical sections | Delayed lower I/O no longer blocks unrelated RAM operations |
