@@ -131,6 +131,33 @@ and the writer evicting the hot set under Automatic allocation (~81,000 evicted 
 256 MiB read set). The second is worth testing against a Fixed allocation with a reserved read
 share.
 
+### Allocation follow-up: eviction is secondary, serialization is dominant
+
+Repeat of the interference pair with a reserved read quota (`--allocation Fixed`), 3 repeats each,
+same session, medians:
+
+| Allocation | Reader alone | Reader + writer | Reader p99 under load | Reader misses |
+|---|---|---|---|---|
+| Automatic | 305,508 IOPS | 53.6 IOPS | 313.9 ms | 2.4 MiB |
+| Fixed, 50% write share | 308,514 IOPS | **177.8 IOPS** | **126.6 ms** | **0 MiB** |
+| Fixed, 25% write share | 309,060 IOPS | 175.0 IOPS | 119.9 ms | **0 MiB** |
+
+With a slowed lower device (25 ms), Fixed allocation helps nothing at all: 14.0 IOPS / 1,008 ms
+versus 16.5 IOPS / 1,003 ms.
+
+This separates the two mechanisms cleanly:
+
+- **Eviction of the hot set is real and cheaply mitigated.** A reserved read quota removes read
+  misses entirely (2.4 MiB → 0) and improves the loaded reader by **3.3x**. That is a
+  configuration-level mitigation available today, not a redesign.
+- **Serialization dominates.** Even fully protected from eviction, the reader still runs about
+  **1,700x slower** than it does alone, and it still inherits the full lower-device delay. No
+  allocation setting can fix that; it is the request-path and locking work in phases 3–6 of the
+  [plan](PERFORMANCE_PLAN.md).
+
+Side effect worth noting: Fixed allocation makes the *writer* thrash its smaller quota (throttle
+waits 694 → 3,759, evictions 83,573 → 241,152). Protecting reads has a real write-side cost.
+
 ### Reads scale with threads, writes do not
 
 | Cached 4 KiB workload | QD1 T1 | QD32 T1 | QD8 T4 |
@@ -173,6 +200,24 @@ Still no throughput winner: every cell is within run-to-run spread (write QD32 T
 throughput, **Idle issued roughly half the lower writes** of Eager in the small-request cells
 (4,450 versus 9,717 at QD1 T1), i.e. more RAM coalescing and less disk traffic. That is the
 expected behaviour and a better argument for Idle than any score in this matrix.
+
+## Source map for the paths measured here
+
+Where each measured behaviour lives, for anyone acting on these numbers.
+
+| Path | Role in these measurements |
+|---|---|
+| `driver/qcache/lab.cpp` | `RequestWorker` — the single per-device thread every cached read, write, flush and unknown IOCTL is executed on; `QueueRequest`/CSQ insertion, direct pass-through when caching is inactive, and the private telemetry IOCTLs answered outside the queue |
+| `driver/qcache/writecache.cpp` | `Write()` admission and capacity wait, `Read()` overlay and read-miss path, `Drainer()` background drain and gather batching, `QcCacheBarrier()` flush/disable, `Publish()` snapshot on every request, `TryTrim()`, and `QcMayChangeMedia()` control classification |
+| `driver/qcache/cacheblocks.inl` | Block index, dirty FIFO and clean read/write LRUs, `Evict`/`EvictOldest`/`ClearClean`, `ReadRoom`, `TouchClean`, `WriteLimit`/`ReadLimit` — the eviction behaviour the allocation experiment exercised |
+| `driver/qcache/cachepolicy.h` | `QcShouldDrain()` drain eligibility for Eager/Balanced/Idle, watermarks, `QcWriteLimit()` write-pool sizing |
+| `driver/qcache/writecache.h` | `QC_CACHE`, `QC_SLOT`, `QC_DRAIN_WORKER` and the control action enum, including `QcDropClean` used to reset cache state between measurements |
+| `src/QueueCache.Management/CacheOptions.cs` | Managed mirror of the policy contract: allocation, write share, drain algorithm, watermarks, batch size, parallelism |
+| `src/QueueCache.Management/WriteCacheState.cs` | Snapshot decoding for every counter quoted above (accepted, drained, read hit/miss, evictions, throttle waits, lower/batched writes) |
+| `src/QueueCache.Management/CacheDevice.cs` | Device handle and IOCTL surface used by the CLI and the harness |
+| `src/QueueCache.Cli/Commands.cs`, `src/QueueCache.Cli/LegacyCommands.cs` | `qcache policy apply/pause/flush/drop-clean/status` and `lab-delay`, the exact commands the harness drives |
+| `developer/scripts/Measure-Performance.ps1` | The harness itself |
+| `docs/PERFORMANCE_PLAN.md` | Phased work plan derived from these results |
 
 ## What this baseline does not show
 

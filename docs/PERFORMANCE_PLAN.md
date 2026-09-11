@@ -31,16 +31,21 @@ Phase 2 has been executed once (3 repeats, Eager versus Idle interleaved, median
 | Capacity pressure is now reachable and measured | 7,785 throttle waits, p99 18.2 ms |
 | Idle coalesces more than Eager at equal throughput | ~half the lower writes |
 
-Still open: the **split between queueing behind the writer's lower I/O and the writer evicting the
-hot read set** under Automatic allocation (both happened in the interference run), and all
-in-driver time attribution. Phase 1 instrumentation remains the prerequisite for the latter.
+The allocation follow-up has since been run (Fixed 50% and 25% write share, 3 repeats each):
+a reserved read quota removes hot-set eviction completely (reader misses 2.4 MiB → 0) and
+improves the loaded reader **3.3x** (53.6 → 177.8 IOPS, p99 313.9 → 126.6 ms) — but the reader is
+still ~1,700x slower than unloaded and gains nothing when the lower device is slowed. So:
 
-Two additions to the plan from these results:
+- **Eviction is a secondary, configuration-level problem** with a mitigation available today
+  (Fixed allocation, at the cost of the writer thrashing its smaller quota: throttle waits
+  694 → 3,759).
+- **Serialization is the dominant problem** and cannot be tuned away. Phases 3–6 stand.
 
-- **Phase 2 follow-up (cheap, do first):** repeat the interference experiment with Fixed
-  allocation and a reserved read share. If a protected read quota restores reader latency, part
-  of the problem is eviction policy rather than scheduling, and the fix is far cheaper than
-  Phase 6.
+Still open: all in-driver time attribution — queue wait versus cache-lock contention versus
+staging copy versus lower-device time. Phase 1 instrumentation remains the prerequisite.
+
+One addition to the plan from these results:
+
 - **Phase 4 gains a concrete target:** drain parallelism 2 already improves both foreground
   throughput (+36%) and drain rate (+14%) over the default of 1. Treat raising the default to 2
   as a measured candidate, but only once Phase 1 can show why 4 collapses the foreground.

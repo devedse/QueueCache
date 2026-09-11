@@ -33,6 +33,10 @@ param(
     [ValidateSet('off', 'Eager', 'Balanced', 'Idle')][string[]]$Configs = @('Eager', 'Idle'),
     [ValidateSet('small-request', 'interference', 'capacity', 'slow-storage', 'random-drain', 'drain-parallelism', 'flush-under-load')]
     [string[]]$Experiments = @('small-request', 'interference', 'capacity', 'slow-storage', 'random-drain', 'drain-parallelism', 'flush-under-load'),
+    # Allocation under test. Fixed reserves -WritePercent of the payload for writes, so a hot read
+    # set cannot be evicted by a background writer; Automatic lets writes take the whole pool.
+    [ValidateSet('Automatic', 'Fixed')][string]$Allocation = 'Automatic',
+    [ValidateRange(0, 100)][int]$WritePercent = 50,
     [ValidateRange(1, 10)][int]$Repeats = 3,
     # Measured seconds per DiskSpd window. Warm-up is added on top.
     [ValidateRange(3, 120)][int]$Duration = 10,
@@ -76,7 +80,7 @@ function Assert-Target {
     if (-not (Test-Path -LiteralPath $DiskSpd)) { throw "DiskSpd not found: $DiskSpd" }
     $state = Get-State
     if (-not $state) { throw "No QueueCache state for $Volume. Install the driver and restart Windows first." }
-    Say "target $Volume on disk $($disk.Number) ($($disk.FriendlyName)); driver instance $($state.Instance) revision $($state.Generation); free $([math]::Round($target.SizeRemaining/1GB,1)) GiB"
+    Say "target $Volume on disk $($disk.Number) ($($disk.FriendlyName)); driver instance $($state.Instance) revision $($state.Generation); free $([math]::Round($target.SizeRemaining/1GB,1)) GiB; allocation $Allocation/$WritePercent%"
     $state
 }
 
@@ -84,7 +88,7 @@ function Apply-Config([string]$config, [int]$parallelism = 1) {
     if ($config -eq 'off') { Qc 'policy' 'pause' $Volume | Out-Null }
     else {
         Qc 'policy' 'apply' $Volume '--budget-mib' $BudgetMiB '--preset' 'Fast' '--drain' $config `
-            '--drain-parallelism' $parallelism '--save' | Out-Null
+            '--allocation' $Allocation '--write-percent' $WritePercent '--drain-parallelism' $parallelism '--save' | Out-Null
     }
     $state = Get-State
     $expected = if ($config -eq 'off') { 'Paused' } else { 'Active' }
@@ -141,6 +145,7 @@ function Add-Row([hashtable]$fields, $before, $after, [double]$seconds) {
     $row = [ordered]@{
         Timestamp = (Get-Date).ToString('s'); Volume = $Volume; BudgetMiB = $BudgetMiB
         DriverInstance = $after.Instance; DriverRevision = $after.Generation; Seconds = [math]::Round($seconds, 2)
+        Allocation = $Allocation; WritePercent = $WritePercent
     }
     foreach ($k in $fields.Keys) { $row[$k] = $fields[$k] }
     $delta = {
@@ -221,7 +226,8 @@ try {
             Say "=== repeat $repeat / config $config ==="
             $null = Apply-Config $config
             Reset-Cache
-            $base = @{ Repeat = $repeat; Config = $config }
+            # The allocation is part of the configuration identity, so it must appear in every row.
+            $base = @{ Repeat = $repeat; Config = "$config-$Allocation$(if ($Allocation -eq 'Fixed') { "-w$WritePercent" })" }
 
             if ($Experiments -contains 'small-request') {
                 Warm-ReadSet $readFile
@@ -300,8 +306,13 @@ finally {
     $restore = switch ($originalDrain) { '1' { 'Balanced' } '2' { 'Idle' } default { 'Eager' } }
     if ($original.BudgetBytes -gt 0) {
         $wanted = [int]($original.BudgetBytes / 1MB)
+        # Restore the allocation too: apply defaults to Automatic, which would silently drop a
+        # Fixed read/write split the disk had before the run.
+        $allocation = if ($original.Options -and $original.Options.Allocation -eq 1) { 'Fixed' } else { 'Automatic' }
+        $share = if ($original.Options) { [int]$original.Options.WritePercent } else { 50 }
         Qc 'policy' 'apply' $Volume '--budget-mib' $wanted '--preset' `
-            $(if ($original.UnsafeDefer) { 'Fast' } else { 'Strict' }) '--drain' $restore '--save' | Out-Null
+            $(if ($original.UnsafeDefer) { 'Fast' } else { 'Strict' }) '--drain' $restore `
+            '--allocation' $allocation '--write-percent' $share '--save' | Out-Null
         # Restoring a larger budget can legitimately fail the available-memory preflight.
         # Never let that pass silently: the disk would keep the benchmark's settings.
         $now = Get-State
