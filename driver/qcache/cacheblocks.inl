@@ -85,6 +85,13 @@ static bool EvictOldest(QC_CACHE* c) {
     auto first = c->Slots[c->CleanHead[0]].DirtySince <= c->Slots[c->CleanHead[1]].DirtySince ? 0UL : 1UL;
     return Evict(c, first) || Evict(c, 1 - first);
 }
+static bool EvictForWrite(QC_CACHE* c, ULONG requestSlots) {
+    // Retained writes are expendable first. Below the read-demand floor, wait
+    // for dirty draining instead of wiping the hot set. Never evict dirty slots.
+    if (Evict(c, 0)) return true;
+    const auto protectedReads = QcProtectedReadSlots(c->Capacity, c->CleanCount[1], requestSlots);
+    return c->CleanCount[1] > protectedReads && Evict(c, 1);
+}
 static ULONG WriteLimit(QC_CACHE* c) { return QcWriteLimit(c->Options, c->Capacity); }
 static ULONG ReadLimit(QC_CACHE* c) {
     return c->Options.Allocation == QcAutomatic ? c->Capacity : c->Capacity - WriteLimit(c);

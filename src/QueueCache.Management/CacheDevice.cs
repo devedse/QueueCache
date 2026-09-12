@@ -41,8 +41,8 @@ public sealed class CacheDevice : IDisposable
         var data = new byte[CachePerformance.WireSize];
         if (!Native.DeviceIoControl(handle, PerformanceIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Advertised performance telemetry unavailable.");
-        if (returned != data.Length) throw new InvalidDataException("Invalid performance snapshot length.");
-        return CachePerformance.Decode(data);
+        if (returned > data.Length) throw new InvalidDataException("Invalid performance snapshot length.");
+        return CachePerformance.Decode(data.AsSpan(0, (int)returned));
     }
 
     public CacheDiagnostics GetDiagnostics()

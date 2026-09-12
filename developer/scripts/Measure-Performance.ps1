@@ -34,7 +34,8 @@ param(
     [ValidateSet('small-request', 'interference', 'capacity', 'slow-storage', 'random-drain', 'drain-parallelism', 'flush-under-load')]
     [string[]]$Experiments = @('small-request', 'interference', 'capacity', 'slow-storage', 'random-drain', 'drain-parallelism', 'flush-under-load'),
     # Allocation under test. Fixed reserves -WritePercent of the payload for writes, so a hot read
-    # set cannot be evicted by a background writer; Automatic lets writes take the whole pool.
+    # set cannot be evicted by a background writer; Automatic shares spare capacity
+    # and newer drivers protect resident read demand up to half the payload pool.
     [ValidateSet('Automatic', 'Fixed')][string]$Allocation = 'Automatic',
     [ValidateRange(0, 100)][int]$WritePercent = 50,
     [ValidateRange(1, 10)][int]$Repeats = 3,

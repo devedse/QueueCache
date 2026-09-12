@@ -4,6 +4,7 @@
 #include <ntifs.h>
 #include <ntdddisk.h>
 #include "qcstats.h"
+#include "observation.h"
 #if QCACHE_WRITE_LAB
 #include "writecache.h"
 #endif
@@ -29,6 +30,7 @@ struct LAB_EXTENSION {
     LONG PendingControls;
     KEVENT DirectIdle;
     ULONGLONG NextSequence;
+    ULONGLONG ReadServiceEpoch; // Normal worker admissions, not drain wakeups.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
 #endif
 };
@@ -89,6 +91,7 @@ static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert) {
     ext->Routing = TRUE;
     if (reinsert) InsertHeadList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
     else {
+        irp->Tail.Overlay.DriverContext[2] = nullptr; // Last unsuccessful bypass epoch.
         irp->Tail.Overlay.DriverContext[0] = reinterpret_cast<PVOID>(++ext->NextSequence);
         irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(KeQueryPerformanceCounter(nullptr).QuadPart);
         InsertTailList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
@@ -106,6 +109,23 @@ static void QueueRemove(PIO_CSQ csq, PIRP irp) {
     RemoveEntryList(&irp->Tail.Overlay.ListEntry);
 }
 struct READ_SELECTION { PIRP BlockedRequest; ULONGLONG AfterSequence; };
+#if QCACHE_WRITE_LAB
+static void Increment(ULONGLONG* value) {
+    InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(value));
+}
+#endif
+static void RecordSelection(QC_PERFORMANCE* performance, PIRP request, ULONG scanned) {
+    auto stack = IoGetCurrentIrpStackLocation(request);
+    performance->LastSelectionMajor = stack->MajorFunction;
+    performance->LastSelectionCode = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL ||
+        stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL ? stack->Parameters.DeviceIoControl.IoControlCode : 0;
+    performance->LastSelectionSequence = reinterpret_cast<ULONGLONG>(request->Tail.Overlay.DriverContext[0]);
+    performance->LastSelectionScanned = scanned;
+    if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) {
+        performance->LastSelectionOffset = stack->Parameters.Read.ByteOffset.QuadPart;
+        performance->LastSelectionLength = stack->Parameters.Read.Length;
+    } else performance->LastSelectionOffset = performance->LastSelectionLength = 0;
+}
 static bool Overlaps(PIRP read, PIRP write) {
     auto r = IoGetCurrentIrpStackLocation(read); auto w = IoGetCurrentIrpStackLocation(write);
     auto a = r->Parameters.Read.ByteOffset.QuadPart; auto b = w->Parameters.Write.ByteOffset.QuadPart;
@@ -114,29 +134,79 @@ static bool Overlaps(PIRP read, PIRP write) {
                   : static_cast<ULONGLONG>(a - b) < w->Parameters.Write.Length;
 }
 static PIRP QueuePeek(PIO_CSQ csq, PIRP irp, PVOID context) {
-    auto head = &QueueOwner(csq)->Pending;
+    auto ext = QueueOwner(csq); auto head = &ext->Pending;
     auto next = irp ? irp->Tail.Overlay.ListEntry.Flink : head->Flink;
     if (!context) return next == head ? nullptr : CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
     auto selection = static_cast<READ_SELECTION*>(context);
-    // Bounded scan under the CSQ spinlock. Every non-read/write is a fence.
+#if QCACHE_WRITE_LAB
+    auto performance = &ext->Cache.Performance;
+    const bool diagnostics = ext->Cache.Timing != 0;
+#endif
+    // Bounded scan under the CSQ spinlock. Only explicit observations are not fences.
     // Check ALL older queued writes, not only the currently capacity-blocked one.
     ULONG scanned = 0;
-    for (; next != head && scanned++ < 64; next = next->Flink) {
+    for (; next != head && scanned < 64; next = next->Flink) {
+        ++scanned;
         auto candidate = CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
         auto major = IoGetCurrentIrpStackLocation(candidate)->MajorFunction;
-        if (major != IRP_MJ_READ && major != IRP_MJ_WRITE) break;
-        if (major != IRP_MJ_READ || IoGetCurrentIrpStackLocation(candidate)->Parameters.Read.Length > 1024 * 1024 ||
-            reinterpret_cast<ULONGLONG>(candidate->Tail.Overlay.DriverContext[0]) <= selection->AfterSequence ||
-            (selection->BlockedRequest && Overlaps(candidate, selection->BlockedRequest))) continue;
+#if QCACHE_WRITE_LAB
+        if (diagnostics) RecordSelection(performance, candidate, scanned);
+#endif
+        if (major != IRP_MJ_READ && major != IRP_MJ_WRITE) {
+            if (QcObservationRequest(IoGetCurrentIrpStackLocation(candidate))) continue;
+#if QCACHE_WRITE_LAB
+            if (diagnostics) Increment(&performance->SelectionRejectFence);
+#endif
+            break;
+        }
+        if (major != IRP_MJ_READ) {
+#if QCACHE_WRITE_LAB
+            if (diagnostics) Increment(&performance->SelectionRejectNotRead);
+#endif
+            continue;
+        }
+        if (reinterpret_cast<ULONGLONG>(candidate->Tail.Overlay.DriverContext[2]) == ext->ReadServiceEpoch) continue;
+        if (IoGetCurrentIrpStackLocation(candidate)->Parameters.Read.Length > 1024 * 1024) {
+#if QCACHE_WRITE_LAB
+            if (diagnostics) Increment(&performance->SelectionRejectMaxSize);
+#endif
+            continue;
+        }
+        if (reinterpret_cast<ULONGLONG>(candidate->Tail.Overlay.DriverContext[0]) <= selection->AfterSequence) {
+#if QCACHE_WRITE_LAB
+            if (diagnostics) Increment(&performance->SelectionRejectAfterSequence);
+#endif
+            continue;
+        }
+        if (selection->BlockedRequest && Overlaps(candidate, selection->BlockedRequest)) {
+#if QCACHE_WRITE_LAB
+            if (diagnostics) Increment(&performance->SelectionRejectActiveOverlap);
+#endif
+            continue;
+        }
         bool conflict = false;
         for (auto older = head->Flink; older != next; older = older->Flink) {
             auto request = CONTAINING_RECORD(older, IRP, Tail.Overlay.ListEntry);
             auto previousMajor = IoGetCurrentIrpStackLocation(request)->MajorFunction;
-            if ((previousMajor != IRP_MJ_READ && previousMajor != IRP_MJ_WRITE) ||
-                (previousMajor == IRP_MJ_WRITE && Overlaps(candidate, request))) { conflict = true; break; }
+            if (previousMajor != IRP_MJ_READ && previousMajor != IRP_MJ_WRITE) {
+                if (QcObservationRequest(IoGetCurrentIrpStackLocation(request))) continue;
+#if QCACHE_WRITE_LAB
+                if (diagnostics) { Increment(&performance->SelectionRejectFence); RecordSelection(performance, request, scanned); }
+#endif
+                conflict = true; break;
+            }
+            if (previousMajor == IRP_MJ_WRITE && Overlaps(candidate, request)) {
+#if QCACHE_WRITE_LAB
+                if (diagnostics) { Increment(&performance->SelectionRejectOlderWriteOverlap); RecordSelection(performance, request, scanned); }
+#endif
+                conflict = true; break;
+            }
         }
         if (!conflict) return candidate;
     }
+#if QCACHE_WRITE_LAB
+    if (diagnostics && next != head && scanned == 64) Increment(&performance->SelectionScanLimit);
+#endif
     return nullptr;
 }
 static void QueueAcquire(PIO_CSQ csq, PKIRQL irql) { KeAcquireSpinLock(&QueueOwner(csq)->QueueLock, irql); }
@@ -149,22 +219,44 @@ static void QueueCancel(PIO_CSQ csq, PIRP irp) {
 static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
     auto ext = static_cast<LAB_EXTENSION*>(context);
     KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    const bool diagnostics = ext->Cache.Timing != 0;
+    if (diagnostics) {
+        Increment(&ext->Cache.Performance.ServiceReadCalls);
+        ext->Cache.Performance.LastAfterSequence = 0;
+        if (blockedRequest) {
+            auto stack = IoGetCurrentIrpStackLocation(blockedRequest);
+            ext->Cache.Performance.LastBlockedMajor = stack->MajorFunction;
+            ext->Cache.Performance.LastBlockedOffset = stack->Parameters.Write.ByteOffset.QuadPart;
+            ext->Cache.Performance.LastBlockedLength = stack->Parameters.Write.Length;
+        } else ext->Cache.Performance.LastBlockedMajor = ext->Cache.Performance.LastBlockedOffset =
+            ext->Cache.Performance.LastBlockedLength = 0;
+    }
     KeClearEvent(&ext->WorkAvailable);
     const bool closing = ext->Closing != FALSE;
     KeReleaseSpinLock(&ext->QueueLock, irql);
     if (closing) return false;
     READ_SELECTION selection{blockedRequest, 0};
     bool completed = false;
+    ULONG used = 0;
     for (ULONG n = 0; n < 8; ++n) {
         auto read = IoCsqRemoveNextIrp(&ext->Csq, &selection);
-        if (!read) break;
+        if (!read) { if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadNoCandidate); break; }
+        ++used;
+        if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadAttempts);
         selection.AfterSequence = reinterpret_cast<ULONGLONG>(read->Tail.Overlay.DriverContext[0]);
+        if (diagnostics) InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&ext->Cache.Performance.LastAfterSequence), selection.AfterSequence);
         NTSTATUS status;
         if (QcCacheTryReadHit(&ext->Cache, read, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &status)) {
             auto bytes = NT_SUCCESS(status) ? read->IoStatus.Information : 0;
             IoReleaseRemoveLock(&ext->RemoveLock, read); Complete(read, status, bytes);
+            if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadCompletions);
             completed = true;
         } else {
+            if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadMisses);
+            // The sole foreground owner is still blocked. Draining and cache hits
+            // cannot populate a missing block; retry after normal admission advances.
+            // DriverContext[3] belongs to CSQ and must never be used here.
+            read->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(ext->ReadServiceEpoch);
             // A miss must not block this lane on the lower device. Reinsertion at
             // the head crosses only reads/non-overlapping writes already checked.
             // CSQ may cancel/free it inline; never touch it after successful insert.
@@ -174,6 +266,7 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
             }
         }
     }
+    if (diagnostics && used == 8) Increment(&ext->Cache.Performance.ServiceReadBudgetExhausted);
     return completed;
 }
 #endif
@@ -184,6 +277,7 @@ static void RequestWorker(PVOID context) {
         if (irp) {
             KIRQL activeIrql; KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
             ext->ActiveMajor = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
+            if (++ext->ReadServiceEpoch == 0) ++ext->ReadServiceEpoch;
             ext->ActiveSince = KeQueryPerformanceCounter(nullptr).QuadPart;
             KeReleaseSpinLock(&ext->QueueLock, activeIrql);
             // A control request closes direct admission under QueueLock. Complete
@@ -401,7 +495,8 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(diagnostics));
         }
         if (code == IOCTL_QCACHE_PERFORMANCE_V1) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_PERFORMANCE)) {
+            auto outputLength = stack->Parameters.DeviceIoControl.OutputBufferLength;
+            if (outputLength < QcPerformanceV1Size) {
                 IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
             QC_PERFORMANCE performance; QcCachePerformance(&ext->Cache, &performance);
@@ -420,8 +515,10 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             }
             KeReleaseSpinLock(&ext->QueueLock, irql);
 #endif
-            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &performance, sizeof(performance));
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(performance));
+            auto bytes = outputLength < sizeof(performance) ? QcPerformanceV1Size : sizeof(performance);
+            if (bytes == QcPerformanceV1Size) { performance.Version = 1; performance.Size = QcPerformanceV1Size; }
+            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &performance, bytes);
+            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, bytes);
         }
         if (code == IOCTL_QCACHE_STATE_V1) {
             if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE)) {
@@ -463,6 +560,16 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     if (stack->MajorFunction == IRP_MJ_READ) InterlockedAdd64(&ext->ReadBytes, stack->Parameters.Read.Length);
     if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedAdd64(&ext->WrittenBytes, stack->Parameters.Write.Length);
 #if QCACHE_SERIALIZED_LAB
+    if (QcObservationRequest(stack)) {
+        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+        const bool closing = ext->Closing != FALSE;
+        KeReleaseSpinLock(&ext->QueueLock, irql);
+        if (closing) { IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_DELETE_PENDING); }
+        // Preserve caller context, real lower response and normal cancellation.
+        // RemoveLock spans completion/removal. No DirectCount: an observation
+        // must not hold up subsequent cache admission behind DirectIdle.
+        return Forward(ext, irp);
+    }
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
     // requests which must retain the original caller context. A control request
     // atomically switches subsequent traffic to the ordered worker.

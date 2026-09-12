@@ -4,6 +4,7 @@
 #include <ntddstor.h>
 #include <ntdddisk.h>
 #include <ntddscsi.h>
+#include "observation.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
@@ -71,7 +72,7 @@ static void Publish(QC_CACHE* c) {
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
     c->Diagnostics.Version = 1; c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
-    c->Performance.Version = 1; c->Performance.Size = sizeof(QC_PERFORMANCE);
+    c->Performance.Version = 2; c->Performance.Size = sizeof(QC_PERFORMANCE);
     c->Performance.TimingEnabled = c->Timing != 0;
     c->PerformanceSnapshot = c->Performance;
     KeReleaseSpinLock(&c->SnapshotLock, irql);
@@ -193,7 +194,9 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp) {
                 // whose current stack location belongs to the pending lower I/O.
                 if (c->ServiceReads(c->ServiceContext, nullptr)) continue;
                 PVOID objects[] = { &completed, c->RequestAvailable };
-                KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, nullptr);
+                auto waited = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, nullptr);
+                if (c->Timing) InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(waited == STATUS_WAIT_0 ?
+                    &c->Performance.WaitLowerCompleted : &c->Performance.WaitRequestAvailable));
             } else KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
         }
     }
@@ -502,7 +505,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp) {
         // Evictions may remove clean blocks referenced by this request; recalculate
         // the preflight after every eviction before touching any payload.
         auto writeUsed = c->State.DirtyBytes / Chunk + c->CleanCount[0];
-        if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictOldest(c)) continue;
+        if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictForWrite(c, length / Chunk)) continue;
         if (c->Options.Allocation == QcFixed && (needed > c->Capacity - c->Count ||
              writeUsed + newWriteOccupancy > WriteLimit(c)) && Evict(c, 0)) continue;
         if ((needed <= c->Capacity - c->Count && c->State.DirtyBytes / Chunk + newDirty <= WriteLimit(c)) || !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel) break;
@@ -517,8 +520,15 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp) {
         if (!c->ServiceReads || !c->ServiceReads(c->ServiceContext, irp)) {
             if (c->RequestAvailable) {
                 PVOID objects[] = { &c->Changed, c->RequestAvailable };
-                KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &interval, nullptr);
-            } else KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+                auto waited = KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &interval, nullptr);
+                if (c->Timing) InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(waited == STATUS_WAIT_0 ?
+                    &c->Performance.WaitChanged : waited == STATUS_WAIT_0 + 1 ? &c->Performance.WaitRequestAvailable :
+                    &c->Performance.WaitTimeout));
+            } else {
+                auto waited = KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+                if (c->Timing) InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(waited == STATUS_WAIT_0 ?
+                    &c->Performance.WaitChanged : &c->Performance.WaitTimeout));
+            }
         }
         AcquireCache(c);
         if (waitStart) c->Performance.CapacityWaitTicks += Tick() - waitStart;
@@ -782,7 +792,10 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {
     // whole clean cache within seconds on an otherwise idle disk. Only newly admitted
     // data, real modifications and explicit pause/remove/reconfigure may displace it.
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) {
-        if (!QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode)) return OriginalIo(c, irp);
+        // Only explicit observations bypass admission. Other controls retain the
+        // existing ordered-worker media-invalidation policy; do not turn every
+        // vendor inventory query into a clean-cache wipe as a side effect here.
+        if (QcObservationRequest(stack) || !QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode)) return OriginalIo(c, irp);
     }
     // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty writes.
     AcquireCache(c); bool dirty = c->State.DirtyBytes != 0;

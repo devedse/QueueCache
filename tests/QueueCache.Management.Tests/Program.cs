@@ -4,12 +4,16 @@ using QueueCache.Operations;
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 1);
+BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 2);
 BinaryPrimitives.WriteUInt32LittleEndian(perfWire.AsSpan(4), CachePerformance.WireSize);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 10_000_000);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 8), 2);
 var perf = CachePerformance.Decode(perfWire);
 Check(perf.PhaseName == "Waiting for write capacity" && perf.Milliseconds(10_000) == 1, "performance wire phase and QPC conversion");
+var legacyPerfWire = perfWire[..CachePerformance.LegacyWireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(legacyPerfWire, 1);
+BinaryPrimitives.WriteUInt32LittleEndian(legacyPerfWire.AsSpan(4), CachePerformance.LegacyWireSize);
+Check(CachePerformance.Decode(legacyPerfWire).ServiceReadCalls == 0, "performance v1 compatibility defaults appended counters");
 Reject(() => CachePerformance.Decode(perfWire[..^1]), "reject truncated performance response");
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 0);
 Reject(() => CachePerformance.Decode(perfWire), "reject zero performance frequency");

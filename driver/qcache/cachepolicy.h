@@ -26,6 +26,17 @@ constexpr bool QcValidOptions(const QC_OPTIONS& o) {
 constexpr ULONG QcWriteLimit(const QC_OPTIONS& o, ULONG capacity) {
     return o.Allocation == QcAutomatic ? capacity : static_cast<ULONG>(static_cast<ULONGLONG>(capacity) * o.WritePercent / 100);
 }
+// Protect resident read demand up to half the payload, borrowing unused space.
+// A large atomic request may reduce protection so it can eventually be admitted.
+constexpr ULONG QcProtectedReadSlots(ULONG capacity, ULONG residentReads, ULONG requestSlots) {
+    if (requestSlots >= capacity) return 0;
+    const auto ceiling = capacity / 2 < capacity - requestSlots ? capacity / 2 : capacity - requestSlots;
+    return residentReads < ceiling ? residentReads : ceiling;
+}
+static_assert(QcProtectedReadSlots(100, 30, 1) == 30);
+static_assert(QcProtectedReadSlots(100, 80, 1) == 50);
+static_assert(QcProtectedReadSlots(100, 80, 75) == 25);
+static_assert(QcProtectedReadSlots(100, 80, 100) == 0);
 // Background policies never override barriers or writers waiting for capacity.
 constexpr bool QcShouldDrain(const QC_OPTIONS& o, ULONGLONG dirty, ULONGLONG limit,
     ULONGLONG ageMs, ULONGLONG idleMs, bool forced, bool& pressure) {

@@ -21,7 +21,7 @@ public sealed class MainWindow : Window
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly List<Card> views = [];
     private bool busy, discovering, closed;
-    private int ticks;
+    private DateTimeOffset nextInventory = DateTimeOffset.MinValue;
     private readonly ICacheTaskService service;
     public MainWindow() : this(new WindowsCacheTaskService()) { }
     public MainWindow(ICacheTaskService service)
@@ -52,7 +52,7 @@ public sealed class MainWindow : Window
         Opened += async (_, _) => { timer.Start(); await Refresh(); };
         timer.Tick += async (_, _) =>
         {
-            // Staleness and inventory rediscovery follow the chosen interval, never a fixed tick count.
+            // Driver freshness follows telemetry frequency; identity discovery does not.
             var stale = TimeSpan.FromSeconds(Math.Max(3, timer.Interval.TotalSeconds * 3));
             foreach (var card in views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled > stale))
             {
@@ -63,7 +63,7 @@ public sealed class MainWindow : Window
             UpdateSummary();
             if (closed) return;
             // Discovery never holds up telemetry; each disk has at most one outstanding sample.
-            if (++ticks % Math.Max(1, (int)(10 / timer.Interval.TotalSeconds)) == 0 && !busy) _ = Refresh();
+            if (DateTimeOffset.UtcNow >= nextInventory && !busy) _ = Refresh();
             await Sample();
         };
         Closing += (_, e) => { if (busy || views.Any(v => v.Busy)) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
@@ -72,6 +72,9 @@ public sealed class MainWindow : Window
     {
         if (discovering || views.Any(v => v.Busy)) return;
         discovering = true;
+        // Cached identity plus manual refresh and a conservative fallback. Native
+        // device-change notification is a future refinement, not implemented here.
+        nextInventory = DateTimeOffset.UtcNow.AddMinutes(2);
         try
         {
             var disks = await service.ListAsync(); if (closed) return;

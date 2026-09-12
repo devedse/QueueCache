@@ -29,6 +29,11 @@ Check(labels.Contains("READABLE FROM RAM") && swatches.Length >= 7, "legend swat
 var colours = swatches.Select(b => (b.Background as Avalonia.Media.ISolidColorBrush)?.Color).ToArray();
 Check(new[] { "#3489DB", "#087F8C", "#9A66CC", "#E8F1F2" }.All(hex => colours.Contains(Avalonia.Media.Color.Parse(hex))), "legend colours match the occupancy palette");
 var buttons = window.GetVisualDescendants().OfType<Button>().ToArray();
+var inventoryReads = fixture.InventoryReads;
+buttons.Single(b => Equals(b.Content, "Refresh disks")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+Dispatcher.UIThread.RunJobs();
+Check(fixture.InventoryReads == inventoryReads + 1, "manual inventory refresh remains immediate between fallback scans");
+Check((DateTimeOffset)typeof(MainWindow).GetField("nextInventory", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)! > DateTimeOffset.UtcNow.AddSeconds(100), "inventory fallback is independent of fast telemetry interval");
 var pause = buttons.Single(b => Equals(b.Content, "Pause") && b.IsVisible);
 pause.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Check(fixture.Pauses == 1, "Pause uses shared task service");
@@ -105,11 +110,11 @@ sealed class Fixture : ICacheTaskService
     public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
         { Options = new(), CleanReadBytes = 1024UL << 20, CleanWriteBytes = 256UL << 20,
             Instance = 1, Generation = 2, GlobalLimitBytes = 6UL << 30, GlobalReservedBytes = 4UL << 30 };
-    public int Pauses, Removes, CleanDrops, DataReads, BlockedReads;
+    public int Pauses, Removes, CleanDrops, DataReads, BlockedReads, InventoryReads;
     public TaskCompletionSource<IReadOnlyList<DiskDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
     public TaskCompletionSource? PendingFlush;
-    public Task<IReadOnlyList<DiskDescription>> ListAsync() => PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks);
+    public Task<IReadOnlyList<DiskDescription>> ListAsync() { InventoryReads++; return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks); }
     public Task<WriteCacheState> ReadAsync(DiskDescription disk)
     {
         if (disk.Number == 0 && PendingDisk is not null) { BlockedReads++; return PendingDisk.Task; }

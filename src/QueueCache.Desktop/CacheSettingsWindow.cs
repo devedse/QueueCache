@@ -64,7 +64,7 @@ public sealed class CacheSettingsWindow : Window
         panel.Children.Add(MainWindow.Text($"{string.Join(" · ", disk.Volumes)}  /  {disk.Device}  /  {disk.SizeGiB:0.##} GiB", 13, MainWindow.Muted));
         Add(panel, "Total RAM budget", memory, "Total nonpaged RAM reserved for this disk, including block index, descriptors and staging buffers, so usable payload is slightly smaller.");
         panel.Children.Add(custom);
-        Add(panel, "Memory allocation", allocation, "Automatic: reads and writes share the whole payload pool and clean blocks yield space to writes. Fixed: the write share below is reserved for pending and retained writes.");
+        Add(panel, "Memory allocation", allocation, "Automatic: shares unused space while protecting resident read data up to half the payload pool. Retained writes yield first; very large writes can temporarily reduce read protection. Fixed: the write share below is reserved for pending and retained writes.");
         Add(panel, "Write share (%)", write, "Fixed allocation only: percentage of the payload pool reserved for writes. This is also the pool the draining percentages below are measured against.");
         panel.Children.Add(split);
         panel.Children.Add(retain); panel.Children.Add(promote);

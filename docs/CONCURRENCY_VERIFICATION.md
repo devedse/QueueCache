@@ -10,7 +10,7 @@ historical baseline in PERFORMANCE.md with predicted improvements.
 |---|---|---|
 | Capacity stalls | The request worker services independent, fully cached reads while its current write waits for space. | A full dirty cache still throttles writes. |
 | Cache misses | A pending lower read no longer holds the cache mutex. While waiting for completion, the worker can service independent RAM-hit reads. | This does not create parallel foreground writers or parallel cache-miss reads. |
-| Ordering | Selective CSQ dequeue checks the active blocked write and every earlier queued write for overlapping ranges. Any non-read/write request stops the scan. | Flush, TRIM, policy, power and PnP requests are fences; later reads must not bypass them. |
+| Ordering | Selective CSQ dequeue checks the active blocked write and every earlier queued write for overlapping ranges. Non-read/write requests stop the scan except explicitly classified observations. | Flush, TRIM, policy, power and PnP requests are fences; later reads must not bypass them. |
 | Ownership | Slots have pins, a Filling state and deferred retirement. A drained version needed by an ongoing read remains indexed until the final pin is released. | A pin protects the exact buffer version, not merely the disk address. |
 | Copies | Foreground write/read-hit payloads are copied outside the mutex in batches of up to 64 blocks. Drainers copy pinned versions into staging outside the mutex. | Read-miss admission still copies individual clean blocks under the mutex. Metadata/index work remains serialized. |
 | Drain locality | Start with the oldest eligible dirty block; search backwards by at most one batch, then gather forward by disk address. | No gaps are bridged, no newer version can pass an older in-flight version, no default parallelism increase. |
@@ -43,8 +43,9 @@ historical baseline in PERFORMANCE.md with predicted improvements.
    Successful old-version completion cannot retire or overwrite the newer version.
 8. No metadata mutex is held over lower read I/O, lower writes, lower Flush, or
    capacity waits. Snapshot polling never joins the request queue.
-9. No policy defaults, boot caching defaults, version numbers or saved profiles
-   are changed by this performance work.
+9. No boot caching defaults, version numbers or saved profiles are changed.
+   The observer follow-up changes Automatic eviction semantics as documented below;
+   Fixed allocation and the wire option defaults remain unchanged.
 
 ## Verification order
 
@@ -93,7 +94,10 @@ runs; compare throughput with timing disabled on both builds. Turning timing off
 does not reset accumulated counters. Old drivers must reject the new command in
 the managed capability check, without being sent an unknown IOCTL.
 
-Performance wire contract: version 1, 192 bytes, advertised by state flag 2048.
+Performance wire contract: version 2, 408 bytes, advertised by state flag 2048.
+The first 192 bytes remain the version 1 layout. A new driver returns that v1
+prefix to a client supplying a 192-byte buffer, and a new client accepts either
+version so updating the controller before the loaded driver remains safe.
 Durations are QPC ticks; divide by Frequency. Queue and cache samples use separate
 short locks and are not a single atomic transaction with V3 state. QueueWaitTicks
 includes queue departures due to cancellation and repeated lane attempts;
@@ -104,6 +108,26 @@ LowerIoTicks currently measures drainer lower-write time, including injected del
 not all lower I/O. DrainBytes/DrainBatches count attempts, including failed attempts;
 use normal DrainedBytes for successful disk acceptance. Lock counters are aggregate
 across foreground and drainer threads; they are not latency percentiles or CPU time.
+
+Version 2 appends bounded, lifetime diagnostics for the cooperative cached-read
+lane. They advance only while performance timing is enabled. `ServiceReadCalls`
+counts callback entries; `ServiceReadAttempts` counts IRPs removed for a hit-only
+lookup; `ServiceReadCompletions` and `ServiceReadMisses` classify those attempts.
+`ServiceReadNoCandidate` counts calls whose next removal found no eligible IRP,
+and `ServiceReadBudgetExhausted` counts calls that consumed the fixed eight-IRP
+budget. Selection rejection counters are mutually exclusive per examined
+candidate: queued write/not-read, sequence cursor, size, active-write overlap,
+older-write overlap, or a non-read/write fence. `SelectionScanLimit` means the
+64-entry scan ended with queue entries remaining. Wait counters classify returns
+as changed, request-available, timeout, or pending lower-read completion. The
+`Last*` fields are a bounded, best-effort snapshot of the blocking/candidate major
+function, control code, byte range, sequence cursor and scan position. They expose
+no kernel pointers and are not a transactional event log.
+
+These diagnostics do not change selection, wake, cache admission, or drain policy.
+If later evidence justifies scheduling changes, the intended priority is cached
+write admission, cached reads, then background drain, with progress guarantees to
+prevent starvation and capacity deadlock.
 
 ### Deterministic correctness scenarios
 
@@ -160,6 +184,54 @@ the Fixed-allocation ~120 ms / delayed ~1000 ms baseline, with writer progress a
 byte integrity intact. This is a target for acceptance, **not a measured result**.
 Investigate >10% repeatable regressions in unloaded reads/writes or successful drain
 throughput. Sparse random dirty sets may not benefit from adjacency gathering.
+
+## Observer isolation and Automatic protection follow-up
+
+Executable-test instructions and acceptance criteria are in
+[OBSERVER_FIX_VERIFICATION.md](OBSERVER_FIX_VERIFICATION.md).
+
+Implementation (VM acceptance pending):
+
+- `observation.h` is the explicit identity/health-query allowlist shared by
+  dispatch, cooperative selection and processing. These requests forward to the
+  lower stack asynchronously in caller context. They do not join `DirectCount`
+  or the cache admission queue. The existing completion routine retains the
+  remove lock until completion, and rejects admission once closing starts.
+  This does not fabricate a query response or promise a snapshot ordered with
+  concurrent layout changes. Unknown commands remain scheduling fences; their
+  existing media-invalidation policy is unchanged.
+- A bypass miss is attempted once per normal worker-admission epoch, recorded
+  in IRP DriverContext[2] before CSQ reinsertion. CSQ retains DriverContext[3].
+  During a blocked owner's wait, drainers can remove/change classification of
+  existing blocks but cannot populate an absent block. Hit-only reads likewise
+  cannot introduce previously absent coverage. Normal admission advances the
+  epoch and still dequeues misses normally; cancellation remains owned by CSQ.
+  This reduces repeated failed copies/lookups, not all bounded queue scans.
+- Automatic write eviction first reclaims retained clean writes. It protects
+  resident read blocks up to half the payload capacity, but allows a whole
+  request to reduce this ceiling to `capacity - requestSlots`. Unused allowance
+  is borrowable; Fixed and its write-percent setting are unchanged. This is a
+  demand-based heuristic, not a permanent reservation or a cold-read latency
+  guarantee. Existing dirty borrowing cannot be reclaimed until it drains.
+- Desktop identity inventory is cached with manual refresh and a two-minute
+  fallback independent of telemetry frequency. Native device-change refresh is
+  still future work; new disks may require manual refresh until that fallback.
+
+Acceptance batch for this follow-up:
+
+| Check | Required evidence |
+|---|---|
+| Exact observer matrix, Fixed50, delayed storage | Repeat none/telemetry/inventory/both in reversed order. Known query fences disappear; hot reader tails stay close to no-observer results. Record unknown fence codes separately. |
+| Real desktop open/closed and manual refresh under load | Sampling and query completion progress independently; no misleading live state. |
+| Automatic 256 MiB hot set, 1 GiB budget, delayed writer | Resident-read survival, raw miss deltas, reader p99.9/max, writer and drain progress; compare Fixed control. |
+| Empty read pool and requests above half payload | Writes borrow spare space; oversized atomic writes do not wait forever on the protection floor. |
+| Cold and partially cached reads under pressure | At most one failed hit attempt per owner epoch; requests eventually execute normally after capacity progress. Cancellation still completes. |
+| Ordering/lifecycle | Seeded overlap and post-drain bytes; real flush/TRIM/policy fences; inventory concurrent with cancellation and device removal. No hangs or leaked remove locks. |
+
+The pre-existing untracked concurrency harness writes the x64 OVERLAPPED file
+offset at byte 0 rather than byte 16 in CancelReads. Correct that before using
+its cancellation results as evidence about the intended file region. Prior
+passes are not exhaustive correctness coverage.
 
 ## Remaining architectural work, not claimed by this change
 

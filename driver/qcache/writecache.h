@@ -11,14 +11,24 @@
 #define IOCTL_QCACHE_OPTIONS_V1 CTL_CODE(0x8844UL, 0xD15UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
+// V2 appends opt-in cooperative-read diagnostics; the first 192 bytes remain V1.
 struct QC_PERFORMANCE {
     ULONG Version, Size;
     ULONGLONG Frequency, TimingEnabled, QueueDepth, OldestQueuedTicks, QueuedRequests, QueueWaitTicks, MaxQueueWaitTicks;
     ULONGLONG ActiveMajor, Phase, ActiveAgeTicks, CapacityWaits, CapacityWaitTicks, BypassReads, BypassMisses;
     ULONGLONG LockAcquires, LockWaitTicks, LockHoldTicks, MaxLockWaitTicks, MaxLockHoldTicks;
     ULONGLONG DrainBatches, DrainBytes, WakeSignals, LowerIoTicks;
+    ULONGLONG ServiceReadCalls, ServiceReadAttempts, ServiceReadCompletions, ServiceReadNoCandidate;
+    ULONGLONG SelectionRejectNotRead, SelectionRejectAfterSequence, SelectionRejectMaxSize;
+    ULONGLONG SelectionRejectActiveOverlap, SelectionRejectOlderWriteOverlap, SelectionRejectFence;
+    ULONGLONG SelectionScanLimit, ServiceReadBudgetExhausted, ServiceReadMisses;
+    ULONGLONG WaitChanged, WaitRequestAvailable, WaitTimeout, WaitLowerCompleted;
+    ULONGLONG LastBlockedMajor, LastBlockedOffset, LastBlockedLength;
+    ULONGLONG LastSelectionMajor, LastSelectionCode, LastSelectionOffset, LastSelectionLength;
+    ULONGLONG LastSelectionSequence, LastAfterSequence, LastSelectionScanned;
 };
-static_assert(sizeof(QC_PERFORMANCE) == 192);
+static constexpr ULONG QcPerformanceV1Size = 192;
+static_assert(sizeof(QC_PERFORMANCE) == 408);
 enum : ULONGLONG { QcIdlePhase, QcRequestPhase, QcCapacityPhase, QcDrainPhase, QcLowerFlushPhase, QcLowerReadPhase };
 struct QC_DIAGNOSTICS {
     ULONG Version, Size;

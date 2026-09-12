@@ -6,7 +6,7 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 
 | Setting | Behaviour |
 |---|---|
-| Automatic (default) | Read and write data share the payload pool. The least recently used clean block yields space; dirty data is never evicted. This is demand-driven sharing, not workload prediction. |
+| Automatic (default) | Read and write data share the payload pool. Writes evict retained clean writes first, protecting currently resident read data up to half the payload capacity. Unused read allowance is borrowable. An individual write larger than the remaining allowance reduces protection enough to admit that whole request. Dirty data is never evicted. This is demand-driven protection, not workload prediction. |
 | Fixed | `--write-percent` reserves that proportion of payload for dirty and retained-write data; the remainder holds clean reads. 0 is read-only, 100 write-only. |
 | Retain writes (default) | Successful background writes become clean cached blocks instead of immediately being discarded. |
 | Promote on read (default) | Reading a retained clean write moves it into the read quota without copying its payload. Dirty writes remain in the write quota until drained. |
