@@ -139,7 +139,7 @@ preflight rejects it.
   -BudgetMiB 1024 -ReadSetMiB 256 -CapacitySetMiB 4096 `
   -Allocation Fixed -WritePercent 50 -Configs Eager,Idle `
   -Experiments interference,slow-storage -Repeats 3 -Duration 10 `
-  -OutputDirectory 'C:\Users\remoteman\perf-concurrency-fixed50'
+  -OutputDirectory '<results-directory>\perf-concurrency-fixed50'
 ```
 
 Resolve the actual DiskSpd executable path first. Run detached if SSH child lifetime
