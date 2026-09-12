@@ -52,6 +52,15 @@ param(
 $ErrorActionPreference = 'Stop'
 $script:rows = @()
 $script:started = Get-Date
+$script:loads = @()
+
+function Get-Median($items) {
+    $sorted = @($items | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object)
+    if (-not $sorted.Count) { return $null }
+    $middle = [int][math]::Floor($sorted.Count / 2)
+    if ($sorted.Count % 2) { return $sorted[$middle] }
+    ($sorted[$middle - 1] + $sorted[$middle]) / 2
+}
 
 function Say($text) {
     $line = '{0:HH:mm:ss}  {1}' -f (Get-Date), $text
@@ -60,9 +69,13 @@ function Say($text) {
 }
 
 function Qc {
-    # Native stderr must not abort the run; callers check state instead.
+    # Preserve output, but never turn native failure into a successful experiment.
     $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-    try { & $Qcache @args 2>&1 | Out-String } finally { $ErrorActionPreference = $old }
+    try {
+        $result = & $Qcache @args 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "qcache failed ($LASTEXITCODE): $result" }
+        $result
+    } finally { $ErrorActionPreference = $old }
 }
 
 function Get-State { Qc 'policy' 'status' $Volume '--json' | ConvertFrom-Json }
@@ -85,10 +98,10 @@ function Assert-Target {
 }
 
 function Apply-Config([string]$config, [int]$parallelism = 1) {
-    if ($config -eq 'off') { Qc 'policy' 'pause' $Volume | Out-Null }
+    if ($config -eq 'off') { Qc 'policy' 'pause' $Volume '--runtime-only' | Out-Null }
     else {
         Qc 'policy' 'apply' $Volume '--budget-mib' $BudgetMiB '--preset' 'Fast' '--drain' $config `
-            '--allocation' $Allocation '--write-percent' $WritePercent '--drain-parallelism' $parallelism '--save' | Out-Null
+            '--allocation' $Allocation '--write-percent' $WritePercent '--drain-parallelism' $parallelism '--runtime-only' | Out-Null
     }
     $state = Get-State
     $expected = if ($config -eq 'off') { 'Paused' } else { 'Active' }
@@ -103,6 +116,7 @@ function New-TestFile([string]$name, [int]$sizeMiB) {
         Remove-Item $path -ErrorAction SilentlyContinue
         Say "creating $name ($sizeMiB MiB)"
         & $DiskSpd "-c$($sizeMiB)M" -b1M -o4 -t1 -w100 -d1 -S $path | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "DiskSpd file creation failed ($LASTEXITCODE)." }
         Qc 'policy' 'flush' $Volume | Out-Null
     }
     $path
@@ -125,22 +139,37 @@ function Read-DiskSpd([string]$text) {
         if ($row.Count) { $cols = @($row[0] -split '\|' | ForEach-Object { $_.Trim() }); $value = $cols[-1] }
         $result["Lat_$($p -replace '-', '')"] = $value
     }
+    if ($null -eq $result.IOPS) { throw "DiskSpd report has no parseable total." }
+    if ($result.IOPS -eq 0) {
+        $result.AvgLatMs = $null
+        foreach ($key in @($result.Keys)) { if ($key -like 'Lat_*') { $result[$key] = $null } }
+    }
     $result
 }
 
 function Invoke-DiskSpd([string]$label, [string[]]$spdArgs, [string]$path) {
     $text = (& $DiskSpd @spdArgs $path 2>&1 | Out-String)
+    $exitCode = $LASTEXITCODE
     Set-Content -Path (Join-Path $OutputDirectory "diskspd-$label.txt") -Value $text
+    if ($exitCode -ne 0) { throw "DiskSpd $label failed ($exitCode); see raw report." }
     Read-DiskSpd $text
 }
 
 function Start-BackgroundLoad([string[]]$spdArgs, [string]$path, [string]$label) {
     $out = Join-Path $OutputDirectory "diskspd-$label.txt"
-    Start-Process -FilePath $DiskSpd -ArgumentList ($spdArgs + $path) -RedirectStandardOutput $out `
+    $process = Start-Process -FilePath $DiskSpd -ArgumentList ($spdArgs + ('"' + $path + '"')) -RedirectStandardOutput $out `
         -WindowStyle Hidden -PassThru
+    $script:loads += $process
+    $process
 }
 
-# One result row: DiskSpd metrics plus driver counter deltas over the same window.
+function Finish-Load($process) {
+    if (-not $process.WaitForExit(120000)) { throw "Background DiskSpd timed out (PID $($process.Id))." }
+    if ($process.ExitCode -ne 0) { throw "Background DiskSpd failed ($($process.ExitCode))." }
+}
+
+# Driver counters bracket the entire invocation (including warmup); DiskSpd scores
+# cover its measurement interval only. These are NOT identical sample windows.
 function Add-Row([hashtable]$fields, $before, $after, [double]$seconds) {
     $row = [ordered]@{
         Timestamp = (Get-Date).ToString('s'); Volume = $Volume; BudgetMiB = $BudgetMiB
@@ -153,7 +182,13 @@ function Add-Row([hashtable]$fields, $before, $after, [double]$seconds) {
     }
     $row.AcceptedMiB = & $delta 'AcceptedBytes'
     $row.DrainedMiB = & $delta 'DrainedBytes'
-    $row.CoalescedMiB = [math]::Round(((($after.AcceptedBytes - $before.AcceptedBytes) - ($after.DrainedBytes - $before.DrainedBytes)) / 1MB), 1)
+    $row.DriverCounterWindow = 'Whole invocation including warmup, not DiskSpd score interval'
+    $row.DirtyDeltaMiB = & $delta 'DirtyBytes'
+    $row.DiscardedMiB = & $delta 'DiscardedBytes'
+    $row.CoalescedMiB = [math]::Round((([decimal]$after.AcceptedBytes - [decimal]$before.AcceptedBytes) -
+        ([decimal]$after.DrainedBytes - [decimal]$before.DrainedBytes) -
+        ([decimal]$after.DirtyBytes - [decimal]$before.DirtyBytes) -
+        ([decimal]$after.DiscardedBytes - [decimal]$before.DiscardedBytes)) / 1MB, 1)
     $row.ReadHitMiB = & $delta 'ReadHitBytes'
     $row.ReadMissMiB = & $delta 'ReadMissBytes'
     $row.LowerWrites = $after.LowerWrites - $before.LowerWrites
@@ -171,10 +206,14 @@ function Add-Row([hashtable]$fields, $before, $after, [double]$seconds) {
 
 function Measure-Window([hashtable]$fields, [string]$label, [string[]]$spdArgs, [string]$path) {
     $before = Get-State
+    if ($before.SupportsPerformance) { Qc 'developer' 'performance' $Volume | Set-Content (Join-Path $OutputDirectory "$label-performance-before.json") }
     $sw = [Diagnostics.Stopwatch]::StartNew()
     $metrics = Invoke-DiskSpd $label $spdArgs $path
     $sw.Stop()
     $all = @{} + $fields
+    $durationArgument = @($spdArgs | Where-Object { $_ -match '^-d\d+$' })[-1]
+    $all.ScoreSeconds = [int]$durationArgument.Substring(2)
+    if ($before.SupportsPerformance) { Qc 'developer' 'performance' $Volume | Set-Content (Join-Path $OutputDirectory "$label-performance-after.json") }
     foreach ($k in $metrics.Keys) { $all[$k] = $metrics[$k] }
     $row = Add-Row $all $before (Get-State) $sw.Elapsed.TotalSeconds
     Say ('{0,-18} {1,-26} {2,10} MiB/s {3,10} IOPS  avg {4,7} p95 {5,8} p99 {6,8} | miss {7,7} MiB thr {8,5} evc {9,7}' -f `
@@ -208,13 +247,14 @@ function Reset-Cache {
 function Warm-ReadSet([string]$path) {
     # Sequential warm pass, then confirm the set is actually resident.
     & $DiskSpd -b1M -o4 -t1 -w0 -d3 -S $path | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "DiskSpd warmup failed ($LASTEXITCODE)." }
     $state = Get-State
     Say ("warm read set: clean read $([math]::Round($state.CleanReadBytes/1MB,1)) MiB, retained $([math]::Round($state.CleanWriteBytes/1MB,1)) MiB")
 }
 
 $null = New-Item -ItemType Directory -Force -Path $OutputDirectory
 $original = Assert-Target
-$originalDrain = if ($original.Options) { [string]$original.Options.Drain } else { 'Eager' }
+$original | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $OutputDirectory 'original-state.json')
 $readFile = New-TestFile 'hot-read.dat' $ReadSetMiB
 $writeFile = New-TestFile 'writer.dat' 2048
 $capacityFile = if ($Experiments -contains 'capacity') { New-TestFile 'capacity.dat' $CapacitySetMiB } else { $null }
@@ -256,7 +296,7 @@ try {
                     Start-Sleep -Seconds 3
                     $f = $base + @{ Experiment = $experiment; Case = "reader-with-writer-d$delay" }
                     $null = Measure-Window $f "r$repeat-$config-$experiment-loaded" ($warm + @('-o8', '-t2', '-w0', "-d$Duration", '-W3')) $readFile
-                    if (-not $writer.HasExited) { $writer.WaitForExit(120000) | Out-Null }
+                    Finish-Load $writer
                     if ($delay -gt 0) { Qc 'lab-delay' $Volume 0 | Out-Null; Say 'lab-delay cleared' }
                     $null = Measure-Flush ($base + @{ Experiment = $experiment; Case = "post-writer-flush-d$delay" })
                 }
@@ -301,24 +341,37 @@ try {
     }
 }
 finally {
-    # Always clear the diagnostic delay and restore the original policy, including after a failure.
-    Qc 'lab-delay' $Volume 0 | Out-Null
-    $restore = switch ($originalDrain) { '1' { 'Balanced' } '2' { 'Idle' } default { 'Eager' } }
-    if ($original.BudgetBytes -gt 0) {
-        $wanted = [int]($original.BudgetBytes / 1MB)
-        # Restore the allocation too: apply defaults to Automatic, which would silently drop a
-        # Fixed read/write split the disk had before the run.
-        $allocation = if ($original.Options -and $original.Options.Allocation -eq 1) { 'Fixed' } else { 'Automatic' }
-        $share = if ($original.Options) { [int]$original.Options.WritePercent } else { 50 }
-        Qc 'policy' 'apply' $Volume '--budget-mib' $wanted '--preset' `
-            $(if ($original.UnsafeDefer) { 'Fast' } else { 'Strict' }) '--drain' $restore `
-            '--allocation' $allocation '--write-percent' $share '--save' | Out-Null
-        # Restoring a larger budget can legitimately fail the available-memory preflight.
-        # Never let that pass silently: the disk would keep the benchmark's settings.
-        $now = Get-State
-        if (-not $now -or [int]($now.BudgetBytes / 1MB) -ne $wanted) {
-            Say "WARNING: could not restore the original budget of $wanted MiB (now $([int]($now.BudgetBytes / 1MB)) MiB). Re-apply it manually when enough RAM is free: qcache policy apply $Volume --budget-mib $wanted --save"
-        }
+    # Stop only workloads started by this invocation before restoring policy.
+    foreach ($process in $script:loads) {
+        if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
+    }
+    $restoreError = $null
+    try {
+        Qc 'lab-delay' $Volume 0 | Out-Null
+        if ($original.BudgetBytes -gt 0) {
+            $wanted = [int]($original.BudgetBytes / 1MB)
+            $o = $original.Options
+            if (-not $o) { throw 'Cannot faithfully restore an older driver without full policy options.' }
+            $restoreArgs = @('policy', 'apply', $Volume, '--runtime-only', '--budget-mib', $wanted,
+                '--preset', $(if ($original.UnsafeDefer) { 'Fast' } else { 'Strict' }),
+                '--drain', @('Eager', 'Balanced', 'Idle')[[int]$o.Drain],
+                '--allocation', @('Automatic', 'Fixed')[[int]$o.Allocation],
+                '--write-percent', $o.WritePercent, '--low-percent', $o.LowPercent, '--high-percent', $o.HighPercent,
+                '--max-dirty-age-ms', $o.MaxDirtyAgeMs, '--idle-ms', $o.IdleMs,
+                '--batch-kib', $o.BatchKiB, '--drain-parallelism', $o.Parallelism)
+            if (-not $o.RetainWrites) { $restoreArgs += '--discard-drained' }
+            if (-not $o.PromoteOnRead) { $restoreArgs += '--no-promotion' }
+            Qc @restoreArgs | Out-Null
+            if (-not $original.Enabled) { Qc 'policy' 'pause' $Volume '--runtime-only' | Out-Null }
+            $now = Get-State
+            if ($now.BudgetBytes -ne $original.BudgetBytes -or $now.Enabled -ne $original.Enabled -or
+                ($now.Options | ConvertTo-Json -Compress) -ne ($original.Options | ConvertTo-Json -Compress)) {
+                throw 'Runtime policy restoration did not match the captured state.'
+            }
+        } else { Qc 'policy' 'remove' $Volume '--runtime-only' | Out-Null }
+    } catch {
+        $restoreError = $_
+        Say "WARNING: runtime restore failed: $_. Original state is in original-state.json; saved startup profile was not changed."
     }
     if ($script:rows.Count) {
         $csv = Join-Path $OutputDirectory 'results.csv'
@@ -327,20 +380,21 @@ finally {
         # Median and spread across repeats: a single sample cannot separate a change from drift.
         $summary = $script:rows | Group-Object Experiment, Case, Config | ForEach-Object {
             $values = @($_.Group.MiBps | Where-Object { $null -ne $_ } | Sort-Object)
-            $p99 = @($_.Group.Lat_99th | Where-Object { $_ } | ForEach-Object { [double]$_ } | Sort-Object)
+            $p99 = @($_.Group.Lat_99th | Where-Object { $null -ne $_ } | ForEach-Object { [double]$_ } | Sort-Object)
             [pscustomobject]@{
                 Experiment  = $_.Group[0].Experiment; Case = $_.Group[0].Case; Config = $_.Group[0].Config
                 Samples     = $_.Count
-                MedianMiBps = if ($values.Count) { $values[[int]([math]::Floor($values.Count / 2))] } else { $null }
+                MedianMiBps = Get-Median $values
                 MinMiBps    = if ($values.Count) { $values[0] } else { $null }
                 MaxMiBps    = if ($values.Count) { $values[-1] } else { $null }
-                MedianP99Ms = if ($p99.Count) { $p99[[int]([math]::Floor($p99.Count / 2))] } else { $null }
-                MedianThrottles = ($_.Group.ThrottleWaits | Measure-Object -Average).Average
+                MedianP99Ms = Get-Median $p99
+                MedianThrottles = Get-Median @($_.Group.ThrottleWaits)
             }
         }
         $summary | Export-Csv -Path (Join-Path $OutputDirectory 'summary.csv') -NoTypeInformation
         $summary | Format-Table -AutoSize | Out-String -Width 220 | Write-Host
         Say "results: $csv"
     }
-    Say ("finished in {0:0.0} minutes; policy restored to {1}" -f ((Get-Date) - $script:started).TotalMinutes, $restore)
+    Say ("finished in {0:0.0} minutes; restore succeeded: {1}" -f ((Get-Date) - $script:started).TotalMinutes, ($null -eq $restoreError))
+    if ($restoreError) { throw $restoreError }
 }

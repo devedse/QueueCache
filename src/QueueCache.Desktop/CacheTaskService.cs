@@ -26,7 +26,8 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public Task<WriteCacheState> ReadAsync(DiskDescription disk) => Task.Run(() =>
     {
         using var device = new CacheDevice(disk.Device);
-        return device.GetWriteCacheState();
+        var state = device.GetWriteCacheState();
+        return state.SupportsPerformance ? state with { Performance = device.GetPerformance() } : state;
     });
     public bool IsPersistent(DiskDescription disk) => SavedConfigurations.List().Any(p => p.Instance.Equals(disk.Instance, StringComparison.OrdinalIgnoreCase));
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>

@@ -19,13 +19,36 @@ static ULONGLONG MemoryLimit() {
 static ULONGLONG GlobalLimit;
 static ULONGLONG NowMs() { return KeQueryInterruptTime() / 10000; }
 #include "cacheblocks.inl"
-static void AcquireCache(QC_CACHE* c) { KeWaitForSingleObject(&c->Mutex, Executive, KernelMode, FALSE, nullptr); }
-static void ReleaseCache(QC_CACHE* c) { KeReleaseMutex(&c->Mutex, FALSE); }
+static ULONGLONG Tick() { return KeQueryPerformanceCounter(nullptr).QuadPart; }
+static void AcquireCache(QC_CACHE* c) {
+    const auto start = c->Timing ? Tick() : 0;
+    KeWaitForSingleObject(&c->Mutex, Executive, KernelMode, FALSE, nullptr);
+    c->LockStarted = c->Timing ? Tick() : 0;
+    if (start && c->LockStarted) {
+        const auto wait = c->LockStarted - start;
+        ++c->Performance.LockAcquires; c->Performance.LockWaitTicks += wait;
+        c->Performance.MaxLockWaitTicks = max(c->Performance.MaxLockWaitTicks, wait);
+    }
+}
+static void ReleaseCache(QC_CACHE* c) {
+    if (c->LockStarted) {
+        auto held = Tick() - c->LockStarted; c->Performance.LockHoldTicks += held;
+        c->Performance.MaxLockHoldTicks = max(c->Performance.MaxLockHoldTicks, held);
+    }
+    KeReleaseMutex(&c->Mutex, FALSE);
+}
+static void WakeDrainers(QC_CACHE* c) {
+    // NotificationEvent is level-triggered. Re-signalling an already-set event
+    // adds scheduler work without waking any additional waiter.
+    if (!KeReadStateEvent(&c->Wake)) {
+        ++c->Performance.WakeSignals; KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE);
+    }
+}
 // Caller holds Mutex. Dispatch can read the small coherent snapshot at DISPATCH_LEVEL.
 static void Publish(QC_CACHE* c) {
     c->State.Version = 1; c->State.Size = sizeof(QC_STATE);
     c->State.Flags = (c->Enabled ? 1UL : 0UL) | (!NT_SUCCESS(c->State.LastError) ? 2UL : 0UL) |
-        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL | 256UL | 1024UL; // 128: drain-and-release task support. 1024: QcDropClean support.
+        (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) | (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL | 256UL | 1024UL | 2048UL; // 128: drain-and-release task support. 1024: QcDropClean support.
     c->State.OccupiedSlots = c->Count;
     KIRQL irql; KeAcquireSpinLock(&c->SnapshotLock, &irql);
     c->Snapshot = c->State;
@@ -48,6 +71,9 @@ static void Publish(QC_CACHE* c) {
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
     c->Diagnostics.Version = 1; c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
+    c->Performance.Version = 1; c->Performance.Size = sizeof(QC_PERFORMANCE);
+    c->Performance.TimingEnabled = c->Timing != 0;
+    c->PerformanceSnapshot = c->Performance;
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 void QcCacheSnapshot(QC_CACHE* c, QC_STATE* output) {
@@ -70,6 +96,11 @@ void QcCacheSnapshotV3(QC_CACHE* c, QC_STATE_V3* output) {
 void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output) {
     KIRQL irql; KeAcquireSpinLock(&c->SnapshotLock, &irql);
     *output = c->DiagnosticsSnapshot;
+    KeReleaseSpinLock(&c->SnapshotLock, irql);
+}
+void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output) {
+    KIRQL irql; KeAcquireSpinLock(&c->SnapshotLock, &irql);
+    *output = c->PerformanceSnapshot;
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 static void Fault(QC_CACHE* c, NTSTATUS status) {
@@ -147,11 +178,25 @@ static NTSTATUS RetainCompletion(PDEVICE_OBJECT, PIRP, PVOID event) {
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp) {
+    const bool read = IoGetCurrentIrpStackLocation(irp)->MajorFunction == IRP_MJ_READ;
     KEVENT completed; KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
     auto status = IoCallDriver(c->Lower, irp);
-    if (status == STATUS_PENDING) KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
+    if (status == STATUS_PENDING) {
+        while (!KeReadStateEvent(&completed)) {
+            // This IRP remains owned by the lower stack until RetainCompletion.
+            // Cache.Read has pinned its hit versions before reaching this wait.
+            // Only hit-only reads may bypass; no nested lower request is issued.
+            if (read && c->ServiceReads && c->RequestAvailable) {
+                // Null means the active request is a read. Do not inspect an IRP
+                // whose current stack location belongs to the pending lower I/O.
+                if (c->ServiceReads(c->ServiceContext, nullptr)) continue;
+                PVOID objects[] = { &completed, c->RequestAvailable };
+                KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, nullptr);
+            } else KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
+        }
+    }
     return irp->IoStatus.Status;
 }
 static void Drainer(PVOID context) {
@@ -180,15 +225,26 @@ static void Drainer(PVOID context) {
         // Gather disk-adjacent blocks into a preallocated staging buffer. Their RAM
         // addresses need not be adjacent. Always choose the oldest version of each
         // address so a later completion can never overwrite newer data on disk.
+        // The oldest eligible block remains the fairness anchor. Gather forward
+        // by address below; never scan the whole cache under the mutex.
         auto index = c->Head;
         // Distinct disk ranges can drain concurrently. Never issue a newer version
         // while an older write to that address is still outstanding.
-        while (index != NoSlot && (c->Slots[index].InFlight ||
+        while (index != NoSlot && (c->Slots[index].InFlight || c->Slots[index].Filling ||
             FindOldestSlot(c, c->Slots[index].Offset.QuadPart) != index)) index = c->Slots[index].QueueNext;
         if (index == NoSlot) {
             KeClearEvent(&c->Wake); ReleaseCache(c);
             LARGE_INTEGER interval; interval.QuadPart = -1000000;
             KeWaitForSingleObject(&c->Wake, Executive, KernelMode, FALSE, &interval); continue;
+        }
+        // Arrival order can be random even when neighboring disk blocks are dirty.
+        // Walk backwards by at most one batch before gathering forwards, keeping
+        // the oldest eligible anchor in the batch and preserving version order.
+        auto batchBlocks = min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk;
+        for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back) {
+            auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
+            if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling) break;
+            index = previous;
         }
         auto first = &c->Slots[index];
         QC_SLOT io = *first;
@@ -197,35 +253,43 @@ static void Drainer(PVOID context) {
         io.Buffer = c->DrainBuffer + worker->Number * c->DrainCapacity; io.Length = 0;
         while (index != NoSlot && merged < min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk) {
             auto slot = &c->Slots[index];
-            if (slot->InFlight) break;
-            selected[merged++] = index; slot->InFlight = TRUE;
-            RtlCopyMemory(io.Buffer + io.Length, slot->Buffer, Chunk); io.Length += Chunk;
+            if (slot->InFlight || slot->Filling) break;
+            selected[merged++] = index; slot->InFlight = TRUE; ++slot->Pins;
+            io.Length += Chunk;
             index = FindOldestSlot(c, io.Offset.QuadPart + io.Length);
         }
         c->State.InFlightBytes += io.Length;
         auto delay = c->DelayMs;
         auto inject = c->InjectFault == 1 || c->InjectFault == 2 || c->InjectFault == 4 || c->InjectFault == 5 ? c->InjectFault : 0;
         if (inject) c->InjectFault = 0;
+        ++c->Performance.DrainBatches; c->Performance.DrainBytes += io.Length;
         Publish(c); ReleaseCache(c);
+        // InFlight + Pins keep these exact payload versions immutable and alive.
+        for (ULONG i = 0; i < merged; ++i)
+            RtlCopyMemory(io.Buffer + i * Chunk, c->Slots[selected[i]].Buffer, Chunk);
+        const auto lowerStart = c->Timing ? Tick() : 0;
         if (delay) { LARGE_INTEGER interval; interval.QuadPart = -10000LL * delay; KeDelayExecutionThread(KernelMode, FALSE, &interval); }
         // Lab-only synthetic failure/short-completion path, deliberately identified in controls.
         auto status = inject == 1 ? STATUS_IO_DEVICE_ERROR : inject == 2 ? STATUS_DEVICE_DATA_ERROR : LowerIo(c, IRP_MJ_WRITE, &io, inject);
         AcquireCache(c);
+        if (lowerStart) c->Performance.LowerIoTicks += Tick() - lowerStart;
         c->State.InFlightBytes -= io.Length;
-        for (ULONG i = 0; i < merged; ++i) c->Slots[selected[i]].InFlight = FALSE;
+        for (ULONG i = 0; i < merged; ++i) { c->Slots[selected[i]].InFlight = FALSE; --c->Slots[selected[i]].Pins; }
         if (NT_SUCCESS(status)) {
             ++c->LowerWrites; if (merged > 1) ++c->BatchedWrites;
             c->State.DirtyBytes -= io.Length;
             c->State.DrainedBytes += io.Length;
             for (ULONG i = 0; i < merged; ++i) {
                 auto completedIndex = selected[i]; auto slot = &c->Slots[completedIndex];
-                if (c->Enabled && (c->Options.Retention & QcRetainWrites) && FindSlot(c, slot->Offset.QuadPart) == completedIndex) {
+                const bool retain = c->Enabled && (c->Options.Retention & QcRetainWrites) && FindSlot(c, slot->Offset.QuadPart) == completedIndex;
+                if (retain || slot->Pins) {
+                    slot->RetireWhenUnpinned = !retain;
                     Unlink(c, completedIndex); slot->Dirty = FALSE; slot->ReadClass = FALSE; Link(c, completedIndex);
                 } else RetireSlot(c, completedIndex);
             }
             Publish(c); KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
         } else Fault(c, status); // Keep the dirty slot and stop retries until explicit recovery.
-        KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE); ReleaseCache(c);
+        WakeDrainers(c); ReleaseCache(c);
     }
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
@@ -233,6 +297,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower) {
     RtlZeroMemory(c, sizeof(*c)); c->Lower = lower;
     c->Head = c->Tail = c->FreeHead = NoSlot;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
+    LARGE_INTEGER frequency; KeQueryPerformanceCounter(&frequency); c->Performance.Frequency = frequency.QuadPart;
     c->Options = QcDefaultOptions(); c->Instance = InterlockedIncrement64(&NextInstance);
     GlobalLimit = MemoryLimit();
     // A disk-class upper filter can accidentally be installed ABOVE partmgr.
@@ -276,12 +341,13 @@ static void FreeSlots(QC_CACHE* c) {
 }
 NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable) {
     AcquireCache(c); if (disable) c->Enabled = FALSE;
-    c->Barrier = TRUE; Publish(c);
+    c->Barrier = TRUE; c->Performance.Phase = QcDrainPhase; Publish(c);
     while (c->State.DirtyBytes && NT_SUCCESS(c->State.LastError) && !c->Gone) {
-        KeClearEvent(&c->Changed); KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE);
+        KeClearEvent(&c->Changed); WakeDrainers(c);
         ReleaseCache(c); KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, nullptr); AcquireCache(c);
     }
     auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
+    c->Performance.Phase = QcLowerFlushPhase; Publish(c);
     bool inject = c->InjectFault == 3; if (inject) c->InjectFault = 0;
     ReleaseCache(c);
     if (NT_SUCCESS(status)) status = inject ? STATUS_IO_DEVICE_ERROR : LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
@@ -289,11 +355,11 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable) {
     if (NT_SUCCESS(status)) ++c->State.Flushes;
     else if (NT_SUCCESS(c->State.LastError)) Fault(c, status);
     if (disable && NT_SUCCESS(status)) { ClearClean(c); ++c->Generation; }
-    c->Barrier = FALSE; Publish(c); ReleaseCache(c);
+    c->Barrier = FALSE; c->Performance.Phase = QcRequestPhase; Publish(c); ReleaseCache(c);
     return status;
 }
 void QcCacheDestroy(QC_CACHE* c) {
-    AcquireCache(c); c->Stop = TRUE; KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE); ReleaseCache(c);
+    AcquireCache(c); c->Stop = TRUE; WakeDrainers(c); ReleaseCache(c);
     for (auto& worker : c->Workers) if (worker.Thread) {
         ZwWaitForSingleObject(worker.Thread, FALSE, nullptr); ZwClose(worker.Thread); worker.Thread = nullptr;
     }
@@ -373,7 +439,11 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size) {
     case QcRetry:
         if (c->Gone || c->Suspended) { status = STATUS_DEVICE_NOT_READY; break; }
         ++c->Diagnostics.ControlBarriers;
-        c->State.LastError = STATUS_SUCCESS; KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE); break;
+        c->State.LastError = STATUS_SUCCESS; WakeDrainers(c); break;
+    case QcPerformanceTiming:
+        if (command.Value > 1 || command.BudgetBytes) status = STATUS_INVALID_PARAMETER;
+        else c->Timing = static_cast<LONG>(command.Value);
+        break;
     case QcDropClean:
         // Release clean read/retained-write blocks on request. Dirty and in-flight payload
         // is untouched: this is not a flush and never discards data the disk has not taken.
@@ -421,30 +491,44 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp) {
     for (;;) {
         // Preflight the WHOLE request before modifying any payload. Recompute after
         // every wait because the drainer may have removed or pinned indexed slots.
-        needed = 0; ULONG newDirty = 0;
+        needed = 0; ULONG newDirty = 0, newWriteOccupancy = 0;
         for (ULONG copied = 0; copied < length; copied += Chunk) {
             auto index = FindSlot(c, offset.QuadPart + copied);
-            if (index == NoSlot || c->Slots[index].InFlight) ++needed;
-            if (index == NoSlot || !c->Slots[index].Dirty || c->Slots[index].InFlight) ++newDirty;
+            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins) ++needed;
+            if (index == NoSlot || !c->Slots[index].Dirty || c->Slots[index].InFlight || c->Slots[index].Pins) ++newDirty;
+            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins ||
+                (!c->Slots[index].Dirty && c->Slots[index].ReadClass)) ++newWriteOccupancy;
         }
         // Evictions may remove clean blocks referenced by this request; recalculate
         // the preflight after every eviction before touching any payload.
         auto writeUsed = c->State.DirtyBytes / Chunk + c->CleanCount[0];
         if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictOldest(c)) continue;
         if (c->Options.Allocation == QcFixed && (needed > c->Capacity - c->Count ||
-             (c->Options.Allocation == QcFixed && writeUsed + newDirty > WriteLimit(c))) && Evict(c, 0)) continue;
+             writeUsed + newWriteOccupancy > WriteLimit(c)) && Evict(c, 0)) continue;
         if ((needed <= c->Capacity - c->Count && c->State.DirtyBytes / Chunk + newDirty <= WriteLimit(c)) || !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel) break;
-        c->WriterWaiting = TRUE; ++c->State.ThrottleWaits; Publish(c);
-        KeClearEvent(&c->Changed); KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE);
+        c->WriterWaiting = TRUE; ++c->State.ThrottleWaits; ++c->Performance.CapacityWaits;
+        c->Performance.Phase = QcCapacityPhase; Publish(c);
+        KeClearEvent(&c->Changed); WakeDrainers(c);
         LARGE_INTEGER interval; interval.QuadPart = -1000000; // Check cancellation at least every 100 ms.
-        ReleaseCache(c); KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval); AcquireCache(c);
+        const auto waitStart = c->Timing ? Tick() : 0;
+        ReleaseCache(c);
+        // Preserve ownership/order of the blocked write, but service bounded,
+        // independent RAM reads rather than occupying the worker with a sleep.
+        if (!c->ServiceReads || !c->ServiceReads(c->ServiceContext, irp)) {
+            if (c->RequestAvailable) {
+                PVOID objects[] = { &c->Changed, c->RequestAvailable };
+                KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &interval, nullptr);
+            } else KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+        }
+        AcquireCache(c);
+        if (waitStart) c->Performance.CapacityWaitTicks += Tick() - waitStart;
     }
-    c->WriterWaiting = FALSE;
+    c->WriterWaiting = FALSE; c->Performance.Phase = QcRequestPhase;
     if (irp->Cancel) { ReleaseCache(c); return STATUS_CANCELLED; }
     if (!NT_SUCCESS(c->State.LastError) || c->Gone) { auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError; ReleaseCache(c); return error; }
     for (ULONG copied = 0; copied < length;) {
         auto index = FindSlot(c, offset.QuadPart + copied);
-        if (index == NoSlot || c->Slots[index].InFlight) {
+        if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins) {
             index = AllocateSlot(c);
             auto slot = &c->Slots[index];
             slot->Length = Chunk; slot->Offset.QuadPart = offset.QuadPart + copied;
@@ -456,53 +540,90 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp) {
             Unlink(c, index); slot->Dirty = TRUE; slot->ReadClass = FALSE; slot->DirtySince = NowMs(); Link(c, index);
             c->State.DirtyBytes += Chunk;
         }
-        RtlCopyMemory(slot->Buffer, source + copied, slot->Length);
+        slot->Filling = TRUE;
         copied += slot->Length;
     }
+    // No other foreground request runs during publication. Filling prevents
+    // drain selection; bounded pointer batches allow payload copies unlocked.
+    for (ULONG copied = 0; copied < length;) {
+        PUCHAR buffers[64]; ULONG count = min(64UL, (length - copied) / Chunk);
+        for (ULONG i = 0; i < count; ++i) buffers[i] = c->Slots[FindSlot(c, offset.QuadPart + copied + i * Chunk)].Buffer;
+        ReleaseCache(c);
+        for (ULONG i = 0; i < count; ++i) RtlCopyMemory(buffers[i], source + copied + i * Chunk, Chunk);
+        AcquireCache(c); copied += count * Chunk;
+    }
+    for (ULONG copied = 0; copied < length; copied += Chunk) c->Slots[FindSlot(c, offset.QuadPart + copied)].Filling = FALSE;
     c->State.AcceptedBytes += length; c->LastWriteTime = NowMs();
     if (writeThrough) ++c->Diagnostics.DeferredWriteThroughWrites;
     c->State.PeakDirtyBytes = max(c->State.PeakDirtyBytes, c->State.DirtyBytes);
-    Publish(c); KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE); ReleaseCache(c);
+    Publish(c);
+    WakeDrainers(c);
+    ReleaseCache(c);
     irp->IoStatus.Information = length; return STATUS_SUCCESS;
 }
-static NTSTATUS Read(QC_CACHE* c, PIRP irp) {
+// Foreground admission remains single-owner. Pins protect exact cached versions
+// from drainer retirement while lower reads and payload copies run without Mutex.
+static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false) {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Read.Length; auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     auto end = start + length;
     AcquireCache(c);
+    if (c->Gone || c->Suspended || irp->Cancel) {
+        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Suspended ? STATUS_DEVICE_NOT_READY : STATUS_CANCELLED;
+        ReleaseCache(c); return error;
+    }
     if (!NT_SUCCESS(c->State.LastError)) { auto error = c->State.LastError; ReleaseCache(c); return error; }
-    if (!c->Enabled || length == 0) { ReleaseCache(c); return OriginalIo(c, irp); }
+    if (!c->Enabled || length == 0) { ReleaseCache(c); return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp); }
     auto target = Map(irp);
     if (!target) { ReleaseCache(c); return STATUS_INSUFFICIENT_RESOURCES; }
-    // Indexed block coverage avoids scanning the entire cache for each read block.
-    // The newest entry wins, including when an older version is still in flight.
-    auto covered = start;
-    while (covered < end) {
-        auto block = covered / Chunk * Chunk;
-        if (FindSlot(c, block) == NoSlot) break;
-        covered = block + Chunk;
+    bool full = true;
+    for (auto block = start / Chunk * Chunk; block < end; block += Chunk) {
+        auto index = FindSlot(c, block);
+        if (index == NoSlot || c->Slots[index].Filling) { full = false; break; }
+    }
+    if (hitOnly && !full) {
+        ++c->Performance.BypassMisses; Publish(c); ReleaseCache(c); return STATUS_NOT_FOUND;
+    }
+    for (auto block = start / Chunk * Chunk; block < end; block += Chunk) {
+        auto index = FindSlot(c, block);
+        if (index != NoSlot) ++c->Slots[index].Pins;
     }
     NTSTATUS status = STATUS_SUCCESS;
-    if (covered < end) status = OriginalIo(c, irp);
-    else { irp->IoStatus.Information = length; }
+    if (!full) {
+        c->Performance.Phase = QcLowerReadPhase; Publish(c);
+        ReleaseCache(c);
+        status = OriginalIo(c, irp);
+        AcquireCache(c);
+        c->Performance.Phase = QcRequestPhase;
+    } else irp->IoStatus.Information = length;
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length) status = STATUS_DEVICE_DATA_ERROR;
     if (NT_SUCCESS(status)) {
-        for (auto block = start / Chunk * Chunk; block < end; block += Chunk) {
-            auto index = FindSlot(c, block);
-            if (index == NoSlot) {
-                auto from = max(start, block); auto to = min(end, block + Chunk);
-                c->ReadMissBytes += to - from;
-                continue;
+        for (auto block = start / Chunk * Chunk; block < end;) {
+            PUCHAR buffers[64]; ULONG count = 0;
+            auto first = block;
+            for (; count < RTL_NUMBER_OF(buffers) && block < end; ++count, block += Chunk) {
+                auto index = FindSlot(c, block);
+                auto bytes = min(end, block + Chunk) - max(start, block);
+                buffers[count] = index == NoSlot ? nullptr : c->Slots[index].Buffer;
+                if (index == NoSlot) c->ReadMissBytes += bytes;
+                else { c->ReadHitBytes += bytes; c->State.CacheReadBytes += bytes; }
             }
-            auto slot = &c->Slots[index];
-            auto from = max(start, slot->Offset.QuadPart); auto to = min(end, slot->Offset.QuadPart + slot->Length);
-            if (from < to) {
-                RtlCopyMemory(target + (from - start), slot->Buffer + (from - slot->Offset.QuadPart), static_cast<SIZE_T>(to - from));
-                c->ReadHitBytes += to - from; c->State.CacheReadBytes += to - from;
+            ReleaseCache(c);
+            for (ULONG i = 0; i < count; ++i) if (buffers[i]) {
+                auto current = first + i * Chunk;
+                auto from = max(start, current); auto to = min(end, current + Chunk);
+                RtlCopyMemory(target + (from - start), buffers[i] + (from - current), static_cast<SIZE_T>(to - from));
             }
+            AcquireCache(c);
         }
-        // Complete the caller's entire buffer BEFORE admission/promotion can evict
-        // any clean block which a later portion of this same read still needs.
+    }
+    // Release every pin before admission can evict anything. Deferred retirement
+    // allows a read to finish even if retention is disabled and draining completed.
+    for (auto block = start / Chunk * Chunk; block < end; block += Chunk) {
+        auto index = FindSlot(c, block);
+        if (index != NoSlot) UnpinSlot(c, index);
+    }
+    if (NT_SUCCESS(status)) {
         for (auto block = start / Chunk * Chunk; block < end; block += Chunk) {
             auto index = FindSlot(c, block);
             if (index != NoSlot) { TouchClean(c, index); continue; }
@@ -512,8 +633,20 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp) {
                 RtlCopyMemory(fill->Buffer, target + (block - start), Chunk); IndexSlot(c, index);
             }
         }
+        if (hitOnly) ++c->Performance.BypassReads;
     }
     Publish(c); ReleaseCache(c); return status;
+}
+bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status) {
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction != IRP_MJ_READ) return false;
+    auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    auto length = stack->Parameters.Read.Length;
+    if (offset < 0 || offset > deviceBytes || !length ||
+        length > static_cast<ULONGLONG>(deviceBytes - offset)) return false;
+    if (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes)) return false;
+    *status = Read(c, irp, true);
+    return *status != STATUS_NOT_FOUND;
 }
 // Only optimized, bounded, full-cache-block TRIM ranges are handled here. Any
 // unfamiliar flags/parameters/alignment use the existing ordered drain/pass-through.
@@ -575,7 +708,7 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         }
     }
     c->TrimPaused = FALSE; Publish(c);
-    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE); KeSetEvent(&c->Wake, IO_NO_INCREMENT, FALSE);
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE); WakeDrainers(c);
     ReleaseCache(c); *result = status; return true;
 }
 NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes) {

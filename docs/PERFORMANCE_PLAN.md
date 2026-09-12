@@ -1,5 +1,23 @@
 # Performance and concurrency plan
 
+## Implementation checkpoint (2026-09-12)
+
+The first implementation is now in source: bounded dependency-aware RAM-read
+service during capacity waits and pending lower reads; pinned payload versions;
+foreground/drain copies outside the metadata mutex; bidirectional adjacent drain
+gathering; deduplicated wake signalling; versioned performance telemetry; per-disk
+desktop operations; and corrected benchmark accounting/runtime-only restoration.
+
+See [implementation boundaries and verification handoff](CONCURRENCY_VERIFICATION.md)
+for exact semantics, commands and acceptance scenarios. This is not a multi-worker
+foreground-write redesign. Runtime correctness and performance are **not yet
+verified**; local compilation must not be reported as VM validation.
+
+The sections below retain the design history. In particular, the Phase 2 Automatic
+reader was evicted; use the later Fixed-allocation zero-reported-miss experiment to
+isolate serialization. Drain-parallelism cells also differed in capacity pressure,
+so their throughput ratios are not an isolated measurement of lock contention.
+
 Ordered work plan for the foreground/background interference and small-request cost problems.
 Written to be executed by one implementing agent (or person) phase by phase. The measurements
 behind it are in [performance baseline and method](PERFORMANCE.md); the runtime semantics being
@@ -23,11 +41,11 @@ Phase 2 has been executed once (3 repeats, Eager versus Idle interleaved, median
 
 | Now established | Number |
 |---|---|
-| An unrelated writer destroys RAM-hit read performance | 317,797 → **52.8 IOPS**, p99 0.087 → **320 ms** |
-| RAM hits inherit lower-device latency | reader p99 **1,034 ms** with a 25 ms lower-write delay |
+| An unrelated writer destroys reader performance under Automatic allocation (including eviction) | 317,797 → **52.8 IOPS**, p99 0.087 → **320 ms** |
+| Reader latency tracks slow draining; Fixed follow-up removes reported misses | reader p99 about **1,000 ms** with a 25 ms lower-write delay |
 | Identical under Eager and Idle | architecture, not policy |
-| Background drain concurrency trades directly against foreground | parallelism 4: drain +37%, foreground **−83%** |
-| The write admission path has a real ceiling; the read path does not | write ~29,000 IOPS plateau; read 287,000 IOPS |
+| Parallelism-4 cell also suffered capacity pressure; attribution remains open | drain +37%, foreground **−83%** in those cells |
+| Write admission scales poorly in the measured matrix; reads are much faster, not proven ceiling-free | write ~29,000 IOPS plateau; read 287,000 IOPS |
 | Capacity pressure is now reachable and measured | 7,785 throttle waits, p99 18.2 ms |
 | Idle coalesces more than Eager at equal throughput | ~half the lower writes |
 

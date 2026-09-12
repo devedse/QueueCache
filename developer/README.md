@@ -9,6 +9,7 @@ The `tests/` projects run on the build host/CI and are not installed.
 |---|---|
 | `qcache test Q:` | Ordinary current-boot file checks. New files retained; no raw writes, faults or reboot. |
 | `qcache benchmark Q:` | Ordinary sequential file benchmark. |
+| `qcache developer performance Q: [--timing true/false]` | Queue/phase/counter JSON; optional detailed lock and drain timing. No workload is started. |
 | `qcache developer test <disk> <exact-bytes> <PnP-instance>` | Read-only pass-through smoke test; use an idle disk. `--detached` expects no filter. |
 | `qcache developer file-tests Q <disk> <exact-bytes> <PnP-instance> <mode>` | Advanced NTFS integrity, concurrency, coalescing and flush-policy scenarios. |
 | `qcache developer write-tests <disk> <exact-bytes> <PnP-instance> <mode>` | Raw-disk integration tests, including destructive writes in a fixed 64 MiB region at 1 GiB. Requires an empty RAW non-OS disk. |

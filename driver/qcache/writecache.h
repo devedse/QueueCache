@@ -9,6 +9,17 @@
 #define IOCTL_QCACHE_STATE_V2 CTL_CODE(0x8844UL, 0xD13UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_STATE_V3 CTL_CODE(0x8844UL, 0xD14UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_OPTIONS_V1 CTL_CODE(0x8844UL, 0xD15UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
+#define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
+struct QC_PERFORMANCE {
+    ULONG Version, Size;
+    ULONGLONG Frequency, TimingEnabled, QueueDepth, OldestQueuedTicks, QueuedRequests, QueueWaitTicks, MaxQueueWaitTicks;
+    ULONGLONG ActiveMajor, Phase, ActiveAgeTicks, CapacityWaits, CapacityWaitTicks, BypassReads, BypassMisses;
+    ULONGLONG LockAcquires, LockWaitTicks, LockHoldTicks, MaxLockWaitTicks, MaxLockHoldTicks;
+    ULONGLONG DrainBatches, DrainBytes, WakeSignals, LowerIoTicks;
+};
+static_assert(sizeof(QC_PERFORMANCE) == 192);
+enum : ULONGLONG { QcIdlePhase, QcRequestPhase, QcCapacityPhase, QcDrainPhase, QcLowerFlushPhase, QcLowerReadPhase };
 struct QC_DIAGNOSTICS {
     ULONG Version, Size;
     ULONGLONG ApplicationFlushes, DeferredFlushes, WriteThroughWrites, DeferredWriteThroughWrites;
@@ -34,13 +45,15 @@ struct QC_STATE_V3 {
 static_assert(sizeof(QC_STATE_V3) == 288);
 static_assert(sizeof(QC_COMMAND) == 32);
 enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy, QcRelease,
-    QcDropClean }; // QcDropClean releases clean cached blocks only; pending writes keep draining.
+    QcDropClean, QcPerformanceTiming }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT {
     PUCHAR Buffer;
     LARGE_INTEGER Offset;
     ULONG Length, HashNext, HashPrevious, QueueNext, QueuePrevious, FreeNext;
     BOOLEAN InFlight;
     BOOLEAN Dirty, ReadClass;
+    ULONG Pins;
+    BOOLEAN Filling, RetireWhenUnpinned;
     ULONGLONG DirtySince;
 };
 struct QC_CACHE;
@@ -58,6 +71,15 @@ struct QC_CACHE {
     BOOLEAN Pressure, WriterWaiting;
     ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests;
     QC_DIAGNOSTICS Diagnostics, DiagnosticsSnapshot;
+    QC_PERFORMANCE Performance, PerformanceSnapshot;
+    ULONGLONG LockStarted;
+    volatile LONG Timing;
+    // Only the request worker invokes this callback, outside Mutex, while its
+    // current write is capacity-blocked or its lower read is pending. No concurrent
+    // foreground writer is introduced, and the callback must never submit lower I/O.
+    bool (*ServiceReads)(PVOID, PIRP);
+    PVOID ServiceContext;
+    PKEVENT RequestAvailable;
     KEVENT Wake, Changed;
     QC_DRAIN_WORKER Workers[4];
     QC_SLOT* Slots;
@@ -77,5 +99,7 @@ void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
+void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
+bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
 NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable);

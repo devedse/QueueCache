@@ -47,17 +47,24 @@ static ULONG AllocateSlot(QC_CACHE* c, bool dirty = true, bool read = false) {
     auto i = c->FreeHead; auto s = &c->Slots[i];
     c->FreeHead = s->FreeNext; s->Dirty = dirty; s->ReadClass = read;
     s->InFlight = FALSE; s->DirtySince = dirty ? NowMs() : 0;
+    s->Pins = 0; s->Filling = s->RetireWhenUnpinned = FALSE;
     Link(c, i); ++c->Count; return i;
 }
 static void RetireSlot(QC_CACHE* c, ULONG i) {
+    NT_ASSERT(c->Slots[i].Pins == 0 && !c->Slots[i].InFlight && !c->Slots[i].Filling);
     auto s = &c->Slots[i]; UnindexSlot(c, i); Unlink(c, i);
     s->Length = 0; s->InFlight = FALSE;
     s->FreeNext = c->FreeHead; c->FreeHead = i; --c->Count;
 }
 static bool Evict(QC_CACHE* c, ULONG pool) {
     auto i = c->CleanHead[pool];
+    while (i != NoSlot && c->Slots[i].Pins) i = c->Slots[i].QueueNext;
     if (i == NoSlot) return false;
     RetireSlot(c, i); ++c->Evictions; return true;
+}
+static void UnpinSlot(QC_CACHE* c, ULONG i) {
+    auto slot = &c->Slots[i]; NT_ASSERT(slot->Pins != 0); --slot->Pins;
+    if (!slot->Pins && slot->RetireWhenUnpinned) RetireSlot(c, i);
 }
 static void ClearClean(QC_CACHE* c) {
     for (ULONG pool = 0; pool < 2; ++pool) while (Evict(c, pool)) {}
@@ -75,7 +82,8 @@ static void InvalidateCleanRange(QC_CACHE* c, LONGLONG offset, ULONG length) {
 static bool EvictOldest(QC_CACHE* c) {
     if (c->CleanHead[0] == NoSlot) return Evict(c, 1);
     if (c->CleanHead[1] == NoSlot) return Evict(c, 0);
-    return Evict(c, c->Slots[c->CleanHead[0]].DirtySince <= c->Slots[c->CleanHead[1]].DirtySince ? 0 : 1);
+    auto first = c->Slots[c->CleanHead[0]].DirtySince <= c->Slots[c->CleanHead[1]].DirtySince ? 0UL : 1UL;
+    return Evict(c, first) || Evict(c, 1 - first);
 }
 static ULONG WriteLimit(QC_CACHE* c) { return QcWriteLimit(c->Options, c->Capacity); }
 static ULONG ReadLimit(QC_CACHE* c) {
@@ -84,7 +92,7 @@ static ULONG ReadLimit(QC_CACHE* c) {
 static bool ReadRoom(QC_CACHE* c) {
     auto limit = ReadLimit(c);
     if (!limit) return false;
-    if (c->Options.Allocation == QcFixed && c->CleanCount[1] >= limit) Evict(c, 1);
+    if (c->Options.Allocation == QcFixed && c->CleanCount[1] >= limit && !Evict(c, 1)) return false;
     if (c->Count == c->Capacity && !(c->Options.Allocation == QcAutomatic ? EvictOldest(c) : Evict(c, 1))) return false;
     return true;
 }
@@ -92,7 +100,7 @@ static void TouchClean(QC_CACHE* c, ULONG i) {
     auto slot = &c->Slots[i];
     if (slot->Dirty) return;
     if (!slot->ReadClass && (c->Options.Retention & QcPromoteReads) && ReadLimit(c)) {
-        if (c->Options.Allocation == QcFixed && c->CleanCount[1] >= ReadLimit(c)) Evict(c, 1);
+        if (c->Options.Allocation == QcFixed && c->CleanCount[1] >= ReadLimit(c) && !Evict(c, 1)) return;
         Unlink(c, i); slot->ReadClass = TRUE; Link(c, i);
     } else { Unlink(c, i); Link(c, i); }
 }

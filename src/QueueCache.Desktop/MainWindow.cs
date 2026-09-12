@@ -22,7 +22,6 @@ public sealed class MainWindow : Window
     private readonly List<Card> views = [];
     private bool busy, discovering, closed;
     private int ticks;
-    private CancellationTokenSource? workload;
     private readonly ICacheTaskService service;
     public MainWindow() : this(new WindowsCacheTaskService()) { }
     public MainWindow(ICacheTaskService service)
@@ -67,17 +66,17 @@ public sealed class MainWindow : Window
             if (++ticks % Math.Max(1, (int)(10 / timer.Interval.TotalSeconds)) == 0 && !busy) _ = Refresh();
             await Sample();
         };
-        Closing += (_, e) => { if (busy) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
+        Closing += (_, e) => { if (busy || views.Any(v => v.Busy)) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
     }
     private async Task Refresh()
     {
-        if (discovering) return;
+        if (discovering || views.Any(v => v.Busy)) return;
         discovering = true;
         try
         {
             var disks = await service.ListAsync(); if (closed) return;
             var signature = string.Join("|", disks.Select(d => d.Instance + string.Join(",", d.Volumes)));
-            if (signature != string.Join("|", views.Select(v => v.Disk.Instance + string.Join(",", v.Disk.Volumes))))
+            if (!views.Any(v => v.Busy) && signature != string.Join("|", views.Select(v => v.Disk.Instance + string.Join(",", v.Disk.Volumes))))
             {
                 cards.Children.Clear(); views.Clear();
                 foreach (var disk in disks) { var card = new Card(disk); views.Add(card); cards.Children.Add(BuildCard(card)); }
@@ -89,6 +88,10 @@ public sealed class MainWindow : Window
     }
     private Control BuildCard(Card card)
     {
+        Button DiskAction(string label, Func<Task> action)
+        {
+            var button = Action(label, action, card); card.Actions.Add(button); return button;
+        }
         var content = new StackPanel { Spacing = 18 };
         var heading = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         var name = new StackPanel { Spacing = 5 };
@@ -106,16 +109,16 @@ public sealed class MainWindow : Window
         card.Activity.Children.Add(Legend((ReadFill, "Reads"), (RetainedFill, "Incoming writes"), (PendingFill, "Writing to disk")));
         card.Activity.Children.Add(Text("Last 60 samples · auto-scaled", 11, Muted));
         var actions = new WrapPanel();
-        card.Settings = Action("Add cache", () => Edit(card)); actions.Children.Add(card.Settings);
+        card.Settings = DiskAction("Add cache", () => Edit(card)); actions.Children.Add(card.Settings);
         card.Settings.Background = Accent; card.Settings.Foreground = Brushes.White;
-        card.Pause = Action("Pause", () => service.SetEnabledAsync(Volume(card), !(card.State?.Enabled ?? false), Persistent(card))); actions.Children.Add(card.Pause);
-        card.Flush = Action("Flush now", () => service.FlushAsync(card.Disk)); actions.Children.Add(card.Flush);
-        card.DropClean = Action("Clear read cache", async () => { await service.DropCleanAsync(card.Disk); message.Text = "Cached clean blocks released. Pending writes were not touched."; });
+        card.Pause = DiskAction("Pause", () => service.SetEnabledAsync(Volume(card), !(card.State?.Enabled ?? false), Persistent(card))); actions.Children.Add(card.Pause);
+        card.Flush = DiskAction("Flush now", () => service.FlushAsync(card.Disk)); actions.Children.Add(card.Flush);
+        card.DropClean = DiskAction("Clear read cache", async () => { await service.DropCleanAsync(card.Disk); message.Text = "Cached clean blocks released. Pending writes were not touched."; });
         actions.Children.Add(card.DropClean);
-        card.Remove = Action("Remove cache", async () => { message.Text = "Draining and removing cache…"; await service.RemoveAsync(Volume(card)); }); actions.Children.Add(card.Remove); content.Children.Add(actions);
+        card.Remove = DiskAction("Remove cache", async () => { message.Text = "Draining and removing cache…"; await service.RemoveAsync(Volume(card)); }); actions.Children.Add(card.Remove); content.Children.Add(actions); content.Children.Add(card.Operation);
         var details = new Expander { Header = "Diagnostics" }; var diagnostics = new StackPanel { Spacing = 10 }; var tools = new WrapPanel();
-        tools.Children.Add(Action("File tests", () => Test(card, false))); tools.Children.Add(Action("Benchmark", () => Test(card, true)));
-        var cancel = new Button { Content = "Cancel test" }; cancel.Click += (_, _) => workload?.Cancel(); tools.Children.Add(cancel);
+        tools.Children.Add(DiskAction("File tests", () => Test(card, false))); tools.Children.Add(DiskAction("Benchmark", () => Test(card, true)));
+        var cancel = new Button { Content = "Cancel test" }; cancel.Click += (_, _) => card.Workload?.Cancel(); tools.Children.Add(cancel);
         diagnostics.Children.Add(tools); diagnostics.Children.Add(card.Details); details.Content = diagnostics; content.Children.Add(details);
         return new Border { Background = Brushes.White, CornerRadius = new CornerRadius(14), BorderBrush = Brush.Parse("#E1E8F0"), BorderThickness = new Thickness(1), Padding = new Thickness(24), Child = content };
     }
@@ -132,6 +135,9 @@ public sealed class MainWindow : Window
             var state = await service.ReadAsync(card.Disk); if (closed || !views.Contains(card)) return;
             var now = DateTimeOffset.UtcNow; var rates = card.State is null ? null : CacheTelemetry.Between(card.State, state, now > card.Sampled ? now - card.Sampled : TimeSpan.FromTicks(1));
             card.State = state; card.Sampled = now;
+            var performance = state.Performance;
+            card.Operation.Text = (card.Busy ? $"{card.OperationName}… " : "") +
+                (performance is null ? "" : $"Driver: {performance.PhaseName} · queued {performance.QueueDepth} · current request {performance.Milliseconds(performance.ActiveAgeTicks):0} ms · bypassed RAM reads {performance.BypassReads:N0}");
             bool exists = state.BudgetBytes > 0;
             card.Activity.IsVisible = exists;
             card.Badge.Text = state.RuntimeStatus;
@@ -142,12 +148,12 @@ public sealed class MainWindow : Window
             // Cached reads: clean read-fill blocks plus retained drained writes, both readable from RAM.
             card.Cached.Text = $"{(state.CleanReadBytes + state.CleanWriteBytes) / 1048576.0:0.0} MB";
             card.Dirty.Text = $"{state.DirtyBytes / 1048576.0:0.0} MB"; card.Incoming.Text = $"{rates?.AcceptedMiBPerSecond ?? 0:0.0} MB/s"; card.Draining.Text = $"{rates?.DrainedMiBPerSecond ?? 0:0.0} MB/s";
-            card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !busy && state.SupportsReadWrite && card.Disk.Volumes.Length > 0;
+            card.Settings.Content = exists ? "Cache settings" : "Add cache"; card.Settings.IsEnabled = !card.Busy && state.SupportsReadWrite && card.Disk.Volumes.Length > 0;
             card.Pause.Content = state.Enabled ? "Pause" : "Resume"; card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
-            card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !busy;
+            card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !card.Busy;
             card.DropClean.IsVisible = exists && state.SupportsDropClean;
-            card.DropClean.IsEnabled = !busy && state.CleanReadBytes + state.CleanWriteBytes > 0;
-            card.Remove.IsEnabled = !busy && state.SupportsRelease;
+            card.DropClean.IsEnabled = !card.Busy && state.CleanReadBytes + state.CleanWriteBytes > 0;
+            card.Remove.IsEnabled = !card.Busy && state.SupportsRelease;
             if (state.Faulted) card.Description.Text = $"Disk I/O failed (0x{state.LastError:X8}). Pending writes are retained; check the disk before retrying.";
         }
         catch (Exception ex)
@@ -161,7 +167,7 @@ public sealed class MainWindow : Window
     }
     private void UpdateSummary()
     {
-        var fresh = views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled <= TimeSpan.FromSeconds(3)).ToArray();
+        var fresh = views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled <= TimeSpan.FromSeconds(Math.Max(3, timer.Interval.TotalSeconds * 3))).ToArray();
         var active = fresh.Count(v => v.State!.Operational);
         var memory = fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes);
         summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} disks";
@@ -180,28 +186,41 @@ public sealed class MainWindow : Window
     }
     private async Task Test(Card card, bool benchmark)
     {
-        workload = new();
+        card.Workload = new();
         try
         {
             var progress = new Progress<string>(text => card.Details.Text = text);
-            var report = await service.TestAsync(Volume(card), benchmark, progress, workload.Token);
+            var report = await service.TestAsync(Volume(card), benchmark, progress, card.Workload.Token);
             card.Details.Text = string.Join("\n", report.Checks.Select(c => $"{c.Result} · {c.Name}: {c.Detail}")) + $"\nFiles: {report.Directory}";
         }
-        finally { workload.Dispose(); workload = null; }
+        finally { card.Workload.Dispose(); card.Workload = null; }
     }
     private static string Volume(Card card) => card.Disk.Volumes.FirstOrDefault() ?? throw new IOException("Create an NTFS volume first.");
     private bool Persistent(Card card) => card.State?.BudgetBytes is null or 0 || service.IsPersistent(card.Disk);
-    private Button Action(string label, Func<Task> action)
+    private Button Action(string label, Func<Task> action, Card? card = null)
     {
-        var button = new Button { Content = label, Padding = new Thickness(16, 9), Margin = new Thickness(0, 0, 8, 0), CornerRadius = new CornerRadius(7) }; button.Click += async (_, _) => await Run(action); return button;
+        var button = new Button { Content = label, Padding = new Thickness(16, 9), Margin = new Thickness(0, 0, 8, 0), CornerRadius = new CornerRadius(7) }; button.Click += async (_, _) => await Run(action, card, label); return button;
     }
-    private async Task Run(Func<Task> action)
+    private async Task Run(Func<Task> action, Card? card, string label)
     {
-        if (busy) return; busy = true;
+        if (card is null ? busy : card.Busy) return;
+        if (card is null) busy = true;
+        else {
+            card.Busy = true; card.OperationName = label; card.Operation.Text = label + "…";
+            foreach (var button in card.Actions) button.IsEnabled = false;
+        }
         try { await action(); }
         catch (OperationCanceledException) { message.Text = "Test cancelled. Cache remains running."; }
         catch (Exception ex) { message.Text = ex.Message; }
-        finally { busy = false; if (!closed) await Sample(); }
+        finally {
+            if (card is null) busy = false;
+            else {
+                card.Busy = false; card.OperationName = "";
+                foreach (var button in card.Actions) button.IsEnabled = true;
+                card.Operation.Text = "";
+            }
+            if (!closed) { if (card is null) await Sample(); else await SampleCard(card); }
+        }
     }
     private static Control Metric(string label, TextBlock value) { var panel = new StackPanel { Spacing = 6 }; panel.Children.Add(Text(label, 11, Muted, FontWeight.SemiBold)); panel.Children.Add(value); return panel; }
     /// <summary>Colour key using the same brushes the charts draw with.</summary>
@@ -220,7 +239,11 @@ public sealed class MainWindow : Window
     internal static TextBlock Text(string text, double size, IBrush? brush = null, FontWeight? weight = null) => new() { Text = text, FontSize = size, Foreground = brush ?? Ink, FontWeight = weight ?? FontWeight.Normal, TextWrapping = TextWrapping.Wrap };
     private sealed class Card(DiskDescription disk)
     {
-        public bool Sampling;
+        public bool Sampling, Busy;
+        public string OperationName = "";
+        public TextBlock Operation = Text("", 13, Muted);
+        public List<Button> Actions = [];
+        public CancellationTokenSource? Workload;
         public DiskDescription Disk = disk; public WriteCacheState? State; public DateTimeOffset Sampled;
         public TextBlock Badge = Text("Connecting", 13, Accent, FontWeight.SemiBold), Description = Text("", 14, Muted), Cached = Text("—", 24), Dirty = Text("—", 24), Incoming = Text("—", 24), Draining = Text("—", 24);
         public CacheOccupancy Bucket = new();

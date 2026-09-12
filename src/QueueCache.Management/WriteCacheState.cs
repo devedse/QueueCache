@@ -12,6 +12,8 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
     public const int ExtendedWireSize = 160;
     public const int ReadWriteWireSize = 288;
     public CacheOptions? Options { get; init; }
+    public CachePerformance? Performance { get; init; }
+    public bool SupportsPerformance => (Flags & 2048) != 0;
     public ulong CleanReadBytes { get; init; }
     public ulong CleanWriteBytes { get; init; }
     public ulong ReadHitBytes { get; init; }
@@ -94,4 +96,4 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
         return result;
     }
 }
-public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean }
+public enum WriteCacheAction : uint { Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean, PerformanceTiming }

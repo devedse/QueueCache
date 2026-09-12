@@ -42,6 +42,17 @@ Check(Equals(frequency.SelectedItem, "Update every 5s"), "one selector sets the 
 var remove = buttons.Single(b => Equals(b.Content, "Remove cache") && b.IsVisible);
 remove.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Check(fixture.Removes == 1, "Remove uses draining task operation");
+fixture.PendingFlush = new();
+buttons.Single(b => Equals(b.Content, "Flush now") && b.IsVisible).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+Dispatcher.UIThread.RunJobs();
+Check(!pause.IsEnabled, "same-disk mutations disabled during pending Flush");
+Check(buttons.Single(b => Equals(b.Content, "Add cache")).IsEnabled, "another disk remains configurable during pending Flush");
+var duringFlush = fixture.DataReads;
+Invoke("Sample").GetAwaiter().GetResult();
+Check(fixture.DataReads > duringFlush, "telemetry continues during pending Flush");
+fixture.PendingFlush.SetResult(); fixture.PendingFlush = null;
+Dispatcher.UIThread.RunJobs();
+Check(pause.IsEnabled, "disk actions re-enabled after Flush completion");
 fixture.PendingInventory = new();
 var discovery = Invoke("Refresh");
 fixture.PendingDisk = new();
@@ -97,17 +108,18 @@ sealed class Fixture : ICacheTaskService
     public int Pauses, Removes, CleanDrops, DataReads, BlockedReads;
     public TaskCompletionSource<IReadOnlyList<DiskDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
+    public TaskCompletionSource? PendingFlush;
     public Task<IReadOnlyList<DiskDescription>> ListAsync() => PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks);
     public Task<WriteCacheState> ReadAsync(DiskDescription disk)
     {
         if (disk.Number == 0 && PendingDisk is not null) { BlockedReads++; return PendingDisk.Task; }
         if (disk.Number == 1) DataReads++;
-        return Task.FromResult(disk.Number == 1 ? State : State with { Flags = 0, BudgetBytes = 0, ReservedBytes = 0, DirtyBytes = 0, PayloadCapacity = 0 });
+        return Task.FromResult(disk.Number == 1 ? State : State with { Flags = 256, BudgetBytes = 0, ReservedBytes = 0, DirtyBytes = 0, PayloadCapacity = 0 });
     }
     public bool IsPersistent(DiskDescription disk) => true;
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) { if (!enabled) Pauses++; return Task.CompletedTask; }
     public Task RemoveAsync(string volume) { Removes++; return Task.CompletedTask; }
-    public Task FlushAsync(DiskDescription disk) => Task.CompletedTask;
+    public Task FlushAsync(DiskDescription disk) => PendingFlush?.Task ?? Task.CompletedTask;
     public Task DropCleanAsync(DiskDescription disk) { CleanDrops++; return Task.CompletedTask; }
     public Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
     public Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token) => throw new NotSupportedException("Fixture never opens disks.");

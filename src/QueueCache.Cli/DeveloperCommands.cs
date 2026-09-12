@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Runtime.Versioning;
+using QueueCache.Management;
+using System.Text.Json;
 
 namespace QueueCache.Cli;
 
@@ -10,6 +12,20 @@ internal static class DeveloperCommands
     public static Command Create(Func<string[], Task<int>> compatibility)
     {
         var root = new Command("developer", "Advanced integration tests and driver hooks. Ordinary file-only checks: qcache test.");
+        var performance = new Command("performance", "Read queue/phase and lifetime performance counters as JSON. Detailed timing is opt-in.");
+        var perfDevice = new Argument<string>("device");
+        var timing = new Option<bool?>("--timing") { Description = "Enable/disable detailed driver timing; omitted leaves it unchanged." };
+        performance.Arguments.Add(perfDevice); performance.Options.Add(timing);
+        performance.SetAction(p =>
+        {
+            var enabled = p.GetValue(timing);
+            using var device = new CacheDevice(p.GetValue(perfDevice)!, enabled is not null);
+            if (!device.GetWriteCacheState().SupportsPerformance) throw new NotSupportedException("Install the performance-telemetry driver first.");
+            if (enabled is not null) device.Control(WriteCacheAction.PerformanceTiming, value: enabled.Value ? 1UL : 0UL);
+            Console.WriteLine(JsonSerializer.Serialize(device.GetPerformance(), new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        });
+        root.Subcommands.Add(performance);
         var scenarios = new Command("cache-scenarios", "Current-boot RAM-cache policy scenarios on new files. Temporarily changes runtime policies, drains, verifies disk bytes and restores settings; no reboot or format.");
         var scenarioVolume = new Argument<string>("volume"); scenarios.Arguments.Add(scenarioVolume);
         scenarios.SetAction(async (p, token) =>

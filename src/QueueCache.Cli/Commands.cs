@@ -44,6 +44,8 @@ internal static class Commands
         var save = new Option<bool>("--save") { Description = "Save to administrator-only machine settings after successful Apply; installer startup task restores saved profiles." };
         apply.Arguments.Add(volume); apply.Options.Add(budget); apply.Options.Add(preset); apply.Options.Add(accept); apply.Options.Add(disabled);
         apply.Options.Add(save);
+        var runtimeOnly = new Option<bool>("--runtime-only") { Description = "Change this boot only; leave the saved startup profile untouched. Cannot combine with --save." };
+        apply.Options.Add(runtimeOnly);
         var allocation = new Option<CacheAllocation>("--allocation") { DefaultValueFactory = _ => CacheAllocation.Automatic };
         var writePercent = new Option<int>("--write-percent") { DefaultValueFactory = _ => 50, Description = "Fixed allocation: 0 = read-only, 100 = write-only." };
         // Drain scheduling. Eager ignores the watermark/age/idle settings; Balanced adds watermarks and
@@ -66,7 +68,8 @@ internal static class Commands
                     p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel))
             };
             configuration.Validate(true); // Validate before opening a disk. The selected preset defines semantics.
-            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token);
+            if (p.GetValue(save) && p.GetValue(runtimeOnly)) throw new ArgumentException("--save and --runtime-only cannot be combined.");
+            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token, p.GetValue(runtimeOnly));
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
         });
@@ -75,15 +78,17 @@ internal static class Commands
         {
             var command = new Command(name, name == "remove" ? "Drain and free cache memory, then remove the saved task. Files are untouched." : "Pause/drain or resume a task, preserving its startup setting.");
             var drive = new Argument<string>("volume"); ValidateVolume(drive); command.Arguments.Add(drive);
+            var transient = new Option<bool>("--runtime-only") { Description = "Leave the saved startup profile untouched." };
+            command.Options.Add(transient);
             command.SetAction(async (p, token) =>
             {
                 var selected = p.GetValue(drive)!;
-                if (name == "remove") await CacheTasks.RemoveAsync(selected, token);
+                if (name == "remove") await CacheTasks.RemoveAsync(selected, token, p.GetValue(transient));
                 else
                 {
                     var target = await DiskTarget.InspectAsync(selected, token);
                     var persistent = SavedConfigurations.List().Any(profile => profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase));
-                    await CacheTasks.SetEnabledAsync(selected, name == "resume", persistent, token);
+                    await CacheTasks.SetEnabledAsync(selected, name == "resume", persistent, token, p.GetValue(transient));
                 }
                 Console.WriteLine($"Cache task {name} completed.");
                 return 0;

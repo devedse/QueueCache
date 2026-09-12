@@ -17,6 +17,7 @@ public sealed class CacheDevice : IDisposable
     public const uint ExtendedStateIoctl = (0x8844u << 16) | (0xD13u << 2);
     public const uint ReadWriteStateIoctl = (0x8844u << 16) | (0xD14u << 2);
     public const uint OptionsIoctl = (0x8844u << 16) | (3u << 14) | (0xD15u << 2);
+    public const uint PerformanceIoctl = (0x8844u << 16) | (0xD16u << 2);
     private readonly SafeFileHandle handle;
 
     public CacheDevice(string device, bool writable = false)
@@ -32,6 +33,17 @@ public sealed class CacheDevice : IDisposable
     }
 
     public string Path { get; }
+
+    public CachePerformance GetPerformance()
+    {
+        // Never send a new, potentially barrier-like IOCTL to an old driver.
+        if (!GetWriteCacheState().SupportsPerformance) throw new NotSupportedException("Driver does not advertise performance telemetry.");
+        var data = new byte[CachePerformance.WireSize];
+        if (!Native.DeviceIoControl(handle, PerformanceIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Advertised performance telemetry unavailable.");
+        if (returned != data.Length) throw new InvalidDataException("Invalid performance snapshot length.");
+        return CachePerformance.Decode(data);
+    }
 
     public CacheDiagnostics GetDiagnostics()
     {
