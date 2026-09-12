@@ -129,7 +129,77 @@ from inventory, and no return of approximately one-second hot-reader tails.
 Investigate a repeatable >20% observer/control throughput difference or >2x tail
 increase. Report uncertainty, not a binary speed claim from one sample.
 
-## 4. Restoration and handoff
+## 4. Measurements for architecture decisions
+
+The acceptance batch above answers whether these fixes work. It does not by
+itself select the next architecture. Add the probes below to the same detached
+runner, after correctness gates pass. Prepare the runner once and collect evidence
+without changing implementation between cases. Use three repeats with reversed
+or interleaved order, fixed seeds and explicit timeouts. Record skipped probes
+and reasons instead of silently expanding scope or inventing results.
+
+Priority: cached write admission, then cached reads, then background draining,
+subject to ordering and sufficient drain progress. Evaluate steady-state pressure
+separately from RAM bursts: finite RAM cannot sustain unique writes faster than
+the disk indefinitely. No design should be selected to conceal that constraint.
+
+### Additional bounded probes
+
+Use 1 GiB budget where possible, 10-second measurement windows after warmup, and
+disjoint files/ranges except in explicit coherence tests. Confirm residency using
+unrounded counters, not file size. Record actual usable payload capacity.
+
+| ID | Probe | Configuration and evidence |
+|---|---|---|
+| D1 | Small-request scaling without capacity pressure | Warm a disjoint 64 MiB working set. Test 4 KiB read-only and overwrite-only at T1/QD1, T1/QD8, T1/QD32 and T4/QD8 (QD is per thread). Compare Eager/Idle with matched residency and timing disabled; repeat representative cases with timing enabled. Capture total/per-core CPU, IOPS, tails, queue depth, accepted/drained bytes, coalescing and lock counters. Confirm zero capacity waits or label the case pressure-contaminated. |
+| D2 | Cold-read interference without write pressure | Fixed50; keep a 64 MiB hot set resident. Run hot reader alone, then alongside a cold reader over a disjoint set larger than cache. Verify actual misses. Repeat with a simultaneous writer only after the no-writer comparison. Capture reader-specific latency and throughput plus driver phases. The lab lower-write delay is NOT a controlled lower-read delay; do not describe it as one. |
+| D3 | Queue-limit sensitivity | With a verified hot set and capacity-blocked writer, vary total offered outstanding requests around 32, 64 and 128, then vary reader request size 4 KiB/1 MiB/2 MiB. Record actual driver request sizes where observable because the stack may split them. Correlate scan-limit, size-rejection, no-candidate and fence deltas with successful bypasses and tails. Do not infer that offered depth equals instantaneous queued depth. |
+| D4 | Drain tradeoffs | Identical seeded sequential versus sparse-random dirty sets; test batch 256/1024 KiB and parallelism 1/2/4. Hold policy constant. Measure explicit drain-to-zero separately from concurrent reader/writer tests. Capture successful drained bytes, attempted batches, average bytes per batch, CPU, reader tails and writer acceptance. Test Eager/Idle separately with matched starting state, not mixed into every batch cell. |
+| D5 | Allocation demand and transitions | Compare Automatic and Fixed25/50. Hot sets approximately 10%, 40% and 70% of usable payload; unique-write set greater than budget. Run write-only, hot-read plus write, then a bounded phase change from hot set A to disjoint B. Track clean-read/write occupancy, raw hits/misses, eviction rate, accepted/drained bytes and tails over time. Distinguish resident-read protection from learning a new cold hot set while RAM is dirty. |
+| D6 | Copy versus metadata cost | Compare resident 4 KiB, 64 KiB and 1 MiB requests at equal total depth with/without active draining. Capture CPU and lock timing; use a separate short CPU-sampling trace if tooling is available. Attribute samples to preflight/index operations, copying, publication, wakeups and scheduling. Counter totals alone cannot separate those costs. Do not enable unbounded tracing for the whole run. |
+| D7 | Inventory discovery behavior | Record automatic scan start/completion times and manual-refresh completion during load. If an additional disposable disk is already available, test arrival/drive-letter changes with user coordination; do not add/remove VM hardware automatically. Without that setup, mark actual hotplug coverage unavailable. |
+
+Keep runtime bounded: estimate duration before starting; use per-case and overall
+deadlines and always reserve time for restoration. If the full matrix cannot fit,
+run acceptance plus D1/D2/D4/D5 first and clearly mark D3/D6/D7 pending. A missing
+trace or unavailable hotplug setup is a reason to defer a decision, not a failed
+driver result. Fault/lifecycle experiments must not overlap performance probes.
+
+### Decision rules for the open items
+
+For each recommendation, cite case IDs and measured effect size/spread. An
+improvement smaller than repeat-to-repeat variation is inconclusive. The >10%
+regression, >20% observer difference and >2x tail criteria in this document are
+investigation triggers, not statistical proof or universal product requirements.
+
+| Open item | Evidence required | Decision and remaining design work |
+|---|---|---|
+| Native device-change notifications | D7 and UI inventory timing. | This is primarily a discovery/UX improvement, not contingent on a speed win. Implement if prompt automatic arrival/letter-change updates are needed. First choose disk/volume notification coverage, lifetime ownership, debounce and rescan-on-missed-event fallback. Do not make live cache-state trust depend on inventory events. |
+| Independent cold-read execution | D2 shows unrelated resident readers/writers delayed while a lower read owns the foreground worker, after excluding fences and evictions. | Prioritize asynchronous miss handling if that interference persists. First specify range dependencies, pinned overlay versions, cancellation/remove ownership, bounded outstanding I/O and flush/TRIM ordering. A benchmark cannot supply this correctness design. |
+| Parallel write admission | D1 scaling plateaus without pressure while queue latency grows; D6 attributes cost to serialized admission rather than the lower device. | Optimize fixed work first if it dominates. Choose multi-owner admission only if the remaining ceiling matters for target hardware. Require per-range version publication, dependency/barrier epochs, cancellation and bounded memory before implementation. Little's law consistency alone does NOT prove where latency is spent. |
+| Better queue selection | D3 shows limits/repeated scans correlate with lost useful bypass work, without real ordering conflicts. | Prefer an eligible-read index or progress-driven scheduling if scans are costly. Do not merely raise limits: bound spinlock time and preserve all older overlapping writes/fences. If actual fences dominate, classify their semantics instead. |
+| Lower per-write overhead | D1/D6 separate CPU spent in preflight, metadata, publication, copying and notifications. | Target the largest evidenced cost with one contained change at a time. Without stack attribution, record the hypothesis and request a short trace; aggregate lock time cannot justify a specific rewrite. |
+| Faster draining | D4 proves batching/concurrency gains in actual disk acceptance while foreground latency and write admission remain acceptable. | Select batch/parallelism only from the throughput-versus-latency tradeoff. Keep defaults if gains are noisy or harm foreground work. Sparse writes that lack adjacency may need address-aware scheduling, with starvation and same-range version ordering explicitly designed. |
+| Smarter Automatic allocation | D5 shows which demand transitions lose useful reads or unnecessarily throttle writes versus Fixed controls. | Retain the current heuristic if it is stable. Otherwise propose adaptive protection with explicit minimum write progress, bounds and hysteresis. Do not optimize for one hot-set size. Uncached future demand cannot be reserved by evicting acknowledged dirty writes. |
+| Sharding or reader/writer locks | D6 traces show metadata lock contention remains substantial after fixed-work and scheduling improvements; D1 shows useful independent work available. | Shard by block/range only with cross-shard barrier/eviction/accounting rules. Consider reader/writer locks only if the hit path can actually be read-only: current hits update recency, statistics and pins. Neither a lock-free design nor separate RAM pools is automatically faster or safer. |
+| Separate read/write RAM pools | D5 demonstrates a protection problem not solved by logical quotas, or traces show allocator/metadata interference that physical partitioning would remove. | Prefer the unified versioned store with logical protection unless evidence favors partitioning. Separate pools must still serve newest dirty data to reads and manage promotion without stale duplicates or excessive copying. Fixed quotas are not equivalent to independent execution. |
+| Boot/power lifecycle hardening | Separate planned boot/paging, shutdown, sleep/hibernate, dump and device-removal tests on a recoverable VM. | Current-boot results can prioritize this work but cannot certify it. Establish recovery access and a separate test window before invasive lifecycle tests. Do not infer OS-disk safety from Q: benchmarks. |
+
+### Required decision output
+
+Add `DECISIONS.md` beside the raw results, with one row per open item:
+
+`item | implement next / defer / insufficient evidence | evidence case IDs |
+measured benefit or bottleneck | confounders | design prerequisite | smallest next change`
+
+Rank the next three changes using the stated foreground priority and measured
+impact, not implementation novelty. Include any tradeoff where faster writes cost
+read residency or faster draining hurts foreground latency. Separate measured
+facts, source-code reasoning and hypotheses. It is valid to recommend no new
+architecture yet. Preserve all correctness invariants even if the preferred
+performance design requires further investigation.
+
+## 5. Restoration and handoff
 
 The runner must use try/finally and restore original delay/fault/timing hooks,
 budget, every policy field and enabled state. Verify saved profiles are unchanged.
