@@ -298,6 +298,11 @@ both foreground acceptance and drain rate in this run.
 - Native hotplug, boot/paging, power, removal and Driver Verifier coverage were not run.
 - A successful filesystem TRIM/reuse check does not prove that a filesystem TRIM notification
   reached the driver; unsupported forms remain `SKIP` unless driver counters prove observation.
+- The final runtime state was restored and healthy. A saved-profile comparison detected that the
+  profile had become Fixed50 during the long batch despite all current runners using
+  `--runtime-only`; the original Automatic profile was manually restored with an explicit
+  `--save`. This is a restoration/audit issue to investigate before trusting unattended profile
+  preservation, not a performance result.
 
 Private raw results and the decision table are under the ignored `.lab/` directory. The next
 architectural priority is independent cold-read execution or better request scheduling, not a
