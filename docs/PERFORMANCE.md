@@ -201,6 +201,108 @@ throughput, **Idle issued roughly half the lower writes** of Eager in the small-
 (4,450 versus 9,717 at QD1 T1), i.e. more RAM coalescing and less disk traffic. That is the
 expected behaviour and a better argument for Idle than any score in this matrix.
 
+## Observer and concurrency verification, 2026-09-13 (driver 0.4.21.1)
+
+The latest implementation was tested on the disposable Q: volume using the installed 0.4.21.1
+CLI/driver pair from commit `46e0f60`. The old PATH diagnostics copy was not used; all VM control
+commands used the installed Program Files CLI. Budget was 1024 MiB and runtime mutations were
+restored after every batch.
+
+### Correctness gate
+
+The corrected private runner completed **11/11 checks**:
+
+- in-flight overwrite at drain parallelism 1/2/4;
+- overlapping read ordering;
+- nested reads with retention disabled;
+- deep mixed read/write queues;
+- overlapped cancellation smoke test (197 cancelled, 3 completion races, 0 failed);
+- Flush fence, TRIM/reuse, whole-file seeded verification and final driver-health checks.
+
+The first mixed-queue attempt reported 39 wrong RAM reads because the test initialized the expected
+patterns concurrently with the readers. That was a harness false positive; the test was corrected
+to seed and flush the expected patterns before readers started, then passed. The old untracked
+harness is not evidence and is not packaged.
+
+### Observer matrix
+
+Fixed 50% allocation, Eager, 25 ms lower-write delay, 256 MiB hot reader and separate 2 GiB writer;
+two reversed-order repeats. Values below are medians of the loaded-reader cases:
+
+| Observer | Reader IOPS | p99 | Read misses | New observer/control barriers |
+|---|---:|---:|---:|---:|
+| None | 95,846 | 0.284 ms | 0 | 0 / 0 |
+| Telemetry | 96,647 | 0.281 ms | 0 | 0 / 0 |
+| Inventory | 51,221 | 0.284 ms | 0 | 0 / 0 |
+| Both | 49,727 | 0.279 ms | 0 | 0 / 0 |
+
+Telemetry isolation passes. Inventory no longer creates a cache-clearing or scheduling fence,
+but it has a repeatable roughly 45–50% throughput cost while the writer is active. It did not
+restore the old catastrophic one-second tail: p99 stayed below 1 ms, although one maximum reached
+about 1.4 s. Inventory-query CPU/storage cost is now the next observer-specific investigation.
+
+### Automatic resident-read protection
+
+Three repeats each, Eager, separate writer and hot reader:
+
+| Hot set | Allocation | Reader + writer | Loaded p99 | Misses |
+|---:|---|---:|---:|---:|
+| 100 MiB | Automatic | ~104k IOPS | ~0.33 ms | 0 |
+| 100 MiB | Fixed 50% | ~104k IOPS | ~0.33 ms | 0 |
+| 400 MiB | Automatic | ~100k IOPS | ~0.35 ms | 0 |
+| 400 MiB | Fixed 50% | ~102k IOPS | ~0.33 ms | 0 |
+| 700 MiB | Automatic | ~20.8 MiB/s | ~45 ms | nonzero |
+| 700 MiB | Fixed 50% | ~13.5 MiB/s | ~58 ms | nonzero |
+
+Automatic protection works for hot sets within its bounded allowance and can borrow space more
+flexibly than Fixed. It is not a promise to retain a hot set larger than the protected allowance.
+
+### Cold-read interference
+
+With a Fixed 50% quota, a hot 256 MiB reader alone reached about 253k IOPS. Running a disjoint
+4 GiB cold reader at the same time reduced it to about 112k IOPS, with p99.9 around 1.2–1.35 ms
+and 173–195 MiB of hot-read misses. This is much better than the earlier one-second behavior,
+but independent cold-read execution remains a valid next architectural target.
+
+### Small requests and draining
+
+The new small-request medians (Automatic/Eager, three repeats) were approximately:
+
+| Case | Result |
+|---|---:|
+| Cached read, QD1 T1 | 25.2k IOPS |
+| Cached read, QD32 T1 | 248k IOPS |
+| Cached read, QD8 T4 | 216k IOPS |
+| Cached write, QD1 T1 | 20.1k IOPS |
+| Cached write, QD32 T1 | 24.0k IOPS |
+| Cached write, QD8 T4 | 24.6k IOPS |
+
+The write-admission ceiling remains. Drain parallelism showed the same trade-off as the earlier
+baseline, with the new implementation measured again:
+
+| Parallelism | Foreground write | Drain rate | Result |
+|---:|---:|---:|---|
+| 1 | ~24.3k IOPS | 5.54 MiB/s | stable |
+| 2 | ~30.5k IOPS | 6.52 MiB/s | promising candidate |
+| 4 | ~6.4k IOPS | 9.87 MiB/s | unacceptable foreground collapse |
+
+Do not raise the default to 4. Parallelism 2 needs a deliberate follow-up decision; it improves
+both foreground acceptance and drain rate in this run.
+
+### Verification limitations and decisions
+
+- The queue-limit probe at offered writer QD32/64/128 showed severe pressure, but did not prove
+  that the 64-entry scan limit caused it. A synchronized timing-enabled probe is still needed.
+- Aggregate QPC counters do not yet attribute CPU time cleanly to copying, locking, publication
+  and bookkeeping. Lower per-write overhead remains a hypothesis.
+- Native hotplug, boot/paging, power, removal and Driver Verifier coverage were not run.
+- A successful filesystem TRIM/reuse check does not prove that a filesystem TRIM notification
+  reached the driver; unsupported forms remain `SKIP` unless driver counters prove observation.
+
+Private raw results and the decision table are under the ignored `.lab/` directory. The next
+architectural priority is independent cold-read execution or better request scheduling, not a
+large parallel-write rewrite.
+
 ## Source map for the paths measured here
 
 Where each measured behaviour lives, for anyone acting on these numbers.

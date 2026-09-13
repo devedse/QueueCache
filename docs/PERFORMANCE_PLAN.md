@@ -68,6 +68,28 @@ One addition to the plan from these results:
   throughput (+36%) and drain rate (+14%) over the default of 1. Treat raising the default to 2
   as a measured candidate, but only once Phase 1 can show why 4 collapses the foreground.
 
+## 0.1 Status after the 0.4.21.1 verification batch (2026-09-13)
+
+The observer/protection implementation passed the corrected correctness gate (11/11 checks).
+The important measured outcomes are:
+
+| Finding | Decision |
+|---|---|
+| Overlap, pinning, nested retention-off reads, cancellation smoke, Flush and TRIM/reuse | No concrete correctness defect found in this batch |
+| Telemetry observer | Passes isolation: no new barriers and no meaningful loaded-reader regression |
+| Inventory observer | No cache wipe/fence, but repeatable 45–50% loaded-reader throughput cost; investigate query CPU/storage cost |
+| Automatic protection for 100/400 MiB hot sets | Works about as well as Fixed50 with zero misses |
+| Automatic protection for a 700 MiB hot set | Bounded protection is exceeded; degradation is expected, not a defect |
+| Cold reader plus hot reader | Hot throughput roughly halves and misses 173–195 MiB; independent cold-read execution remains a candidate |
+| Write admission | Still around 20–24k IOPS for 4 KiB writes; no evidence yet for parallel write admission |
+| Drain parallelism | 2 improves both foreground and drain; 4 improves drain but collapses foreground, so default remains unchanged |
+| Queue-limit probe | Pressure is severe at offered QD64/128, but scan-limit causation is not proven |
+| Hotplug/lifecycle | Not tested; remains separate work |
+
+The next implementation should not be chosen from novelty. First investigate inventory-query cost and
+cold-read scheduling; only then consider write sharding or additional foreground workers. Keep the
+current bounded protection and default drain parallelism unchanged until more attribution exists.
+
 ## 1. What the first baseline settled, and what it did not
 
 | Finding | Conclusion supported | Conclusion **not** supported yet |
