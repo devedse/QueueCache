@@ -87,6 +87,8 @@ struct QC_CACHE {
     // Only the request worker invokes this callback, outside Mutex, while its
     // current write is capacity-blocked or its lower read is pending. No concurrent
     // foreground writer is introduced, and the callback must never submit lower I/O.
+    // True: read completion OR bounded selector progress; recheck the owner
+    // condition before calling again. False: wait for work/capacity/completion.
     bool (*ServiceReads)(PVOID, PIRP);
     PVOID ServiceContext;
     PKEVENT RequestAvailable;
