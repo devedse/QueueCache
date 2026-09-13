@@ -5,6 +5,12 @@ compiled into `QueueCache.Developer.dll` beside the CLI, not separate executable
 applications or duplicate .NET runtimes. The desktop can reuse this library later.
 The `tests/` projects run on the build host/CI and are not installed.
 
+For repeatable batches, start with `qcache developer verify Q: --suite quick`.
+Use `--suite full --diskspd C:\Tools\DiskSpd\diskspd.exe` for the longer matrix.
+Output defaults to a unique subfolder of the current directory (`--output` overrides
+the parent). See [verification suites and recovery](../docs/DEVELOPER_VERIFICATION.md)
+before running; use the shared runner instead of copying private harness scripts.
+
 | Command | Purpose / effects |
 |---|---|
 | `qcache test Q:` | Ordinary current-boot file checks. New files retained; no raw writes, faults or reboot. |

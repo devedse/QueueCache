@@ -25,11 +25,13 @@ foreach($name in @('pause','resume','remove')) {
 & $cli disk attach 'Q:\not-a-volume' 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 2) { throw 'Invalid attachment target must fail during parsing.' }
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer','test'), @('developer','write-tests'), @('developer','file-tests'), @('developer','driver'), @('developer','driver','delay'), @('developer','driver','fault'), @('developer','driver','inspect'))) {
+foreach ($command in @(@('developer'), @('developer','verify'), @('developer','verify-status'), @('developer','verify-recover'), @('developer','test'), @('developer','write-tests'), @('developer','file-tests'), @('developer','driver'), @('developer','driver','delay'), @('developer','driver','fault'), @('developer','driver','inspect'))) {
     & $cli @command --help
     if ($LASTEXITCODE) { throw "Developer help failed: $command" }
 }
 foreach ($arguments in @(
+    @('developer','verify','Q:','--suite','not-a-suite'),
+    @('developer','verify','Q:','--detach'),
     @('developer','write-tests','1','4294967296','invalid','unknown-mode'),
     @('developer','write-tests','0','4294967296','invalid','write-disposable-region'),
     @('developer','write-tests','1','4294967296','invalid','write-dirty-prefix','--prefix-bytes','65536'),
@@ -43,6 +45,8 @@ foreach ($arguments in @(
     if ($LASTEXITCODE -ne 2) { throw "Developer invalid arguments must fail before disk access: $arguments" }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
+& $cli developer verify 'Q:' --suite quick --repeats 0 2>&1 | Out-Host
+if ($LASTEXITCODE -ne 1) { throw 'Invalid runner settings must fail before device access.' }
 # GitHub's pwsh wrapper propagates the last native exit code. The negative tests
 # intentionally leave it nonzero, so report this script's own successful result.
 exit 0

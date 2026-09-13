@@ -53,15 +53,18 @@ Exact IRP positions cannot be inferred from process launch. If available evidenc
 cannot establish a scenario, report NOT EXERCISED, not PASS. Do not add production
 hooks just to fill a coverage table. Large concurrent writes are not assumed atomic.
 
-3. Reuse the private `.lab/Run-FlushAttribution.ps1` one-shot probe, with its embedded
-   sampler. Resolve VM paths and update its old-version identity preflight to the
-   actual release. Keep previous results intact. This script is private, not shipped
-   in Git; obtain it from the current workspace if testing another checkout.
-4. Run only its targeted eight cases: Automatic/Fixed50, with/without requested
-   application flush, two repetitions, writer QD128, 25 ms lower-write delay. Keep
-   the 1 GiB cache, 256 MiB hot reader, separate 2 GiB writer, 256 KiB drain batch,
-   one drainer and original DiskSpd workload parameters. A control may still contain
-   OS flushes; classify by observed counters as well as requested configuration.
+3. Use the source-controlled C# runner, not another copy of the private PowerShell
+   harness: `qcache developer verify Q: --suite flush-interference --repeats 2
+   --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results`.
+   See `DEVELOPER_VERIFICATION.md` for the output contract and recovery commands.
+4. This selects eight cases: Automatic/Fixed50, with/without requested application
+   flush, two repetitions, writer QD128, 25 ms lower-write delay. Defaults retain
+   the 1 GiB cache, 256 MiB hot reader, separate 2 GiB writer, 256 KiB batch and one
+   drainer. The standard DiskSpd XML runner is a new measurement contract, not the
+   old CDM fork: establish matching-engine baselines before claiming speedup ratios.
+   A control may still contain OS flushes; classify by observed counters, not only
+   requested configuration. The existing explicit byte-order tests above remain
+   required; the runner does not claim to establish exact queue positions.
 5. Report each repetition's reader IOPS, actual completions, p99.9/max (N/A for zero
    completions), read misses, clean occupancy, bypass completions, fence rejections,
    scan yields, drain progress, application/deferred flush deltas and injected-flush

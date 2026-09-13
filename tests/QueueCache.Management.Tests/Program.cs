@@ -1,6 +1,23 @@
 using System.Buffers.Binary;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Developer.Verification;
+
+if (OperatingSystem.IsWindows() && args.Length == 4 && args[0] == "--fake-verification" && args[2] == "--verification-worker")
+{
+    Environment.ExitCode = await VerificationRunnerTests.FakeWorkerAsync(args[1], args[3]);
+    return;
+}
+
+// Isolated fake child for runner contract tests; never opens a disk/driver.
+if (args.Length > 0 && args[0] == "--runner-child")
+{
+    if (args[1] == "hang") await Task.Delay(Timeout.Infinite);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(args.Skip(1)));
+    Console.Error.WriteLine("captured stderr");
+    return;
+}
+if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];

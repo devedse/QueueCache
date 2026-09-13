@@ -8,3 +8,4 @@
 *.user
 *.binlog
 /developer/**/Logs/
+**/QueueCache-Verify-*/
