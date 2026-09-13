@@ -33,6 +33,7 @@ struct LAB_EXTENSION {
     ULONGLONG NextSequence;
     ULONGLONG ReadServiceEpoch; // Normal worker admissions, not drain wakeups.
     QcReadSelection<LIST_ENTRY> ReadSelection; // QueueLock; see readselection.h.
+    bool ReadSelectionAllowsFlush; // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
 #endif
 };
@@ -117,7 +118,7 @@ static void QueueRemove(PIO_CSQ csq, PIRP irp) {
     // Cancellation can remove a fence/dependency without a new insertion.
     KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
 }
-struct READ_SELECTION { PIRP BlockedRequest; ULONGLONG AfterSequence; bool More; };
+struct READ_SELECTION { PIRP BlockedRequest; ULONGLONG AfterSequence; bool More; bool AllowApplicationFlush; };
 #if QCACHE_WRITE_LAB
 static void Increment(ULONGLONG* value) {
     InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(value));
@@ -165,6 +166,10 @@ struct ReadQueueView {
 #endif
         if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE ||
             QcObservationRequest(stack)) return false;
+        // Do not dequeue/acknowledge the flush. A Fast application flush does not
+        // alter cached bytes; independent reads may cross it, but validation must
+        // still visit every older write on BOTH sides of it. Other fences remain.
+        if (stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS && Selection->AllowApplicationFlush) return false;
 #if QCACHE_WRITE_LAB
         Count(&Ext->Cache.Performance.SelectionRejectFence);
 #endif
@@ -225,7 +230,13 @@ static void QueueCancel(PIO_CSQ csq, PIRP irp) {
 #if QCACHE_WRITE_LAB
 static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
     auto ext = static_cast<LAB_EXTENSION*>(context);
+    QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
+    const bool allowFlush = QcReadMayPassApplicationFlush(state.Flags);
     KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (ext->ReadSelectionAllowsFlush != allowFlush) {
+        ext->ReadSelection.Reset(ext->Pending.Flink);
+        ext->ReadSelectionAllowsFlush = allowFlush;
+    }
     const bool diagnostics = ext->Cache.Timing != 0;
     if (diagnostics) {
         Increment(&ext->Cache.Performance.ServiceReadCalls);
@@ -242,7 +253,10 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
     const bool closing = ext->Closing != FALSE;
     KeReleaseSpinLock(&ext->QueueLock, irql);
     if (closing) return false;
-    READ_SELECTION selection{blockedRequest, 0, false};
+    // Policy mutations are executed by this same foreground worker, never during
+    // this callback. Queued policy changes remain fences. SnapshotLock is released
+    // before QueueLock; no cache mutex acquisition inside a CSQ callback.
+    READ_SELECTION selection{blockedRequest, 0, false, allowFlush};
     bool completed = false;
     ULONG used = 0;
     for (ULONG n = 0; n < 8; ++n) {
@@ -265,7 +279,9 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
             // DriverContext[3] belongs to CSQ and must never be used here.
             read->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(ext->ReadServiceEpoch);
             // A miss must not block this lane on the lower device. Reinsertion at
-            // the head crosses only reads/non-overlapping writes already checked.
+            // the head crosses only reads/non-overlapping writes, observations
+            // and eligible Fast flushes already checked. No lower read is issued
+            // here; the normal worker may later execute this independent miss.
             // CSQ may cancel/free it inline; never touch it after successful insert.
             status = IoCsqInsertIrpEx(&ext->Csq, read, nullptr, reinterpret_cast<PVOID>(1));
             if (!NT_SUCCESS(status)) {

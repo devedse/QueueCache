@@ -8,6 +8,7 @@ struct Queue {
     Node Nodes[145]{};
     QcReadSelection<Node> Scan{};
     unsigned Visits = 0;
+    unsigned Flags = 1; // Strict by default; kind 4 is an application flush.
     constexpr Queue() {
         for (unsigned i = 0; i < 145; ++i) {
             Nodes[i].Next = &Nodes[(i + 1) % 145];
@@ -17,7 +18,8 @@ struct Queue {
         Scan.Reset(Nodes[0].Next);
     }
     constexpr Node* Next(Node* node) { return node->Next; }
-    constexpr bool Fence(Node* node) { ++Visits; return node->Kind == 3; }
+    constexpr bool Fence(Node* node) { ++Visits; return node->Kind == 3 ||
+        (node->Kind == 4 && !QcReadMayPassApplicationFlush(Flags)); }
     constexpr bool Eligible(Node* node) { return node->Kind == 1; }
     constexpr bool Conflict(Node* read, Node* older) { return older->Kind == 2 && read->Range == older->Range; }
     constexpr void Remove(unsigned index) {
@@ -121,4 +123,28 @@ static_assert(CancelAndReinsert(), "Cancellation and reinsertion invalidate borr
 static_assert(CursorRemovalAndAppend(), "Maintain cursor lifetime and tail progress");
 static_assert(LateDependencyAndValidationCancellation(), "Validate beyond 64 and survive dependency cancellation");
 static_assert(NewPrefixInvalidatesValidation(), "Head insertion must restart dependency validation");
+constexpr bool FlushChecks(unsigned flags, unsigned conflictAt, bool hardFence) {
+    Queue q; q.Flags = flags;
+    q.Nodes[70].Kind = 4; q.Nodes[100].Kind = 4;
+    q.Nodes[140].Kind = 1; q.Nodes[140].Range = 2;
+    if (conflictAt) q.Nodes[conflictAt].Range = 2;
+    if (hardFence) q.Nodes[110].Kind = 3;
+    bool more = false;
+    for (unsigned i = 0; i < 12; ++i) {
+        auto found = q.Step(more);
+        if (q.Visits > 64) return false;
+        if (found) return !conflictAt && !hardFence && flags == 33 && found == &q.Nodes[140]
+            && q.Nodes[69].Next == &q.Nodes[70]; // Flush was never removed.
+        if (!more) return conflictAt || hardFence || flags != 33;
+    }
+    return false;
+}
+static_assert(FlushChecks(33, 0, false), "Fast reads cross multiple flushes beyond entry 64");
+static_assert(FlushChecks(1, 0, false), "Strict flush remains a fence");
+static_assert(FlushChecks(32, 0, false), "Disabled cache cannot cross flush");
+static_assert(FlushChecks(35, 0, false) && FlushChecks(37, 0, false) &&
+    FlushChecks(41, 0, false) && FlushChecks(49, 0, false), "Unhealthy cache cannot cross flush");
+static_assert(FlushChecks(33, 20, false) && FlushChecks(33, 120, false),
+    "Overlaps before and after flush still block read");
+static_assert(FlushChecks(33, 0, true), "Fast flush exception never bypasses other barriers");
 }

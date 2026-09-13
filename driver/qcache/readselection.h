@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+// QC_STATE flag contract: enabled + Fast, without fault/suspend/barrier/removal.
+// Only application flushes use this exception; controls/TRIM never do.
+constexpr bool QcReadMayPassApplicationFlush(unsigned flags) {
+    return (flags & 33u) == 33u && (flags & 30u) == 0;
+}
+
 // Intrusive queue cursors, accessed ONLY while the queue lock is held. The owner
 // must call Removing before unlink/free, Appended after tail insertion, and Reset
 // after head insertion or a new foreground admission. No request is pinned here.
