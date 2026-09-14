@@ -146,13 +146,10 @@ constexpr bool QcMayChangeMedia(ULONG code) {
     case IOCTL_STORAGE_EJECT_MEDIA:
     case IOCTL_STORAGE_LOAD_MEDIA:
     case IOCTL_STORAGE_LOAD_MEDIA2:
-    case IOCTL_STORAGE_MEDIA_REMOVAL:
-    case IOCTL_STORAGE_EJECTION_CONTROL:
     case IOCTL_STORAGE_RESET_BUS:
     case IOCTL_STORAGE_RESET_DEVICE:
     case IOCTL_DISK_EJECT_MEDIA:
     case IOCTL_DISK_LOAD_MEDIA:
-    case IOCTL_DISK_MEDIA_REMOVAL:
     case IOCTL_DISK_REASSIGN_BLOCKS:
         return true;
     default: return false;
@@ -167,6 +164,15 @@ static_assert(!QcMayChangeMedia(IOCTL_STORAGE_CHECK_VERIFY));
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_GET_DEVICE_NUMBER));
 static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_GEOMETRY_EX));
 static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_LAYOUT_EX));
+// These lock/unlock the eject mechanism; they do not eject or modify media.
+// Keep ordered forwarding, but do not invalidate clean cache during discovery.
+static_assert(!QcMayChangeMedia(IOCTL_DISK_MEDIA_REMOVAL));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_MEDIA_REMOVAL));
+static_assert(!QcMayChangeMedia(IOCTL_STORAGE_EJECTION_CONTROL));
+static_assert(QcMayChangeMedia(IOCTL_DISK_EJECT_MEDIA));
+static_assert(QcMayChangeMedia(IOCTL_DISK_LOAD_MEDIA));
+static_assert(QcMayChangeMedia(IOCTL_STORAGE_LOAD_MEDIA));
+static_assert(QcMayChangeMedia(IOCTL_STORAGE_RESET_DEVICE));
 static_assert(QcMayChangeMedia(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
 static_assert(QcMayChangeMedia(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
 static_assert(QcMayChangeMedia(IOCTL_DISK_SET_DISK_ATTRIBUTES));

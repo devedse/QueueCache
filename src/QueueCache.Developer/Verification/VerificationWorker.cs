@@ -19,6 +19,11 @@ public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, Writ
 [SupportedOSPlatform("windows")]
 public static class VerificationWorker
 {
+    public static void ReportFailures(IEnumerable<CheckResult> checks, TextWriter error)
+    {
+        foreach (var check in checks.Where(c => c.Result != "PASS"))
+            error.WriteLine($"{check.Result}: {check.Name}: {check.Detail}");
+    }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static async Task<int> ExecuteAsync(string jobPath)
     {
@@ -93,10 +98,13 @@ public static class VerificationWorker
             case "files":
                 var report = await DiskWorkloads.TestAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, report);
+                if (!report.Passed) ReportFailures(report.Checks, Console.Error);
                 return report.Passed ? 0 : 1;
             case "policies":
                 var checks = await CacheScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, checks);
+                ReportFailures(checks, Console.Error);
+                if (checks.Count == 0) Console.Error.WriteLine("Policy suite returned no checks.");
                 return checks.Count > 0 && checks.All(c => c.Result == "PASS") ? 0 : 1;
             case "prepare":
                 var directory = Path.GetFullPath(job.WorkDirectory!);

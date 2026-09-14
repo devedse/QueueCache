@@ -18,6 +18,12 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
+        using (var errors = new StringWriter())
+        {
+            VerificationWorker.ReportFailures([new("warm-read", "PASS", "okay"), new("retention", "FAIL", "hot data evicted; barrier=0x74804")], errors);
+            Check(errors.ToString().Contains("FAIL: retention: hot data evicted; barrier=0x74804") && !errors.ToString().Contains("warm-read"),
+                "structured check failures reach worker stderr with exact details");
+        }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
         VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 0 });
         VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1440 });

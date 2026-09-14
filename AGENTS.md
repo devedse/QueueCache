@@ -65,6 +65,11 @@
 
 ## Repository hygiene
 
+- For failures reported in this ongoing verification work, the user authorizes
+  scoped fixes, proportionate tests, and commits/pushes to their master branch
+  without another confirmation. This does not authorize destructive VM recovery
+  or unrelated changes; report blockers and preserve evidence.
+
 - GitHub Actions owns build-version increments. Do not manually bump versions.
 - Personal research notes, credentials, VM keys and one-off evidence stay private.
   Preserve unrelated uncommitted research documents. `.lab/`, downloaded tools,
