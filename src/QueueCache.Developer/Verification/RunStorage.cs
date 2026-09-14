@@ -12,7 +12,10 @@ public sealed record CaseResult(string Id, string Status, string Detail, DateTim
 public sealed class RunStorage
 {
     public static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
-    public string DirectoryPath { get; }
+    public string DirectoryPath
+    {
+        get;
+    }
     public List<CaseResult> Results { get; } = [];
     public RunStorage(string parent)
     {
@@ -34,7 +37,8 @@ public sealed class RunStorage
     public void Write(string name, object value) => AtomicJson(PathFor(name), value);
     public void Add(CaseResult result)
     {
-        if (Results.Any(r => r.Id == result.Id)) throw new InvalidDataException("Duplicate case ID: " + result.Id);
+        if (Results.Any(r => r.Id == result.Id))
+            throw new InvalidDataException("Duplicate case ID: " + result.Id);
         Results.Add(result);
         Write("results.json", Results);
     }

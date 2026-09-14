@@ -7,17 +7,27 @@ namespace QueueCache.Operations;
 internal sealed class ConfigurationGate : IDisposable
 {
     private readonly Mutex mutex = new(false, @"Global\QueueCache.Configuration");
-    private ConfigurationGate() { }
+    private ConfigurationGate()
+    {
+    }
     public static ConfigurationGate Enter()
     {
         var gate = new ConfigurationGate();
         try
         {
-            try { if (!gate.mutex.WaitOne(TimeSpan.FromSeconds(30))) throw new IOException("Another interface is changing cache settings. Try again when it finishes."); }
+            try
+            {
+                if (!gate.mutex.WaitOne(TimeSpan.FromSeconds(30)))
+                    throw new IOException("Another interface is changing cache settings. Try again when it finishes.");
+            }
             catch (AbandonedMutexException) { /* Ownership acquired; caller must inspect live driver state. */ }
             return gate;
         }
         catch { gate.mutex.Dispose(); throw; }
     }
-    public void Dispose() { mutex.ReleaseMutex(); mutex.Dispose(); }
+    public void Dispose()
+    {
+        mutex.ReleaseMutex();
+        mutex.Dispose();
+    }
 }

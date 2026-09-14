@@ -16,15 +16,22 @@ public sealed class CacheSettingsWindow : Window
     {
         Icon = AppBranding.CreateIcon();
         Title = state.BudgetBytes == 0 ? "Add cache" : "Cache settings";
-        Width = 620; Height = 780; MinWidth = 540; MinHeight = 550;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; Background = Brushes.White;
-        if (availableMiB is < 1 or > MemoryBudget.MaximumMiB) throw new ArgumentOutOfRangeException(nameof(availableMiB));
+        Width = 620;
+        Height = 780;
+        MinWidth = 540;
+        MinHeight = 550;
+        WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Background = Brushes.White;
+        if (availableMiB is < 1 or > MemoryBudget.MaximumMiB)
+            throw new ArgumentOutOfRangeException(nameof(availableMiB));
         var options = state.Options ?? new();
         var sizes = new[] { 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536 }.Where(n => n <= availableMiB).ToArray();
         var initial = state.BudgetBytes == 0 ? Math.Min(4096, availableMiB) : Math.Min(availableMiB, (int)(state.BudgetBytes >> 20));
         var memory = Choice(sizes.Select(n => $"{n:N0} MiB").Append("Custom").ToArray(), Array.IndexOf(sizes, initial));
-        if (memory.SelectedIndex < 0) memory.SelectedIndex = sizes.Length;
-        var custom = Number(1, availableMiB, initial); custom.Name = "CustomBudget";
+        if (memory.SelectedIndex < 0)
+            memory.SelectedIndex = sizes.Length;
+        var custom = Number(1, availableMiB, initial);
+        custom.Name = "CustomBudget";
         custom.IsVisible = memory.SelectedIndex == sizes.Length;
         memory.SelectionChanged += (_, _) => custom.IsVisible = memory.SelectedIndex == sizes.Length;
         var allocation = Choice(["Automatic sharing", "Fixed read / write split"], (int)options.Allocation);
@@ -36,13 +43,16 @@ public sealed class CacheSettingsWindow : Window
             split.Text = allocation.SelectedIndex == 0 ? "Reads and writes share one pool. Clean data yields space to incoming writes."
                 : $"{100 - (int)(write.Value ?? 50)}% read / {(int)(write.Value ?? 50)}% write. 0% write gives read-only caching; 100% gives write-only caching.";
         }
-        allocation.SelectionChanged += (_, _) => DescribeSplit(); write.ValueChanged += (_, _) => DescribeSplit(); DescribeSplit();
+        allocation.SelectionChanged += (_, _) => DescribeSplit();
+        write.ValueChanged += (_, _) => DescribeSplit();
+        DescribeSplit();
         var retain = new ToggleSwitch { Content = "Keep drained writes cached for reads", IsChecked = options.RetainWrites };
         var promote = new ToggleSwitch { Content = "Move retained writes into the read quota when read", IsChecked = options.PromoteOnRead };
         var preset = Choice(["Fast", "Strict"], state.BudgetBytes == 0 || state.UnsafeDefer ? 0 : 1);
         var behaviour = MainWindow.Text("", 13, MainWindow.Muted);
         void DescribePreset() => behaviour.Text = preset.SelectedIndex == 0 ? "Writes and application flushes can finish in RAM. Flush now always drains to disk." : "Application flushes and write-through writes wait for disk.";
-        preset.SelectionChanged += (_, _) => DescribePreset(); DescribePreset();
+        preset.SelectionChanged += (_, _) => DescribePreset();
+        DescribePreset();
         // Background draining. Which tuning settings actually affect the driver depends on the
         // selected algorithm (QcShouldDrain in driver/qcache/cachepolicy.h):
         //   Eager    — always drains while dirty; watermarks, maximum age and idle interval are unused.
@@ -50,9 +60,11 @@ public sealed class CacheSettingsWindow : Window
         //   Idle     — watermarks + maximum age + write-idle interval.
         // Batch size and parallelism describe how a drain is issued and apply to every algorithm.
         var algorithm = Choice(["Eager", "Balanced", "Idle"], (int)options.Drain);
-        var low = Number(0, 99, options.LowPercent); var high = Number(1, 100, options.HighPercent);
+        var low = Number(0, 99, options.LowPercent);
+        var high = Number(1, 100, options.HighPercent);
         var parallel = Number(1, 4, options.Parallelism);
-        var age = Number(10, 300000, options.MaxDirtyAgeMs); var idle = Number(10, 60000, options.IdleMs);
+        var age = Number(10, 300000, options.MaxDirtyAgeMs);
+        var idle = Number(10, 60000, options.IdleMs);
         var batch = Choice(["4 KiB", "64 KiB", "256 KiB", "512 KiB", "1024 KiB"], Array.IndexOf(new[] { 4, 64, 256, 512, 1024 }, options.BatchKiB));
         // Preserve CLI batch sizes not present in the suggested list.
         var batchCustom = Number(4, 1024, options.BatchKiB);
@@ -67,12 +79,14 @@ public sealed class CacheSettingsWindow : Window
         Add(panel, "Memory allocation", allocation, "Automatic: shares unused space while protecting resident read data up to half the payload pool. Retained writes yield first; very large writes can temporarily reduce read protection. Fixed: the write share below is reserved for pending and retained writes.");
         Add(panel, "Write share (%)", write, "Fixed allocation only: percentage of the payload pool reserved for writes. This is also the pool the draining percentages below are measured against.");
         panel.Children.Add(split);
-        panel.Children.Add(retain); panel.Children.Add(promote);
+        panel.Children.Add(retain);
+        panel.Children.Add(promote);
         Add(panel, "Write behaviour", preset, "Fast lets application flushes and write-through writes complete while data is still in volatile RAM. Strict makes them wait for the disk. Independent of the draining algorithm.");
         panel.Children.Add(behaviour);
         var draining = new StackPanel { Spacing = 10 };
         Add(draining, "Algorithm", algorithm, "Decides when pending (dirty) writes are sent to the disk in the background. It never affects cached reads: clean read data is evicted, never drained.");
-        var describe = MainWindow.Text("", 13, MainWindow.Muted); draining.Children.Add(describe);
+        var describe = MainWindow.Text("", 13, MainWindow.Muted);
+        draining.Children.Add(describe);
         // Watermarks and maximum age: Balanced and Idle only.
         var watermarks = Field("Start pressure draining at (%)", PressureHint + " Above this fill level, background draining runs until the stop level is reached.", high,
             Field("Stop pressure draining at (%)", PressureHint + " Pressure draining stops here, so writes below this level can keep absorbing overwrites in RAM.", low),
@@ -80,7 +94,8 @@ public sealed class CacheSettingsWindow : Window
         // Write-idle interval: Idle only.
         var idleField = Field("Write-idle interval (ms)", "Idle algorithm only: drain after this long with no newly cached write, so bursts stay in RAM and the disk catches up during pauses.", idle);
         // Always relevant: how each drain is issued to the disk.
-        draining.Children.Add(watermarks); draining.Children.Add(idleField);
+        draining.Children.Add(watermarks);
+        draining.Children.Add(idleField);
         draining.Children.Add(Field("Maximum adjacent-write batch", "Pending 4 KiB blocks that are adjacent on disk are gathered into one lower write up to this size. Larger batches favour sequential throughput; budgets under 16 MiB cap each staging buffer at 64 KiB.", batch, batchCustom));
         draining.Children.Add(Field("Maximum simultaneous disk writes", "How many gathered writes may be outstanding to the disk at once. Higher values help random draining on fast devices; overlapping versions of a block stay ordered regardless.", parallel));
         draining.Children.Add(MainWindow.Text("Age is a scheduling trigger, not a durability deadline. Every algorithm yields to explicit flushes, shutdown barriers and writers waiting for capacity.", 12, MainWindow.Muted));
@@ -95,13 +110,16 @@ public sealed class CacheSettingsWindow : Window
             watermarks.IsVisible = algorithm.SelectedIndex != 0;
             idleField.IsVisible = algorithm.SelectedIndex == 2;
         }
-        algorithm.SelectionChanged += (_, _) => DescribeDraining(); DescribeDraining();
+        algorithm.SelectionChanged += (_, _) => DescribeDraining();
+        DescribeDraining();
         panel.Children.Add(MainWindow.Text("Background draining", 13, null, FontWeight.SemiBold));
         panel.Children.Add(new Border { BorderBrush = Brush.Parse("#DDDDDD"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), Padding = new Thickness(14), Child = draining });
         panel.Children.Add(startup);
-        var error = MainWindow.Text("", 13, Brush.Parse("#B33C36")); panel.Children.Add(error);
+        var error = MainWindow.Text("", 13, Brush.Parse("#B33C36"));
+        panel.Children.Add(error);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 10 };
-        var cancel = new Button { Content = "Cancel" }; cancel.Click += (_, _) => Close(null);
+        var cancel = new Button { Content = "Cancel" };
+        cancel.Click += (_, _) => Close(null);
         var save = new Button { Content = state.BudgetBytes == 0 ? "Create cache" : "Save changes", Background = MainWindow.Accent, Foreground = Brushes.White };
         save.Click += (_, _) =>
         {
@@ -115,14 +133,19 @@ public sealed class CacheSettingsWindow : Window
                         (int)(age.Value ?? 5000), (int)(idle.Value ?? 250),
                         batch.SelectedIndex < 0 ? (int)(batchCustom.Value ?? options.BatchKiB) : new[] { 4, 64, 256, 512, 1024 }[batch.SelectedIndex], (int)(parallel.Value ?? 1))
                 };
-                config.Validate(true); Close(new CacheSettingsResult(config, startup.IsChecked == true));
+                config.Validate(true);
+                Close(new CacheSettingsResult(config, startup.IsChecked == true));
             }
             catch (ArgumentException ex) { error.Text = ex.Message; }
         };
-        buttons.Children.Add(cancel); buttons.Children.Add(save);
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(save);
         buttons.Margin = new Thickness(28, 14);
-        var layout = new DockPanel(); DockPanel.SetDock(buttons, Dock.Bottom); layout.Children.Add(buttons);
-        layout.Children.Add(new ScrollViewer { Content = panel }); Content = layout;
+        var layout = new DockPanel();
+        DockPanel.SetDock(buttons, Dock.Bottom);
+        layout.Children.Add(buttons);
+        layout.Children.Add(new ScrollViewer { Content = panel });
+        Content = layout;
     }
     private static ComboBox Choice(string[] values, int selected) => new() { ItemsSource = values, SelectedIndex = selected, HorizontalAlignment = HorizontalAlignment.Stretch };
     private static NumericUpDown Number(int min, int max, int value) => new() { Minimum = min, Maximum = max, Value = value, Increment = 1 };
@@ -131,16 +154,20 @@ public sealed class CacheSettingsWindow : Window
     private static void Add(StackPanel panel, string label, Control control, string? hint = null)
     {
         var text = MainWindow.Text(label, 13, null, FontWeight.SemiBold);
-        if (hint is null) panel.Children.Add(text);
+        if (hint is null)
+            panel.Children.Add(text);
         else
         {
             var mark = MainWindow.Text("?", 11, Brushes.White, FontWeight.Bold);
-            mark.TextAlignment = TextAlignment.Center; mark.Width = 15;
+            mark.TextAlignment = TextAlignment.Center;
+            mark.Width = 15;
             var badge = new Border { Background = MainWindow.Accent, CornerRadius = new CornerRadius(8), Height = 16, VerticalAlignment = VerticalAlignment.Center, Child = mark, Cursor = new(StandardCursorType.Help) };
             ToolTip.SetTip(badge, new TextBlock { Text = hint, MaxWidth = 380, TextWrapping = TextWrapping.Wrap });
             ToolTip.SetShowDelay(badge, 150);
             var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            row.Children.Add(text); row.Children.Add(badge); panel.Children.Add(row);
+            row.Children.Add(text);
+            row.Children.Add(badge);
+            panel.Children.Add(row);
         }
         panel.Children.Add(control);
     }
@@ -149,7 +176,8 @@ public sealed class CacheSettingsWindow : Window
     {
         var group = new StackPanel { Spacing = 10 };
         Add(group, label, control, hint);
-        foreach (var extra in more) group.Children.Add(extra);
+        foreach (var extra in more)
+            group.Children.Add(extra);
         return group;
     }
 }

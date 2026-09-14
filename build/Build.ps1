@@ -10,26 +10,78 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
-    @($Version.Split('.') | Where-Object { [long]$_ -gt 65535 }).Count) {
+    @($Version.Split('.') | Where-Object { [long]$_ -gt 65535 }).Count)
+{
     throw 'Version must contain four numeric fields, each in 0..65535.'
 }
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location $root
-try {
-    function Invoke-Checked([string]$Command, [string[]]$Arguments) {
+try
+{
+    function Invoke-Checked([string]$Command, [string[]]$Arguments)
+    {
         & $Command @Arguments
-        if ($LASTEXITCODE) { throw "$Command failed with exit code $LASTEXITCODE" }
+        if ($LASTEXITCODE)
+        {
+            throw "$Command failed with exit code $LASTEXITCODE"
+        }
     }
-    if ($LabWriteCache) { $LabPassThrough = [switch]::new($true); $LabSerialized = [switch]::new($true) }
-    if ($ManagedOnly -and $LabPassThrough) { throw 'Choose controller-only or lab, not both.' }
-    if ($LabSerialized -and -not $LabPassThrough) { throw 'Serialized worker is an explicit lab-only option; also specify -LabPassThrough.' }
-    $flavor = if ($LabPassThrough) { 'lab' } else { 'legacy' }
-    if ($LabSerialized) { $flavor = 'lab-serialized' }
-    if ($LabWriteCache) { $flavor = 'lab-writecache' }
-    $driverName = if ($LabPassThrough) { 'qcachelab' } else { 'qcache' }
-    $kind = if ($ManagedOnly) { 'controller' } elseif ($LabPassThrough) { 'lab-passthrough-unsigned' } else { 'unsigned' }
-    if ($LabSerialized) { $kind = 'lab-serialized-unsigned' }
-    if ($LabWriteCache) { $kind = 'lab-writecache-unsigned' }
+    if ($LabWriteCache)
+    {
+        $LabPassThrough = [switch]::new($true); $LabSerialized = [switch]::new($true)
+    }
+    if ($ManagedOnly -and $LabPassThrough)
+    {
+        throw 'Choose controller-only or lab, not both.'
+    }
+    if ($LabSerialized -and -not $LabPassThrough)
+    {
+        throw 'Serialized worker is an explicit lab-only option; also specify -LabPassThrough.'
+    }
+    $flavor = if ($LabPassThrough)
+    {
+        'lab'
+    }
+    else
+    {
+        'legacy'
+    }
+    if ($LabSerialized)
+    {
+        $flavor = 'lab-serialized'
+    }
+    if ($LabWriteCache)
+    {
+        $flavor = 'lab-writecache'
+    }
+    $driverName = if ($LabPassThrough)
+    {
+        'qcachelab'
+    }
+    else
+    {
+        'qcache'
+    }
+    $kind = if ($ManagedOnly)
+    {
+        'controller'
+    }
+    elseif ($LabPassThrough)
+    {
+        'lab-passthrough-unsigned'
+    }
+    else
+    {
+        'unsigned'
+    }
+    if ($LabSerialized)
+    {
+        $kind = 'lab-serialized-unsigned'
+    }
+    if ($LabWriteCache)
+    {
+        $kind = 'lab-writecache-unsigned'
+    }
     # Each invocation uses a fresh staging directory; no stale binaries or private files.
     $name = "QueueCache-$Version-x64-$Configuration-$kind"
     $stage = Join-Path $root "artifacts/packages/$name-$([guid]::NewGuid().ToString('N'))"
@@ -41,11 +93,15 @@ try {
     Invoke-Checked dotnet @('publish', 'src/QueueCache.Desktop', '-c', $Configuration,
         '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-o', "$stage/desktop")
     & "$PSScriptRoot/Test-PackageLayout.ps1" -PackageDirectory $stage
-    if (-not $ManagedOnly) {
+    if (-not $ManagedOnly)
+    {
         & "$PSScriptRoot/Restore-Toolchain.ps1"
         $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
         $vsPath = & $vswhere -latest -products '*' -version '[18.0,19.0)' -property installationPath
-        if (-not $vsPath) { throw 'Install Visual Studio 2026 with Desktop development with C++ and Windows Driver Kit.' }
+        if (-not $vsPath)
+        {
+            throw 'Install Visual Studio 2026 with Desktop development with C++ and Windows Driver Kit.'
+        }
         $msbuild = Join-Path $vsPath 'MSBuild/Current/Bin/MSBuild.exe'
         # Some launchers supply both Path and PATH. Framework MSBuild rejects that
         # environment when spawning CL. Normalize only this process, not Windows settings.
@@ -60,7 +116,8 @@ try {
             "/p:LabWriteCache=$($LabWriteCache.IsPresent.ToString().ToLowerInvariant())",
             "/bl:artifacts/driver-$flavor-$Configuration.binlog")
         $driverVersion = (Get-Item "artifacts/driver/$flavor/$Configuration/$driverName.sys").VersionInfo
-        if ($driverVersion.FileVersion -ne $Version -or $driverVersion.ProductVersion -ne $Version) {
+        if ($driverVersion.FileVersion -ne $Version -or $driverVersion.ProductVersion -ne $Version)
+        {
             throw 'Driver version resource does not match the requested package version.'
         }
         New-Item -ItemType Directory -Path "$stage/driver" | Out-Null
@@ -71,7 +128,10 @@ try {
     New-Item -ItemType Directory -Path "$stage/docs" | Out-Null
     Copy-Item docs/KNOWN_ISSUES.md, docs/LICENSING_REVIEW.md, docs/CACHE_POLICIES.md "$stage/docs"
     $commit = & git rev-parse HEAD
-    if ($LASTEXITCODE) { throw 'Cannot determine source commit.' }
+    if ($LASTEXITCODE)
+    {
+        throw 'Cannot determine source commit.'
+    }
     $dirty = [bool](& git status --porcelain --untracked-files=normal)
     [ordered]@{ version = $Version; configuration = $Configuration; architecture = 'x64';
         commit = $commit; workingTreeDirty = $dirty; driverIncluded = (-not $ManagedOnly);
@@ -79,14 +139,19 @@ try {
         labWriteCache = $LabWriteCache.IsPresent;
         labSerialized = $LabSerialized.IsPresent;
         dotnetSdk = (& dotnet --version); wdkSdkPackage = '10.0.28000.2526';
-        createdUtc = [DateTime]::UtcNow.ToString('O') } |
+        createdUtc = [DateTime]::UtcNow.ToString('O')
+    } |
         ConvertTo-Json | Set-Content "$stage/build-info.json" -Encoding utf8
     Get-ChildItem $stage -File -Recurse | Sort-Object FullName | ForEach-Object {
         '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash,
-            [IO.Path]::GetRelativePath($stage, $_.FullName)
+        [IO.Path]::GetRelativePath($stage, $_.FullName)
     } | Set-Content "$stage/SHA256SUMS.txt" -Encoding utf8
     $archive = "$stage.zip"
     Compress-Archive -Path "$stage/*" -DestinationPath $archive
     Write-Host "Package: $archive"
     Write-Host 'Experimental build only: no driver is signed, installed or enabled by this script.'
-} finally { Pop-Location }
+}
+finally
+{
+    Pop-Location
+}

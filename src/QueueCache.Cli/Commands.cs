@@ -18,14 +18,17 @@ internal static class Commands
         var diskList = new Command("list", "Show volumes, physical drive, GiB and boot/system status.");
         diskList.SetAction(async (_, token) =>
         {
-            foreach (var disk in await DiskCatalog.ListAsync(token)) Console.WriteLine(disk.Display);
+            foreach (var disk in await DiskCatalog.ListAsync(token))
+                Console.WriteLine(disk.Display);
             return 0;
         });
         disks.Subcommands.Add(diskList);
         foreach (var attach in new[] { true, false })
         {
             var command = new Command(attach ? "attach" : "detach", "Select/remove this disk's filter. Reboot required; does not enable caching.");
-            var drive = new Argument<string>("volume"); ValidateVolume(drive); command.Arguments.Add(drive);
+            var drive = new Argument<string>("volume");
+            ValidateVolume(drive);
+            command.Arguments.Add(drive);
             command.SetAction(async (p, token) =>
             {
                 Console.WriteLine(await DriverRegistration.ChangeAsync(p.GetValue(drive)!, attach, token));
@@ -42,7 +45,11 @@ internal static class Commands
         var accept = new Option<bool>("--accept-volatile-flush");
         var disabled = new Option<bool>("--disabled");
         var save = new Option<bool>("--save") { Description = "Save to administrator-only machine settings after successful Apply; installer startup task restores saved profiles." };
-        apply.Arguments.Add(volume); apply.Options.Add(budget); apply.Options.Add(preset); apply.Options.Add(accept); apply.Options.Add(disabled);
+        apply.Arguments.Add(volume);
+        apply.Options.Add(budget);
+        apply.Options.Add(preset);
+        apply.Options.Add(accept);
+        apply.Options.Add(disabled);
         apply.Options.Add(save);
         var runtimeOnly = new Option<bool>("--runtime-only") { Description = "Change this boot only; leave the saved startup profile untouched. Cannot combine with --save." };
         apply.Options.Add(runtimeOnly);
@@ -59,7 +66,8 @@ internal static class Commands
         var idle = new Option<int>("--idle-ms") { DefaultValueFactory = _ => 250, Description = "Idle only: drain after this long without a newly cached write." };
         var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 256, Description = "All algorithms: maximum adjacent-write gather size per lower write." };
         var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 1, Description = "All algorithms: maximum simultaneous lower writes." };
-        foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel }) apply.Options.Add(option);
+        foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel })
+            apply.Options.Add(option);
         apply.SetAction(async (p, token) =>
         {
             var configuration = new CacheConfiguration(p.GetValue(budget), p.GetValue(preset), !p.GetValue(disabled))
@@ -68,7 +76,8 @@ internal static class Commands
                     p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel))
             };
             configuration.Validate(true); // Validate before opening a disk. The selected preset defines semantics.
-            if (p.GetValue(save) && p.GetValue(runtimeOnly)) throw new ArgumentException("--save and --runtime-only cannot be combined.");
+            if (p.GetValue(save) && p.GetValue(runtimeOnly))
+                throw new ArgumentException("--save and --runtime-only cannot be combined.");
             var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token, p.GetValue(runtimeOnly));
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
@@ -77,13 +86,16 @@ internal static class Commands
         foreach (var name in new[] { "pause", "resume", "remove" })
         {
             var command = new Command(name, name == "remove" ? "Drain and free cache memory, then remove the saved task. Files are untouched." : "Pause/drain or resume a task, preserving its startup setting.");
-            var drive = new Argument<string>("volume"); ValidateVolume(drive); command.Arguments.Add(drive);
+            var drive = new Argument<string>("volume");
+            ValidateVolume(drive);
+            command.Arguments.Add(drive);
             var transient = new Option<bool>("--runtime-only") { Description = "Leave the saved startup profile untouched." };
             command.Options.Add(transient);
             command.SetAction(async (p, token) =>
             {
                 var selected = p.GetValue(drive)!;
-                if (name == "remove") await CacheTasks.RemoveAsync(selected, token, p.GetValue(transient));
+                if (name == "remove")
+                    await CacheTasks.RemoveAsync(selected, token, p.GetValue(transient));
                 else
                 {
                     var target = await DiskTarget.InspectAsync(selected, token);
@@ -114,8 +126,13 @@ internal static class Commands
             var size = new Option<int>("--size-mib") { DefaultValueFactory = _ => 256 };
             var passes = new Option<int>("--passes") { DefaultValueFactory = _ => 4 };
             var reportPath = new Option<string>("--report") { Description = "Create a NEW JSON report (existing files are never overwritten)." };
-            command.Arguments.Add(drive); command.Options.Add(reportPath);
-            if (benchmark) { command.Options.Add(size); command.Options.Add(passes); }
+            command.Arguments.Add(drive);
+            command.Options.Add(reportPath);
+            if (benchmark)
+            {
+                command.Options.Add(size);
+                command.Options.Add(passes);
+            }
             command.SetAction(async (p, token) =>
             {
                 // Reserve output first so an invalid/existing report path fails before disk activity.
@@ -126,16 +143,23 @@ internal static class Commands
                     ? await DiskWorkloads.BenchmarkAsync(target, p.GetValue(size), p.GetValue(passes), progress, token)
                     : await DiskWorkloads.TestAsync(target, progress, token);
                 Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions));
-                if (output is not null) { JsonSerializer.Serialize(output, report, JsonOptions); output.Flush(true); }
+                if (output is not null)
+                {
+                    JsonSerializer.Serialize(output, report, JsonOptions);
+                    output.Flush(true);
+                }
                 return report.Passed ? 0 : 1;
             });
             root.Subcommands.Add(command);
         }
         // Preserve existing installer and operator scripts while moving their presentation incrementally.
         Add("list", [], []);
-        foreach (var name in new[] { "status", "cache-status" }) Add(name, ["device"], ["--json"]);
-        foreach (var name in new[] { "watch", "diagnostics", "enable", "flush", "disable", "retry", "drop-clean" }) Add(name, ["device"], []);
-        foreach (var name in new[] { "configure", "start", "lab-delay", "lab-fault" }) Add(name, ["device", "value"], []);
+        foreach (var name in new[] { "status", "cache-status" })
+            Add(name, ["device"], ["--json"]);
+        foreach (var name in new[] { "watch", "diagnostics", "enable", "flush", "disable", "retry", "drop-clean" })
+            Add(name, ["device"], []);
+        foreach (var name in new[] { "configure", "start", "lab-delay", "lab-fault" })
+            Add(name, ["device", "value"], []);
         foreach (var name in new[] { "enable", "disable", "flush", "retry", "watch", "diagnostics", "drop-clean" })
             Add(name, ["device"], [], policy);
         Add("status", ["device"], ["--json"], policy, "cache-status");
@@ -145,10 +169,15 @@ internal static class Commands
         foreach (var action in new[] { "inspect", "add", "remove" })
         {
             var command = new Command(action);
-            var instance = new Argument<string>("instance"); command.Arguments.Add(instance);
+            var instance = new Argument<string>("instance");
+            command.Arguments.Add(instance);
             var service = new Argument<string>("service");
             var marker = new Option<bool>("--lab-installer");
-            if (action != "inspect") { command.Arguments.Add(service); command.Options.Add(marker); }
+            if (action != "inspect")
+            {
+                command.Arguments.Add(service);
+                command.Options.Add(marker);
+            }
             command.SetAction(p => compatibility(action == "inspect"
                 ? ["lab-filter", action, p.GetValue(instance)!]
                 : p.GetValue(marker) ? ["lab-filter", action, p.GetValue(instance)!, p.GetValue(service)!, "--lab-installer"]
@@ -164,8 +193,10 @@ internal static class Commands
             var command = new Command(name, name.StartsWith("lab-") ? "Advanced lab-only diagnostic hook. Not part of qcache test." : $"Cache {name}.");
             var arguments = argumentNames.Select(n => new Argument<string>(n)).ToArray();
             var options = optionNames.Select(n => new Option<bool>(n)).ToArray();
-            foreach (var a in arguments) command.Arguments.Add(a);
-            foreach (var o in options) command.Options.Add(o);
+            foreach (var a in arguments)
+                command.Arguments.Add(a);
+            foreach (var o in options)
+                command.Options.Add(o);
             command.SetAction(p => compatibility(new[] { legacyName ?? name }.Concat(arguments.Select(a => p.GetValue(a)!))
                 .Concat(options.Where(o => p.GetValue(o)).Select(o => o.Name)).ToArray()));
             (parent ?? root).Subcommands.Add(command);
@@ -178,5 +209,8 @@ internal static class Commands
         if (value is null || value.Length != 2 || !char.IsAsciiLetter(value[0]) || value[1] != ':')
             result.AddError("Expected an explicit volume such as Q:.");
     });
-    private sealed class ConsoleProgress : IProgress<string> { public void Report(string value) => Console.Error.WriteLine(value); }
+    private sealed class ConsoleProgress : IProgress<string>
+    {
+        public void Report(string value) => Console.Error.WriteLine(value);
+    }
 }

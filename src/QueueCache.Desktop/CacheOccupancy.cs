@@ -11,7 +11,11 @@ internal sealed class CacheOccupancy : Control
     internal static readonly IBrush ReadFill = Brush.Parse("#3489DB"), RetainedFill = Brush.Parse("#087F8C"),
         PendingFill = Brush.Parse("#9A66CC"), FreeFill = Brush.Parse("#E8F1F2");
     private double read, retained, dirty;
-    public CacheOccupancy() { Height = 14; ClipToBounds = true; }
+    public CacheOccupancy()
+    {
+        Height = 14;
+        ClipToBounds = true;
+    }
     public void Update(ulong readBytes, ulong retainedBytes, ulong dirtyBytes, ulong capacity)
     {
         read = capacity == 0 ? 0 : Math.Clamp((double)readBytes / capacity, 0, 1);

@@ -71,8 +71,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         var stop = trace + ".stop";
         var ready = trace + ".ready.json";
         using var observerToken = new CancellationTokenSource();
-        var observer = ExecuteWorker(job with { Operation = "telemetry", Reply = trace + ".jsonl", StopFile = stop, ReadyFile = ready,
-            Seconds = timeoutSeconds + 60 }, observerToken.Token, timeoutSeconds + 70);
+        var observer = ExecuteWorker(job with
+        {
+            Operation = "telemetry",
+            Reply = trace + ".jsonl",
+            StopFile = stop,
+            ReadyFile = ready,
+            Seconds = timeoutSeconds + 60
+        }, observerToken.Token, timeoutSeconds + 70);
         try
         {
             await TelemetryCoverage.WaitReadyAsync(ready, observer, TimeSpan.FromSeconds(45), token);
@@ -85,50 +91,80 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         {
             File.WriteAllText(stop, "stop");
             observerToken.Cancel();
-            try { await observer; } catch (Exception) { /* primary error and raw trace retained */ }
+            try
+            {
+                await observer;
+            }
+            catch (Exception) { /* primary error and raw trace retained */ }
         }
     }
 
     private async Task<string> ExecuteWorker(WorkerJob job, CancellationToken token, int timeoutSeconds = 120)
     {
         var id = $"worker-{Interlocked.Increment(ref sequence):D5}-{job.Operation}";
-        job = job with { Reply = string.IsNullOrEmpty(job.Reply) ? storage.PathFor(id + ".reply.json") : job.Reply };
+        job = job with
+        {
+            Reply = string.IsNullOrEmpty(job.Reply) ? storage.PathFor(id + ".reply.json") : job.Reply
+        };
         var path = storage.PathFor(id + ".job.json");
         RunStorage.AtomicJson(path, job);
         var result = await RunProcess(id, executable, [.. prefix, "--verification-worker", path],
             TimeSpan.FromSeconds(timeoutSeconds), token);
-        if (result.ExitCode != 0) throw new IOException($"Worker {job.Operation} failed ({result.ExitCode}): {ErrorDetail(result.Error)}. Full error: {storage.PathFor(id + ".stderr.txt")}");
-        if (!File.Exists(job.Reply)) throw new InvalidDataException("Worker did not write its result: " + id);
+        if (result.ExitCode != 0)
+            throw new IOException($"Worker {job.Operation} failed ({result.ExitCode}): {ErrorDetail(result.Error)}. Full error: {storage.PathFor(id + ".stderr.txt")}");
+        if (!File.Exists(job.Reply))
+            throw new InvalidDataException("Worker did not write its result: " + id);
         return job.Reply;
     }
     private WorkerJob Job(string operation) => new(operation, options.Volume, "", original.Target);
     private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0) =>
-        Worker(Job("control") with { Action = action, Value = value }, token, 180);
+        Worker(Job("control") with
+        {
+            Action = action,
+            Value = value
+        }, token, 180);
 
     public async Task<int> RunAsync(VerificationOptions selected, IProgress<string>? progress, CancellationToken token)
     {
         VerificationPlan.Validate(selected);
-        options = selected with { Output = Path.GetFullPath(selected.Output), DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd) };
+        options = selected with
+        {
+            Output = Path.GetFullPath(selected.Output),
+            DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd)
+        };
         storage = new RunStorage(options.Output);
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var performance = options.Suite is "performance" or "full" or "flush-interference" ? VerificationPlan.Performance(options) : [];
         var expected = new List<string>();
-        if (options.Suite is "quick" or "full") expected.Add("file-integrity");
-        if (options.Suite is "policies" or "full") expected.Add("policy-integrity");
+        if (options.Suite is "quick" or "full")
+            expected.Add("file-integrity");
+        if (options.Suite is "policies" or "full")
+            expected.Add("policy-integrity");
         expected.AddRange(performance.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
-        storage.Write("manifest.json", new { SchemaVersion = 1, PlanVersion = VerificationPlan.Version, Options = options,
-            ExpectedCases = expected, Provenance = VerificationWorker.Provenance(executable),
-            DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd))) });
-        storage.Write("status.json", new { Status = "RUNNING", Started = DateTimeOffset.UtcNow });
+        storage.Write("manifest.json", new
+        {
+            SchemaVersion = 1,
+            PlanVersion = VerificationPlan.Version,
+            Options = options,
+            ExpectedCases = expected,
+            Provenance = VerificationWorker.Provenance(executable),
+            DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
+        });
+        storage.Write("status.json", new
+        {
+            Status = "RUNNING",
+            Started = DateTimeOffset.UtcNow
+        });
         storage.Write("results.json", storage.Results);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        if (options.DeadlineMinutes > 0) deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
+        if (options.DeadlineMinutes > 0)
+            deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
         string? failure = null, restorationFailure = null;
         var captured = false;
         FileStream? diskLease = null;
@@ -141,13 +177,21 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             captured = true;
             workDirectory = Path.Combine(original.Target.Root, Path.GetFileName(storage.DirectoryPath));
-            storage.Write("workloads.json", new { Directory = workDirectory, Retained = true });
+            storage.Write("workloads.json", new
+            {
+                Directory = workDirectory,
+                Retained = true
+            });
             foreach (var test in expected.TakeWhile(id => id is "file-integrity" or "policy-integrity"))
                 await Case(test, async () => { await Worker(Job(test == "file-integrity" ? "files" : "policies"), deadline.Token, 900); return null; });
             if (performance.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
-                await Worker(Job("prepare") with { WorkDirectory = workDirectory, BudgetMiB = options.BudgetMiB }, deadline.Token, 900);
+                await Worker(Job("prepare") with
+                {
+                    WorkDirectory = workDirectory,
+                    BudgetMiB = options.BudgetMiB
+                }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -168,8 +212,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 progressLabel = $"Restoring | {storage.Results.Count}/{totalCases} recorded";
                 Log("Restoring original runtime state (independent cleanup deadline).");
-                try { OwnedProcess.EnsureStopped(storage.DirectoryPath); await Worker(Job("restore") with { Recovery = storage.PathFor("recovery.json"),
-                    Reply = storage.PathFor("restored.json") }, CancellationToken.None, 300); }
+                try
+                {
+                    OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    await Worker(Job("restore") with
+                    {
+                        Recovery = storage.PathFor("recovery.json"),
+                        Reply = storage.PathFor("restored.json")
+                    }, CancellationToken.None, 300);
+                }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
             }
             diskLease?.Dispose();
@@ -185,20 +236,34 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 return (sorted[(sorted.Length - 1) / 2] + sorted[sorted.Length / 2]) / 2;
             }
             storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush })
-                .Select(g => new { Configuration = g.Key, Samples = g.Count(),
+                .Select(g => new
+                {
+                    Configuration = g.Key,
+                    Samples = g.Count(),
                     IopsMedian = Median(g.Select(c => storage.Results.Single(r => r.Id == c.Id).Score!.Iops)),
                     IopsMin = g.Min(c => storage.Results.Single(r => r.Id == c.Id).Score!.Iops),
                     IopsMax = g.Max(c => storage.Results.Single(r => r.Id == c.Id).Score!.Iops),
-                    CaseIds = g.Select(c => c.Id).ToArray() }).ToArray());
+                    CaseIds = g.Select(c => c.Id).ToArray()
+                }).ToArray());
         }
-        storage.Write("status.json", new { Status = status, Finished = DateTimeOffset.UtcNow, Expected = expected.Count,
-            Collected = storage.Results.Count, Failure = failure, RestorationFailure = restorationFailure });
+        storage.Write("status.json", new
+        {
+            Status = status,
+            Finished = DateTimeOffset.UtcNow,
+            Expected = expected.Count,
+            Collected = storage.Results.Count,
+            Failure = failure,
+            RestorationFailure = restorationFailure
+        });
         var report = new StringBuilder($"# QueueCache verification\n\nStatus: **{status}**\n\nCases: {storage.Results.Count}/{expected.Count}. Plan version: {VerificationPlan.Version}.\n\n");
         report.AppendLine("PASS means the case's collection/checks succeeded, not that latency met a performance target or that every driver path is verified. No medians are computed from partial runs.\n");
         report.AppendLine("| Case | Status | IOPS | Read p99 ms |\n|---|---|---:|---:|");
-        foreach (var row in storage.Results) report.AppendLine($"| {row.Id} | {row.Status} | {row.Score?.Iops.ToString("F2", CultureInfo.InvariantCulture) ?? "—"} | {row.Score?.ReadP99Milliseconds?.ToString("F3", CultureInfo.InvariantCulture) ?? "N/A"} |");
-        if (failure is not null) report.AppendLine("\n## Failure\n\n```text\n" + failure + "\n```");
-        if (restorationFailure is not null) report.AppendLine("\n## Restoration failure\n\n```text\n" + restorationFailure + "\n```");
+        foreach (var row in storage.Results)
+            report.AppendLine($"| {row.Id} | {row.Status} | {row.Score?.Iops.ToString("F2", CultureInfo.InvariantCulture) ?? "—"} | {row.Score?.ReadP99Milliseconds?.ToString("F3", CultureInfo.InvariantCulture) ?? "N/A"} |");
+        if (failure is not null)
+            report.AppendLine("\n## Failure\n\n```text\n" + failure + "\n```");
+        if (restorationFailure is not null)
+            report.AppendLine("\n## Restoration failure\n\n```text\n" + restorationFailure + "\n```");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
         var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs\n");
         foreach (var r in storage.Results)
@@ -219,9 +284,21 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         progressLabel = $"Test {storage.Results.Count + 1} of {totalCases}";
         Log("Starting " + id);
-        storage.Write("status.json", new { Status = "RUNNING", CurrentCase = id, CompletedCases = storage.Results.Count, Updated = DateTimeOffset.UtcNow });
-        var started = DateTimeOffset.UtcNow; var timer = Stopwatch.StartNew();
-        try { var score = await run(); storage.Add(new(id, score is null ? "PASS" : "MEASURED", "Case completed; raw evidence retained. Performance thresholds require comparison.", started, timer.Elapsed.TotalSeconds, score)); Log($"Case {id}: {(score is null ? "PASS" : "MEASURED")} ({timer.Elapsed.TotalSeconds:F1}s)."); }
+        storage.Write("status.json", new
+        {
+            Status = "RUNNING",
+            CurrentCase = id,
+            CompletedCases = storage.Results.Count,
+            Updated = DateTimeOffset.UtcNow
+        });
+        var started = DateTimeOffset.UtcNow;
+        var timer = Stopwatch.StartNew();
+        try
+        {
+            var score = await run();
+            storage.Add(new(id, score is null ? "PASS" : "MEASURED", "Case completed; raw evidence retained. Performance thresholds require comparison.", started, timer.Elapsed.TotalSeconds, score));
+            Log($"Case {id}: {(score is null ? "PASS" : "MEASURED")} ({timer.Elapsed.TotalSeconds:F1}s).");
+        }
         catch (Exception ex) { storage.Add(new(id, "FAIL", ex.Message, started, timer.Elapsed.TotalSeconds)); throw; }
     }
 
@@ -230,7 +307,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // Every command uses the same typed argument vector; shell parsing and automatic $args cannot interfere.
         var result = await RunProcess(id, options.DiskSpd!, [.. arguments, "-Rxml", "-L", "-S", file],
             TimeSpan.FromSeconds(int.Parse(arguments.Single(a => a.StartsWith("-d", StringComparison.Ordinal))[2..], CultureInfo.InvariantCulture) + 120), token);
-        if (result.ExitCode != 0) throw new IOException($"DiskSpd XML-mode exit {result.ExitCode}: {ErrorDetail(result.Error)}. Both supported variants must return zero in XML mode. See {storage.PathFor(id)}.stderr.txt and stdout.txt.");
+        if (result.ExitCode != 0)
+            throw new IOException($"DiskSpd XML-mode exit {result.ExitCode}: {ErrorDetail(result.Error)}. Both supported variants must return zero in XML mode. See {storage.PathFor(id)}.stderr.txt and stdout.txt.");
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);
         return score;
@@ -239,9 +317,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
     {
         await Control(WriteCacheAction.LabDelay, token);
-        await Worker(Job("configure") with { Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.Drain != "Off")
-            { Options = new CacheOptions(Enum.Parse<CacheAllocation>(scenario.Allocation), 50,
-                Drain: scenario.Drain == "Off" ? DrainAlgorithm.Eager : Enum.Parse<DrainAlgorithm>(scenario.Drain)) } }, token, 300);
+        await Worker(Job("configure") with
+        {
+            Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.Drain != "Off")
+            {
+                Options = new CacheOptions(Enum.Parse<CacheAllocation>(scenario.Allocation), 50,
+                Drain: scenario.Drain == "Off" ? DrainAlgorithm.Eager : Enum.Parse<DrainAlgorithm>(scenario.Drain))
+            }
+        }, token, 300);
         await Control(WriteCacheAction.Flush, token);
         await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, 1);
@@ -256,12 +339,20 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 throw new IOException("Warm hot set is not fully resident; do not interpret this as a cache-hit interference test.");
         }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
-        await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
+        await Worker(Job("snapshot") with
+        {
+            Reply = storage.PathFor(scenario.Id + "-before.json")
+        }, token);
         var stop = storage.PathFor(scenario.Id + ".stop");
         var ready = storage.PathFor(scenario.Id + ".ready.json");
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var telemetry = Worker(Job("telemetry") with { Reply = storage.PathFor(scenario.Id + "-telemetry.jsonl"),
-            StopFile = stop, ReadyFile = ready, Seconds = options.DurationSeconds + 120 }, children.Token, options.DurationSeconds + 130);
+        var telemetry = Worker(Job("telemetry") with
+        {
+            Reply = storage.PathFor(scenario.Id + "-telemetry.jsonl"),
+            StopFile = stop,
+            ReadyFile = ready,
+            Seconds = options.DurationSeconds + 120
+        }, children.Token, options.DurationSeconds + 130);
         Task<DiskSpdScore>? writer = null;
         Task<string>? flush = null;
         try
@@ -276,24 +367,37 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     ["-b1M", $"-o{scenario.QueueDepth}", "-t1", "-w100", $"-d{options.DurationSeconds + 6}", "-W0", "-Zr"], children.Token);
                 await Task.Delay(TimeSpan.FromSeconds(3), token);
                 if (scenario.ApplicationFlush)
-                    flush = Worker(Job("application-flush") with { StopFile = stop, WorkDirectory = workDirectory,
-                        Seconds = options.DurationSeconds }, children.Token, options.DurationSeconds + 120);
+                    flush = Worker(Job("application-flush") with
+                    {
+                        StopFile = stop,
+                        WorkDirectory = workDirectory,
+                        Seconds = options.DurationSeconds
+                    }, children.Token, options.DurationSeconds + 120);
             }
             var arguments = scenario.Workload == "interference" ? new List<string> { "-b4K", "-r4K", "-o8", "-t2", "-w0" } :
                 new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", "-t1",
                     scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", "-Zr" };
-            if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed") arguments.Add("-r4K");
+            if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
+                arguments.Add("-r4K");
             arguments.AddRange([$"-d{options.DurationSeconds}", "-W0"]);
             var score = await Disk(scenario.Id + "-reader", scenario.Workload == "interference" ? hot : Path.Combine(workDirectory, "writer.dat"),
                 arguments.ToArray(), children.Token);
-            if (writer is not null) await writer;
-            if (flush is not null) await flush;
+            if (writer is not null)
+                await writer;
+            if (flush is not null)
+                await flush;
             var workloadEnd = DateTimeOffset.UtcNow;
-            storage.Write(scenario.Id + "-interval.json", new { Start = workloadStart, End = workloadEnd, MaximumSampleGapSeconds = 2 });
+            storage.Write(scenario.Id + "-interval.json", new
+            {
+                Start = workloadStart,
+                End = workloadEnd,
+                MaximumSampleGapSeconds = 2
+            });
             File.WriteAllText(stop, "stop");
             await telemetry;
             var lines = File.ReadAllLines(storage.PathFor(scenario.Id + "-telemetry.jsonl"));
-            if (lines.Length < 2) throw new InvalidDataException("Insufficient telemetry.");
+            if (lines.Length < 2)
+                throw new InvalidDataException("Insufficient telemetry.");
             var timestamps = new List<DateTimeOffset>();
             foreach (var line in lines)
             {
@@ -304,7 +408,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     throw new IOException("Driver error or instance change during measurement.");
             }
             TelemetryCoverage.Validate(timestamps, workloadStart, workloadEnd);
-            await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
+            await Worker(Job("snapshot") with
+            {
+                Reply = storage.PathFor(scenario.Id + "-after.json")
+            }, token);
             return score;
         }
         finally
@@ -313,7 +420,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             children.Cancel();
             // Observe all child completions before restoring or starting another case.
             foreach (var child in new Task?[] { telemetry, writer, flush })
-                if (child is not null) { try { await child; } catch (Exception) { /* original case failure retained */ } }
+                if (child is not null)
+                {
+                    try
+                    {
+                        await child;
+                    }
+                    catch (Exception) { /* original case failure retained */ }
+                }
         }
     }
 
@@ -332,9 +446,19 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         progressLabel = "Recovery";
         Log("Recovery run directory: " + storage.DirectoryPath);
-        try { await Worker(Job("restore") with { Recovery = snapshotPath }, token, 300); }
+        try
+        {
+            await Worker(Job("restore") with
+            {
+                Recovery = snapshotPath
+            }, token, 300);
+        }
         catch (Exception ex) { Log("RESTORATION ERROR: " + ex); throw; }
-        storage.Write("recovery-result.json", new { Status = "RESTORED", At = DateTimeOffset.UtcNow });
+        storage.Write("recovery-result.json", new
+        {
+            Status = "RESTORED",
+            At = DateTimeOffset.UtcNow
+        });
         Log("RESTORED: " + storage.PathFor("recovery-result.json"));
         return 0;
     }

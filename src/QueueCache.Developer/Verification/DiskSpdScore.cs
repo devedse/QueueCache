@@ -1,6 +1,6 @@
 using System.Globalization;
-using System.Xml.Linq;
 using System.Text.RegularExpressions;
+using System.Xml.Linq;
 
 namespace QueueCache.Developer.Verification;
 
@@ -26,27 +26,33 @@ public static class DiskSpdParser
                 xml = xml[..end];
         }
         var root = XDocument.Parse(xml).Root ?? throw new InvalidDataException("Missing DiskSpd XML.");
-        if (root.Name.LocalName != "Results") throw new InvalidDataException("Expected DiskSpd Results XML (use -Rxml).");
+        if (root.Name.LocalName != "Results")
+            throw new InvalidDataException("Expected DiskSpd Results XML (use -Rxml).");
         var spans = root.Elements("TimeSpan").ToArray();
-        if (spans.Length != 1) throw new InvalidDataException("Expected exactly one measured time span.");
+        if (spans.Length != 1)
+            throw new InvalidDataException("Expected exactly one measured time span.");
         var span = spans[0];
         double Number(XElement parent, string name) => double.Parse(parent.Element(name)?.Value ??
             throw new InvalidDataException("Missing DiskSpd " + name), CultureInfo.InvariantCulture);
         var seconds = Number(span, "TestTimeSeconds");
         var targets = span.Elements("Thread").SelectMany(t => t.Elements("Target")).ToArray();
-        if (!double.IsFinite(seconds) || seconds <= 0 || targets.Length == 0) throw new InvalidDataException("Invalid measured span.");
+        if (!double.IsFinite(seconds) || seconds <= 0 || targets.Length == 0)
+            throw new InvalidDataException("Invalid measured span.");
         long Sum(string field) => targets.Sum(t =>
         {
             var value = long.Parse(t.Element(field)?.Value ?? throw new InvalidDataException("Missing DiskSpd " + field), CultureInfo.InvariantCulture);
             return value >= 0 ? value : throw new InvalidDataException("Negative DiskSpd counter.");
         });
         var bytes = checked(Sum("ReadBytes") + Sum("WriteBytes"));
-        var reads = Sum("ReadCount"); var writes = Sum("WriteCount");
+        var reads = Sum("ReadCount");
+        var writes = Sum("WriteCount");
         var count = checked(reads + writes);
-        if (bytes < 0 || count < 0) throw new InvalidDataException("Negative DiskSpd counters.");
+        if (bytes < 0 || count < 0)
+            throw new InvalidDataException("Negative DiskSpd counters.");
         double? Latency(string name, double percentile, long operations)
         {
-            if (operations == 0) return null;
+            if (operations == 0)
+                return null;
             var bucket = span.Element("Latency")?.Elements("Bucket").SingleOrDefault(b =>
                 double.TryParse(b.Element("Percentile")?.Value, CultureInfo.InvariantCulture, out var p) && p == percentile);
             return double.TryParse(bucket?.Element(name)?.Value, CultureInfo.InvariantCulture, out var n) && double.IsFinite(n) && n >= 0 ? n :

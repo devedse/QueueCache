@@ -8,8 +8,7 @@
 // should just lazy-write out the actual operation in background.
 //
 
-void
-QCacheDeviceWorkerThread(PVOID Context)
+void QCacheDeviceWorkerThread(PVOID Context)
 {
     auto device_extension = (PDEVICE_EXTENSION)Context;
 
@@ -18,8 +17,7 @@ QCacheDeviceWorkerThread(PVOID Context)
         KLOCK_QUEUE_HANDLE lock_handle;
         KIRQL lowest_irql = PASSIVE_LEVEL;
 
-        QCacheAcquireLock(&device_extension->WriteQueueLock, &lock_handle,
-            lowest_irql);
+        QCacheAcquireLock(&device_extension->WriteQueueLock, &lock_handle, lowest_irql);
 
         auto request = device_extension->WriteQueue.Flink;
 
@@ -35,30 +33,22 @@ QCacheDeviceWorkerThread(PVOID Context)
             if (!QCacheLinksCreated)
             {
                 UNICODE_STRING event_path;
-                RtlInitUnicodeString(&event_path,
-                    L"\\Device\\" QCACHE_OUT_OF_MEMORY_EVENT_NAME);
+                RtlInitUnicodeString(&event_path, L"\\Device\\" QCACHE_OUT_OF_MEMORY_EVENT_NAME);
 
                 UNICODE_STRING event_link;
-                RtlInitUnicodeString(&event_link,
-                    L"\\BaseNamedObjects\\Global\\"
-                    QCACHE_OUT_OF_MEMORY_EVENT_NAME);
+                RtlInitUnicodeString(&event_link, L"\\BaseNamedObjects\\Global\\" QCACHE_OUT_OF_MEMORY_EVENT_NAME);
 
-                auto status = IoCreateUnprotectedSymbolicLink(&event_link,
-                    &event_path);
+                auto status = IoCreateUnprotectedSymbolicLink(&event_link, &event_path);
 
-                KdPrint((
-                    "QCache:DeviceWorkerThread: Link creation status: %#x\n",
-                    status));
+                KdPrint(("QCache:DeviceWorkerThread: Link creation status: %#x\n", status));
 
-                if (NT_SUCCESS(status) ||
-                    (status == STATUS_OBJECT_NAME_COLLISION))
+                if (NT_SUCCESS(status) || (status == STATUS_OBJECT_NAME_COLLISION))
                 {
                     QCacheLinksCreated = true;
                 }
             }
 
-            KeWaitForSingleObject(&device_extension->WriteQueueEvent,
-                Executive, KernelMode, FALSE, NULL);
+            KeWaitForSingleObject(&device_extension->WriteQueueEvent, Executive, KernelMode, FALSE, NULL);
 
             continue;
         }

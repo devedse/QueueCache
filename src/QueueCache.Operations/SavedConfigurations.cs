@@ -9,6 +9,10 @@ namespace QueueCache.Operations;
 public sealed record SavedConfiguration(int Version, string Volume, string Instance, long Bytes,
     CacheConfiguration Configuration, bool VolatileFlushAccepted)
 {
+    /// <summary>
+    /// Validates the persisted schema and its self-contained values. Matching the
+    /// saved identity to the disk currently mounted at this volume happens during restore.
+    /// </summary>
     public void Validate()
     {
         if (Version != 1 || Volume is null || Volume.Length != 2 || !char.IsAsciiLetter(Volume[0]) || Volume[1] != ':' ||
@@ -45,7 +49,8 @@ public static class SavedConfigurations
     {
         using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = machine.OpenSubKey(KeyPath);
-        if (key is null) return [];
+        if (key is null)
+            return [];
         var profiles = new List<SavedConfiguration>();
         foreach (var name in key.GetValueNames())
         {

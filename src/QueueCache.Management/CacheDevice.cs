@@ -1,5 +1,5 @@
-using System.ComponentModel;
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using Microsoft.Win32.SafeHandles;
@@ -32,16 +32,21 @@ public sealed class CacheDevice : IDisposable
         }
     }
 
-    public string Path { get; }
+    public string Path
+    {
+        get;
+    }
 
     public CachePerformance GetPerformance()
     {
         // Never send a new, potentially barrier-like IOCTL to an old driver.
-        if (!GetWriteCacheState().SupportsPerformance) throw new NotSupportedException("Driver does not advertise performance telemetry.");
+        if (!GetWriteCacheState().SupportsPerformance)
+            throw new NotSupportedException("Driver does not advertise performance telemetry.");
         var data = new byte[CachePerformance.WireSize];
         if (!Native.DeviceIoControl(handle, PerformanceIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Advertised performance telemetry unavailable.");
-        if (returned > data.Length) throw new InvalidDataException("Invalid performance snapshot length.");
+        if (returned > data.Length)
+            throw new InvalidDataException("Invalid performance snapshot length.");
         return CachePerformance.Decode(data.AsSpan(0, (int)returned));
     }
 
@@ -50,7 +55,8 @@ public sealed class CacheDevice : IDisposable
         var data = new byte[CacheDiagnostics.WireSize];
         if (!Native.DeviceIoControl(handle, DiagnosticsIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache diagnostics unavailable (requires matching new driver).");
-        if (returned != data.Length) throw new InvalidDataException("Invalid diagnostics length.");
+        if (returned != data.Length)
+            throw new InvalidDataException("Invalid diagnostics length.");
         return CacheDiagnostics.Decode(data);
     }
 
@@ -59,14 +65,16 @@ public sealed class CacheDevice : IDisposable
         var data = new byte[WriteCacheState.WireSize];
         if (!Native.DeviceIoControl(handle, WriteStateIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Write-cache state unavailable.");
-        if (returned != data.Length) throw new InvalidDataException("Invalid write-cache snapshot length.");
+        if (returned != data.Length)
+            throw new InvalidDataException("Invalid write-cache snapshot length.");
         var legacy = WriteCacheState.Decode(data);
         if (legacy.SupportsReadWrite)
         {
             var current = new byte[WriteCacheState.ReadWriteWireSize];
             if (!Native.DeviceIoControl(handle, ReadWriteStateIoctl, IntPtr.Zero, 0, current, (uint)current.Length, out var count, IntPtr.Zero))
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Advertised read/write cache state unavailable.");
-            if (count != current.Length) throw new InvalidDataException("Invalid read/write snapshot length.");
+            if (count != current.Length)
+                throw new InvalidDataException("Invalid read/write snapshot length.");
             return WriteCacheState.DecodeReadWrite(current);
         }
         // Never probe an unknown IOCTL on an old driver: unknown controls may be
@@ -76,7 +84,8 @@ public sealed class CacheDevice : IDisposable
             var extended = new byte[WriteCacheState.ExtendedWireSize];
             if (Native.DeviceIoControl(handle, ExtendedStateIoctl, IntPtr.Zero, 0, extended, (uint)extended.Length, out var count, IntPtr.Zero))
             {
-                if (count != extended.Length) throw new InvalidDataException("Invalid extended snapshot length.");
+                if (count != extended.Length)
+                    throw new InvalidDataException("Invalid extended snapshot length.");
                 return WriteCacheState.DecodeExtended(extended);
             }
             var error = Marshal.GetLastWin32Error();
@@ -87,7 +96,8 @@ public sealed class CacheDevice : IDisposable
 
     public void Control(WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0)
     {
-        if (!Enum.IsDefined(action)) throw new ArgumentOutOfRangeException(nameof(action));
+        if (!Enum.IsDefined(action))
+            throw new ArgumentOutOfRangeException(nameof(action));
         var command = new byte[32];
         BinaryPrimitives.WriteUInt32LittleEndian(command, 1);
         BinaryPrimitives.WriteUInt32LittleEndian(command.AsSpan(4), 32);
@@ -96,15 +106,18 @@ public sealed class CacheDevice : IDisposable
         BinaryPrimitives.WriteUInt64LittleEndian(command.AsSpan(24), value);
         if (!Native.DeviceIoControlCommand(handle, WriteControlIoctl, command, (uint)command.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"Cache {action} failed. Inspect cache-status; dirty buffers may be retained.");
-        if (returned != 0) throw new InvalidDataException("Unexpected cache control response.");
+        if (returned != 0)
+            throw new InvalidDataException("Unexpected cache control response.");
     }
     public void SetOptions(CacheOptions options)
     {
         var data = options.Encode();
-        if (!GetWriteCacheState().SupportsReadWrite) throw new NotSupportedException("Install the read/write-cache driver and restart Windows first.");
+        if (!GetWriteCacheState().SupportsReadWrite)
+            throw new NotSupportedException("Install the read/write-cache driver and restart Windows first.");
         if (!Native.DeviceIoControlCommand(handle, OptionsIoctl, data, (uint)data.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache policy update failed.");
-        if (returned != 0) throw new InvalidDataException("Unexpected policy response.");
+        if (returned != 0)
+            throw new InvalidDataException("Unexpected policy response.");
     }
 
     public CacheStatistics GetStatistics()
@@ -116,7 +129,8 @@ public sealed class CacheDevice : IDisposable
             var error = Marshal.GetLastWin32Error();
             throw new Win32Exception(error, $"QueueCache statistics unavailable for {Path}: {new Win32Exception(error).Message}");
         }
-        if (returned > data.Length) throw new InvalidDataException("Driver returned an invalid response length.");
+        if (returned > data.Length)
+            throw new InvalidDataException("Driver returned an invalid response length.");
         return CacheStatistics.Decode(data.AsSpan(0, (int)returned));
     }
 
@@ -133,7 +147,8 @@ public sealed class CacheDevice : IDisposable
                          int.TryParse(n.AsSpan(13), out _)))
                     .Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var error = Marshal.GetLastWin32Error();
-            if (error != 122) throw new Win32Exception(error);
+            if (error != 122)
+                throw new Win32Exception(error);
         }
         throw new IOException("Device-name buffer exceeded 1 MiB.");
     }

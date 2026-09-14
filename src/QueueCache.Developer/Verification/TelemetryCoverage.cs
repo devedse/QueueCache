@@ -15,13 +15,22 @@ public static class TelemetryCoverage
                 await observer;
                 throw new IOException("Telemetry exited before becoming ready: " + readyPath);
             }
-            if (timer.Elapsed >= timeout) throw new TimeoutException("Telemetry did not become ready before workloads: " + readyPath);
+            if (timer.Elapsed >= timeout)
+                throw new TimeoutException("Telemetry did not become ready before workloads: " + readyPath);
             await Task.Delay(50, token);
         }
-        if (observer.IsCompleted) { await observer; throw new IOException("Telemetry exited before workloads started."); }
+        if (observer.IsCompleted)
+        {
+            await observer;
+            throw new IOException("Telemetry exited before workloads started.");
+        }
     }
 
-    // The enclosing process interval deliberately includes DiskSpd startup/teardown.
+    /// <summary>
+    /// Proves that ordered telemetry samples cover the complete workload process
+    /// interval without a gap large enough to hide a transient failure.
+    /// </summary>
+    // The enclosing interval deliberately includes DiskSpd startup and teardown.
     public static void Validate(IReadOnlyList<DateTimeOffset> samples, DateTimeOffset start, DateTimeOffset end)
     {
         if (end < start || samples.Count < 2 || samples[0] > start || samples[^1] < end)

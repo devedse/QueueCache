@@ -21,12 +21,15 @@ public static class DeviceFilters
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(instanceId);
         var set = Native.SetupDiCreateDeviceInfoList(IntPtr.Zero, IntPtr.Zero);
-        if (set == new IntPtr(-1)) throw new Win32Exception();
+        if (set == new IntPtr(-1))
+            throw new Win32Exception();
         try
         {
             var device = new DeviceInfo { Size = (uint)Marshal.SizeOf<DeviceInfo>() };
-            if (!Native.SetupDiOpenDeviceInfoW(set, instanceId, IntPtr.Zero, 0, ref device)) throw new Win32Exception();
-            if (device.ClassGuid != DiskClass) throw new ArgumentException("Target must be a disk devnode.");
+            if (!Native.SetupDiOpenDeviceInfoW(set, instanceId, IntPtr.Zero, 0, ref device))
+                throw new Win32Exception();
+            if (device.ClassGuid != DiskClass)
+                throw new ArgumentException("Target must be a disk devnode.");
             var keyBytes = Read(set, ref device, 9, 1) ?? throw new IOException("Disk has no driver key.");
             var key = Encoding.Unicode.GetString(keyBytes).TrimEnd('\0');
             var filters = DecodeMultiString(Read(set, ref device, 17, 7));
@@ -53,15 +56,18 @@ public static class DeviceFilters
         var items = filters.ToList();
         if (add)
         {
-            if (!items.Contains(LabService, StringComparer.OrdinalIgnoreCase)) items.Add(LabService);
+            if (!items.Contains(LabService, StringComparer.OrdinalIgnoreCase))
+                items.Add(LabService);
         }
-        else items.RemoveAll(s => s.Equals(LabService, StringComparison.OrdinalIgnoreCase));
+        else
+            items.RemoveAll(s => s.Equals(LabService, StringComparison.OrdinalIgnoreCase));
         return items.ToArray();
     }
 
     private static string[] DecodeMultiString(byte[]? bytes)
     {
-        if (bytes is null) return [];
+        if (bytes is null)
+            return [];
         if (bytes.Length < 4 || bytes.Length % 2 != 0 ||
             bytes[^1] != 0 || bytes[^2] != 0 || bytes[^3] != 0 || bytes[^4] != 0)
             throw new IOException("Malformed UpperFilters property.");
@@ -75,7 +81,8 @@ public static class DeviceFilters
                 bytes, (uint)bytes.Length, out var size))
         {
             var error = Marshal.GetLastWin32Error();
-            if (error == 13) return null; // ERROR_INVALID_DATA: property absent.
+            if (error == 13)
+                return null; // ERROR_INVALID_DATA: property absent.
             throw new Win32Exception(error);
         }
         if (type != expectedType || size > bytes.Length || size % 2 != 0)
@@ -84,7 +91,10 @@ public static class DeviceFilters
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct DeviceInfo { public uint Size; public Guid ClassGuid; public uint DevInst; public UIntPtr Reserved; }
+    private struct DeviceInfo
+    {
+        public uint Size; public Guid ClassGuid; public uint DevInst; public UIntPtr Reserved;
+    }
     private static class Native
     {
         [DllImport("setupapi.dll", SetLastError = true)]
