@@ -45,6 +45,10 @@
   verdict. Zero-completion samples have N/A latency. A missing completion marker
   means interrupted/running, not success. Do not combine incomplete repetitions.
 - Restoration has a separate deadline. If it fails, stop and inspect the recorded
+  telemetry readiness/coverage and `*-interval.json` as well. Never bypass the
+  ready handshake or relax missing samples to get a passing result. Recovery may
+  wait for transient draining, but must never retry faults as if they were drains.
+  Inspect the recorded
   PIDs, control traces and recovery snapshot. Do not kill arbitrary PowerShell
   processes, format, reboot, or change driver defaults as automatic recovery.
   After confirming owned processes stopped, use `qcache developer verify-recover

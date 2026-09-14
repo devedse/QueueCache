@@ -4,6 +4,7 @@ using System.Runtime.Versioning;
 namespace QueueCache.Operations;
 
 public enum CachePreset { Fast, Strict }
+public sealed class CacheDrainingException() : IOException("Cache is busy draining; wait for draining to finish before changing settings.");
 public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset = CachePreset.Fast, bool Enabled = true)
 {
     public CacheOptions Options { get; init; } = new();
@@ -59,7 +60,8 @@ public static class ConfigurationManager
 
     public static void EnsureHealthy(WriteCacheState state)
     {
-        if (state.Faulted || state.LastError != 0 || state.Removed || state.Suspended || state.Draining)
-            throw new IOException("Cache unavailable, faulted or busy draining. Inspect status; no automatic recovery performed.");
+        if (state.Faulted || state.LastError != 0 || state.Removed || state.Suspended)
+            throw new IOException("Cache faulted, removed or suspended. Inspect status; no automatic recovery performed.");
+        if (state.Draining) throw new CacheDrainingException();
     }
 }

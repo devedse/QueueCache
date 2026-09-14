@@ -6,7 +6,7 @@ public sealed record PerformanceCase(string Id, string Allocation, string Drain,
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 1;
+    public const int Version = 2;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
     public static readonly string[] Suites = ["quick", "policies", "flush-interference", "performance", "full"];
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)

@@ -11,7 +11,7 @@ namespace QueueCache.Developer.Verification;
 public sealed record WorkerJob(string Operation, string Volume, string Reply, DiskTarget? Expected = null,
     CacheConfiguration? Configuration = null, WriteCacheAction Action = WriteCacheAction.Flush,
     ulong Value = 0, string? Recovery = null, int Seconds = 0, string? StopFile = null,
-    string? WorkDirectory = null, int BudgetMiB = 1024);
+    string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -55,7 +55,27 @@ public static class VerificationWorker
                     device.Control(WriteCacheAction.FlushPolicy, value: original.State.UnsafeDefer ? 1UL : 0UL);
                     if (original.State.Options is not null) device.SetOptions(original.State.Options);
                 }
-                else ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                else
+                {
+                    var settle = Stopwatch.StartNew();
+                    while (true)
+                    {
+                        var current = device.GetWriteCacheState();
+                        if (current.Errors != original.State.Errors || current.Instance != original.State.Instance)
+                            throw new IOException("Recovery observed a driver error or instance change.");
+                        try
+                        {
+                            ConfigurationManager.EnsureHealthy(current);
+                            ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                            break;
+                        }
+                        catch (CacheDrainingException) when (settle.Elapsed < TimeSpan.FromSeconds(30))
+                        {
+                            Console.WriteLine("Recovery waiting for a transient drain to settle.");
+                            await Task.Delay(200);
+                        }
+                    }
+                }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
                 var restored = device.GetWriteCacheState();
                 ConfigurationManager.EnsureHealthy(restored);
@@ -110,12 +130,20 @@ public static class VerificationWorker
                 await using (var writer = new StreamWriter(job.Reply, append: false))
                 {
                     var timer = Stopwatch.StartNew();
-                    while (timer.Elapsed.TotalSeconds < job.Seconds && !File.Exists(job.StopFile))
+                    while (timer.Elapsed.TotalSeconds < job.Seconds)
                     {
+                        // On stop, take one final sample covering workload completion.
+                        var stopping = File.Exists(job.StopFile);
+                        var observedState = device.GetWriteCacheState();
+                        var observedPerformance = device.GetPerformance();
+                        var observedDiagnostics = device.GetDiagnostics();
                         await writer.WriteLineAsync(JsonSerializer.Serialize(new { Utc = DateTimeOffset.UtcNow,
-                            ElapsedSeconds = timer.Elapsed.TotalSeconds, State = device.GetWriteCacheState(),
-                            Performance = device.GetPerformance(), Diagnostics = device.GetDiagnostics() }));
+                            ElapsedSeconds = timer.Elapsed.TotalSeconds, State = observedState,
+                            Performance = observedPerformance, Diagnostics = observedDiagnostics }));
                         await writer.FlushAsync();
+                        if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
+                            RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
+                        if (stopping) break;
                         await Task.Delay(200);
                     }
                 }

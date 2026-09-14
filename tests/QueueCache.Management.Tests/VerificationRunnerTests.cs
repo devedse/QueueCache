@@ -37,6 +37,17 @@ internal static class VerificationRunnerTests
         catch (ArgumentException ex) { Check(ex.Message.Contains("directory, not an executable"), "directory distinguished from file"); }
         VerificationPlan.Validate(options with { Suite = "quick" });
         VerificationPlan.Validate(options with { Suite = "policies" });
+        var epoch = DateTimeOffset.UtcNow;
+        TelemetryCoverage.Validate([epoch, epoch.AddSeconds(1), epoch.AddSeconds(2)], epoch, epoch.AddSeconds(2));
+        Reject(() => TelemetryCoverage.Validate([epoch.AddSeconds(1), epoch.AddSeconds(2)], epoch, epoch.AddSeconds(2)));
+        Reject(() => TelemetryCoverage.Validate([epoch, epoch.AddSeconds(1)], epoch, epoch.AddSeconds(2)));
+        Reject(() => TelemetryCoverage.Validate([epoch, epoch.AddSeconds(3)], epoch, epoch.AddSeconds(3)));
+        Reject(() => TelemetryCoverage.Validate([epoch, epoch, epoch.AddSeconds(1)], epoch, epoch.AddSeconds(1)));
+        var draining = new QueueCache.Management.WriteCacheState(8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        try { QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining); throw new Exception("Drain was accepted."); }
+        catch (QueueCache.Operations.CacheDrainingException) { }
+        try { QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining with { LastError = 1 }); throw new Exception("Fault was accepted."); }
+        catch (IOException ex) { Check(ex is not QueueCache.Operations.CacheDrainingException, "faults must never be retried as transient drains"); }
         // Minimal independent fixture matching Microsoft's XmlResultParser structure, not text columns.
         const string xml = """
             <Results><TimeSpan><TestTimeSeconds>10.00</TestTimeSeconds>
@@ -78,6 +89,20 @@ internal static class VerificationRunnerTests
         var store = new RunStorage(Path.GetTempPath());
         try
         {
+            var readyPath = store.PathFor("readiness.json");
+            var alive = new TaskCompletionSource();
+            try { await TelemetryCoverage.WaitReadyAsync(readyPath, Task.CompletedTask, TimeSpan.FromSeconds(1), CancellationToken.None); throw new Exception("Early observer exit accepted."); }
+            catch (IOException) { }
+            try { await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.Zero, CancellationToken.None); throw new Exception("Readiness timeout ignored."); }
+            catch (TimeoutException) { }
+            using (var cancelledReady = new CancellationTokenSource())
+            {
+                cancelledReady.Cancel();
+                try { await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.FromSeconds(1), cancelledReady.Token); throw new Exception("Readiness cancellation ignored."); }
+                catch (OperationCanceledException) { }
+            }
+            RunStorage.AtomicJson(readyPath, new { Ready = true });
+            await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.FromSeconds(1), CancellationToken.None);
             store.Write("state.json", new { Status = "RUNNING" });
             store.Write("state.json", new { Status = "COMPLETED" });
             Check(File.ReadAllText(store.PathFor("state.json")).Contains("COMPLETED"), "atomic replace");
@@ -145,6 +170,13 @@ internal static class VerificationRunnerTests
     public static async Task<int> FakeWorkerAsync(string mode, string path)
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(path))!;
+        if (job.Operation == "telemetry")
+        {
+            RunStorage.AtomicJson(job.Reply, new { Fake = true });
+            if (job.ReadyFile is not null) RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
+            while (!File.Exists(job.StopFile)) await Task.Delay(20);
+            return 0;
+        }
         if (mode == "cancel" && job.Operation == "files") await Task.Delay(Timeout.Infinite);
         if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore" || mode == "capture-failure" && job.Operation == "capture")
         {

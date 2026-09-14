@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 1)
+## Suites (plan version 2)
 
 | Suite | Scope |
 |---|---|
@@ -29,7 +29,24 @@ different disk so telemetry writes do not contaminate the workload.
 Parameters: `--budget-mib 1024`, `--repeats 3`, `--duration-seconds 10`,
 `--deadline-minutes 90`. Preparation, warming, delayed draining and recovery add
 time; 90 minutes is a measurement deadline, not a promised completion time. Cleanup
-gets a separate five-minute deadline. Do not reduce the plan silently to make it fit.
+gets a separate five-minute restore-worker deadline, preceded by up to 45 seconds
+for observer readiness. Do not reduce the plan silently to make it fit.
+
+Before a workload or management command starts, its telemetry observer must finish
+disk discovery and flush its first sample to disk (45-second readiness limit).
+The observer records a final sample after workload completion. `*-interval.json`
+records the enclosing workload-process interval; telemetry must bracket it, have
+strictly increasing timestamps and no gaps above two seconds (normal cadence:
+200 ms). Late-starting, stalled or early-exiting observers invalidate collection;
+two samples alone are not sufficient. Plan version 1 did not enforce this coverage.
+
+Restoration retries only the explicit transient-draining condition, for up to
+30 seconds within the worker deadline. Faults, removal, suspension and identity
+changes are not treated as transient draining. Original settings, timing and saved
+profiles are still checked before reporting restored. After a failed run, confirm
+its owned processes have stopped and use the newly installed CLI's
+`qcache developer verify-recover <failed-run-directory>` before starting another
+suite. Recovery creates its own subfolder/log and does not relabel old results.
 
 Performance workloads use a hot set one quarter of the selected cache budget and
 a separate writer file twice the budget. Fresh random-filled files are prepared

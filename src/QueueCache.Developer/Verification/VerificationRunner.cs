@@ -68,11 +68,13 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // Continue sampling while a management command is stuck, including during final recovery.
         var trace = storage.PathFor($"control-trace-{Interlocked.Increment(ref sequence):D5}");
         var stop = trace + ".stop";
+        var ready = trace + ".ready.json";
         using var observerToken = new CancellationTokenSource();
-        var observer = ExecuteWorker(job with { Operation = "telemetry", Reply = trace + ".jsonl", StopFile = stop,
-            Seconds = timeoutSeconds + 10 }, observerToken.Token, timeoutSeconds + 20);
+        var observer = ExecuteWorker(job with { Operation = "telemetry", Reply = trace + ".jsonl", StopFile = stop, ReadyFile = ready,
+            Seconds = timeoutSeconds + 60 }, observerToken.Token, timeoutSeconds + 70);
         try
         {
+            await TelemetryCoverage.WaitReadyAsync(ready, observer, TimeSpan.FromSeconds(45), token);
             var result = await ExecuteWorker(job, token, timeoutSeconds);
             File.WriteAllText(stop, "stop");
             await observer;
@@ -242,13 +244,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
         await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
         var stop = storage.PathFor(scenario.Id + ".stop");
+        var ready = storage.PathFor(scenario.Id + ".ready.json");
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
         var telemetry = Worker(Job("telemetry") with { Reply = storage.PathFor(scenario.Id + "-telemetry.jsonl"),
-            StopFile = stop, Seconds = options.DurationSeconds + 120 }, children.Token, options.DurationSeconds + 130);
+            StopFile = stop, ReadyFile = ready, Seconds = options.DurationSeconds + 120 }, children.Token, options.DurationSeconds + 130);
         Task<DiskSpdScore>? writer = null;
         Task<string>? flush = null;
         try
         {
+            Log("Waiting for telemetry readiness before workload: " + scenario.Id);
+            await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
+            Log("Telemetry ready: " + scenario.Id);
+            var workloadStart = DateTimeOffset.UtcNow;
             if (scenario.Writer)
             {
                 writer = Disk(scenario.Id + "-writer", Path.Combine(workDirectory, "writer.dat"),
@@ -267,17 +274,22 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 arguments.ToArray(), children.Token);
             if (writer is not null) await writer;
             if (flush is not null) await flush;
+            var workloadEnd = DateTimeOffset.UtcNow;
+            storage.Write(scenario.Id + "-interval.json", new { Start = workloadStart, End = workloadEnd, MaximumSampleGapSeconds = 2 });
             File.WriteAllText(stop, "stop");
             await telemetry;
             var lines = File.ReadAllLines(storage.PathFor(scenario.Id + "-telemetry.jsonl"));
             if (lines.Length < 2) throw new InvalidDataException("Insufficient telemetry.");
+            var timestamps = new List<DateTimeOffset>();
             foreach (var line in lines)
             {
                 using var sample = JsonDocument.Parse(line);
+                timestamps.Add(sample.RootElement.GetProperty("Utc").GetDateTimeOffset());
                 var state = sample.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!;
                 if (state.Errors != original.State.Errors || state.LastError != 0 || state.Instance != original.State.Instance)
                     throw new IOException("Driver error or instance change during measurement.");
             }
+            TelemetryCoverage.Validate(timestamps, workloadStart, workloadEnd);
             await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
             return score;
         }
