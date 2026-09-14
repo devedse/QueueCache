@@ -28,9 +28,17 @@ public static class VerificationWorker
     public static async Task<int> ExecuteAsync(string jobPath)
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(jobPath)) ?? throw new InvalidDataException("Missing worker job.");
-        var target = await DiskTarget.InspectAsync(job.Volume);
-        if (job.Expected is { } expected && target != expected) throw new IOException("Target identity changed; refusing operation.");
+        DiskTarget target;
+        if (job.Expected is { } expected)
+        {
+            // Repeated Get-Disk/CIM discovery can block behind a loaded storage stack. The coordinator already
+            // captured the identity; validate that exact target with bounded native queries in every child.
+            expected.ValidateCurrent();
+            target = expected;
+        }
+        else target = await DiskTarget.InspectAsync(job.Volume);
         using var device = new CacheDevice(target.Device, writable: true);
+        if (job.Expected is not null) DiskTarget.ValidateDeviceLength(target, device.GetWriteCacheState().DeviceBytes);
         object result;
         switch (job.Operation)
         {

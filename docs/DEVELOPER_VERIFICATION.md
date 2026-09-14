@@ -48,6 +48,12 @@ strictly increasing timestamps and no gaps above two seconds (normal cadence:
 200 ms). Late-starting, stalled or early-exiting observers invalidate collection;
 two samples alone are not sufficient. Plan version 1 did not enforce this coverage.
 
+The coordinator performs full disk inventory during initial capture. Later worker
+processes validate that recorded target using native volume extents, PnP identity
+and the driver's reported device length; they do not launch `Get-Disk` for every
+control or telemetry operation. This keeps identity checks active when storage
+inventory is slow under load.
+
 Restoration retries only the explicit transient-draining condition, for up to
 30 seconds within the worker deadline. Faults, removal, suspension and identity
 changes are not treated as transient draining. Original settings, timing and saved

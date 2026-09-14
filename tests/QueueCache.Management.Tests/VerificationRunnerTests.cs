@@ -25,6 +25,23 @@ internal static class VerificationRunnerTests
                 "structured check failures reach worker stderr with exact details");
         }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
+        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture");
+        QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "FIXTURE", "ntfs");
+        QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
+        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (2, 1L << 20, 199L << 30), "fixture", "NTFS"); throw new Exception("Disk-number mismatch accepted."); }
+        catch (IOException) { }
+        try { QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 201UL << 30); throw new Exception("Disk-length mismatch accepted."); }
+        catch (IOException) { }
+        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "replacement", "NTFS"); throw new Exception("PnP identity mismatch accepted."); }
+        catch (IOException) { }
+        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 201L << 30), "fixture", "NTFS"); throw new Exception("Out-of-bounds extent accepted."); }
+        catch (IOException) { }
+        if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISK_TARGET") is { Length: > 0 } nativeVolume)
+        {
+            var nativeTarget = await QueueCache.Operations.DiskTarget.InspectAsync(nativeVolume);
+            nativeTarget.ValidateCurrent();
+            Console.WriteLine($"Native disk identity validated: {nativeTarget.Device} / {nativeTarget.Instance}");
+        }
         VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 0 });
         VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1440 });
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = -1 }));

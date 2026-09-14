@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 
@@ -43,18 +44,90 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         return target;
     }
 
-    public void CheckExtents()
+    public void CheckExtents() => ValidateExtent(this, ReadExtent(Letter));
+
+    public void ValidateCurrent(CancellationToken cancellationToken = default)
     {
-        using var handle = CreateFileW($"\\\\.\\{Letter}:", 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        cancellationToken.ThrowIfCancellationRequested();
+        ValidateMountedIdentity(this, ReadExtent(Letter), ReadDiskInstance(Number, cancellationToken),
+            new DriveInfo(Root).DriveFormat);
+    }
+
+    private static (int Number, long Start, long Length) ReadExtent(char letter)
+    {
+        using var handle = CreateFileW($"\\\\.\\{letter}:", 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         var buffer = new byte[32];
         if (!DeviceIoControl(handle, 0x560000, IntPtr.Zero, 0, buffer, 32, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error());
-        var start = BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(16));
-        var length = BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(24));
-        if (returned != 32 || BinaryPrimitives.ReadUInt32LittleEndian(buffer) != 1 ||
-            BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(8)) != Number || start < 0 || length <= 0 || start > Bytes - length)
+        if (returned != 32 || BinaryPrimitives.ReadUInt32LittleEndian(buffer) != 1)
+            throw new IOException("The selected volume must have exactly one disk extent.");
+        return (BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(8)),
+            BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(16)),
+            BinaryPrimitives.ReadInt64LittleEndian(buffer.AsSpan(24)));
+    }
+
+    private static string ReadDiskInstance(int number, CancellationToken cancellationToken)
+    {
+        var diskInterface = new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b");
+        var devices = SetupDiGetClassDevsW(ref diskInterface, null, IntPtr.Zero, 0x12);
+        if (devices == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            for (uint index = 0; ; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var entry = new SpDeviceInterfaceData { Size = Marshal.SizeOf<SpDeviceInterfaceData>() };
+                if (!SetupDiEnumDeviceInterfaces(devices, IntPtr.Zero, ref diskInterface, index, ref entry))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error == 259) break;
+                    throw new Win32Exception(error);
+                }
+                var detail = Marshal.AllocHGlobal(4096);
+                try
+                {
+                    Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
+                    var info = new SpDevInfoData { Size = Marshal.SizeOf<SpDevInfoData>() };
+                    if (!SetupDiGetDeviceInterfaceDetailW(devices, ref entry, detail, 4096, out _, ref info))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    var path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4)) ?? throw new IOException("Missing disk interface path.");
+                    using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+                    if (handle.IsInvalid) continue;
+                    var device = new byte[12];
+                    if (!DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, device, 12, out var returned, IntPtr.Zero) || returned < 8 ||
+                        BinaryPrimitives.ReadInt32LittleEndian(device.AsSpan(4)) != number) continue;
+                    var instance = new StringBuilder(1024);
+                    if (!SetupDiGetDeviceInstanceIdW(devices, ref info, instance, instance.Capacity, out _))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    return instance.ToString();
+                }
+                finally { Marshal.FreeHGlobal(detail); }
+            }
+        }
+        finally { SetupDiDestroyDeviceInfoList(devices); }
+        throw new IOException($"Could not resolve the PnP identity of PhysicalDrive{number}.");
+    }
+
+    internal static void ValidateExtent(DiskTarget target, (int Number, long Start, long Length) extent)
+    {
+        if (extent.Number != target.Number || extent.Start < 0 || extent.Length <= 0 || extent.Start > target.Bytes - extent.Length)
             throw new IOException("Volume extents do not match the selected disk.");
+    }
+
+    internal static void ValidateMountedIdentity(DiskTarget target, (int Number, long Start, long Length) extent,
+        string instance, string format)
+    {
+        ValidateExtent(target, extent);
+        if (!string.Equals(instance, target.Instance, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Disk identity changed; refusing operation.");
+        if (!string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Only NTFS volumes are currently supported.");
+    }
+
+    internal static void ValidateDeviceLength(DiskTarget target, ulong bytes)
+    {
+        if (bytes != (ulong)target.Bytes) throw new IOException("Disk length changed; refusing operation.");
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
@@ -62,4 +135,23 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeviceIoControl(SafeFileHandle handle, uint code, IntPtr input, uint inputBytes,
         [Out] byte[] output, uint outputBytes, out uint returned, IntPtr overlapped);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SpDeviceInterfaceData { public int Size; public Guid InterfaceClassGuid; public int Flags; public IntPtr Reserved; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SpDevInfoData { public int Size; public Guid ClassGuid; public int DevInst; public IntPtr Reserved; }
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SetupDiGetClassDevsW(ref Guid classGuid, string? enumerator, IntPtr parent, uint flags);
+    [DllImport("setupapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiEnumDeviceInterfaces(IntPtr devices, IntPtr info, ref Guid classGuid, uint index,
+        ref SpDeviceInterfaceData data);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiGetDeviceInterfaceDetailW(IntPtr devices, ref SpDeviceInterfaceData data,
+        IntPtr detail, int detailBytes, out int requiredBytes, ref SpDevInfoData info);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiGetDeviceInstanceIdW(IntPtr devices, ref SpDevInfoData info, StringBuilder instance,
+        int instanceChars, out int requiredChars);
+    [DllImport("setupapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiDestroyDeviceInfoList(IntPtr devices);
 }
