@@ -24,6 +24,15 @@ internal static class VerificationRunnerTests
         Check(RunStorage.Complete(["a"], [new("a", "MEASURED", "", DateTimeOffset.UtcNow, 0)]), "measurement not correctness pass");
         Reject(() => VerificationPlan.Validate(options with { Suite = "typo" }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", Repeats = 0 }));
+        try { VerificationPlan.Validate(options); throw new Exception("Missing tool was accepted."); }
+        catch (ArgumentException ex) { Check(ex.Message.Contains("requires --diskspd") && ex.Message.Contains(VerificationPlan.DiskSpdDownload), "missing option guidance"); }
+        var missingTool = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "diskspd.exe");
+        try { VerificationPlan.Validate(options with { DiskSpd = missingTool }); throw new Exception("Missing file was accepted."); }
+        catch (FileNotFoundException ex) { Check(ex.Message.Contains(missingTool), "missing executable prints resolved path"); }
+        try { VerificationPlan.Validate(options with { DiskSpd = Path.GetTempPath() }); throw new Exception("Directory was accepted."); }
+        catch (ArgumentException ex) { Check(ex.Message.Contains("directory, not an executable"), "directory distinguished from file"); }
+        VerificationPlan.Validate(options with { Suite = "quick" });
+        VerificationPlan.Validate(options with { Suite = "policies" });
         // Minimal independent fixture matching Microsoft's XmlResultParser structure, not text columns.
         const string xml = """
             <Results><TimeSpan><TestTimeSeconds>10.00</TestTimeSeconds>

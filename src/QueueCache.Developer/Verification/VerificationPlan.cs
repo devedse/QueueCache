@@ -7,6 +7,7 @@ public sealed record PerformanceCase(string Id, string Allocation, string Drain,
 public static class VerificationPlan
 {
     public const int Version = 1;
+    public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
     public static readonly string[] Suites = ["quick", "policies", "flush-interference", "performance", "full"];
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
@@ -45,7 +46,15 @@ public static class VerificationPlan
         if (options.BudgetMiB is < 256 or > 8192 || options.Repeats is < 1 or > 10 ||
             options.DurationSeconds is < 5 or > 60 || options.DeadlineMinutes is < 1 or > 1440)
             throw new ArgumentException("Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, deadline 1..1440 minutes.");
-        if (options.Suite is "performance" or "full" or "flush-interference" && (options.DiskSpd is null || !File.Exists(options.DiskSpd)))
-            throw new ArgumentException("Performance suites require --diskspd pointing to DiskSpd.exe with XML output support.");
+        if (options.Suite is "performance" or "full" or "flush-interference")
+        {
+            if (string.IsNullOrWhiteSpace(options.DiskSpd))
+                throw new ArgumentException($"Suite '{options.Suite}' requires --diskspd <path-to-exe>.\nDownload standard Microsoft DiskSpd: {DiskSpdDownload}\nExtract the ZIP and select amd64\\diskspd.exe on x64 Windows. CrystalDiskMark's bundled fork is not supported.\nExample: qcache developer verify Q: --suite {options.Suite} --diskspd \"C:\\Tools\\DiskSpd\\amd64\\diskspd.exe\"");
+            var path = Path.GetFullPath(options.DiskSpd);
+            if (Directory.Exists(path))
+                throw new ArgumentException($"--diskspd points to a directory, not an executable: {path}\nSelect the extracted amd64\\diskspd.exe file on x64 Windows.");
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"DiskSpd executable was not found or is not accessible: {path}\nCheck the exact filename and quote paths containing spaces.\nUse standard Microsoft DiskSpd from {DiskSpdDownload}, not CrystalDiskMark's bundled fork.", path);
+        }
     }
 }

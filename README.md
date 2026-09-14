@@ -26,7 +26,10 @@ qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe -
 raw evidence and `FINISHED.txt`. The command runs in the foreground, restores
 runtime settings, and reports incomplete/restoration failures explicitly. For the
 focused flush regression use `--suite flush-interference --repeats 2`. Use standard
-Microsoft DiskSpd, not CDM's fork. See [suite scope, status and recovery commands](docs/DEVELOPER_VERIFICATION.md).
+Microsoft DiskSpd, not CDM's fork: download **DiskSpd.ZIP** from
+[Microsoft's releases](https://github.com/microsoft/diskspd/releases), extract it,
+then point `--diskspd` at `amd64\diskspd.exe` on x64 Windows (Intel or AMD).
+See [suite scope, status and recovery commands](docs/DEVELOPER_VERIFICATION.md).
 The reusable runner and its tests must stay current; see [agent instructions](AGENTS.md).
 
 The current development installer registers a disk-class filter: after the installation reboot, existing and newly enumerated disks are covered, initially with caching off. Creating a cache task does not change filter registration or require a per-task reboot. This architecture is awaiting VM lifecycle/boot validation; this build remains test-signed. Setup never formats disks or enables unsaved cache tasks.

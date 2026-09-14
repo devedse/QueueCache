@@ -46,6 +46,14 @@ download or silently substitute binaries. CDM's bundled score-exit fork is not
 supported. Parsing uses structured `-Rxml -L` results, not locale-dependent text
 columns. Missing fields, nonzero exit codes and timeouts stop collection.
 
+To obtain it: open the Microsoft release page, expand **Assets**, download
+**DiskSpd.ZIP** (not the source-code ZIP), and extract the entire archive to, for
+example, `C:\Tools\DiskSpd`. On x64 Windows use
+`C:\Tools\DiskSpd\amd64\diskspd.exe`; amd64 also means Intel x64. Pass that exact
+file path to `--diskspd`, quoting it if it contains spaces. This is a standalone
+Microsoft tool; installing CrystalDiskMark does not install the required standard
+version. A missing path/file error is separate from an incompatible executable.
+
 ## Results and recovery
 
 | File | Meaning |
