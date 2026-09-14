@@ -156,7 +156,7 @@ internal static class VerificationRunnerTests
             }
             catch (OperationCanceledException) { }
             OwnedProcess.EnsureStopped(store.DirectoryPath);
-            foreach (var mode in new[] { "success", "capture-failure", "check-failure", "restore-failure", "cancel" })
+            foreach (var mode in new[] { "success", "capture-failure", "check-failure", "restore-failure", "identity-failure", "observer-failure", "cancel" })
             {
                 var runParent = store.PathFor(mode);
                 var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
@@ -170,17 +170,22 @@ internal static class VerificationRunnerTests
                 var exit = await runner.RunAsync(new("Q:", Output: runParent), progress, cancellation.Token);
                 var directory = Directory.GetDirectories(runParent).Single();
                 var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                var expectedStatus = mode switch { "success" => "COMPLETED", "capture-failure" or "check-failure" => "INCOMPLETE", "restore-failure" => "RESTORATION_FAILED", _ => "CANCELLED" };
+                var expectedStatus = mode switch { "success" => "COMPLETED", "capture-failure" or "check-failure" or "identity-failure" => "INCOMPLETE", "restore-failure" or "observer-failure" => "RESTORATION_FAILED", _ => "CANCELLED" };
                 Check(state.RootElement.GetProperty("Status").GetString() == expectedStatus, "coordinator " + mode);
                 Check((exit == 0) == (mode == "success") && File.Exists(Path.Combine(directory, "FINISHED.txt")), "exit/marker " + mode);
-                Check(File.Exists(Path.Combine(directory, "restored.json")) == (mode is not ("restore-failure" or "capture-failure")), "independent restoration " + mode);
+                Check(File.Exists(Path.Combine(directory, "restored.json")) == (mode is not ("restore-failure" or "capture-failure" or "observer-failure")), "independent restoration " + mode);
+                OwnedProcess.EnsureStopped(directory);
+                if (mode == "observer-failure")
+                    Check(!Directory.GetFiles(directory, "*-restore.job.json").Any(), "restore must not bypass observer readiness");
                 var log = File.ReadAllText(Path.Combine(directory, "run.log"));
                 Check(log.Contains(expectedStatus + ":") && messages.Last().Contains(expectedStatus + ":"), "final status logged and delivered before return " + mode);
                 Check(log.Contains("Starting worker-") && log.Contains("Finished worker-"), "worker progress persisted " + mode);
                 Check(log.Contains("overall limit: unlimited") && log.Contains("[Preflight | 0/1 completed]"), "unlimited run and total shown " + mode);
                 if (mode != "capture-failure")
                     Check(messages.Any(m => m.Contains("[Test 1 of 1] Starting worker-")) && messages.Any(m => m.Contains("[Restoring |")), "case progress on child logs and restoration " + mode);
-                if (mode.EndsWith("failure"))
+                if (mode == "identity-failure")
+                    Check(log.Contains("Worker volume disagrees with the recorded target"), "real worker rejects inconsistent target before native access and recovery still runs");
+                else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
             if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISKSPD") is { Length: > 0 } diskspd)
@@ -201,8 +206,19 @@ internal static class VerificationRunnerTests
     public static async Task<int> FakeWorkerAsync(string mode, string path)
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(path))!;
+        if (mode == "identity-failure" && job.Operation == "files")
+        {
+            RunStorage.AtomicJson(path, job with { Volume = "R:" });
+            try { return await VerificationWorker.ExecuteAsync(path); }
+            catch (IOException ex) { Console.Error.WriteLine(ex); return 1; }
+        }
         if (job.Operation == "telemetry")
         {
+            if (mode == "observer-failure")
+            {
+                Console.Error.WriteLine("fixture failure detail: target discovery timed out before telemetry readiness.");
+                return 1;
+            }
             RunStorage.AtomicJson(job.Reply, new { Fake = true });
             if (job.ReadyFile is not null) RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
             while (!File.Exists(job.StopFile)) await Task.Delay(20);

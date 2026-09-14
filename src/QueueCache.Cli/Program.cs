@@ -6,7 +6,10 @@ try
 {
     // Private transport for the foreground verification coordinator; still the same installed executable.
     if (args.Length == 2 && args[0] == "--verification-worker")
-        return await QueueCache.Developer.Verification.VerificationWorker.ExecuteAsync(args[1]);
+    {
+        try { return await QueueCache.Developer.Verification.VerificationWorker.ExecuteAsync(args[1]); }
+        catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+    }
     if (args.Length > 0 && args[0] is "apply" or "profiles" or "restore") args = ["policy", .. args];
     // Preserve the old `policy <device> <preset>` spelling for deployed scripts.
     if (args.Length >= 3 && args[0] == "policy" &&

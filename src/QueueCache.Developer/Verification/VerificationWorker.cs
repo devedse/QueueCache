@@ -32,8 +32,11 @@ public static class VerificationWorker
         if (job.Expected is { } expected)
         {
             // Repeated Get-Disk/CIM discovery can block behind a loaded storage stack. The coordinator already
-            // captured the identity; validate that exact target with bounded native queries in every child.
-            expected.ValidateCurrent();
+            // captured the identity. Native calls are synchronous; the coordinator bounds the worker lifetime.
+            if (!string.Equals(job.Volume, $"{expected.Letter}:", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Worker volume disagrees with the recorded target.");
+            try { expected.ValidateCurrent(); }
+            catch (Exception ex) { throw new IOException($"Worker {job.Operation}: native target validation failed for {job.Volume}.", ex); }
             target = expected;
         }
         else target = await DiskTarget.InspectAsync(job.Volume);

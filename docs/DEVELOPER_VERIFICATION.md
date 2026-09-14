@@ -53,6 +53,11 @@ processes validate that recorded target using native volume extents, PnP identit
 and the driver's reported device length; they do not launch `Get-Disk` for every
 control or telemetry operation. This keeps identity checks active when storage
 inventory is slow under load.
+PnP metadata is matched before opening a disk interface, so validation queries
+only the recorded disk. Native calls remain synchronous and are bounded by the
+coordinator's worker deadline, not by an intrinsic native-call timeout. Worker
+stderr retains full exception stacks, including validation failures. Recovery
+still requires its observer to become ready before any restoration command.
 
 Restoration retries only the explicit transient-draining condition, for up to
 30 seconds within the worker deadline. Faults, removal, suspension and identity
