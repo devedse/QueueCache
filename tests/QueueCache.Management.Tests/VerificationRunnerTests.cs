@@ -18,6 +18,11 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
+        Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
+        VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 0 });
+        VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1440 });
+        Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = -1 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1441 }));
         var plan = VerificationPlan.Performance(options);
         Check(plan.Count == 204 && plan.Select(c => c.Id).Distinct().Count() == plan.Count, "unique repeated-case identities");
         var focused = VerificationPlan.Performance(options with { Suite = "flush-interference", Repeats = 2 });
@@ -149,6 +154,9 @@ internal static class VerificationRunnerTests
                 var log = File.ReadAllText(Path.Combine(directory, "run.log"));
                 Check(log.Contains(expectedStatus + ":") && messages.Last().Contains(expectedStatus + ":"), "final status logged and delivered before return " + mode);
                 Check(log.Contains("Starting worker-") && log.Contains("Finished worker-"), "worker progress persisted " + mode);
+                Check(log.Contains("overall limit: unlimited") && log.Contains("[Preflight | 0/1 completed]"), "unlimited run and total shown " + mode);
+                if (mode != "capture-failure")
+                    Check(messages.Any(m => m.Contains("[Test 1 of 1] Starting worker-")) && messages.Any(m => m.Contains("[Restoring |")), "case progress on child logs and restoration " + mode);
                 if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }

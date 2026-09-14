@@ -45,6 +45,9 @@
   verdict. Zero-completion samples have N/A latency. A missing completion marker
   means interrupted/running, not success. Do not combine incomplete repetitions.
 - Restoration has a separate deadline. If it fails, stop and inspect the recorded
+  evidence. Runs have no overall deadline by default (`--deadline-minutes 0`);
+  preserve per-operation timeouts and `Test N of M` console/file progress. Inspect
+  the recorded
   telemetry readiness/coverage and `*-interval.json` as well. Never bypass the
   ready handshake or relax missing samples to get a passing result. Recovery may
   wait for transient draining, but must never retry faults as if they were drains.

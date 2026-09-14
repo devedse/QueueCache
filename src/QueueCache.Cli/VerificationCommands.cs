@@ -66,7 +66,7 @@ internal static class VerificationCommands
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 1024, Description = "Performance cache budget, 256..8192 MiB. Original configuration is restored." };
         var repeats = new Option<int>("--repeats") { DefaultValueFactory = _ => 3, Description = "Repetitions per performance case, 1..10; each retains separate evidence." };
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
-        var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 90, Description = "Overall measurement limit, 1..1440 minutes; restoration has a separate deadline." };
+        var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline }) command.Options.Add(option);
         command.SetAction((p, token) => {

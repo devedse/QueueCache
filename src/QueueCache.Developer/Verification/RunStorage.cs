@@ -4,7 +4,7 @@ namespace QueueCache.Developer.Verification;
 
 public sealed record VerificationOptions(string Volume, string Suite = "quick", string Output = ".",
     string? DiskSpd = null, int BudgetMiB = 1024, int Repeats = 3, int DurationSeconds = 10,
-    int DeadlineMinutes = 90);
+    int DeadlineMinutes = 0);
 public sealed record CaseResult(string Id, string Status, string Detail, DateTimeOffset Started,
     double Seconds, DiskSpdScore? Score = null);
 

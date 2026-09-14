@@ -27,10 +27,18 @@ different disk so telemetry writes do not contaminate the workload.
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 
 Parameters: `--budget-mib 1024`, `--repeats 3`, `--duration-seconds 10`,
-`--deadline-minutes 90`. Preparation, warming, delayed draining and recovery add
-time; 90 minutes is a measurement deadline, not a promised completion time. Cleanup
+`--deadline-minutes 0` (default: **no overall time limit**). The suite runs until
+completion, cancellation or a failure; individual operation timeouts remain enabled.
+An optional positive deadline still limits the whole measurement batch. Preparation,
+warming, delayed draining and recovery add time. Cleanup
 gets a separate five-minute restore-worker deadline, preceded by up to 45 seconds
 for observer readiness. Do not reduce the plan silently to make it fit.
+
+Every coordinator progress line, including child-process waiting messages, shows
+`[Test N of M]` during a case. Preparation, restoration and final reporting have
+their own labels and counters. These count top-level cases, not elapsed-time
+percentages; a long-running case stays at the same number. The same lines appear
+in `run.log`.
 
 Before a workload or management command starts, its telemetry observer must finish
 disk discovery and flush its first sample to disk (45-second readiness limit).

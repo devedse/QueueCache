@@ -21,11 +21,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private string workDirectory = "";
     private readonly object logGate = new();
     private IProgress<string>? progressSink;
+    private string progressLabel = "Preflight";
     private void Log(string message)
     {
         lock (logGate)
         {
-            var line = $"[{DateTimeOffset.UtcNow:O}] {message}";
+            var line = $"[{DateTimeOffset.UtcNow:O}] [{progressLabel}] {message}";
             File.AppendAllText(storage.PathFor("run.log"), line + Environment.NewLine);
             progressSink?.Report(line);
         }
@@ -110,8 +111,6 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         options = selected with { Output = Path.GetFullPath(selected.Output), DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd) };
         storage = new RunStorage(options.Output);
         progressSink = progress;
-        Log("Run directory: " + storage.DirectoryPath);
-        Log($"Suite {options.Suite}; target {options.Volume}; starting preflight capture before workloads.");
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var performance = options.Suite is "performance" or "full" or "flush-interference" ? VerificationPlan.Performance(options) : [];
@@ -119,13 +118,17 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         if (options.Suite is "quick" or "full") expected.Add("file-integrity");
         if (options.Suite is "policies" or "full") expected.Add("policy-integrity");
         expected.AddRange(performance.Select(c => c.Id));
+        totalCases = expected.Count;
+        progressLabel = $"Preflight | 0/{totalCases} completed";
+        Log("Run directory: " + storage.DirectoryPath);
+        Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
         storage.Write("manifest.json", new { SchemaVersion = 1, PlanVersion = VerificationPlan.Version, Options = options,
             ExpectedCases = expected, Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd))) });
         storage.Write("status.json", new { Status = "RUNNING", Started = DateTimeOffset.UtcNow });
         storage.Write("results.json", storage.Results);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
+        if (options.DeadlineMinutes > 0) deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
         string? failure = null, restorationFailure = null;
         var captured = false;
         FileStream? diskLease = null;
@@ -143,6 +146,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 await Case(test, async () => { await Worker(Job(test == "file-integrity" ? "files" : "policies"), deadline.Token, 900); return null; });
             if (performance.Count > 0)
             {
+                progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 await Worker(Job("prepare") with { WorkDirectory = workDirectory, BudgetMiB = options.BudgetMiB }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
@@ -151,11 +155,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 }
             }
         }
-        catch (Exception ex) { failure = ex.ToString(); Log("ERROR: " + failure); }
+        catch (Exception ex)
+        {
+            failure = ex is OperationCanceledException && deadline.IsCancellationRequested && !token.IsCancellationRequested
+                ? $"Overall time limit reached ({options.DeadlineMinutes} minutes). The suite is incomplete.\n{ex}"
+                : ex.ToString();
+            Log("ERROR: " + failure);
+        }
         finally
         {
             if (captured)
             {
+                progressLabel = $"Restoring | {storage.Results.Count}/{totalCases} recorded";
                 Log("Restoring original runtime state (independent cleanup deadline).");
                 try { OwnedProcess.EnsureStopped(storage.DirectoryPath); await Worker(Job("restore") with { Recovery = storage.PathFor("recovery.json"),
                     Reply = storage.PathFor("restored.json") }, CancellationToken.None, 300); }
@@ -198,12 +209,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 r.Score?.ReadMaxMilliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? ""));
         File.WriteAllText(storage.PathFor("results.csv"), csv.ToString());
         File.WriteAllText(storage.PathFor("FINISHED.txt"), $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n");
+        progressLabel = $"Finished | {storage.Results.Count}/{totalCases} recorded";
         Log($"{status}: {storage.Results.Count}/{expected.Count} cases. " + storage.PathFor("SUMMARY.md"));
         return complete ? 0 : token.IsCancellationRequested ? 130 : 1;
     }
 
+    private int totalCases;
     private async Task Case(string id, Func<Task<DiskSpdScore?>> run)
     {
+        progressLabel = $"Test {storage.Results.Count + 1} of {totalCases}";
         Log("Starting " + id);
         storage.Write("status.json", new { Status = "RUNNING", CurrentCase = id, CompletedCases = storage.Results.Count, Updated = DateTimeOffset.UtcNow });
         var started = DateTimeOffset.UtcNow; var timer = Stopwatch.StartNew();
@@ -316,6 +330,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         options = new($"{original.Target.Letter}:", Output: path);
         storage = new RunStorage(path);
         progressSink = progress;
+        progressLabel = "Recovery";
         Log("Recovery run directory: " + storage.DirectoryPath);
         try { await Worker(Job("restore") with { Recovery = snapshotPath }, token, 300); }
         catch (Exception ex) { Log("RESTORATION ERROR: " + ex); throw; }

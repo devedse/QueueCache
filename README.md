@@ -30,7 +30,9 @@ raw evidence and `FINISHED.txt`. Timestamped progress, errors and a waiting mess
 every 10 seconds while a child runs appear in the terminal and `run.log`. Raw child
 stdout/stderr and command details are retained separately. Pre-run errors (such as
 missing administrator access) print directly before a run folder is created.
-The command runs in the foreground, restores
+The command runs in the foreground with **no overall time limit by default** (individual operation
+timeouts remain). Progress lines include `Test N of M`, with separate preparation
+and restoration labels. It restores
 runtime settings, and reports incomplete/restoration failures explicitly. For the
 focused flush regression use `--suite flush-interference --repeats 2`.
 **Both Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd are supported**:

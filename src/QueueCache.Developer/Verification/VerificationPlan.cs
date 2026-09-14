@@ -44,8 +44,8 @@ public static class VerificationPlan
     {
         if (!Suites.Contains(options.Suite)) throw new ArgumentException("Unknown verification suite.");
         if (options.BudgetMiB is < 256 or > 8192 || options.Repeats is < 1 or > 10 ||
-            options.DurationSeconds is < 5 or > 60 || options.DeadlineMinutes is < 1 or > 1440)
-            throw new ArgumentException("Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, deadline 1..1440 minutes.");
+            options.DurationSeconds is < 5 or > 60 || options.DeadlineMinutes is < 0 or > 1440)
+            throw new ArgumentException("Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, deadline 0 (unlimited) or 1..1440 minutes.");
         if (options.Suite is "performance" or "full" or "flush-interference")
         {
             if (string.IsNullOrWhiteSpace(options.DiskSpd))
