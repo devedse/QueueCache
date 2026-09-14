@@ -172,7 +172,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // Every command uses the same typed argument vector; shell parsing and automatic $args cannot interfere.
         var result = await OwnedProcess.RunAsync(options.DiskSpd!, [.. arguments, "-Rxml", "-L", "-S", file],
             storage.PathFor(id), TimeSpan.FromSeconds(int.Parse(arguments.Single(a => a.StartsWith("-d", StringComparison.Ordinal))[2..], CultureInfo.InvariantCulture) + 120), token);
-        if (result.ExitCode != 0) throw new IOException($"DiskSpd exit {result.ExitCode}; use standard DiskSpd, not CDM's score-exit fork. See {id}.");
+        if (result.ExitCode != 0) throw new IOException($"DiskSpd XML-mode exit {result.ExitCode}; both supported variants must return zero in XML mode. See {id}.stderr.txt and stdout.txt.");
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);
         return score;

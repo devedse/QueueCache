@@ -30,12 +30,15 @@ internal static class VerificationCommands
 
             DiskSpd: download standard Microsoft DiskSpd from https://github.com/microsoft/diskspd/releases
             Extract DiskSpd.ZIP; use amd64\diskspd.exe on x64 Windows (also for Intel CPUs).
-            CrystalDiskMark bundles a modified DiskSpd; that fork is not supported by this runner.
-            The runner needs XML results (-Rxml -L), not CrystalDiskMark score-exit behavior.
+            Also supported: CrystalDiskMark's CdmResource\DiskSpd\DiskSpd64.exe on x64 Windows.
+            Tested: Microsoft 2.3 and DiskSpd 2.2 bundled with CrystalDiskMark 9.0.3.
+            Both use XML results (-Rxml -L). CDM's recognized text trailer is ignored, not its XML measurements.
+            Keep the same executable/version when comparing benchmark runs.
 
             Examples:
               qcache developer verify Q: --suite quick
               qcache developer verify Q: --suite full --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output .\results
+              qcache developer verify Q: --suite full --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
 
             Output: unique QueueCache-Verify-* subfolder of --output (default: current directory).
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
@@ -45,7 +48,7 @@ internal static class VerificationCommands
         var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies do not require DiskSpd." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };
-        var disk = new Option<string?>("--diskspd") { Description = "Path to Microsoft's extracted amd64\\diskspd.exe, not a folder or CDM executable. Quote paths with spaces." };
+        var disk = new Option<string?>("--diskspd") { Description = "Executable path: Microsoft amd64\\diskspd.exe or CrystalDiskMark CdmResource\\DiskSpd\\DiskSpd64.exe. Quote paths with spaces." };
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 1024, Description = "Performance cache budget, 256..8192 MiB. Original configuration is restored." };
         var repeats = new Option<int>("--repeats") { DefaultValueFactory = _ => 3, Description = "Repetitions per performance case, 1..10; each retains separate evidence." };
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };

@@ -45,6 +45,10 @@ foreach ($arguments in @(
     if ($LASTEXITCODE -ne 2) { throw "Developer invalid arguments must fail before disk access: $arguments" }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
+$verificationHelp = & $cli developer verify --help | Out-String
+if ($LASTEXITCODE -ne 0 -or $verificationHelp -notmatch 'DiskSpd64.exe' -or $verificationHelp -notmatch 'Microsoft' -or $verificationHelp -notmatch 'flush-interference') {
+    throw 'Verification help must describe suites and both DiskSpd variants.'
+}
 & $cli developer verify 'Q:' --suite quick --repeats 0 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 1) { throw 'Invalid runner settings must fail before device access.' }
 # GitHub's pwsh wrapper propagates the last native exit code. The negative tests

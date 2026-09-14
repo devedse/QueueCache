@@ -60,8 +60,9 @@ hooks just to fill a coverage table. Large concurrent writes are not assumed ato
 4. This selects eight cases: Automatic/Fixed50, with/without requested application
    flush, two repetitions, writer QD128, 25 ms lower-write delay. Defaults retain
    the 1 GiB cache, 256 MiB hot reader, separate 2 GiB writer, 256 KiB batch and one
-   drainer. The standard DiskSpd XML runner is a new measurement contract, not the
-   old CDM fork: establish matching-engine baselines before claiming speedup ratios.
+   drainer. The XML runner supports Microsoft and CDM executables, but its workload
+   contract differs from the old scripts: establish matching-engine/version and
+   workload baselines before claiming speedup ratios.
    A control may still contain OS flushes; classify by observed counters, not only
    requested configuration. The existing explicit byte-order tests above remain
    required; the runner does not claim to establish exact queue positions.

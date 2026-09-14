@@ -28,7 +28,11 @@
   qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
   ```
 
-- Use **standard Microsoft DiskSpd with XML support**, not the CDM score-exit fork.
+- Both **Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd** are supported in
+  XML mode (tested Microsoft 2.3 and CDM 9.0.3's DiskSpd 2.2). On x64 select
+  Microsoft's `amd64\diskspd.exe` or CDM's `CdmResource\DiskSpd\DiskSpd64.exe`.
+  CDM's recognized two-line score trailer may follow valid XML; do not loosen
+  parsing to swallow arbitrary errors or accept text-mode score exit codes.
   Keep the same binary/hash when comparing releases. Details and suite scope:
   `docs/DEVELOPER_VERIFICATION.md`. Do not run a broad matrix when only the focused
   regression was requested. Results default to a unique subfolder of the current
@@ -44,7 +48,7 @@
   <run-directory>`; it refuses an identity mismatch or live owned process.
 - Run host-safe contract tests with `dotnet run --project
   tests/QueueCache.Management.Tests -c Release`. For an optional real DiskSpd XML
-  parser smoke check, set `QCACHE_TEST_DISKSPD` to a standard executable first:
+  parser smoke check, set `QCACHE_TEST_DISKSPD` to either supported executable first:
   this creates/deletes only a unique 16 MiB temp workload, never accesses a driver.
   Run `tests/QueueCache.Desktop.Tests` for frontend changes. Local success is not VM
   driver verification. Record gaps honestly, including unexercised ordering paths.

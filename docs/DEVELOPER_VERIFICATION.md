@@ -40,19 +40,31 @@ their own results, and complete runs produce IOPS medians/min/max in
 Alone QD labels identify the paired writer configuration, not the reader queue
 depth: the hot reader always uses two threads and eight requests per thread.
 
-Use [standard Microsoft DiskSpd](https://github.com/microsoft/diskspd/releases)
-(XML contract smoke-tested with 2.3); the runner records its SHA256. It does not
-download or silently substitute binaries. CDM's bundled score-exit fork is not
-supported. Parsing uses structured `-Rxml -L` results, not locale-dependent text
-columns. Missing fields, nonzero exit codes and timeouts stop collection.
+Use [Microsoft DiskSpd](https://github.com/microsoft/diskspd/releases) or
+CrystalDiskMark's bundled DiskSpd. Tested with Microsoft 2.3 and DiskSpd 2.2 in CDM
+9.0.3. The runner records the executable's SHA256 and does not download or silently
+substitute binaries. Both use structured `-Rxml -L` results and must return exit
+code zero in XML mode. CDM appends `Score: 0` and `averageLatency: 0.000000` after
+the XML; only this recognized two-line numeric trailer is ignored. All measurements
+come from XML. Unexpected extra output, malformed XML, missing required fields,
+nonzero exit codes and timeouts still fail collection. Text-mode CDM score exit
+codes are not used. Keep executable/version and workload settings constant across
+comparisons; do not merge baselines from different variants.
 
 To obtain it: open the Microsoft release page, expand **Assets**, download
 **DiskSpd.ZIP** (not the source-code ZIP), and extract the entire archive to, for
 example, `C:\Tools\DiskSpd`. On x64 Windows use
 `C:\Tools\DiskSpd\amd64\diskspd.exe`; amd64 also means Intel x64. Pass that exact
 file path to `--diskspd`, quoting it if it contains spaces. This is a standalone
-Microsoft tool; installing CrystalDiskMark does not install the required standard
-version. A missing path/file error is separate from an incompatible executable.
+Microsoft tool. Alternatively, use `CdmResource\DiskSpd\DiskSpd64.exe` inside your
+CrystalDiskMark folder, for example:
+
+```powershell
+qcache developer verify Q: --suite full --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
+```
+
+A missing path/file error is separate from an incompatible executable. Do not
+assume the CDM filename is `diskspd.exe`; select its actual `DiskSpd64.exe`.
 
 ## Results and recovery
 

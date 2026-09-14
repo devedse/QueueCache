@@ -49,12 +49,12 @@ public static class VerificationPlan
         if (options.Suite is "performance" or "full" or "flush-interference")
         {
             if (string.IsNullOrWhiteSpace(options.DiskSpd))
-                throw new ArgumentException($"Suite '{options.Suite}' requires --diskspd <path-to-exe>.\nDownload standard Microsoft DiskSpd: {DiskSpdDownload}\nExtract the ZIP and select amd64\\diskspd.exe on x64 Windows. CrystalDiskMark's bundled fork is not supported.\nExample: qcache developer verify Q: --suite {options.Suite} --diskspd \"C:\\Tools\\DiskSpd\\amd64\\diskspd.exe\"");
+                throw new ArgumentException($"Suite '{options.Suite}' requires --diskspd <path-to-exe>.\nUse Microsoft DiskSpd ({DiskSpdDownload}, extracted amd64\\diskspd.exe) or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.\nExample: qcache developer verify Q: --suite {options.Suite} --diskspd \"C:\\Tools\\DiskSpd\\amd64\\diskspd.exe\"");
             var path = Path.GetFullPath(options.DiskSpd);
             if (Directory.Exists(path))
-                throw new ArgumentException($"--diskspd points to a directory, not an executable: {path}\nSelect the extracted amd64\\diskspd.exe file on x64 Windows.");
+                throw new ArgumentException($"--diskspd points to a directory, not an executable: {path}\nSelect Microsoft's amd64\\diskspd.exe or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.");
             if (!File.Exists(path))
-                throw new FileNotFoundException($"DiskSpd executable was not found or is not accessible: {path}\nCheck the exact filename and quote paths containing spaces.\nUse standard Microsoft DiskSpd from {DiskSpdDownload}, not CrystalDiskMark's bundled fork.", path);
+                throw new FileNotFoundException($"DiskSpd executable was not found or is not accessible: {path}\nCheck the exact filename and quote paths containing spaces.\nSupported: Microsoft's amd64\\diskspd.exe ({DiskSpdDownload}) or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe.", path);
         }
     }
 }

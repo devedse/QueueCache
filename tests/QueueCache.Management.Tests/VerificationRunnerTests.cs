@@ -44,6 +44,26 @@ internal static class VerificationRunnerTests
             </TimeSpan></Results>
             """;
         var score = DiskSpdParser.Parse(xml);
+        foreach (var newline in new[] { "\r\n", "\n" })
+            Check(DiskSpdParser.Parse(xml + newline + "Score: 0" + newline + "averageLatency: 0.000000" + newline) == score,
+                "CDM XML trailer does not replace real measurements");
+        Reject(() => DiskSpdParser.Parse(xml + "\nScore: 0"));
+        Reject(() => DiskSpdParser.Parse(xml + "\nScore: 0\naverageLatency: 0.000000\nERROR: failed"));
+        Reject(() => DiskSpdParser.Parse("ERROR: failed\n" + xml + "\nScore: 0\naverageLatency: 0.000000"));
+        Reject(() => DiskSpdParser.Parse(xml + "\nScore: NaN\naverageLatency: 0"));
+        Reject(() => DiskSpdParser.Parse(xml.Replace("ReadBytes", "MissingBytes") + "\nScore: 0\naverageLatency: 0.000000"));
+        if (Environment.GetEnvironmentVariable("QCACHE_TEST_COMPATIBILITY_RESULTS") is { Length: > 0 } evidence)
+        {
+            foreach (var variant in new[] { "cdm", "microsoft" })
+            foreach (var workload in new[] { "read", "write", "mixed" })
+            {
+                var observed = DiskSpdParser.Parse(File.ReadAllText(Path.Combine(evidence, $"{variant}-{workload}-xml-stdout.txt")));
+                Check(observed.Operations > 0, "VM XML fixture: " + variant + " " + workload);
+                Check(workload == "write" ? observed.WriteP99Milliseconds is not null : observed.ReadP99Milliseconds is not null,
+                    "VM latency fixture: " + variant + " " + workload);
+            }
+            Console.WriteLine("All six VM DiskSpd compatibility outputs parsed successfully.");
+        }
         Check(score.Operations == 20 && score.Iops == 2 && score.ReadP99Milliseconds == .123 && score.WriteP99Milliseconds is null, "XML totals and latency units");
         var zero = DiskSpdParser.Parse(xml.Replace("<ReadCount>10", "<ReadCount>0").Replace("<ReadBytes>40960", "<ReadBytes>0"));
         Check(zero.Operations == 0 && zero.ReadP99Milliseconds is null, "zero IO means N/A latency");

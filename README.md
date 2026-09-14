@@ -25,10 +25,17 @@ qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe -
 `QueueCache-Verify-<time>-<id>` subfolder containing `SUMMARY.md`, JSON/CSV results,
 raw evidence and `FINISHED.txt`. The command runs in the foreground, restores
 runtime settings, and reports incomplete/restoration failures explicitly. For the
-focused flush regression use `--suite flush-interference --repeats 2`. Use standard
-Microsoft DiskSpd, not CDM's fork: download **DiskSpd.ZIP** from
-[Microsoft's releases](https://github.com/microsoft/diskspd/releases), extract it,
-then point `--diskspd` at `amd64\diskspd.exe` on x64 Windows (Intel or AMD).
+focused flush regression use `--suite flush-interference --repeats 2`.
+**Both Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd are supported**:
+
+| On x64 Windows | Executable passed to `--diskspd` |
+|---|---|
+| [Microsoft DiskSpd](https://github.com/microsoft/diskspd/releases), extracted from DiskSpd.ZIP | `amd64\diskspd.exe` |
+| CrystalDiskMark installation/extracted folder | `CdmResource\DiskSpd\DiskSpd64.exe` |
+
+Tested with Microsoft 2.3 and CDM 9.0.3's DiskSpd 2.2. Both use XML; the runner
+accepts CDM's extra score trailer without treating those trailing zeros as results.
+Quote the full path and keep the same executable/version for benchmark comparisons.
 See [suite scope, status and recovery commands](docs/DEVELOPER_VERIFICATION.md).
 The reusable runner and its tests must stay current; see [agent instructions](AGENTS.md).
 

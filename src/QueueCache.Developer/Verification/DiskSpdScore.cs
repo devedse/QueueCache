@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Xml.Linq;
+using System.Text.RegularExpressions;
 
 namespace QueueCache.Developer.Verification;
 
@@ -12,6 +13,18 @@ public static class DiskSpdParser
 {
     public static DiskSpdScore Parse(string xml)
     {
+        // CDM 9.0.3's DiskSpd 2.2 appends these two text lines even in XML mode.
+        // Strip only this complete, recognized trailer. Never scrape a Results element
+        // out of arbitrary error output or use the trailer's zero scores as metrics.
+        var end = xml.LastIndexOf("</Results>", StringComparison.Ordinal);
+        if (end >= 0)
+        {
+            end += "</Results>".Length;
+            var trailer = xml[end..].Trim();
+            if (Regex.IsMatch(trailer, @"\AScore:[ \t]*[0-9]+(?:\.[0-9]+)?\r?\naverageLatency:[ \t]*[0-9]+(?:\.[0-9]+)?\z",
+                RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                xml = xml[..end];
+        }
         var root = XDocument.Parse(xml).Root ?? throw new InvalidDataException("Missing DiskSpd XML.");
         if (root.Name.LocalName != "Results") throw new InvalidDataException("Expected DiskSpd Results XML (use -Rxml).");
         var spans = root.Elements("TimeSpan").ToArray();
