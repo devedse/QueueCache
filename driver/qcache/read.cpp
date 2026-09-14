@@ -24,21 +24,17 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     InterlockedIncrement64(&device_extension->Statistics.ReadRequests);
 
-    InterlockedAdd64(&device_extension->Statistics.ReadBytes,
-        io_stack->Parameters.Read.Length);
+    InterlockedAdd64(&device_extension->Statistics.ReadBytes, io_stack->Parameters.Read.Length);
 
     if (io_stack->Parameters.Read.Length == 0)
     {
         return QCacheIgnore(DeviceObject, Irp);
     }
 
-    if (io_stack->Parameters.Read.Length >
-        device_extension->Statistics.LargestReadSize)
+    if (io_stack->Parameters.Read.Length > device_extension->Statistics.LargestReadSize)
     {
-        device_extension->Statistics.LargestReadSize =
-            io_stack->Parameters.Read.Length;
-        KdPrint(("QCache: Largest read size is now %u KB\n",
-            device_extension->Statistics.LargestReadSize >> 10));
+        device_extension->Statistics.LargestReadSize = io_stack->Parameters.Read.Length;
+        KdPrint(("QCache: Largest read size is now %u KB\n", device_extension->Statistics.LargestReadSize >> 10));
     }
 
     if (((io_stack->Parameters.Read.ByteOffset.QuadPart & 0x1ff) != 0) ||
@@ -52,14 +48,10 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
         return STATUS_INVALID_PARAMETER;
     }
 
-    LONGLONG highest_byte =
-        io_stack->Parameters.Read.ByteOffset.QuadPart +
-        io_stack->Parameters.Read.Length;
+    LONGLONG highest_byte = io_stack->Parameters.Read.ByteOffset.QuadPart + io_stack->Parameters.Read.Length;
 
-    if ((io_stack->Parameters.Read.ByteOffset.QuadPart >=
-        device_extension->Statistics.Size.QuadPart) ||
-        (highest_byte <= 0) ||
-        (highest_byte > device_extension->Statistics.Size.QuadPart))
+    if ((io_stack->Parameters.Read.ByteOffset.QuadPart >= device_extension->Statistics.Size.QuadPart) ||
+        (highest_byte <= 0) || (highest_byte > device_extension->Statistics.Size.QuadPart))
     {
         Irp->IoStatus.Status = STATUS_END_OF_MEDIA;
         IoCompleteRequest(Irp, IO_NO_INCREMENT);
@@ -69,8 +61,7 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
         return STATUS_END_OF_MEDIA;
     }
 
-    auto system_buffer = (PUCHAR)
-        MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
+    auto system_buffer = (PUCHAR)MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
 
     if (system_buffer == NULL)
     {
@@ -84,8 +75,7 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     RTL_BITMAP bitmap;
 
-    WPoolMem<ULONG, NonPagedPoolNx> bitmap_buffer(
-        (io_stack->Parameters.Read.Length >> 9) + sizeof(ULONG) - 1);
+    WPoolMem<ULONG, NonPagedPoolNx> bitmap_buffer((io_stack->Parameters.Read.Length >> 9) + sizeof(ULONG) - 1);
 
     if (!bitmap_buffer)
     {
@@ -99,8 +89,7 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     bitmap_buffer.Clear();
 
-    RtlInitializeBitMap(&bitmap, bitmap_buffer,
-        io_stack->Parameters.Read.Length >> 9);
+    RtlInitializeBitMap(&bitmap, bitmap_buffer, io_stack->Parameters.Read.Length >> 9);
 
     KLOCK_QUEUE_HANDLE lock_handle;
 
@@ -108,45 +97,34 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     bool any_from_write_queue = false;
 
-    QCacheAcquireLock(&device_extension->WriteQueueLock, &lock_handle,
-        lowest_irql);
+    QCacheAcquireLock(&device_extension->WriteQueueLock, &lock_handle, lowest_irql);
 
-    for (
-        auto entry = device_extension->WriteQueue.Flink;
-        entry != &device_extension->WriteQueue;
-        entry = entry->Flink)
+    for (auto entry = device_extension->WriteQueue.Flink; entry != &device_extension->WriteQueue; entry = entry->Flink)
     {
         auto item = CONTAINING_RECORD(entry, WRITE_QUEUE_ITEM, ListEntry);
 
         if ((item->MajorFunction == IRP_MJ_WRITE) &&
             (item->Offset.QuadPart <
-            (io_stack->Parameters.Read.ByteOffset.QuadPart +
-            io_stack->Parameters.Read.Length)) &&
-            ((item->Offset.QuadPart + item->Length) >
-            io_stack->Parameters.Read.ByteOffset.QuadPart))
+             (io_stack->Parameters.Read.ByteOffset.QuadPart + io_stack->Parameters.Read.Length)) &&
+            ((item->Offset.QuadPart + item->Length) > io_stack->Parameters.Read.ByteOffset.QuadPart))
         {
-            LONGLONG start_pos = max(item->Offset.QuadPart,
-                io_stack->Parameters.Read.ByteOffset.QuadPart);
+            LONGLONG start_pos = max(item->Offset.QuadPart, io_stack->Parameters.Read.ByteOffset.QuadPart);
 
             LONGLONG end_pos = min(item->Offset.QuadPart + item->Length,
-                io_stack->Parameters.Read.ByteOffset.QuadPart +
-                io_stack->Parameters.Read.Length);
+                                   io_stack->Parameters.Read.ByteOffset.QuadPart + io_stack->Parameters.Read.Length);
 
-            RtlCopyMemory(system_buffer + start_pos -
-                io_stack->Parameters.Read.ByteOffset.QuadPart,
-                item->Buffer + start_pos - item->Offset.QuadPart,
-                (SIZE_T)(end_pos - start_pos));
+            RtlCopyMemory(system_buffer + start_pos - io_stack->Parameters.Read.ByteOffset.QuadPart,
+                          item->Buffer + start_pos - item->Offset.QuadPart,
+                          (SIZE_T)(end_pos - start_pos));
 
             RtlSetBits(&bitmap,
-                (ULONG)((start_pos -
-                io_stack->Parameters.Read.ByteOffset.QuadPart) >> 9),
-                (ULONG)((end_pos - start_pos) >> 9));
+                       (ULONG)((start_pos - io_stack->Parameters.Read.ByteOffset.QuadPart) >> 9),
+                       (ULONG)((end_pos - start_pos) >> 9));
 
             any_from_write_queue = true;
 
             ++device_extension->Statistics.ReadRequestsFromCache;
-            device_extension->Statistics.ReadBytesFromCache +=
-                end_pos - start_pos;
+            device_extension->Statistics.ReadBytesFromCache += end_pos - start_pos;
         }
     }
 
@@ -155,12 +133,9 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     // If none of buffer filled by write queue
     if (!any_from_write_queue)
     {
-        InterlockedIncrement64(
-            &device_extension->Statistics.ReadRequestsReroutedToOriginal);
+        InterlockedIncrement64(&device_extension->Statistics.ReadRequestsReroutedToOriginal);
 
-        InterlockedAdd64(
-            &device_extension->Statistics.ReadBytesReroutedToOriginal,
-            io_stack->Parameters.Read.Length);
+        InterlockedAdd64(&device_extension->Statistics.ReadBytesReroutedToOriginal, io_stack->Parameters.Read.Length);
 
         IoSkipCurrentIrpStackLocation(Irp);
 
@@ -184,14 +159,12 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     PSCATTERED_IRP scatter;
 
-    status = SCATTERED_IRP::Create(
-        &scatter,
-        DeviceObject,
-        Irp,
-        &device_extension->RemoveLock,
-        (DeviceObject->Flags & DO_BUFFERED_IO) ?
-        (PUCHAR)Irp->AssociatedIrp.SystemBuffer :
-        NULL);
+    status =
+        SCATTERED_IRP::Create(&scatter,
+                              DeviceObject,
+                              Irp,
+                              &device_extension->RemoveLock,
+                              (DeviceObject->Flags & DO_BUFFERED_IO) ? (PUCHAR)Irp->AssociatedIrp.SystemBuffer : NULL);
 
     if (!NT_SUCCESS(status))
     {
@@ -208,29 +181,21 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     do
     {
         LARGE_INTEGER lower_offset;
-        lower_offset.QuadPart =
-            io_stack->Parameters.Read.ByteOffset.QuadPart +
-            ((LONGLONG)clear_index << 9);
+        lower_offset.QuadPart = io_stack->Parameters.Read.ByteOffset.QuadPart + ((LONGLONG)clear_index << 9);
 
         auto lower_irp = scatter->BuildIrp(
-            IRP_MJ_READ,
-            device_extension->TargetDeviceObject,
-            clear_index << 9,
-            clear_bits << 9,
-            &lower_offset);
+            IRP_MJ_READ, device_extension->TargetDeviceObject, clear_index << 9, clear_bits << 9, &lower_offset);
 
         if (lower_irp == NULL)
         {
             break;
         }
 
-        InterlockedAdd64(&device_extension->Statistics.ReadBytesFromOriginal,
-            (LONGLONG)clear_bits << 9);
+        InterlockedAdd64(&device_extension->Statistics.ReadBytesFromOriginal, (LONGLONG)clear_bits << 9);
 
         IoCallDriver(device_extension->TargetDeviceObject, lower_irp);
 
-        clear_bits = RtlFindNextForwardRunClear(
-            &bitmap, clear_index + clear_bits, &clear_index);
+        clear_bits = RtlFindNextForwardRunClear(&bitmap, clear_index + clear_bits, &clear_index);
 
         ++splits;
 
@@ -245,6 +210,4 @@ QCacheRead(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     scatter->Complete();
 
     return STATUS_PENDING;
-}				// end QCacheReadWrite()
-
-
+} // end QCacheReadWrite()

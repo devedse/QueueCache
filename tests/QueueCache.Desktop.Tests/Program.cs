@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -7,7 +8,6 @@ using Avalonia.VisualTree;
 using QueueCache.Desktop;
 using QueueCache.Management;
 using QueueCache.Operations;
-using System.Runtime.Versioning;
 
 [assembly: SupportedOSPlatform("windows")]
 
@@ -55,7 +55,8 @@ Check(buttons.Single(b => Equals(b.Content, "Add cache")).IsEnabled, "another di
 var duringFlush = fixture.DataReads;
 Invoke("Sample").GetAwaiter().GetResult();
 Check(fixture.DataReads > duringFlush, "telemetry continues during pending Flush");
-fixture.PendingFlush.SetResult(); fixture.PendingFlush = null;
+fixture.PendingFlush.SetResult();
+fixture.PendingFlush = null;
 Dispatcher.UIThread.RunJobs();
 Check(pause.IsEnabled, "disk actions re-enabled after Flush completion");
 fixture.PendingInventory = new();
@@ -89,9 +90,11 @@ bool Visible(string label) => settings.GetVisualDescendants().OfType<TextBlock>(
     .Any(t => t.Text?.StartsWith(label) == true && t.IsVisible && t.GetVisualAncestors().All(a => a is not Control c || c.IsVisible));
 Check(Visible("Eager:") && !Visible("Start pressure") && !Visible("Maximum dirty age") && !Visible("Write-idle"), "Eager describes itself and hides watermark, age and idle settings");
 Check(Visible("Maximum adjacent-write batch") && Visible("Maximum simultaneous disk writes"), "batch and parallelism apply to every algorithm");
-drain.SelectedIndex = 1; Dispatcher.UIThread.RunJobs();
+drain.SelectedIndex = 1;
+Dispatcher.UIThread.RunJobs();
 Check(Visible("Balanced:") && Visible("Start pressure") && Visible("Maximum dirty age") && !Visible("Write-idle"), "Balanced adds watermarks and age but not the idle interval");
-drain.SelectedIndex = 2; Dispatcher.UIThread.RunJobs();
+drain.SelectedIndex = 2;
+Dispatcher.UIThread.RunJobs();
 Check(Visible("Idle:") && Visible("Write-idle") && Visible("Maximum dirty age"), "Idle adds the write-idle interval");
 var marks = settings.GetVisualDescendants().OfType<TextBlock>().Where(t => t.Text == "?").Select(t => t.Parent as Control).ToArray();
 Check(marks.Length >= 8 && marks.All(m => ToolTip.GetTip(m!) is TextBlock { Text.Length: > 40 }), "each help badge carries explanatory hover text");
@@ -100,7 +103,8 @@ Console.WriteLine("Desktop fixture checks passed; no real disk operations perfor
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
 static void Check(bool result, string description)
 {
-    if (!result) throw new Exception(description);
+    if (!result)
+        throw new Exception(description);
     Console.WriteLine("PASS: " + description);
 }
 
@@ -108,24 +112,60 @@ sealed class Fixture : ICacheTaskService
 {
     public DiskDescription[] Disks = [new(0, "System SSD", 100L << 30, "fixture-system", ["C:"], true, true), new(1, "Game library SSD", 200L << 30, "fixture-data", ["Q:"], false, false)];
     public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
-        { Options = new(), CleanReadBytes = 1024UL << 20, CleanWriteBytes = 256UL << 20,
-            Instance = 1, Generation = 2, GlobalLimitBytes = 6UL << 30, GlobalReservedBytes = 4UL << 30 };
+    {
+        Options = new(),
+        CleanReadBytes = 1024UL << 20,
+        CleanWriteBytes = 256UL << 20,
+        Instance = 1,
+        Generation = 2,
+        GlobalLimitBytes = 6UL << 30,
+        GlobalReservedBytes = 4UL << 30
+    };
     public int Pauses, Removes, CleanDrops, DataReads, BlockedReads, InventoryReads;
     public TaskCompletionSource<IReadOnlyList<DiskDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
     public TaskCompletionSource? PendingFlush;
-    public Task<IReadOnlyList<DiskDescription>> ListAsync() { InventoryReads++; return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks); }
+    public Task<IReadOnlyList<DiskDescription>> ListAsync()
+    {
+        InventoryReads++;
+        return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks);
+    }
     public Task<WriteCacheState> ReadAsync(DiskDescription disk)
     {
-        if (disk.Number == 0 && PendingDisk is not null) { BlockedReads++; return PendingDisk.Task; }
-        if (disk.Number == 1) DataReads++;
-        return Task.FromResult(disk.Number == 1 ? State : State with { Flags = 256, BudgetBytes = 0, ReservedBytes = 0, DirtyBytes = 0, PayloadCapacity = 0 });
+        if (disk.Number == 0 && PendingDisk is not null)
+        {
+            BlockedReads++;
+            return PendingDisk.Task;
+        }
+        if (disk.Number == 1)
+            DataReads++;
+        return Task.FromResult(disk.Number == 1 ? State : State with
+        {
+            Flags = 256,
+            BudgetBytes = 0,
+            ReservedBytes = 0,
+            DirtyBytes = 0,
+            PayloadCapacity = 0
+        });
     }
     public bool IsPersistent(DiskDescription disk) => true;
-    public Task SetEnabledAsync(string volume, bool enabled, bool persistent) { if (!enabled) Pauses++; return Task.CompletedTask; }
-    public Task RemoveAsync(string volume) { Removes++; return Task.CompletedTask; }
+    public Task SetEnabledAsync(string volume, bool enabled, bool persistent)
+    {
+        if (!enabled)
+            Pauses++;
+        return Task.CompletedTask;
+    }
+    public Task RemoveAsync(string volume)
+    {
+        Removes++;
+        return Task.CompletedTask;
+    }
     public Task FlushAsync(DiskDescription disk) => PendingFlush?.Task ?? Task.CompletedTask;
-    public Task DropCleanAsync(DiskDescription disk) { CleanDrops++; return Task.CompletedTask; }
+    public Task DropCleanAsync(DiskDescription disk)
+    {
+        CleanDrops++;
+        return Task.CompletedTask;
+    }
     public Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
     public Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token) => throw new NotSupportedException("Fixture never opens disks.");
 }

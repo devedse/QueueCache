@@ -9,18 +9,26 @@ namespace QueueCache.Desktop;
 internal sealed class RateHistory : Control
 {
     private readonly Queue<(double Incoming, double Draining, double Read)> samples = new();
-    public RateHistory() { Height = 55; ClipToBounds = true; }
+    public RateHistory()
+    {
+        Height = 55;
+        ClipToBounds = true;
+    }
     public void Add(double incoming, double draining, double read, bool reset)
     {
-        if (reset) samples.Clear();
+        if (reset)
+            samples.Clear();
         samples.Enqueue((incoming, draining, read));
-        while (samples.Count > 60) samples.Dequeue();
+        while (samples.Count > 60)
+            samples.Dequeue();
         InvalidateVisual();
     }
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        var points = samples.ToArray(); if (points.Length < 2) return;
+        var points = samples.ToArray();
+        if (points.Length < 2)
+            return;
         var scale = Math.Max(1, points.Max(p => Math.Max(p.Read, Math.Max(p.Incoming, p.Draining))));
         var reading = new Pen(MainWindow.ReadFill, 2);
         var incoming = new Pen(MainWindow.RetainedFill, 2);

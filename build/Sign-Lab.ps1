@@ -6,10 +6,14 @@ $root = Split-Path $PSScriptRoot -Parent
 $source = (Resolve-Path -LiteralPath $UnsignedPackageDirectory).Path
 & "$PSScriptRoot/Test-PackageLayout.ps1" -PackageDirectory $source
 $metadata = Get-Content "$source/build-info.json" -Raw | ConvertFrom-Json
-if ((-not $metadata.labPassThrough -and -not ($metadata.labWriteCache -and $AllowWriteCache)) -or $metadata.driverSigned -or $metadata.configuration -ne 'Release') {
+if ((-not $metadata.labPassThrough -and -not ($metadata.labWriteCache -and $AllowWriteCache)) -or $metadata.driverSigned -or $metadata.configuration -ne 'Release')
+{
     throw 'Only unsigned Release lab packages may be signed; write-cache builds require explicit -AllowWriteCache.'
 }
-if ((Test-Path "$source/driver/qcache.sys") -or -not (Test-Path "$source/driver/qcachelab.sys")) { throw 'Unexpected driver contents.' }
+if ((Test-Path "$source/driver/qcache.sys") -or -not (Test-Path "$source/driver/qcachelab.sys"))
+{
+    throw 'Unexpected driver contents.'
+}
 $stage = Join-Path $root "artifacts/lab/QueueCache-$($metadata.version)-test-signed-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item "$source/*" $stage -Recurse
@@ -21,9 +25,13 @@ $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=QueueCache 
 Export-Certificate -Cert $cert -FilePath "$stage/QueueCacheLab.cer" | Out-Null
 $signtool = "$root/.packages/Microsoft.Windows.SDK.CPP.10.0.28000.2526/c/bin/10.0.28000.0/x64/signtool.exe"
 & $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint "$stage/driver/qcachelab.sys"
-if ($LASTEXITCODE) { throw "SignTool failed: $LASTEXITCODE" }
+if ($LASTEXITCODE)
+{
+    throw "SignTool failed: $LASTEXITCODE"
+}
 $sig = Get-AuthenticodeSignature "$stage/driver/qcachelab.sys"
-if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or $sig.Status -eq 'HashMismatch') {
+if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.Thumbprint -or $sig.Status -eq 'HashMismatch')
+{
     throw 'Signed binary verification failed.'
 }
 $metadata.driverSigned = $true

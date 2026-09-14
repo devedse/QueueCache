@@ -48,14 +48,14 @@
 #ifdef ExAllocatePool
 #undef ExAllocatePool
 #endif
-#define ExAllocatePool(a,b) ExAllocatePoolWithTag(a,b,POOL_TAG)
+#define ExAllocatePool(a, b) ExAllocatePoolWithTag(a, b, POOL_TAG)
 #ifdef ExFreePool
 #undef ExFreePool
 #endif
-#define ExFreePool(a) ExFreePoolWithTag(a,POOL_TAG)
+#define ExFreePool(a) ExFreePoolWithTag(a, POOL_TAG)
 #endif
 
-#define ACCESS_FROM_CTL_CODE(ctrlCode)          ((UCHAR)((ctrlCode >> 14) & 0x03))
+#define ACCESS_FROM_CTL_CODE(ctrlCode) ((UCHAR)((ctrlCode >> 14) & 0x03))
 
 //
 // Device Extension
@@ -142,8 +142,7 @@ typedef struct _DEVICE_EXTENSION
 
 typedef class WRITE_QUEUE_ITEM
 {
-public:
-
+  public:
     //
     //
     //
@@ -184,11 +183,10 @@ public:
         delete[] Buffer;
     }
 
-} *PWRITE_QUEUE_ITEM;
+}* PWRITE_QUEUE_ITEM;
 
 FORCEINLINE
-VOID
-QCacheFreeIrpWithMdls(IN PIRP Irp)
+VOID QCacheFreeIrpWithMdls(IN PIRP Irp)
 {
     if (Irp->MdlAddress != NULL)
     {
@@ -244,16 +242,14 @@ typedef class SCATTERED_IRP
         {
             if (CopyBack)
             {
-                RtlCopyMemory(SystemBuffer, AllocatedBuffer,
-                    BytesCompleted);
+                RtlCopyMemory(SystemBuffer, AllocatedBuffer, BytesCompleted);
             }
 
             OriginalIrp->IoStatus.Information = BytesCompleted;
         }
         else
         {
-            KdPrint(("QCache: Lower level I/O failed: 0x%X\n",
-                LastFailedStatus));
+            KdPrint(("QCache: Lower level I/O failed: 0x%X\n", LastFailedStatus));
 
             KdBreakPoint();
 
@@ -267,7 +263,7 @@ typedef class SCATTERED_IRP
         delete[] AllocatedBuffer;
     }
 
-public:
+  public:
     void Complete()
     {
         auto scatter_items = InterlockedDecrement(&ScatterCount);
@@ -277,12 +273,11 @@ public:
         }
     }
 
-    static NTSTATUS Create(
-        SCATTERED_IRP **Object,
-        PDEVICE_OBJECT OriginalDeviceObject,
-        PIRP OriginalIrp,
-        PIO_REMOVE_LOCK RemoveLock,
-        PUCHAR SystemBuffer = NULL)
+    static NTSTATUS Create(SCATTERED_IRP** Object,
+                           PDEVICE_OBJECT OriginalDeviceObject,
+                           PIRP OriginalIrp,
+                           PIO_REMOVE_LOCK RemoveLock,
+                           PUCHAR SystemBuffer = NULL)
     {
         //
         // Acquire the remove lock so that device will not be removed while
@@ -292,12 +287,12 @@ public:
         if (!NT_SUCCESS(status))
         {
             DbgPrint("QCache: Remove lock failed Irp type %i\n",
-                IoGetCurrentIrpStackLocation(OriginalIrp)->MajorFunction);
+                     IoGetCurrentIrpStackLocation(OriginalIrp)->MajorFunction);
 
             return status;
         }
 
-        *Object = new(0) SCATTERED_IRP;
+        *Object = new (0) SCATTERED_IRP;
 
         if (*Object == NULL)
         {
@@ -319,14 +314,13 @@ public:
         return STATUS_SUCCESS;
     }
 
-    PIRP BuildIrp(
-        UCHAR MajorFunction,
-        PDEVICE_OBJECT DeviceObject,
-        ULONG OriginalIrpOffset,
-        ULONG BytesThisIrp,
-        PLARGE_INTEGER LowerDeviceOffset);
+    PIRP BuildIrp(UCHAR MajorFunction,
+                  PDEVICE_OBJECT DeviceObject,
+                  ULONG OriginalIrpOffset,
+                  ULONG BytesThisIrp,
+                  PLARGE_INTEGER LowerDeviceOffset);
 
-} *PSCATTERED_IRP;
+}* PSCATTERED_IRP;
 
 //
 // Function declarations
@@ -343,11 +337,9 @@ extern "C"
     DRIVER_ADD_DEVICE QCacheAddDevice;
 
     NTSTATUS
-        QCacheAttachDevice(
-            IN PDRIVER_OBJECT DriverObject,
-            IN PDEVICE_OBJECT PhysicalDeviceObject,
-            OUT PDEVICE_EXTENSION *FilterDeviceExtension
-            );
+    QCacheAttachDevice(IN PDRIVER_OBJECT DriverObject,
+                       IN PDEVICE_OBJECT PhysicalDeviceObject,
+                       OUT PDEVICE_EXTENSION* FilterDeviceExtension);
 
     DRIVER_DISPATCH QCacheForwardIrpSynchronous;
 
@@ -366,14 +358,11 @@ extern "C"
     _Dispatch_type_(IRP_MJ_WRITE) DRIVER_DISPATCH QCacheWrite;
 
     _Dispatch_type_(IRP_MJ_DEVICE_CONTROL)
-        _Dispatch_type_(IRP_MJ_INTERNAL_DEVICE_CONTROL)
-        DRIVER_DISPATCH QCacheDeviceControl;
+        _Dispatch_type_(IRP_MJ_INTERNAL_DEVICE_CONTROL) DRIVER_DISPATCH QCacheDeviceControl;
 
-    _Dispatch_type_(IRP_MJ_SHUTDOWN)
-        DRIVER_DISPATCH QCacheShutdown;
+    _Dispatch_type_(IRP_MJ_SHUTDOWN) DRIVER_DISPATCH QCacheShutdown;
 
-    _Dispatch_type_(IRP_MJ_FLUSH_BUFFERS)
-        DRIVER_DISPATCH QCacheFlushBuffers;
+    _Dispatch_type_(IRP_MJ_FLUSH_BUFFERS) DRIVER_DISPATCH QCacheFlushBuffers;
 
     DRIVER_DISPATCH QCacheTrim;
     DRIVER_DISPATCH QCacheIgnore;
@@ -391,59 +380,44 @@ extern "C"
     KSTART_ROUTINE QCacheDeviceWorkerThread;
 
     NTSTATUS
-        QCacheAttachLegacyDevice(
-            PDRIVER_OBJECT DriverObject,
-            PUNICODE_STRING DeviceName);
+    QCacheAttachLegacyDevice(PDRIVER_OBJECT DriverObject, PUNICODE_STRING DeviceName);
 
-    VOID
-        QCacheDispatchQueuedItem(
-            PDEVICE_EXTENSION DeviceExtension,
-            PWRITE_QUEUE_ITEM Item);
+    VOID QCacheDispatchQueuedItem(PDEVICE_EXTENSION DeviceExtension, PWRITE_QUEUE_ITEM Item);
 
-    VOID
-        QCacheLogError(IN PDEVICE_OBJECT DeviceObject,
-            IN ULONG UniqueId,
-            IN NTSTATUS ErrorCode, IN NTSTATUS Status);
+    VOID QCacheLogError(IN PDEVICE_OBJECT DeviceObject, IN ULONG UniqueId, IN NTSTATUS ErrorCode, IN NTSTATUS Status);
 
-    VOID
-        QCacheSyncFilterWithTarget(IN PDEVICE_OBJECT FilterDevice,
-            IN PDEVICE_OBJECT TargetDevice);
+    VOID QCacheSyncFilterWithTarget(IN PDEVICE_OBJECT FilterDevice, IN PDEVICE_OBJECT TargetDevice);
 
-    VOID
-        QCacheCleanupDevice(IN PDEVICE_EXTENSION DeviceExtension);
+    VOID QCacheCleanupDevice(IN PDEVICE_EXTENSION DeviceExtension);
 
     NTSTATUS
-        QCacheQueueIrp(IN PDEVICE_EXTENSION DeviceExtension,
-            IN PIRP Irp);
+    QCacheQueueIrp(IN PDEVICE_EXTENSION DeviceExtension, IN PIRP Irp);
 
     NTSTATUS
-        QCacheSynchronousDeviceControl(
-            IN PDEVICE_OBJECT DeviceObject,
-            IN PFILE_OBJECT FileObject,
-            IN UCHAR MajorFunction,
-            IN ULONG IoControlCode,
-            IN OUT PVOID SystemBuffer = NULL,
-            IN ULONG InputBufferLength = 0,
-            IN ULONG OutputBufferLength = 0,
-            OUT PIO_STATUS_BLOCK IoStatus = NULL);
+    QCacheSynchronousDeviceControl(IN PDEVICE_OBJECT DeviceObject,
+                                   IN PFILE_OBJECT FileObject,
+                                   IN UCHAR MajorFunction,
+                                   IN ULONG IoControlCode,
+                                   IN OUT PVOID SystemBuffer = NULL,
+                                   IN ULONG InputBufferLength = 0,
+                                   IN ULONG OutputBufferLength = 0,
+                                   OUT PIO_STATUS_BLOCK IoStatus = NULL);
 
     NTSTATUS
-        QCacheSynchronousReadWrite(
-            IN PDEVICE_OBJECT DeviceObject,
-            IN PFILE_OBJECT FileObject,
-            IN UCHAR MajorFunction,
-            IN OUT PVOID SystemBuffer = NULL,
-            IN ULONG BufferLength = 0,
-            IN PLARGE_INTEGER StartingOffset = NULL,
-            OUT PIO_STATUS_BLOCK IoStatus = NULL);
+    QCacheSynchronousReadWrite(IN PDEVICE_OBJECT DeviceObject,
+                               IN PFILE_OBJECT FileObject,
+                               IN UCHAR MajorFunction,
+                               IN OUT PVOID SystemBuffer = NULL,
+                               IN ULONG BufferLength = 0,
+                               IN PLARGE_INTEGER StartingOffset = NULL,
+                               OUT PIO_STATUS_BLOCK IoStatus = NULL);
 
     NTSTATUS
-        QCacheInitializeDevice(IN PDEVICE_EXTENSION DeviceExtension);
+    QCacheInitializeDevice(IN PDEVICE_EXTENSION DeviceExtension);
 
     FORCEINLINE
-        PDEVICE_OBJECT
-        QCacheGetLowerDeviceObjectAndDereference(
-            IN PDEVICE_OBJECT DeviceObject)
+    PDEVICE_OBJECT
+    QCacheGetLowerDeviceObjectAndDereference(IN PDEVICE_OBJECT DeviceObject)
     {
         auto lower_device = IoGetLowerDeviceObject(DeviceObject);
         ObDereferenceObject(DeviceObject);
@@ -462,14 +436,13 @@ extern "C"
 #if _NT_TARGET_VERSION >= 0x501
 
     FORCEINLINE
-        VOID
-        __drv_maxIRQL(DISPATCH_LEVEL)
+    VOID __drv_maxIRQL(DISPATCH_LEVEL)
         __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_savesIRQLGlobal(QueuedSpinLock, LockHandle))
-        __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_setsIRQL(DISPATCH_LEVEL))
-        QCacheAcquireLock_x64(__inout __deref PKSPIN_LOCK SpinLock,
-            __out __deref __drv_acquiresExclusiveResource(KeQueuedSpinLockType)
-            PKLOCK_QUEUE_HANDLE LockHandle,
-            __in KIRQL LowestAssumedIrql)
+            __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_setsIRQL(DISPATCH_LEVEL))
+                QCacheAcquireLock_x64(__inout __deref PKSPIN_LOCK SpinLock,
+                                      __out __deref __drv_acquiresExclusiveResource(KeQueuedSpinLockType)
+                                          PKLOCK_QUEUE_HANDLE LockHandle,
+                                      __in KIRQL LowestAssumedIrql)
     {
         if (LowestAssumedIrql >= DISPATCH_LEVEL)
         {
@@ -484,14 +457,12 @@ extern "C"
     }
 
     FORCEINLINE
-        VOID
-        __drv_requiresIRQL(DISPATCH_LEVEL)
+    VOID __drv_requiresIRQL(DISPATCH_LEVEL)
         //__drv_when(*LowestAssumedIrql < DISPATCH_LEVEL, __drv_restoresIRQLGlobal(QueuedSpinLock, LockHandle))
         __drv_restoresIRQLGlobal(QueuedSpinLock, LockHandle)
-        QCacheReleaseLock_x64(
-            __in __deref __drv_releasesExclusiveResource(KeQueuedSpinLockType)
-            PKLOCK_QUEUE_HANDLE LockHandle,
-            __inout __deref PKIRQL LowestAssumedIrql)
+            QCacheReleaseLock_x64(__in __deref __drv_releasesExclusiveResource(KeQueuedSpinLockType)
+                                      PKLOCK_QUEUE_HANDLE LockHandle,
+                                  __inout __deref PKIRQL LowestAssumedIrql)
     {
         ASSERT(KeGetCurrentIrql() >= DISPATCH_LEVEL);
 
@@ -509,13 +480,13 @@ extern "C"
 #endif >= XP
 
     FORCEINLINE
-        VOID
-        __drv_maxIRQL(DISPATCH_LEVEL)
-        __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_savesIRQLGlobal(SpinLock, OldIrql))
+    VOID __drv_maxIRQL(DISPATCH_LEVEL) __drv_when(LowestAssumedIrql < DISPATCH_LEVEL,
+                                                  __drv_savesIRQLGlobal(SpinLock, OldIrql))
         __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_setsIRQL(DISPATCH_LEVEL))
-        QCacheAcquireLock_x86(__inout __deref __drv_acquiresExclusiveResource(KeSpinLockType) PKSPIN_LOCK SpinLock,
-            __out __deref __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_savesIRQL) PKIRQL OldIrql,
-            __in KIRQL LowestAssumedIrql)
+            QCacheAcquireLock_x86(__inout __deref __drv_acquiresExclusiveResource(KeSpinLockType) PKSPIN_LOCK SpinLock,
+                                  __out __deref __drv_when(LowestAssumedIrql < DISPATCH_LEVEL, __drv_savesIRQL)
+                                      PKIRQL OldIrql,
+                                  __in KIRQL LowestAssumedIrql)
     {
         if (LowestAssumedIrql >= DISPATCH_LEVEL)
         {
@@ -532,13 +503,10 @@ extern "C"
     }
 
     FORCEINLINE
-        VOID
-        __drv_requiresIRQL(DISPATCH_LEVEL)
-        __drv_restoresIRQLGlobal(SpinLock, OldIrql)
-        QCacheReleaseLock_x86(
-            __inout __deref __drv_releasesExclusiveResource(KeSpinLockType) PKSPIN_LOCK SpinLock,
-            __in KIRQL OldIrql,
-            __inout __deref PKIRQL LowestAssumedIrql)
+    VOID __drv_requiresIRQL(DISPATCH_LEVEL) __drv_restoresIRQLGlobal(SpinLock, OldIrql)
+        QCacheReleaseLock_x86(__inout __deref __drv_releasesExclusiveResource(KeSpinLockType) PKSPIN_LOCK SpinLock,
+                              __in KIRQL OldIrql,
+                              __inout __deref PKIRQL LowestAssumedIrql)
     {
         ASSERT(KeGetCurrentIrql() >= DISPATCH_LEVEL);
 
@@ -561,17 +529,16 @@ extern "C"
 
 #else
 
-#define QCacheAcquireLock(SpinLock, LockHandle, LowestAssumedIrql) \
-    { \
-        (LockHandle)->LockQueue.Lock = (SpinLock); \
-        QCacheAcquireLock_x86((LockHandle)->LockQueue.Lock, &(LockHandle)->OldIrql, (LowestAssumedIrql)); \
+#define QCacheAcquireLock(SpinLock, LockHandle, LowestAssumedIrql)                                                     \
+    {                                                                                                                  \
+        (LockHandle)->LockQueue.Lock = (SpinLock);                                                                     \
+        QCacheAcquireLock_x86((LockHandle)->LockQueue.Lock, &(LockHandle)->OldIrql, (LowestAssumedIrql));              \
     }
 
-#define QCacheReleaseLock(LockHandle, LowestAssumedIrql) \
-    { \
-        QCacheReleaseLock_x86((LockHandle)->LockQueue.Lock, (LockHandle)->OldIrql, (LowestAssumedIrql)); \
+#define QCacheReleaseLock(LockHandle, LowestAssumedIrql)                                                               \
+    {                                                                                                                  \
+        QCacheReleaseLock_x86((LockHandle)->LockQueue.Lock, (LockHandle)->OldIrql, (LowestAssumedIrql));               \
     }
 
 #endif
-
 }

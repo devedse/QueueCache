@@ -12,7 +12,7 @@
 #include "qcache.h"
 
 #if DBG
-#pragma warning(disable: 28175)
+#pragma warning(disable : 28175)
 #endif
 
 HANDLE QCacheParametersKey = NULL;
@@ -30,19 +30,19 @@ LONGLONG QCacheMaxQueueSize = QCACHE_MAX_QUEUE_SIZE_DEFAULT_VALUE;
 //
 
 #ifdef ALLOC_PRAGMA
-#pragma alloc_text (INIT, DriverEntry)
-#pragma alloc_text (INIT, QCacheAttachLegacyDevice)
-#pragma alloc_text (PAGE, QCacheCreate)
-#pragma alloc_text (PAGE, QCacheAddDevice)
-#pragma alloc_text (PAGE, QCachePnp)
-#pragma alloc_text (PAGE, QCacheStartDevice)
-#pragma alloc_text (PAGE, QCacheRemoveDevice)
-#pragma alloc_text (PAGE, QCacheCleanupDevice)
-#pragma alloc_text (PAGE, QCacheTrim)
-#pragma alloc_text (PAGE, QCacheDeviceUsageNotification)
-#pragma alloc_text (PAGE, QCacheForwardIrpSynchronous)
-#pragma alloc_text (PAGE, QCacheUnload)
-#pragma alloc_text (PAGE, QCacheSyncFilterWithTarget)
+#pragma alloc_text(INIT, DriverEntry)
+#pragma alloc_text(INIT, QCacheAttachLegacyDevice)
+#pragma alloc_text(PAGE, QCacheCreate)
+#pragma alloc_text(PAGE, QCacheAddDevice)
+#pragma alloc_text(PAGE, QCachePnp)
+#pragma alloc_text(PAGE, QCacheStartDevice)
+#pragma alloc_text(PAGE, QCacheRemoveDevice)
+#pragma alloc_text(PAGE, QCacheCleanupDevice)
+#pragma alloc_text(PAGE, QCacheTrim)
+#pragma alloc_text(PAGE, QCacheDeviceUsageNotification)
+#pragma alloc_text(PAGE, QCacheForwardIrpSynchronous)
+#pragma alloc_text(PAGE, QCacheUnload)
+#pragma alloc_text(PAGE, QCacheSyncFilterWithTarget)
 #endif
 
 NTSTATUS
@@ -75,13 +75,11 @@ STATUS_SUCCESS if successful
     HANDLE event_handle;
 
     UNICODE_STRING event_path;
-    RtlInitUnicodeString(&event_path,
-        L"\\Device\\" QCACHE_OUT_OF_MEMORY_EVENT_NAME);
+    RtlInitUnicodeString(&event_path, L"\\Device\\" QCACHE_OUT_OF_MEMORY_EVENT_NAME);
 
     KdBreakPoint();
 
-    WPoolMem<SECURITY_DESCRIPTOR, PagedPool> event_security_descriptor(
-        SECURITY_DESCRIPTOR_MIN_LENGTH);
+    WPoolMem<SECURITY_DESCRIPTOR, PagedPool> event_security_descriptor(SECURITY_DESCRIPTOR_MIN_LENGTH);
 
     if (event_security_descriptor)
     {
@@ -95,52 +93,36 @@ STATUS_SUCCESS if successful
 
     if (NT_SUCCESS(status))
     {
-        status = RtlCreateSecurityDescriptor(
-            event_security_descriptor,
-            SECURITY_DESCRIPTOR_REVISION);
+        status = RtlCreateSecurityDescriptor(event_security_descriptor, SECURITY_DESCRIPTOR_REVISION);
     }
 
     if (NT_SUCCESS(status))
     {
-#pragma warning(suppress: 6248)
-        status = RtlSetDaclSecurityDescriptor(
-            event_security_descriptor,
-            TRUE,
-            NULL,
-            FALSE);
+#pragma warning(suppress : 6248)
+        status = RtlSetDaclSecurityDescriptor(event_security_descriptor, TRUE, NULL, FALSE);
     }
 
     OBJECT_ATTRIBUTES event_obj_attrs;
-    InitializeObjectAttributes(&event_obj_attrs,
-        &event_path,
-        OBJ_PERMANENT | OBJ_OPENIF,
-        NULL,
-        event_security_descriptor);
+    InitializeObjectAttributes(
+        &event_obj_attrs, &event_path, OBJ_PERMANENT | OBJ_OPENIF, NULL, event_security_descriptor);
 
-    status = ZwCreateEvent(
-        &event_handle,
-        EVENT_ALL_ACCESS,
-        &event_obj_attrs,
-        NotificationEvent,
-        FALSE);
+    status = ZwCreateEvent(&event_handle, EVENT_ALL_ACCESS, &event_obj_attrs, NotificationEvent, FALSE);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache:DriverEntry: Cannot create out-of-memory event '%wZ': %#x\n",
-            event_obj_attrs.ObjectName, status);
+        DbgPrint(
+            "QCache:DriverEntry: Cannot create out-of-memory event '%wZ': %#x\n", event_obj_attrs.ObjectName, status);
 
         KdBreakPoint();
     }
     else
     {
-        status = ObReferenceObjectByHandle(event_handle, EVENT_ALL_ACCESS,
-            *ExEventObjectType, KernelMode, (PVOID*)&QCacheLowMemCondition,
-            NULL);
+        status = ObReferenceObjectByHandle(
+            event_handle, EVENT_ALL_ACCESS, *ExEventObjectType, KernelMode, (PVOID*)&QCacheLowMemCondition, NULL);
 
         if (!NT_SUCCESS(status))
         {
-            DbgPrint("QCache:DriverEntry: Cannot reference event '%wZ': %#x\n",
-                event_obj_attrs.ObjectName, status);
+            DbgPrint("QCache:DriverEntry: Cannot reference event '%wZ': %#x\n", event_obj_attrs.ObjectName, status);
 
             QCacheLowMemCondition = NULL;
         }
@@ -151,66 +133,48 @@ STATUS_SUCCESS if successful
     //
     // Open/create memory condition events
     //
-    RtlInitUnicodeString(&event_path,
-        L"\\KernelObjects\\HighMemoryCondition");
+    RtlInitUnicodeString(&event_path, L"\\KernelObjects\\HighMemoryCondition");
 
-    InitializeObjectAttributes(&event_obj_attrs,
-        &event_path,
-        OBJ_PERMANENT | OBJ_OPENIF,
-        NULL,
-        NULL);
+    InitializeObjectAttributes(&event_obj_attrs, &event_path, OBJ_PERMANENT | OBJ_OPENIF, NULL, NULL);
 
-    status = ZwCreateEvent(
-        &event_handle,
-        EVENT_ALL_ACCESS,
-        &event_obj_attrs,
-        NotificationEvent,
-        TRUE);
+    status = ZwCreateEvent(&event_handle, EVENT_ALL_ACCESS, &event_obj_attrs, NotificationEvent, TRUE);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache:DriverEntry: Cannot create event '%wZ': %#x\n",
-            event_obj_attrs.ObjectName, status);
+        DbgPrint("QCache:DriverEntry: Cannot create event '%wZ': %#x\n", event_obj_attrs.ObjectName, status);
 
         KdBreakPoint();
     }
     else
     {
         ObReferenceObjectByHandle(event_handle,
-            EVENT_ALL_ACCESS,
-            *ExEventObjectType,
-            KernelMode,
-            (PVOID *)&QCacheKernelHighMemoryCondition,
-            NULL);
+                                  EVENT_ALL_ACCESS,
+                                  *ExEventObjectType,
+                                  KernelMode,
+                                  (PVOID*)&QCacheKernelHighMemoryCondition,
+                                  NULL);
 
         ZwClose(event_handle);
     }
 
-    RtlInitUnicodeString(&event_path,
-        L"\\KernelObjects\\HighNonPagedPoolCondition");
+    RtlInitUnicodeString(&event_path, L"\\KernelObjects\\HighNonPagedPoolCondition");
 
-    status = ZwCreateEvent(
-        &event_handle,
-        EVENT_ALL_ACCESS,
-        &event_obj_attrs,
-        NotificationEvent,
-        TRUE);
+    status = ZwCreateEvent(&event_handle, EVENT_ALL_ACCESS, &event_obj_attrs, NotificationEvent, TRUE);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache:DriverEntry: Cannot create event '%wZ': %#x\n",
-            event_obj_attrs.ObjectName, status);
+        DbgPrint("QCache:DriverEntry: Cannot create event '%wZ': %#x\n", event_obj_attrs.ObjectName, status);
 
         KdBreakPoint();
     }
     else
     {
         ObReferenceObjectByHandle(event_handle,
-            EVENT_ALL_ACCESS,
-            *ExEventObjectType,
-            KernelMode,
-            (PVOID *)&QCacheKernelHighNonPagedPoolCondition,
-            NULL);
+                                  EVENT_ALL_ACCESS,
+                                  *ExEventObjectType,
+                                  KernelMode,
+                                  (PVOID*)&QCacheKernelHighNonPagedPoolCondition,
+                                  NULL);
 
         ZwClose(event_handle);
     }
@@ -223,8 +187,7 @@ STATUS_SUCCESS if successful
 
     UNICODE_STRING param_key_path;
 
-    param_key_path.MaximumLength = RegistryPath->Length
-        + sizeof(parameters_suffix);
+    param_key_path.MaximumLength = RegistryPath->Length + sizeof(parameters_suffix);
 
     WPoolMem<WCHAR, PagedPool> param_key_buffer(param_key_path.MaximumLength);
 
@@ -246,16 +209,13 @@ STATUS_SUCCESS if successful
     param_key_path.Buffer[param_key_path.Length / sizeof(WCHAR)] = 0;
 
     OBJECT_ATTRIBUTES param_key_obj_attrs;
-    InitializeObjectAttributes(&param_key_obj_attrs, &param_key_path,
-        OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&param_key_obj_attrs, &param_key_path, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
-    status = ZwOpenKey(&QCacheParametersKey, KEY_READ,
-        &param_key_obj_attrs);
+    status = ZwOpenKey(&QCacheParametersKey, KEY_READ, &param_key_obj_attrs);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache::DriverEntry: Error opening key '%wZ': %#x\n",
-            param_key_obj_attrs.ObjectName, status);
+        DbgPrint("QCache::DriverEntry: Error opening key '%wZ': %#x\n", param_key_obj_attrs.ObjectName, status);
 
         KdBreakPoint();
 
@@ -266,9 +226,8 @@ STATUS_SUCCESS if successful
     {
         UNICODE_STRING value_name;
 
-        WPoolMem<KEY_VALUE_PARTIAL_INFORMATION, PagedPool>
-            reg_value(sizeof(KEY_VALUE_PARTIAL_INFORMATION) +
-                sizeof(ULONGLONG));
+        WPoolMem<KEY_VALUE_PARTIAL_INFORMATION, PagedPool> reg_value(sizeof(KEY_VALUE_PARTIAL_INFORMATION) +
+                                                                     sizeof(ULONGLONG));
 
         if (!reg_value)
         {
@@ -286,45 +245,46 @@ STATUS_SUCCESS if successful
         RtlInitUnicodeString(&value_name, QCACHE_MAX_QUEUE_ITEMS_VALUE_NAME);
 
         status = ZwQueryValueKey(QCacheParametersKey,
-            &value_name, KeyValuePartialInformation, (PVOID)reg_value,
-            (ULONG)reg_value.GetSize(), &req_length);
+                                 &value_name,
+                                 KeyValuePartialInformation,
+                                 (PVOID)reg_value,
+                                 (ULONG)reg_value.GetSize(),
+                                 &req_length);
 
         if (NT_SUCCESS(status))
         {
             QCacheMaxQueueItems = 0;
 
-            RtlCopyMemory(&QCacheMaxQueueItems, reg_value->Data,
-                min(reg_value->DataLength, sizeof(QCacheMaxQueueItems)));
+            RtlCopyMemory(
+                &QCacheMaxQueueItems, reg_value->Data, min(reg_value->DataLength, sizeof(QCacheMaxQueueItems)));
         }
 
         RtlInitUnicodeString(&value_name, QCACHE_MAX_QUEUE_SIZE_VALUE_NAME);
 
         status = ZwQueryValueKey(QCacheParametersKey,
-            &value_name, KeyValuePartialInformation, (PVOID)reg_value,
-            (ULONG)reg_value.GetSize(), &req_length);
+                                 &value_name,
+                                 KeyValuePartialInformation,
+                                 (PVOID)reg_value,
+                                 (ULONG)reg_value.GetSize(),
+                                 &req_length);
 
         if (NT_SUCCESS(status))
         {
             QCacheMaxQueueSize = 0;
 
-            RtlCopyMemory(&QCacheMaxQueueSize, reg_value->Data,
-                min(reg_value->DataLength, sizeof(QCacheMaxQueueSize)));
+            RtlCopyMemory(&QCacheMaxQueueSize, reg_value->Data, min(reg_value->DataLength, sizeof(QCacheMaxQueueSize)));
         }
     }
 
-    DbgPrint("QCache: Max queue items = %I64i, Max queue size = %I64i\n",
-        QCacheMaxQueueItems, QCacheMaxQueueSize);
+    DbgPrint("QCache: Max queue items = %I64i, Max queue size = %I64i\n", QCacheMaxQueueItems, QCacheMaxQueueSize);
 
     //
     // Create dispatch points
     //
 
     ULONG ulIndex;
-    PDRIVER_DISPATCH *dispatch;
-    for (
-        ulIndex = 0, dispatch = DriverObject->MajorFunction;
-        ulIndex <= IRP_MJ_MAXIMUM_FUNCTION;
-        ulIndex++, dispatch++)
+    PDRIVER_DISPATCH* dispatch;
+    for (ulIndex = 0, dispatch = DriverObject->MajorFunction; ulIndex <= IRP_MJ_MAXIMUM_FUNCTION; ulIndex++, dispatch++)
     {
         *dispatch = QCacheSendToNextDriver;
     }
@@ -352,9 +312,8 @@ STATUS_SUCCESS if successful
     {
         UNICODE_STRING value_name;
 
-        WPoolMem<KEY_VALUE_PARTIAL_INFORMATION, PagedPool>
-            reg_value(sizeof(KEY_VALUE_PARTIAL_INFORMATION) +
-                UNICODE_STRING_MAX_BYTES);
+        WPoolMem<KEY_VALUE_PARTIAL_INFORMATION, PagedPool> reg_value(sizeof(KEY_VALUE_PARTIAL_INFORMATION) +
+                                                                     UNICODE_STRING_MAX_BYTES);
 
         if (!reg_value)
         {
@@ -372,38 +331,36 @@ STATUS_SUCCESS if successful
         RtlInitUnicodeString(&value_name, QCACHE_ATTACH_DEVICES_VALUE_NAME);
 
         status = ZwQueryValueKey(QCacheParametersKey,
-            &value_name, KeyValuePartialInformation, (PVOID)reg_value,
-            (ULONG)reg_value.GetSize(), &req_length);
+                                 &value_name,
+                                 KeyValuePartialInformation,
+                                 (PVOID)reg_value,
+                                 (ULONG)reg_value.GetSize(),
+                                 &req_length);
 
         if (NT_SUCCESS(status))
         {
             UNICODE_STRING device_name;
 
             device_name.Buffer = (PWCHAR)reg_value->Data;
-            device_name.MaximumLength = (USHORT)
-                min(MAXUSHORT, reg_value->DataLength);
+            device_name.MaximumLength = (USHORT)min(MAXUSHORT, reg_value->DataLength);
 
             while (device_name.MaximumLength >= 6)
             {
-                auto len = wcsnlen(device_name.Buffer,
-                    device_name.MaximumLength / sizeof(WCHAR));
+                auto len = wcsnlen(device_name.Buffer, device_name.MaximumLength / sizeof(WCHAR));
 
                 device_name.Length = (USHORT)(len * sizeof(WCHAR));
 
-                DbgPrint("QCache: Attaching to device '%wZ'...\n",
-                    &device_name);
+                DbgPrint("QCache: Attaching to device '%wZ'...\n", &device_name);
 
                 auto status = QCacheAttachLegacyDevice(DriverObject, &device_name);
 
                 if (NT_SUCCESS(status))
                 {
-                    DbgPrint("QCache: Successfully attached to device '%wZ'.\n",
-                        &device_name);
+                    DbgPrint("QCache: Successfully attached to device '%wZ'.\n", &device_name);
                 }
                 else
                 {
-                    DbgPrint("QCache: Error attaching to device '%wZ': %#x\n",
-                        &device_name, status);
+                    DbgPrint("QCache: Error attaching to device '%wZ': %#x\n", &device_name, status);
 
                     KdBreakPoint();
 
@@ -414,30 +371,25 @@ STATUS_SUCCESS if successful
 
                 device_name.Buffer += len + 1;
 
-                device_name.MaximumLength -= device_name.Length +
-                    sizeof(WCHAR);
+                device_name.MaximumLength -= device_name.Length + sizeof(WCHAR);
             }
         }
     }
 
     return STATUS_SUCCESS;
 
-}				// end DriverEntry()
-
+} // end DriverEntry()
 
 NTSTATUS
-#pragma warning(suppress: 28101)
-QCacheAttachLegacyDevice(
-    PDRIVER_OBJECT DriverObject,
-    PUNICODE_STRING DeviceName)
+#pragma warning(suppress : 28101)
+QCacheAttachLegacyDevice(PDRIVER_OBJECT DriverObject, PUNICODE_STRING DeviceName)
 {
     PAGED_CODE();
 
     PDEVICE_OBJECT device_object;
     PFILE_OBJECT file_object;
 
-    auto status = IoGetDeviceObjectPointer(DeviceName, FILE_READ_ATTRIBUTES,
-        &file_object, &device_object);
+    auto status = IoGetDeviceObjectPointer(DeviceName, FILE_READ_ATTRIBUTES, &file_object, &device_object);
 
     if (!NT_SUCCESS(status))
     {
@@ -450,8 +402,7 @@ QCacheAttachLegacyDevice(
 
     PDEVICE_EXTENSION filter_device_extension;
 
-    status = QCacheAttachDevice(DriverObject, physical_device,
-        &filter_device_extension);
+    status = QCacheAttachDevice(DriverObject, physical_device, &filter_device_extension);
 
     ObDereferenceObject(physical_device);
 
@@ -463,14 +414,10 @@ QCacheAttachLegacyDevice(
     return status;
 }
 
-#define FILTER_DEVICE_PROPAGATE_FLAGS            0
-#define FILTER_DEVICE_PROPAGATE_CHARACTERISTICS (FILE_REMOVABLE_MEDIA |  \
-                                                 FILE_READ_ONLY_DEVICE | \
-                                                 FILE_FLOPPY_DISKETTE)
+#define FILTER_DEVICE_PROPAGATE_FLAGS 0
+#define FILTER_DEVICE_PROPAGATE_CHARACTERISTICS (FILE_REMOVABLE_MEDIA | FILE_READ_ONLY_DEVICE | FILE_FLOPPY_DISKETTE)
 
-VOID
-QCacheSyncFilterWithTarget(IN PDEVICE_OBJECT FilterDevice,
-IN PDEVICE_OBJECT TargetDevice)
+VOID QCacheSyncFilterWithTarget(IN PDEVICE_OBJECT FilterDevice, IN PDEVICE_OBJECT TargetDevice)
 {
     ULONG prop_flags;
 
@@ -485,13 +432,11 @@ IN PDEVICE_OBJECT TargetDevice)
     prop_flags = TargetDevice->Flags & FILTER_DEVICE_PROPAGATE_FLAGS;
     FilterDevice->Flags |= prop_flags;
 
-    prop_flags =
-        TargetDevice->Characteristics & FILTER_DEVICE_PROPAGATE_CHARACTERISTICS;
+    prop_flags = TargetDevice->Characteristics & FILTER_DEVICE_PROPAGATE_CHARACTERISTICS;
     FilterDevice->Characteristics |= prop_flags;
 }
 
-VOID
-QCacheCleanupDevice(IN PDEVICE_EXTENSION DeviceExtension)
+VOID QCacheCleanupDevice(IN PDEVICE_EXTENSION DeviceExtension)
 {
     PAGED_CODE();
 
@@ -503,23 +448,19 @@ QCacheCleanupDevice(IN PDEVICE_EXTENSION DeviceExtension)
         ZwClose(DeviceExtension->WorkerThread);
         DeviceExtension->WorkerThread = NULL;
     }
-
 }
 
 NTSTATUS
-QCacheSynchronousDeviceControl(
-IN PDEVICE_OBJECT DeviceObject,
-IN PFILE_OBJECT FileObject,
-IN UCHAR MajorFunction,
-IN ULONG IoControlCode,
-IN OUT PVOID SystemBuffer,
-IN ULONG InputBufferLength,
-IN ULONG OutputBufferLength,
-OUT PIO_STATUS_BLOCK IoStatus)
+QCacheSynchronousDeviceControl(IN PDEVICE_OBJECT DeviceObject,
+                               IN PFILE_OBJECT FileObject,
+                               IN UCHAR MajorFunction,
+                               IN ULONG IoControlCode,
+                               IN OUT PVOID SystemBuffer,
+                               IN ULONG InputBufferLength,
+                               IN ULONG OutputBufferLength,
+                               OUT PIO_STATUS_BLOCK IoStatus)
 {
-    auto ioctl_irp = IoAllocateIrp(
-        DeviceObject->StackSize,
-        FALSE);
+    auto ioctl_irp = IoAllocateIrp(DeviceObject->StackSize, FALSE);
 
     if (ioctl_irp == NULL)
     {
@@ -535,18 +476,14 @@ OUT PIO_STATUS_BLOCK IoStatus)
     ioctl_stack->MajorFunction = MajorFunction;
     ioctl_stack->FileObject = FileObject;
 
-    ioctl_stack->Parameters.DeviceIoControl.InputBufferLength =
-        InputBufferLength;
-    ioctl_stack->Parameters.DeviceIoControl.OutputBufferLength =
-        OutputBufferLength;
-    ioctl_stack->Parameters.DeviceIoControl.IoControlCode =
-        IoControlCode;
+    ioctl_stack->Parameters.DeviceIoControl.InputBufferLength = InputBufferLength;
+    ioctl_stack->Parameters.DeviceIoControl.OutputBufferLength = OutputBufferLength;
+    ioctl_stack->Parameters.DeviceIoControl.IoControlCode = IoControlCode;
 
     KEVENT event;
     KeInitializeEvent(&event, NotificationEvent, FALSE);
 
-    IoSetCompletionRoutine(ioctl_irp, QCacheSynchronousIrpCompletion,
-        &event, TRUE, TRUE, TRUE);
+    IoSetCompletionRoutine(ioctl_irp, QCacheSynchronousIrpCompletion, &event, TRUE, TRUE, TRUE);
 
     auto status = IoCallDriver(DeviceObject, ioctl_irp);
 
@@ -568,22 +505,16 @@ OUT PIO_STATUS_BLOCK IoStatus)
 }
 
 NTSTATUS
-QCacheSynchronousReadWrite(
-IN PDEVICE_OBJECT DeviceObject,
-IN PFILE_OBJECT FileObject,
-IN UCHAR MajorFunction,
-IN OUT PVOID SystemBuffer,
-IN ULONG BufferLength,
-IN PLARGE_INTEGER StartingOffset,
-OUT PIO_STATUS_BLOCK IoStatus)
+QCacheSynchronousReadWrite(IN PDEVICE_OBJECT DeviceObject,
+                           IN PFILE_OBJECT FileObject,
+                           IN UCHAR MajorFunction,
+                           IN OUT PVOID SystemBuffer,
+                           IN ULONG BufferLength,
+                           IN PLARGE_INTEGER StartingOffset,
+                           OUT PIO_STATUS_BLOCK IoStatus)
 {
     auto ioctl_irp = IoBuildAsynchronousFsdRequest(
-        MajorFunction,
-        DeviceObject,
-        SystemBuffer,
-        BufferLength,
-        StartingOffset,
-        IoStatus);
+        MajorFunction, DeviceObject, SystemBuffer, BufferLength, StartingOffset, IoStatus);
 
     if (ioctl_irp == NULL)
     {
@@ -597,8 +528,7 @@ OUT PIO_STATUS_BLOCK IoStatus)
     KEVENT event;
     KeInitializeEvent(&event, NotificationEvent, FALSE);
 
-    IoSetCompletionRoutine(ioctl_irp, QCacheSynchronousIrpCompletion,
-        &event, TRUE, TRUE, TRUE);
+    IoSetCompletionRoutine(ioctl_irp, QCacheSynchronousIrpCompletion, &event, TRUE, TRUE, TRUE);
 
     auto status = IoCallDriver(DeviceObject, ioctl_irp);
 
@@ -629,19 +559,17 @@ QCacheInitializeDeviceUnsafe(IN PDEVICE_EXTENSION DeviceExtension)
     {
         GET_LENGTH_INFORMATION length;
 
-        status = QCacheSynchronousDeviceControl(
-            DeviceExtension->TargetDeviceObject,
-            NULL,
-            IRP_MJ_DEVICE_CONTROL,
-            IOCTL_DISK_GET_LENGTH_INFO,
-            &length,
-            0,
-            sizeof length);
+        status = QCacheSynchronousDeviceControl(DeviceExtension->TargetDeviceObject,
+                                                NULL,
+                                                IRP_MJ_DEVICE_CONTROL,
+                                                IOCTL_DISK_GET_LENGTH_INFO,
+                                                &length,
+                                                0,
+                                                sizeof length);
 
         if (!NT_SUCCESS(status))
         {
-            KdPrint(("QCacheInitializeDevice: Error querying volume size: %#x.\n",
-                status));
+            KdPrint(("QCacheInitializeDevice: Error querying volume size: %#x.\n", status));
 
             KdBreakPoint();
 
@@ -665,8 +593,7 @@ QCacheInitializeDevice(IN PDEVICE_EXTENSION DeviceExtension)
 {
     KeAcquireGuardedMutex(&DeviceExtension->InitializationMutex);
 
-    KeWaitForSingleObject(&DeviceExtension->InitializationEvent, Executive,
-        KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&DeviceExtension->InitializationEvent, Executive, KernelMode, FALSE, NULL);
 
     KeReleaseGuardedMutex(&DeviceExtension->InitializationMutex);
 
@@ -677,12 +604,10 @@ QCacheInitializeDevice(IN PDEVICE_EXTENSION DeviceExtension)
     return status;
 }
 
-
 NTSTATUS
-#pragma warning(suppress: 28152)
-QCacheAddDevice(IN PDRIVER_OBJECT DriverObject,
-    IN PDEVICE_OBJECT PhysicalDeviceObject)
-    /*++
+#pragma warning(suppress : 28152)
+QCacheAddDevice(IN PDRIVER_OBJECT DriverObject, IN PDEVICE_OBJECT PhysicalDeviceObject)
+/*++
     Routine Description:
 
     Creates and initializes a new filter device object FiDO for the
@@ -700,16 +625,14 @@ QCacheAddDevice(IN PDRIVER_OBJECT DriverObject,
     --*/
 {
     PDEVICE_EXTENSION filter_device_extension;
-    return QCacheAttachDevice(DriverObject, PhysicalDeviceObject,
-        &filter_device_extension);
+    return QCacheAttachDevice(DriverObject, PhysicalDeviceObject, &filter_device_extension);
 }
 
-
 NTSTATUS
-#pragma warning(suppress: 28152)
+#pragma warning(suppress : 28152)
 QCacheAttachDevice(IN PDRIVER_OBJECT DriverObject,
-IN PDEVICE_OBJECT PhysicalDeviceObject,
-OUT PDEVICE_EXTENSION *FilterDeviceExtension)
+                   IN PDEVICE_OBJECT PhysicalDeviceObject,
+                   OUT PDEVICE_EXTENSION* FilterDeviceExtension)
 /*++
 Routine Description:
 
@@ -731,8 +654,7 @@ NTSTATUS
 
     if (PhysicalDeviceObject->Characteristics & FILE_READ_ONLY_DEVICE)
     {
-        KdPrint(("QCacheAttachDevice: DeviceObject 0x%p is read-only. Ignored.\n",
-            PhysicalDeviceObject));
+        KdPrint(("QCacheAttachDevice: DeviceObject 0x%p is read-only. Ignored.\n", PhysicalDeviceObject));
 
         return STATUS_SUCCESS;
     }
@@ -748,38 +670,36 @@ NTSTATUS
     WPoolMem<WCHAR, NonPagedPoolNx> ph_obj_name(UNICODE_STRING_MAX_BYTES + 2);
 
     status = IoGetDeviceProperty(PhysicalDeviceObject,
-        DevicePropertyEnumeratorName, (ULONG)(ph_obj_name.GetSize() - 2),
-        ph_obj_name, &req_length);
+                                 DevicePropertyEnumeratorName,
+                                 (ULONG)(ph_obj_name.GetSize() - 2),
+                                 ph_obj_name,
+                                 &req_length);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache:AddDevice Error getting enumerator name for device: %#x\n",
-            status);
+        DbgPrint("QCache:AddDevice Error getting enumerator name for device: %#x\n", status);
 
         ph_obj_name[0] = 0;
     }
 
-#pragma warning(suppress: 28719)
+#pragma warning(suppress : 28719)
     wcscat(ph_obj_name, L"\\");
 
     status = IoGetDeviceProperty(PhysicalDeviceObject,
-        DevicePropertyClassName, (ULONG)(ph_obj_name.GetSize() -
-        2 * (wcslen(ph_obj_name) + 2)),
-        (PWSTR)ph_obj_name + wcslen(ph_obj_name), &req_length);
+                                 DevicePropertyClassName,
+                                 (ULONG)(ph_obj_name.GetSize() - 2 * (wcslen(ph_obj_name) + 2)),
+                                 (PWSTR)ph_obj_name + wcslen(ph_obj_name),
+                                 &req_length);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint("QCache:AddDevice Error getting class name for '%ws' device: %#x\n",
-            (PWSTR)ph_obj_name, status);
+        DbgPrint("QCache:AddDevice Error getting class name for '%ws' device: %#x\n", (PWSTR)ph_obj_name, status);
     }
 
     auto max_chars = (ph_obj_name.GetSize() / 2 - (wcslen(ph_obj_name) + 2));
 
-#pragma warning(suppress: 28719)
-    auto i = _snwprintf(
-        (PWSTR)ph_obj_name + wcslen(ph_obj_name),
-        max_chars,
-        L"\\%i", bus_count);
+#pragma warning(suppress : 28719)
+    auto i = _snwprintf((PWSTR)ph_obj_name + wcslen(ph_obj_name), max_chars, L"\\%i", bus_count);
 
     if ((i < 0) || ((ULONG)i >= max_chars))
     {
@@ -787,8 +707,7 @@ NTSTATUS
     }
     else
     {
-        DbgPrint("QCache:AddDevice for Enum\\Class\\Number: '%ws'\n",
-            (PWSTR)ph_obj_name);
+        DbgPrint("QCache:AddDevice for Enum\\Class\\Number: '%ws'\n", (PWSTR)ph_obj_name);
     }
 
     ph_obj_name.Free();
@@ -803,25 +722,23 @@ NTSTATUS
 
     PDEVICE_OBJECT filter_device_object;
     status = IoCreateDevice(DriverObject,
-        DEVICE_EXTENSION_SIZE,
-        NULL,
-        FILE_DEVICE_DISK,
-        FILE_DEVICE_SECURE_OPEN,
-        FALSE, &filter_device_object);
+                            DEVICE_EXTENSION_SIZE,
+                            NULL,
+                            FILE_DEVICE_DISK,
+                            FILE_DEVICE_SECURE_OPEN,
+                            FALSE,
+                            &filter_device_object);
 
     if (!NT_SUCCESS(status))
     {
-        KdPrint((
-            "QCacheAttachDevice: Cannot create filter_device_object. Status 0x%X\n",
-            status));
+        KdPrint(("QCacheAttachDevice: Cannot create filter_device_object. Status 0x%X\n", status));
 
         KdBreakPoint();
 
         return STATUS_SUCCESS;
     }
 
-    *FilterDeviceExtension =
-        (PDEVICE_EXTENSION)filter_device_object->DeviceExtension;
+    *FilterDeviceExtension = (PDEVICE_EXTENSION)filter_device_object->DeviceExtension;
 
     RtlZeroMemory((*FilterDeviceExtension), DEVICE_EXTENSION_SIZE);
 
@@ -836,17 +753,14 @@ NTSTATUS
     //
     IoInitializeRemoveLock(&(*FilterDeviceExtension)->RemoveLock, LOCK_TAG, 1, 0);
 
-    KeInitializeEvent(&(*FilterDeviceExtension)->PagingPathCountEvent,
-        SynchronizationEvent, TRUE);
+    KeInitializeEvent(&(*FilterDeviceExtension)->PagingPathCountEvent, SynchronizationEvent, TRUE);
     KeInitializeGuardedMutex(&(*FilterDeviceExtension)->PagingPathCountMutex);
 
     KeInitializeSpinLock(&(*FilterDeviceExtension)->WriteQueueLock);
     InitializeListHead(&(*FilterDeviceExtension)->WriteQueue);
-    KeInitializeEvent(&(*FilterDeviceExtension)->WriteQueueEvent,
-        SynchronizationEvent, FALSE);
+    KeInitializeEvent(&(*FilterDeviceExtension)->WriteQueueEvent, SynchronizationEvent, FALSE);
 
-    KeInitializeEvent(&(*FilterDeviceExtension)->InitializationEvent,
-        SynchronizationEvent, TRUE);
+    KeInitializeEvent(&(*FilterDeviceExtension)->InitializationEvent, SynchronizationEvent, TRUE);
     KeInitializeGuardedMutex(&(*FilterDeviceExtension)->InitializationMutex);
 
     //
@@ -862,17 +776,15 @@ NTSTATUS
     (*FilterDeviceExtension)->PhysicalDeviceObject = PhysicalDeviceObject;
 
     (*FilterDeviceExtension)->TargetDeviceObject =
-        IoAttachDeviceToDeviceStack(filter_device_object,
-        PhysicalDeviceObject);
+        IoAttachDeviceToDeviceStack(filter_device_object, PhysicalDeviceObject);
 
     if ((*FilterDeviceExtension)->TargetDeviceObject == NULL)
     {
         QCacheCleanupDevice((*FilterDeviceExtension));
         IoDeleteDevice(filter_device_object);
 
-        KdPrint((
-            "QCacheAttachDevice: Unable to attach 0x%p to target 0x%p\n",
-            filter_device_object, PhysicalDeviceObject));
+        KdPrint(
+            ("QCacheAttachDevice: Unable to attach 0x%p to target 0x%p\n", filter_device_object, PhysicalDeviceObject));
 
         KdBreakPoint();
 
@@ -886,9 +798,8 @@ NTSTATUS
         QCacheCleanupDevice((*FilterDeviceExtension));
         IoDeleteDevice(filter_device_object);
 
-        KdPrint((
-            "QCacheAttachDevice: Unable to attach 0x%p to target 0x%p\n",
-            filter_device_object, PhysicalDeviceObject));
+        KdPrint(
+            ("QCacheAttachDevice: Unable to attach 0x%p to target 0x%p\n", filter_device_object, PhysicalDeviceObject));
 
         KdBreakPoint();
 
@@ -898,30 +809,29 @@ NTSTATUS
     // With POOL_NX_OPTIN, NonPagedPool is a runtime selection, not a template constant.
     WPoolMem<OBJECT_NAME_INFORMATION, NonPagedPoolNx> obj_name_info(1024);
 
-    status = ObQueryNameString(PhysicalDeviceObject, obj_name_info,
-        (ULONG)obj_name_info.GetSize(), &req_length);
+    status = ObQueryNameString(PhysicalDeviceObject, obj_name_info, (ULONG)obj_name_info.GetSize(), &req_length);
 
     if (NT_SUCCESS(status))
     {
         KdPrint(("QCache:AddDevice for device name '%wZ', driver '%wZ'.\n",
-            &obj_name_info->Name,
-            &PhysicalDeviceObject->DriverObject->DriverName));
+                 &obj_name_info->Name,
+                 &PhysicalDeviceObject->DriverObject->DriverName));
     }
 
-    KdPrint((
-        "QCacheAttachDevice: Attached above driver '%wZ'. Filter device flags: %#x Target device flags: %#x Physical device flags: %#x\n",
-        &(*FilterDeviceExtension)->TargetDeviceObject->DriverObject->DriverName,
-        filter_device_object->Flags,
-        (*FilterDeviceExtension)->TargetDeviceObject->Flags,
-        PhysicalDeviceObject->Flags));
+    KdPrint(("QCacheAttachDevice: Attached above driver '%wZ'. Filter device flags: %#x Target device flags: %#x "
+             "Physical device flags: %#x\n",
+             &(*FilterDeviceExtension)->TargetDeviceObject->DriverObject->DriverName,
+             filter_device_object->Flags,
+             (*FilterDeviceExtension)->TargetDeviceObject->Flags,
+             PhysicalDeviceObject->Flags));
 
     status = PsCreateSystemThread(&(*FilterDeviceExtension)->WorkerThread,
-        (ACCESS_MASK)0L,
-        NULL,
-        NULL,
-        NULL,
-        QCacheDeviceWorkerThread,
-        (*FilterDeviceExtension));
+                                  (ACCESS_MASK)0L,
+                                  NULL,
+                                  NULL,
+                                  NULL,
+                                  QCacheDeviceWorkerThread,
+                                  (*FilterDeviceExtension));
 
     if (!NT_SUCCESS(status))
     {
@@ -951,8 +861,7 @@ NTSTATUS
 
     return STATUS_SUCCESS;
 
-}				// end QCacheAddDevice()
-
+} // end QCacheAddDevice()
 
 NTSTATUS
 QCachePnp(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -993,9 +902,10 @@ NTSTATUS
     if (!NT_SUCCESS(status))
     {
 
-        DbgPrint(
-            "IoAcquireRemoveLock failed: DeviceObject %p PNP Irp type [%#02x] Status: 0x%X.\n",
-            DeviceObject, io_stack->MinorFunction, status);
+        DbgPrint("IoAcquireRemoveLock failed: DeviceObject %p PNP Irp type [%#02x] Status: 0x%X.\n",
+                 DeviceObject,
+                 io_stack->MinorFunction,
+                 status);
         Irp->IoStatus.Status = status;
         IoCompleteRequest(Irp, IO_NO_INCREMENT);
 
@@ -1017,8 +927,7 @@ NTSTATUS
         //
         // Call the Start Routine handler to schedule a completion routine
         //
-        KdPrint((
-            "QCachePnp: Schedule completion for START_DEVICE\n"));
+        KdPrint(("QCachePnp: Schedule completion for START_DEVICE\n"));
         status = QCacheStartDevice(DeviceObject, Irp);
         break;
 
@@ -1041,8 +950,7 @@ NTSTATUS
     }
     case IRP_MN_DEVICE_USAGE_NOTIFICATION:
     {
-        KdPrint((
-            "QCachePnp: Processing DEVICE_USAGE_NOTIFICATION\n"));
+        KdPrint(("QCachePnp: Processing DEVICE_USAGE_NOTIFICATION\n"));
 
         status = QCacheDeviceUsageNotification(DeviceObject, Irp);
 
@@ -1057,9 +965,7 @@ NTSTATUS
         //
 
         status = QCacheSendToNextDriver(DeviceObject, Irp);
-
     }
-
 
     //
     // If the lock is still held, release it now.
@@ -1079,14 +985,12 @@ NTSTATUS
 
     return status;
 
-
-}				// end QCachePnp()
-
+} // end QCachePnp()
 
 NTSTATUS
 QCacheSynchronousIrpCompletion(_In_ PDEVICE_OBJECT DeviceObject,
-_In_ PIRP Irp,
-_In_reads_opt_(_Inexpressible_("varies")) PVOID Context)
+                               _In_ PIRP Irp,
+                               _In_reads_opt_(_Inexpressible_("varies")) PVOID Context)
 /*++
 
 Routine Description:
@@ -1119,8 +1023,7 @@ STATUS_MORE_PORCESSING_REQUIRED
 
     return STATUS_MORE_PROCESSING_REQUIRED;
 
-}				// end QCacheSynchronousIrpCompletion()
-
+} // end QCacheSynchronousIrpCompletion()
 
 NTSTATUS
 QCacheStartDevice(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -1149,11 +1052,9 @@ Status of processing the Start Irp
 
     auto status = QCacheForwardIrpSynchronous(DeviceObject, Irp);
 
-    QCacheSyncFilterWithTarget(DeviceObject,
-        device_extension->TargetDeviceObject);
+    QCacheSyncFilterWithTarget(DeviceObject, device_extension->TargetDeviceObject);
 
-    if (device_extension->Statistics.IsCached &&
-        (device_extension->Statistics.Size.QuadPart == 0))
+    if (device_extension->Statistics.IsCached && (device_extension->Statistics.Size.QuadPart == 0))
     {
         QCacheInitializeDevice(device_extension);
     }
@@ -1166,7 +1067,6 @@ Status of processing the Start Irp
 
     return status;
 }
-
 
 NTSTATUS
 QCacheRemoveDevice(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -1200,19 +1100,11 @@ Status of removing the device
     QCacheCleanupDevice(device_extension);
 
     auto status = QCacheSynchronousReadWrite(
-        device_extension->TargetDeviceObject,
-        NULL,
-        IRP_MJ_FLUSH_BUFFERS,
-        NULL,
-        0,
-        NULL,
-        NULL);
+        device_extension->TargetDeviceObject, NULL, IRP_MJ_FLUSH_BUFFERS, NULL, 0, NULL, NULL);
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint(
-            "QCache:QCacheRemoveDevice: Final flush buffers failed: %#x\n",
-            status);
+        DbgPrint("QCache:QCacheRemoveDevice: Final flush buffers failed: %#x\n", status);
     }
 
     //
@@ -1238,7 +1130,6 @@ Status of removing the device
     return status;
 }
 
-
 NTSTATUS
 QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
@@ -1246,18 +1137,14 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     auto io_stack = IoGetCurrentIrpStackLocation(Irp);
 
-    if ((io_stack->Parameters.UsageNotification.Type !=
-        DeviceUsageTypePaging) &&
-        (io_stack->Parameters.UsageNotification.Type !=
-        DeviceUsageTypeHibernation) &&
-        (io_stack->Parameters.UsageNotification.Type !=
-        DeviceUsageTypeDumpFile))
+    if ((io_stack->Parameters.UsageNotification.Type != DeviceUsageTypePaging) &&
+        (io_stack->Parameters.UsageNotification.Type != DeviceUsageTypeHibernation) &&
+        (io_stack->Parameters.UsageNotification.Type != DeviceUsageTypeDumpFile))
     {
         return QCacheSendToNextDriver(DeviceObject, Irp);
     }
 
-    PDEVICE_EXTENSION device_extension =
-        (PDEVICE_EXTENSION)DeviceObject->DeviceExtension;
+    PDEVICE_EXTENSION device_extension = (PDEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
     //
     // wait on the paging path event
@@ -1265,9 +1152,7 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     KeAcquireGuardedMutex(&device_extension->PagingPathCountMutex);
 
-    KeWaitForSingleObject(
-        &device_extension->PagingPathCountEvent,
-        Executive, KernelMode, FALSE, NULL);
+    KeWaitForSingleObject(&device_extension->PagingPathCountEvent, Executive, KernelMode, FALSE, NULL);
 
     KeReleaseGuardedMutex(&device_extension->PagingPathCountMutex);
 
@@ -1277,8 +1162,7 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     //
 
     auto set_pagable = false;
-    if (!io_stack->Parameters.UsageNotification.InPath &&
-        device_extension->Statistics.PagingPathCount == 1)
+    if (!io_stack->Parameters.UsageNotification.InPath && device_extension->Statistics.PagingPathCount == 1)
     {
 
         //
@@ -1289,18 +1173,19 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
         if (DeviceObject->Flags & DO_POWER_INRUSH)
         {
             KdPrint(("QCachePnp: last paging file "
-                "removed but DO_POWER_INRUSH set, so not "
-                "setting PAGABLE bit "
-                "for DO %p\n", DeviceObject));
+                     "removed but DO_POWER_INRUSH set, so not "
+                     "setting PAGABLE bit "
+                     "for DO %p\n",
+                     DeviceObject));
         }
         else
         {
             KdPrint(("QCachePnp: Setting  PAGABLE "
-                "bit for DO %p\n", DeviceObject));
+                     "bit for DO %p\n",
+                     DeviceObject));
             DeviceObject->Flags |= DO_POWER_PAGABLE;
             set_pagable = true;
         }
-
     }
 
     //
@@ -1319,8 +1204,7 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     {
 
         IoAdjustPagingPathCount(&device_extension->Statistics.PagingPathCount,
-            io_stack->Parameters.UsageNotification.
-            InPath);
+                                io_stack->Parameters.UsageNotification.InPath);
 
         if (io_stack->Parameters.UsageNotification.InPath)
         {
@@ -1331,13 +1215,12 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
                 // first paging file addition
                 //
 
-                KdPrint((
-                    "QCachePnp: Clearing PAGABLE bit "
-                    "for DO %p\n", DeviceObject));
+                KdPrint(("QCachePnp: Clearing PAGABLE bit "
+                         "for DO %p\n",
+                         DeviceObject));
                 DeviceObject->Flags &= ~DO_POWER_PAGABLE;
             }
         }
-
     }
     else
     {
@@ -1349,21 +1232,19 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
         if (set_pagable == true)
         {
-            KdPrint((
-                "QCachePnp: Lower level driver failed, "
-                "resetting PAGABLE bit for DO %p\n", DeviceObject));
+            KdPrint(("QCachePnp: Lower level driver failed, "
+                     "resetting PAGABLE bit for DO %p\n",
+                     DeviceObject));
             DeviceObject->Flags &= ~DO_POWER_PAGABLE;
             set_pagable = false;
         }
-
     }
 
     //
     // set the event so the next one can occur.
     //
 
-    KeSetEvent(&device_extension->PagingPathCountEvent,
-        IO_NO_INCREMENT, FALSE);
+    KeSetEvent(&device_extension->PagingPathCountEvent, IO_NO_INCREMENT, FALSE);
 
     //
     // and complete the irp
@@ -1374,7 +1255,6 @@ QCacheDeviceUsageNotification(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     return status;
 }
 
-
 NTSTATUS
 QCacheCreate(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
@@ -1382,8 +1262,7 @@ QCacheCreate(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
     auto device_extension = (PDEVICE_EXTENSION)DeviceObject->DeviceExtension;
 
-    if (device_extension->Statistics.IsCached &&
-        (device_extension->Statistics.Size.QuadPart == 0))
+    if (device_extension->Statistics.IsCached && (device_extension->Statistics.Size.QuadPart == 0))
     {
         if (KeGetCurrentIrql() > APC_LEVEL)
         {
@@ -1397,15 +1276,13 @@ QCacheCreate(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 
         if (!NT_SUCCESS(status))
         {
-            KdPrint(("QCacheCreate: Error getting device size: %#x\n",
-                status));
+            KdPrint(("QCacheCreate: Error getting device size: %#x\n", status));
         }
     }
 
     return QCacheSendToNextDriver(DeviceObject, Irp);
 
-}				// end QCacheSendToNextDriver()
-
+} // end QCacheSendToNextDriver()
 
 NTSTATUS
 QCacheSendToNextDriver(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -1433,8 +1310,7 @@ NTSTATUS
 
     return IoCallDriver(device_extension->TargetDeviceObject, Irp);
 
-}				// end QCacheSendToNextDriver()
-
+} // end QCacheSendToNextDriver()
 
 NTSTATUS
 QCacheForwardIrpSynchronous(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -1474,8 +1350,7 @@ NTSTATUS
     // set a completion routine
     //
 
-    IoSetCompletionRoutine(Irp, QCacheSynchronousIrpCompletion,
-        &event, TRUE, TRUE, TRUE);
+    IoSetCompletionRoutine(Irp, QCacheSynchronousIrpCompletion, &event, TRUE, TRUE, TRUE);
 
     //
     // call the next lower device
@@ -1487,8 +1362,7 @@ NTSTATUS
     // wait for the actual completion
     //
     __analysis_assume(status != STATUS_PENDING);
-    __analysis_assume(IoGetCurrentIrpStackLocation(Irp)->MinorFunction !=
-        IRP_MN_START_DEVICE);
+    __analysis_assume(IoGetCurrentIrpStackLocation(Irp)->MinorFunction != IRP_MN_START_DEVICE);
 
     if (status == STATUS_PENDING)
     {
@@ -1498,8 +1372,7 @@ NTSTATUS
 
     return status;
 
-}				// end QCacheForwardIrpSynchronous()
-
+} // end QCacheForwardIrpSynchronous()
 
 NTSTATUS
 QCacheIgnore(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
@@ -1531,11 +1404,9 @@ NT Status
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
 
     return STATUS_SUCCESS;
-}				// end QCacheIgnore()
+} // end QCacheIgnore()
 
-
-VOID
-QCacheUnload(IN PDRIVER_OBJECT DriverObject)
+VOID QCacheUnload(IN PDRIVER_OBJECT DriverObject)
 /*++
 
 Routine Description:

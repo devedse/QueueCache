@@ -8,8 +8,7 @@ QCacheDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     auto io_stack = IoGetCurrentIrpStackLocation(Irp);
 
     if ((device_extension->Statistics.Size.QuadPart == 0) ||
-        (io_stack->MajorFunction == IRP_MJ_SCSI &&
-            io_stack->MinorFunction == IRP_MN_SCSI_CLASS))
+        (io_stack->MajorFunction == IRP_MJ_SCSI && io_stack->MinorFunction == IRP_MN_SCSI_CLASS))
     {
         return QCacheSendToNextDriver(DeviceObject, Irp);
     }
@@ -22,8 +21,7 @@ QCacheDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
     {
     case IOCTL_QCACHE_GET_DEVICE_DATA:
     {
-        if (io_stack->Parameters.DeviceIoControl.OutputBufferLength <
-            sizeof(DEVICE_STATISTICS))
+        if (io_stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DEVICE_STATISTICS))
         {
             status = STATUS_BUFFER_TOO_SMALL;
 
@@ -32,9 +30,7 @@ QCacheDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             return status;
         }
 
-        RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer,
-            &device_extension->Statistics,
-            sizeof(DEVICE_STATISTICS));
+        RtlCopyMemory(Irp->AssociatedIrp.SystemBuffer, &device_extension->Statistics, sizeof(DEVICE_STATISTICS));
 
         status = STATUS_SUCCESS;
 
@@ -63,8 +59,7 @@ QCacheDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
         return QCacheQueueIrp(device_extension, Irp);
 
     default:
-        if (ACCESS_FROM_CTL_CODE(
-            io_stack->Parameters.DeviceIoControl.IoControlCode) != 0)
+        if (ACCESS_FROM_CTL_CODE(io_stack->Parameters.DeviceIoControl.IoControlCode) != 0)
         {
             return QCacheQueueIrp(device_extension, Irp);
         }
@@ -81,6 +76,4 @@ QCacheDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
     return IoCallDriver(device_extension->TargetDeviceObject, Irp);
 
-}				// end QCacheDeviceControl()
-
-
+} // end QCacheDeviceControl()
