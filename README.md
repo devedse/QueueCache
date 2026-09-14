@@ -14,7 +14,10 @@ test runtimes. Repository-only host tests remain under `tests/`.
 
 ### Repeatable developer verification
 
-Run elevated on the test machine, using a clean non-OS disk:
+Open Terminal/Command Prompt/PowerShell with **Run as administrator** on the test
+machine, using a clean non-OS disk. `verify` and `verify-recover` require elevation
+to access physical disks and change runtime cache settings; `verify-status` and
+help only read/display information and do not require it.
 
 ```powershell
 qcache developer verify Q: --suite quick
@@ -23,7 +26,11 @@ qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe -
 
 `--output` defaults to the current folder; every run gets a unique
 `QueueCache-Verify-<time>-<id>` subfolder containing `SUMMARY.md`, JSON/CSV results,
-raw evidence and `FINISHED.txt`. The command runs in the foreground, restores
+raw evidence and `FINISHED.txt`. Timestamped progress, errors and a waiting message
+every 10 seconds while a child runs appear in the terminal and `run.log`. Raw child
+stdout/stderr and command details are retained separately. Pre-run errors (such as
+missing administrator access) print directly before a run folder is created.
+The command runs in the foreground, restores
 runtime settings, and reports incomplete/restoration failures explicitly. For the
 focused flush regression use `--suite flush-interference --repeats 2`.
 **Both Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd are supported**:

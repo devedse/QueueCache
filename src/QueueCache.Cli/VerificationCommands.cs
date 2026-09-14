@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Runtime.Versioning;
+using System.Security.Principal;
 using QueueCache.Developer.Verification;
 
 namespace QueueCache.Cli;
@@ -7,6 +8,18 @@ namespace QueueCache.Cli;
 [SupportedOSPlatform("windows")]
 internal static class VerificationCommands
 {
+    private sealed class ConsoleProgress : IProgress<string>
+    {
+        // Progress<T> posts asynchronously; short failed runs can exit before it prints.
+        public void Report(string message) => Console.WriteLine(message);
+    }
+
+    private static void RequireAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            throw new UnauthorizedAccessException("Administrator access required. Open Windows Terminal, Command Prompt or PowerShell with 'Run as administrator', then run this command again. Verification accesses physical disks and changes runtime cache settings. No tests were started. verify-status and --help do not require elevation.");
+    }
     private static VerificationRunner Runner()
     {
         var executable = Environment.ProcessPath ?? throw new IOException("Missing executable path.");
@@ -41,6 +54,7 @@ internal static class VerificationCommands
               qcache developer verify Q: --suite full --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
 
             Output: unique QueueCache-Verify-* subfolder of --output (default: current directory).
+            Live timestamped progress is also saved to run.log, including errors and waiting messages.
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
             Run elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             """);
@@ -55,16 +69,19 @@ internal static class VerificationCommands
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 90, Description = "Overall measurement limit, 1..1440 minutes; restoration has a separate deadline." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline }) command.Options.Add(option);
-        command.SetAction((p, token) => Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
+        command.SetAction((p, token) => {
+            RequireAdministrator();
+            return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline)),
-            new Progress<string>(Console.WriteLine), token));
+            new ConsoleProgress(), token);
+        });
         return command;
     }
     public static Command CreateRecovery()
     {
-        var recover = new Command("verify-recover", "Retry restoration from an interrupted run after ensuring its owned processes have stopped.");
+        var recover = new Command("verify-recover", "Requires Run as administrator. Retry restoration after ensuring owned processes have stopped. Progress and errors are saved to run.log in the new recovery subfolder.");
         var directory = new Argument<string>("run-directory"); recover.Arguments.Add(directory);
-        recover.SetAction((p, token) => Runner().RecoverAsync(p.GetValue(directory)!, token));
+        recover.SetAction((p, token) => { RequireAdministrator(); return Runner().RecoverAsync(p.GetValue(directory)!, token, new ConsoleProgress()); });
         return recover;
     }
     public static Command CreateStatus()

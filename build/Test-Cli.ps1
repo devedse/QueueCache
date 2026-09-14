@@ -51,6 +51,20 @@ if ($LASTEXITCODE -ne 0 -or $verificationHelp -notmatch 'DiskSpd64.exe' -or $ver
 }
 & $cli developer verify 'Q:' --suite quick --repeats 0 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 1) { throw 'Invalid runner settings must fail before device access.' }
+if ($verificationHelp -notmatch 'run.log') { throw 'Verification help must describe persistent logging.' }
+$testIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+try {
+    $testElevated = ([Security.Principal.WindowsPrincipal]::new($testIdentity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+} finally { $testIdentity.Dispose() }
+if (-not $testElevated) {
+    foreach ($command in @('verify', 'verify-recover')) {
+        # The guard must reject before even resolving this deliberately invalid target.
+        $guardOutput = & $cli developer $command 'not-a-target' 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 1 -or $guardOutput -notmatch 'Administrator access required' -or $guardOutput -notmatch 'Run as administrator') {
+            throw "Missing elevation guidance for $command"
+        }
+    }
+}
 # GitHub's pwsh wrapper propagates the last native exit code. The negative tests
 # intentionally leave it nonzero, so report this script's own successful result.
 exit 0

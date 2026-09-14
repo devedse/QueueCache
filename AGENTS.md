@@ -38,7 +38,10 @@
   regression was requested. Results default to a unique subfolder of the current
   directory; never search unrelated historical folders to assemble a result.
 - Wait for `FINISHED.txt`, then read `status.json`, `SUMMARY.md`, `results.json`
-  and raw evidence in that exact run. `MEASURED` is not a performance acceptance
+  and `run.log` (the timestamped console progress/error log). Keep immediate failure
+  reporting and synchronous CLI progress covered by host-safe runner tests; do not
+  replace it with fire-and-forget `Progress<T>` callbacks in the console frontend.
+  Also read raw evidence in that exact run. `MEASURED` is not a performance acceptance
   verdict. Zero-completion samples have N/A latency. A missing completion marker
   means interrupted/running, not success. Do not combine incomplete repetitions.
 - Restoration has a separate deadline. If it fails, stop and inspect the recorded

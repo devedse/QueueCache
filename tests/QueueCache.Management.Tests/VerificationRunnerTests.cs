@@ -5,6 +5,10 @@ using QueueCache.Developer.Verification;
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 internal static class VerificationRunnerTests
 {
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string message) => report(message);
+    }
     public static async Task RunAsync()
     {
         void Check(bool value, string name) { if (!value) throw new Exception("Verification runner: " + name); }
@@ -99,22 +103,29 @@ internal static class VerificationRunnerTests
             }
             catch (OperationCanceledException) { }
             OwnedProcess.EnsureStopped(store.DirectoryPath);
-            foreach (var mode in new[] { "success", "check-failure", "restore-failure", "cancel" })
+            foreach (var mode in new[] { "success", "capture-failure", "check-failure", "restore-failure", "cancel" })
             {
                 var runParent = store.PathFor(mode);
                 var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
                 using var cancellation = new CancellationTokenSource();
-                var progress = new Progress<string>(message =>
+                var messages = new List<string>();
+                var progress = new InlineProgress(message =>
                 {
-                    if (mode == "cancel" && message == "Starting file-integrity") cancellation.CancelAfter(300);
+                    messages.Add(message);
+                    if (mode == "cancel" && message.EndsWith("Starting file-integrity")) cancellation.CancelAfter(300);
                 });
                 var exit = await runner.RunAsync(new("Q:", Output: runParent), progress, cancellation.Token);
                 var directory = Directory.GetDirectories(runParent).Single();
                 var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                var expectedStatus = mode switch { "success" => "COMPLETED", "check-failure" => "INCOMPLETE", "restore-failure" => "RESTORATION_FAILED", _ => "CANCELLED" };
+                var expectedStatus = mode switch { "success" => "COMPLETED", "capture-failure" or "check-failure" => "INCOMPLETE", "restore-failure" => "RESTORATION_FAILED", _ => "CANCELLED" };
                 Check(state.RootElement.GetProperty("Status").GetString() == expectedStatus, "coordinator " + mode);
                 Check((exit == 0) == (mode == "success") && File.Exists(Path.Combine(directory, "FINISHED.txt")), "exit/marker " + mode);
-                Check(File.Exists(Path.Combine(directory, "restored.json")) == (mode != "restore-failure"), "independent restoration " + mode);
+                Check(File.Exists(Path.Combine(directory, "restored.json")) == (mode is not ("restore-failure" or "capture-failure")), "independent restoration " + mode);
+                var log = File.ReadAllText(Path.Combine(directory, "run.log"));
+                Check(log.Contains(expectedStatus + ":") && messages.Last().Contains(expectedStatus + ":"), "final status logged and delivered before return " + mode);
+                Check(log.Contains("Starting worker-") && log.Contains("Finished worker-"), "worker progress persisted " + mode);
+                if (mode.EndsWith("failure"))
+                    Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
             if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISKSPD") is { Length: > 0 } diskspd)
             {
@@ -135,7 +146,11 @@ internal static class VerificationRunnerTests
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(path))!;
         if (mode == "cancel" && job.Operation == "files") await Task.Delay(Timeout.Infinite);
-        if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore") return 1;
+        if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore" || mode == "capture-failure" && job.Operation == "capture")
+        {
+            Console.Error.WriteLine("fixture failure detail: Access is denied.");
+            return 1;
+        }
         object reply = new { Fake = true };
         if (job.Operation == "capture")
             reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only"),
