@@ -76,6 +76,24 @@ internal static class VerificationRunnerTests
         catch (QueueCache.Operations.CacheDrainingException) { }
         try { QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining with { LastError = 1 }); throw new Exception("Fault was accepted."); }
         catch (IOException ex) { Check(ex is not QueueCache.Operations.CacheDrainingException, "faults must never be retried as transient drains"); }
+        var healthy = draining with { Flags = 0 };
+        var reads = 0;
+        var settled = QueueCache.Operations.ConfigurationManager.WaitForHealthyState(
+            () => ++reads < 3 ? draining : healthy, healthy);
+        Check(settled == healthy && reads == 3, "post-apply transient draining is polled without replaying mutations");
+        Check(QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => healthy, draining) == healthy,
+            "initial draining may settle too, including disabled cache");
+        try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => draining, healthy, timeout: TimeSpan.Zero); throw new Exception("Permanent draining accepted."); }
+        catch (TimeoutException) { }
+        foreach (var invalid in new[] { healthy with { Flags = 2 }, healthy with { Flags = 4 }, healthy with { Flags = 16 },
+            healthy with { LastError = 1 }, healthy with { Errors = 1 }, healthy with { Instance = 1 }, healthy with { DeviceBytes = 1 } })
+        {
+            var attempts = 0;
+            try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => { attempts++; return invalid; }, healthy); throw new Exception("Fault or identity change accepted."); }
+            catch (IOException) { Check(attempts == 1, "non-transient state fails immediately"); }
+        }
+        try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => healthy, draining with { LastError = 1 }); throw new Exception("Initial fault hidden."); }
+        catch (IOException) { }
         // Minimal independent fixture matching Microsoft's XmlResultParser structure, not text columns.
         const string xml = """
             <Results><TimeSpan><TestTimeSeconds>10.00</TestTimeSeconds>

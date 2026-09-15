@@ -59,9 +59,11 @@ coordinator's worker deadline, not by an intrinsic native-call timeout. Worker
 stderr retains full exception stacks, including validation failures. Recovery
 still requires its observer to become ready before any restoration command.
 
-Restoration retries only the explicit transient-draining condition, for up to
-30 seconds within the worker deadline. Faults, removal, suspension and identity
-changes are not treated as transient draining. Original settings, timing and saved
+Configuration changes and restoration poll status when it reports transient
+draining, for up to 30 seconds per state check within the worker deadline. They do
+not replay configuration writes just because the final snapshot was busy. Faults,
+increased error counts, removal, suspension, disk-size and identity changes fail
+immediately. Original settings, timing and saved
 profiles are still checked before reporting restored. After a failed run, confirm
 its owned processes have stopped and use the newly installed CLI's
 `qcache developer verify-recover <failed-run-directory>` before starting another

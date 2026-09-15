@@ -73,28 +73,11 @@ public static class VerificationWorker
                 }
                 else
                 {
-                    var settle = Stopwatch.StartNew();
-                    while (true)
-                    {
-                        var current = device.GetWriteCacheState();
-                        if (current.Errors != original.State.Errors || current.Instance != original.State.Instance)
-                            throw new IOException("Recovery observed a driver error or instance change.");
-                        try
-                        {
-                            ConfigurationManager.EnsureHealthy(current);
-                            ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
-                            break;
-                        }
-                        catch (CacheDrainingException) when (settle.Elapsed < TimeSpan.FromSeconds(30))
-                        {
-                            Console.WriteLine("Recovery waiting for a transient drain to settle.");
-                            await Task.Delay(200);
-                        }
-                    }
+                    ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
+                    ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
-                var restored = device.GetWriteCacheState();
-                ConfigurationManager.EnsureHealthy(restored);
+                var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 if (restored.DirtyBytes != 0 || restored.InFlightBytes != 0 || restored.Errors != original.State.Errors ||
                     restored.Instance != original.State.Instance || Profiles() != original.Profiles ||
                     restored.BudgetBytes != original.State.BudgetBytes || restored.Enabled != original.State.Enabled ||
