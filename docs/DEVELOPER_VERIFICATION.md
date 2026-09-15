@@ -58,6 +58,11 @@ only the recorded disk. Native calls remain synchronous and are bounded by the
 coordinator's worker deadline, not by an intrinsic native-call timeout. Worker
 stderr retains full exception stacks, including validation failures. Recovery
 still requires its observer to become ready before any restoration command.
+Volume remapping is rejected before opening the recorded disk, and interface-path
+buffers use Windows' reported size. For read-only native identity regression checks,
+set `QCACHE_TEST_DISK_TARGET` to an existing NTFS volume (for example `C:`) before
+running the management tests. These checks do not configure a cache or write to
+the selected disk; they cover successful validation, mismatches and cancellation.
 
 Configuration changes and restoration poll status when it reports transient
 draining, for up to 30 seconds per state check within the worker deadline. They do

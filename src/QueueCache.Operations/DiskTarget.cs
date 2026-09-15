@@ -55,7 +55,10 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     public void ValidateCurrent(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        ValidateMountedIdentity(this, ReadExtent(Letter), ReadDiskInstance(Number, Instance, cancellationToken),
+        var extent = ReadExtent(Letter);
+        // Reject a remapped volume before opening even the previously recorded disk.
+        ValidateExtent(this, extent);
+        ValidateMountedIdentity(this, extent, ReadDiskInstance(Number, Instance, cancellationToken),
             new DriveInfo(Root).DriveFormat);
     }
 
@@ -90,12 +93,17 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
                     if (error == 259) break;
                     throw new Win32Exception(error);
                 }
-                var detail = Marshal.AllocHGlobal(4096);
+                var info = new SpDevInfoData { Size = Marshal.SizeOf<SpDevInfoData>() };
+                // Ask Windows for the required size rather than assuming every interface path fits 4 KiB.
+                var sized = SetupDiGetDeviceInterfaceDetailW(devices, ref entry, IntPtr.Zero, 0, out var required, ref info);
+                var sizeError = Marshal.GetLastWin32Error();
+                if (!sized && sizeError != 122) throw new Win32Exception(sizeError);
+                if (required < (IntPtr.Size == 8 ? 8 : 6)) throw new IOException("Invalid disk interface detail size.");
+                var detail = Marshal.AllocHGlobal(required);
                 try
                 {
                     Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
-                    var info = new SpDevInfoData { Size = Marshal.SizeOf<SpDevInfoData>() };
-                    if (!SetupDiGetDeviceInterfaceDetailW(devices, ref entry, detail, 4096, out _, ref info))
+                    if (!SetupDiGetDeviceInterfaceDetailW(devices, ref entry, detail, required, out _, ref info))
                         throw new Win32Exception(Marshal.GetLastWin32Error());
                     var instance = new StringBuilder(1024);
                     if (!SetupDiGetDeviceInstanceIdW(devices, ref info, instance, instance.Capacity, out _))

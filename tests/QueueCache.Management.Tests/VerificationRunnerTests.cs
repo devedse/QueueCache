@@ -40,6 +40,15 @@ internal static class VerificationRunnerTests
         {
             var nativeTarget = await QueueCache.Operations.DiskTarget.InspectAsync(nativeVolume);
             nativeTarget.ValidateCurrent();
+            // Exercise the real native enumeration/marshalling path without cache controls or disk writes.
+            try { (nativeTarget with { Instance = "QueueCache-nonexistent-test-device" }).ValidateCurrent(); throw new Exception("Native PnP mismatch accepted."); }
+            catch (IOException) { }
+            try { (nativeTarget with { Number = int.MaxValue }).ValidateCurrent(); throw new Exception("Native disk-number mismatch accepted."); }
+            catch (IOException) { }
+            using var cancelledIdentity = new CancellationTokenSource();
+            cancelledIdentity.Cancel();
+            try { nativeTarget.ValidateCurrent(cancelledIdentity.Token); throw new Exception("Native identity cancellation ignored."); }
+            catch (OperationCanceledException) { }
             Console.WriteLine($"Native disk identity validated: {nativeTarget.Device} / {nativeTarget.Instance}");
         }
         VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 0 });
