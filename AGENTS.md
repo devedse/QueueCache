@@ -2,6 +2,12 @@
 
 ## Keep verification maintainable
 
+- For small-write regressions use `--suite write-performance --budget-mib 2048`
+  with the same DiskSpd binary before/after changes. This separate 72-case suite
+  compares fitting 1 GiB files, random Q1/32 and sequential Q1/8, Off/Eager/Idle,
+  and detailed timing off/on. It is not included in `full`; keep its contracts and
+  documentation up to date. Do not confuse process-wide counters with score windows.
+
 - The supported current-boot runner is `qcache developer verify`. Maintain it when
   changing driver behavior, policies, management APIs or performance diagnostics.
   Add/regress scenarios in `src/QueueCache.Developer/Verification` and contract tests

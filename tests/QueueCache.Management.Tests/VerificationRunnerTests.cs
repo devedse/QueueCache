@@ -106,6 +106,11 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = -1 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1441 }));
         var plan = VerificationPlan.Performance(options);
+        var writes = VerificationPlan.Performance(options with { Suite = "write-performance" });
+        Check(writes.Count == 72 && writes.Select(c => c.Id).Distinct().Count() == 72, "write matrix unique repetitions");
+        Check(writes.All(c => c.Resident && !c.Writer && c.DelayMs == 0), "write matrix isolated fitting file, no injected delay");
+        Check(writes.Count(c => c.Timing) == 36 && writes.Count(c => c.Drain == "Idle") == 24, "write matrix timing and policy controls");
+        Check(writes.Where(c => c.Workload == "random-write").All(c => c.QueueDepth is 1 or 32), "CDM random write queue depths");
         Check(plan.Count == 204 && plan.Select(c => c.Id).Distinct().Count() == plan.Count, "unique repeated-case identities");
         Check(plan[75].Id == "0076-r2-Automatic-Idle-d0-q32-loaded",
             "stable scenario ordering and readable case identity");

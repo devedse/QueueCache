@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 2)
+## Suites (plan version 3)
 
 | Suite | Scope |
 |---|---|
@@ -25,6 +25,29 @@ different disk so telemetry writes do not contaminate the workload.
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
+| `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
+
+### Small-write investigation
+
+```powershell
+qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
+```
+
+This uses a new file half the cache budget (1 GiB with the example), five seconds
+of warmup, then the requested measurement duration. It is CDM-shaped, not an exact
+reproduction of CDM's preparation or scoring. Cache state is flushed and clean
+blocks dropped between cells; warmup does not guarantee full residency. Policy and
+timing order reverse between repetitions. Both timing modes still collect the same
+200 ms observer samples; this separates detailed driver instrumentation overhead,
+not observer overhead. Raw XML, process intervals, before/after counters and phase
+samples are retained. Aggregate keys include timing and fitting-file mode.
+
+Compare Q1 latency/IOPS and Q32 scaling, timing off versus on, and Eager versus
+Idle against the uncached control. Inspect `DrainingPendingWrites`, capacity waits,
+dirty/drained bytes and queue fences before attributing a slowdown to locks. The
+counter window includes warmup/close and must not be treated as the score window.
+Keep the original run as the baseline; rerun the same command/binary/budget after
+each driver change. Do not change broad ordering/barrier rules on throughput alone.
 
 Parameters: `--budget-mib 1024`, `--repeats 3`, `--duration-seconds 10`,
 `--deadline-minutes 0` (default: **no overall time limit**). The suite runs until

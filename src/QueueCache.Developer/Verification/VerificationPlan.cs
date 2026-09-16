@@ -9,18 +9,21 @@ public sealed record PerformanceCase(
     bool Writer,
     int Repeat,
     bool ApplicationFlush = false,
-    string Workload = "interference");
+    string Workload = "interference",
+    bool Resident = false,
+    bool Timing = true);
 
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 2;
+    public const int Version = 3;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
         "policies",
+        "write-performance",
         "flush-interference",
         "performance",
         "full"
@@ -34,6 +37,17 @@ public static class VerificationPlan
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
         var cases = new List<PerformanceCase>();
+
+        if (options.Suite == "write-performance")
+        {
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (workload, depth) in new[] { ("random-write", 1), ("random-write", 32), ("sequential-write", 1), ("sequential-write", 8) })
+            foreach (var drain in repeat % 2 == 1 ? new[] { "Off", "Eager", "Idle" } : new[] { "Idle", "Eager", "Off" })
+            foreach (var timing in repeat % 2 == 1 ? new[] { false, true } : new[] { true, false })
+                cases.Add(new PerformanceCase($"{NextNumber(cases)}-r{repeat}-{workload}-q{depth}-{drain}-timing{timing}",
+                    "Automatic", drain, 0, depth, false, repeat, Workload: workload, Resident: true, Timing: timing));
+            return cases;
+        }
 
         if (options.Suite == "flush-interference")
         {
@@ -212,7 +226,7 @@ public static class VerificationPlan
                 "deadline 0 (unlimited) or 1..1440 minutes.");
         }
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference"))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance"))
         {
             return;
         }

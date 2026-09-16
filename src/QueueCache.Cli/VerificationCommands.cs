@@ -39,7 +39,10 @@ internal static class VerificationCommands
                                  Use --repeats 2 for eight cases. Requires DiskSpd.
               performance        Repeated allocation/drain/queue-depth, delay and off/on workload matrix.
                                  Requires DiskSpd; 204 cases at defaults.
-              full               All suites above; 218 cases at defaults. Requires DiskSpd.
+              full               Integrity + performance + flush matrix; 218 cases at defaults.
+              write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
+                                 Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
+                                 Use --budget-mib 2048 for a 1 GiB workload file.
 
             DiskSpd: download standard Microsoft DiskSpd from https://github.com/microsoft/diskspd/releases
             Extract DiskSpd.ZIP; use amd64\diskspd.exe on x64 Windows (also for Intel CPUs).

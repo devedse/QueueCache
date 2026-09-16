@@ -136,7 +136,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" ? VerificationPlan.Performance(options) : [];
         var expected = new List<string>();
         if (options.Suite is "quick" or "full")
             expected.Add("file-integrity");
@@ -153,6 +153,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             PlanVersion = VerificationPlan.Version,
             Options = options,
             ExpectedCases = expected,
+            PerformanceCases = performance,
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });
@@ -235,7 +236,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 var sorted = values.Order().ToArray();
                 return (sorted[(sorted.Length - 1) / 2] + sorted[sorted.Length / 2]) / 2;
             }
-            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush })
+            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush, c.Resident, c.Timing })
                 .Select(g => new
                 {
                     Configuration = g.Key,
@@ -257,21 +258,23 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         });
         var report = new StringBuilder($"# QueueCache verification\n\nStatus: **{status}**\n\nCases: {storage.Results.Count}/{expected.Count}. Plan version: {VerificationPlan.Version}.\n\n");
         report.AppendLine("PASS means the case's collection/checks succeeded, not that latency met a performance target or that every driver path is verified. No medians are computed from partial runs.\n");
-        report.AppendLine("| Case | Status | IOPS | Read p99 ms |\n|---|---|---:|---:|");
+        report.AppendLine("| Case | Status | IOPS | Read p99 ms | Write p99 ms |\n|---|---|---:|---:|---:|");
         foreach (var row in storage.Results)
-            report.AppendLine($"| {row.Id} | {row.Status} | {row.Score?.Iops.ToString("F2", CultureInfo.InvariantCulture) ?? "—"} | {row.Score?.ReadP99Milliseconds?.ToString("F3", CultureInfo.InvariantCulture) ?? "N/A"} |");
+            report.AppendLine($"| {row.Id} | {row.Status} | {row.Score?.Iops.ToString("F2", CultureInfo.InvariantCulture) ?? "—"} | {row.Score?.ReadP99Milliseconds?.ToString("F3", CultureInfo.InvariantCulture) ?? "N/A"} | {row.Score?.WriteP99Milliseconds?.ToString("F3", CultureInfo.InvariantCulture) ?? "N/A"} |");
         if (failure is not null)
             report.AppendLine("\n## Failure\n\n```text\n" + failure + "\n```");
         if (restorationFailure is not null)
             report.AppendLine("\n## Restoration failure\n\n```text\n" + restorationFailure + "\n```");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
-        var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs\n");
+        var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs,WriteP99Ms,MBPerSecond\n");
         foreach (var r in storage.Results)
             csv.AppendLine(string.Join(',', r.Id, r.Status, r.Seconds.ToString("R", CultureInfo.InvariantCulture),
                 r.Score?.Operations.ToString(CultureInfo.InvariantCulture) ?? "", r.Score?.Iops.ToString("R", CultureInfo.InvariantCulture) ?? "",
                 r.Score?.ReadP99Milliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? "",
                 r.Score?.ReadP999Milliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? "",
-                r.Score?.ReadMaxMilliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? ""));
+                r.Score?.ReadMaxMilliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? "",
+                r.Score?.WriteP99Milliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? "",
+                r.Score is { } score ? (score.Bytes / score.Seconds / 1_000_000).ToString("R", CultureInfo.InvariantCulture) : ""));
         File.WriteAllText(storage.PathFor("results.csv"), csv.ToString());
         File.WriteAllText(storage.PathFor("FINISHED.txt"), $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n");
         progressLabel = $"Finished | {storage.Results.Count}/{totalCases} recorded";
@@ -327,7 +330,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         }, token, 300);
         await Control(WriteCacheAction.Flush, token);
         await Control(WriteCacheAction.DropClean, token);
-        await Control(WriteCacheAction.PerformanceTiming, token, 1);
+        await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
         var hot = Path.Combine(workDirectory, "hot.dat");
         if (scenario.Workload == "interference")
         {
@@ -379,8 +382,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", "-Zr" };
             if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
                 arguments.Add("-r4K");
-            arguments.AddRange([$"-d{options.DurationSeconds}", "-W0"]);
-            var score = await Disk(scenario.Id + "-reader", scenario.Workload == "interference" ? hot : Path.Combine(workDirectory, "writer.dat"),
+            // A fixed five-second warmup exercises the fitting working set before scoring.
+            // Unlike interference, this is not a promise that every block is resident.
+            arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident ? "-W5" : "-W0"]);
+            var score = await Disk(scenario.Id + "-reader", scenario.Workload == "interference" ? hot : Path.Combine(workDirectory, scenario.Resident ? "resident.dat" : "writer.dat"),
                 arguments.ToArray(), children.Token);
             if (writer is not null)
                 await writer;

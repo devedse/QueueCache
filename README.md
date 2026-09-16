@@ -1,5 +1,10 @@
 # QueueCache
 
+Focused small-write investigation (elevated test VM):
+`qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output .\results`.
+Also supports CDM's `CdmResource\DiskSpd\DiskSpd64.exe`. Runs 72 fitting-file
+write comparisons with policy and timing controls; see [verification](docs/DEVELOPER_VERIFICATION.md).
+
 ## Managed tools and experimental desktop
 
 The native driver is under `driver/qcache/`; historical utilities are under `legacy/`.
