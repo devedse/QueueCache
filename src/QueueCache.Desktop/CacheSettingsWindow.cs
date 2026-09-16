@@ -59,11 +59,11 @@ public sealed class CacheSettingsWindow : Window
         //   Balanced — watermarks + maximum age.
         //   Idle     — watermarks + maximum age + write-idle interval.
         // Batch size and parallelism describe how a drain is issued and apply to every algorithm.
-        var algorithm = Choice(["Eager", "Balanced", "Idle"], (int)options.Drain);
+        var algorithm = Choice(state.SupportsDeferredDrain ? ["Eager", "Balanced", "Idle", "Deferred"] : ["Eager", "Balanced", "Idle"], (int)options.Drain);
         var low = Number(0, 99, options.LowPercent);
         var high = Number(1, 100, options.HighPercent);
         var parallel = Number(1, 4, options.Parallelism);
-        var age = Number(10, 300000, options.MaxDirtyAgeMs);
+        var age = Number(10, state.SupportsDeferredDrain ? 3600000 : 300000, options.MaxDirtyAgeMs);
         var idle = Number(10, 60000, options.IdleMs);
         var batch = Choice(["4 KiB", "64 KiB", "256 KiB", "512 KiB", "1024 KiB"], Array.IndexOf(new[] { 4, 64, 256, 512, 1024 }, options.BatchKiB));
         // Preserve CLI batch sizes not present in the suggested list.
@@ -89,12 +89,13 @@ public sealed class CacheSettingsWindow : Window
         draining.Children.Add(describe);
         // Watermarks and maximum age: Balanced and Idle only.
         var watermarks = Field("Start pressure draining at (%)", PressureHint + " Above this fill level, background draining runs until the stop level is reached.", high,
-            Field("Stop pressure draining at (%)", PressureHint + " Pressure draining stops here, so writes below this level can keep absorbing overwrites in RAM.", low),
-            Field("Maximum dirty age before draining starts (ms)", "Drain once the oldest pending write has waited this long, even when the pool is far below the start level. A scheduling trigger only: slow or failing storage can still take longer.", age));
+            Field("Stop pressure draining at (%)", PressureHint + " Pressure draining stops here, so writes below this level can keep absorbing overwrites in RAM.", low));
+        var ageField = Field("Maximum dirty age before draining starts (ms)", "First-dirty age, up to 3600000 ms (one hour) on supported drivers. Deferred ignores idle and watermarks. Explicit flush, lifecycle and capacity boundaries still apply; this is not a durability deadline.", age);
         // Write-idle interval: Idle only.
         var idleField = Field("Write-idle interval (ms)", "Idle algorithm only: drain after this long with no newly cached write, so bursts stay in RAM and the disk catches up during pauses.", idle);
         // Always relevant: how each drain is issued to the disk.
         draining.Children.Add(watermarks);
+        draining.Children.Add(ageField);
         draining.Children.Add(idleField);
         draining.Children.Add(Field("Maximum adjacent-write batch", "Pending 4 KiB blocks that are adjacent on disk are gathered into one lower write up to this size. Larger batches favour sequential throughput; budgets under 16 MiB cap each staging buffer at 64 KiB.", batch, batchCustom));
         draining.Children.Add(Field("Maximum simultaneous disk writes", "How many gathered writes may be outstanding to the disk at once. Higher values help random draining on fast devices; overlapping versions of a block stay ordered regardless.", parallel));
@@ -105,9 +106,11 @@ public sealed class CacheSettingsWindow : Window
             {
                 0 => "Eager: each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites are still coalesced in RAM, but watermarks, maximum age and the idle interval are ignored.",
                 1 => "Balanced: pending writes stay in RAM until the write pool reaches the start watermark or the oldest pending block exceeds its maximum age; draining then continues down to the stop watermark. Absorbs repeated overwrites and write bursts, at the cost of more data waiting in volatile RAM.",
-                _ => "Idle: the Balanced triggers, plus draining whenever no new cached write has arrived for the write-idle interval. Keeps the disk quiet during a burst and catches up between bursts.",
+                2 => "Idle: the Balanced triggers, plus draining whenever no new cached write has arrived for the write-idle interval. Keeps the disk quiet during a burst and catches up between bursts.",
+                _ => "Deferred: background draining starts only at the oldest pending block's age. No early idle or watermark trigger. Explicit flush, capacity and lifecycle boundaries still apply. Partial-write fallback barriers remain until the RAM-first storage rewrite is complete.",
             };
-            watermarks.IsVisible = algorithm.SelectedIndex != 0;
+            watermarks.IsVisible = algorithm.SelectedIndex is 1 or 2;
+            ageField.IsVisible = algorithm.SelectedIndex != 0;
             idleField.IsVisible = algorithm.SelectedIndex == 2;
         }
         algorithm.SelectionChanged += (_, _) => DescribeDraining();

@@ -52,6 +52,9 @@ public static class ConfigurationManager
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);
         if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the matching read/write-cache driver and restart Windows before applying settings.");
+        // Reject an unsupported new policy before disabling/draining the existing cache.
+        if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
+            throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");
         if (state.DeviceBytes != (ulong)target.Bytes)
             throw new IOException("Disk size changed.");
         var budget = (ulong)configuration.BudgetMiB << 20;

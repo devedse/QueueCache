@@ -2,6 +2,15 @@
 
 ## Keep verification maintainable
 
+- RAM-first design principle and ordered performance/test plan:
+  `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
+  update implementation and verification separately for each item changed.
+  `docs/RAM_FIRST_PERFORMANCE_PLAN.md`. In explicit volatile Fast mode, fitting
+  supported writes must not depend on lower I/O merely for admission. Preserve
+  Strict/explicit durability, capacity backpressure and lifecycle/error semantics.
+  No incidental whole-cache drains for partial writes or harmless observations.
+  Document exceptions and prove the contract with lower-I/O-attempt counters.
+
 - For small-write regressions use `--suite write-performance --budget-mib 2048`
   with the same DiskSpd binary before/after changes. This separate 72-case suite
   compares fitting 1 GiB files, random Q1/32 and sequential Q1/8, Off/Eager/Idle,

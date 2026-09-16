@@ -39,6 +39,19 @@ constexpr bool PolicyChecks()
         return false;
     if (QcShouldDrain(o, 0, 100, 0, 0, true, pressure))
         return false;
+    o.Drain = QcDeferred;
+    o.MaxAgeMs = 3600000;
+    pressure = true; // switching policy cannot inherit pressure early draining
+    if (!QcValidOptions(o) || QcShouldDrain(o, 99, 100, 3599999, 3600000, false, pressure) || pressure)
+        return false;
+    if (!QcShouldDrain(o, 1, 100, 3600000, 0, false, pressure) ||
+        !QcShouldDrain(o, 1, 100, 0, 0, true, pressure) ||
+        QcShouldDrain(o, 0, 100, 3600000, 0, true, pressure))
+        return false;
+    o.MaxAgeMs = 3600001;
+    if (QcValidOptions(o))
+        return false;
+    o.MaxAgeMs = 3600000;
     o.Parallelism = 5;
     if (QcValidOptions(o))
         return false;

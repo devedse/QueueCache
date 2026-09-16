@@ -57,6 +57,9 @@ Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inve
 Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
 Reject(() => new CacheOptions(Parallelism: 5).Validate(), "unbounded parallelism");
 Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
+var deferredHour = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000);
+Check(CacheOptions.Decode(deferredHour.Encode()) == deferredHour, "deferred one-hour wire roundtrip");
+Reject(() => new CacheOptions(MaxDirtyAgeMs: 3600001).Validate(), "age above one hour");
 var rw = new byte[WriteCacheState.ReadWriteWireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(rw, 3);
 BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(4), 288);

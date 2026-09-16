@@ -71,7 +71,7 @@ static void Publish(QC_CACHE* c)
     c->State.Flags = (c->Enabled ? 1UL : 0UL) | (!NT_SUCCESS(c->State.LastError) ? 2UL : 0UL) |
                      (c->Suspended ? 4UL : 0UL) | (c->Barrier ? 8UL : 0UL) | (c->Gone ? 16UL : 0UL) |
                      (c->UnsafeDefer ? 32UL : 0UL) | 64UL | 128UL | 256UL | 1024UL |
-                     2048UL; // 128: drain-and-release task support. 1024: QcDropClean support.
+                     2048UL | 4096UL; // 4096: Deferred policy and one-hour age support.
     c->State.OccupiedSlots = c->Count;
     KIRQL irql;
     KeAcquireSpinLock(&c->SnapshotLock, &irql);
@@ -785,6 +785,14 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         auto error = c->State.LastError;
         ReleaseCache(c);
         return error;
+    }
+    // A valid zero-byte write owns no data and imposes no durability boundary.
+    // Do not flush unrelated pending writes merely to complete this no-op.
+    if (length == 0)
+    {
+        ReleaseCache(c);
+        irp->IoStatus.Information = 0;
+        return STATUS_SUCCESS;
     }
     auto needed = (static_cast<ULONGLONG>(length) + Chunk - 1) / Chunk;
     const bool writeThrough = (stack->Flags & SL_WRITE_THROUGH) != 0;

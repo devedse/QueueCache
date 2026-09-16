@@ -112,8 +112,11 @@ public sealed class CacheDevice : IDisposable
     public void SetOptions(CacheOptions options)
     {
         var data = options.Encode();
-        if (!GetWriteCacheState().SupportsReadWrite)
+        var state = GetWriteCacheState();
+        if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the read/write-cache driver and restart Windows first.");
+        if ((options.Drain == DrainAlgorithm.Deferred || options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
+            throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");
         if (!Native.DeviceIoControlCommand(handle, OptionsIoctl, data, (uint)data.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache policy update failed.");
         if (returned != 0)

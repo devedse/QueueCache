@@ -28,6 +28,12 @@ public static class VerificationWorker
     public static async Task<int> ExecuteAsync(string jobPath)
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(jobPath)) ?? throw new InvalidDataException("Missing worker job.");
+        void Stage(string name)
+        {
+            Console.Error.WriteLine($"[{DateTimeOffset.UtcNow:O}] Worker {job.Operation}: {name}");
+            Console.Error.Flush();
+        }
+        Stage("job loaded; validating target");
         DiskTarget target;
         if (job.Expected is { } expected)
         {
@@ -44,9 +50,12 @@ public static class VerificationWorker
         }
         else
             target = await DiskTarget.InspectAsync(job.Volume);
+        Stage("target validated; opening cache device");
         using var device = new CacheDevice(target.Device, writable: true);
+        Stage("cache device opened; validating device length");
         if (job.Expected is not null)
             DiskTarget.ValidateDeviceLength(target, device.GetWriteCacheState().DeviceBytes);
+        Stage("device length validated; dispatching operation");
         object result;
         switch (job.Operation)
         {
@@ -161,6 +170,7 @@ public static class VerificationWorker
                 }
                 break;
             case "telemetry":
+                Stage("opening telemetry output");
                 await using (var writer = new StreamWriter(job.Reply, append: false))
                 {
                     var timer = Stopwatch.StartNew();

@@ -1,5 +1,11 @@
 # QueueCache
 
+RAM-first work and verification status: [implementation tracker](docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md).
+`--drain Deferred --max-dirty-age-ms 3600000` selects age-only background scheduling
+on a supporting driver. It ignores idle/watermark triggers; capacity, explicit
+flush and lifecycle boundaries still apply. The partial-write fallback rewrite is
+not complete yet, so this is not yet an end-to-end no-disk-I/O guarantee.
+
 Focused small-write investigation (elevated test VM):
 `qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output .\results`.
 Also supports CDM's `CdmResource\DiskSpd\DiskSpd64.exe`. Runs 72 fitting-file

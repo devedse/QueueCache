@@ -62,6 +62,7 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
     }
     public bool SupportsReadWrite => (Flags & 256) != 0;
     public bool SupportsDropClean => (Flags & 1024) != 0;
+    public bool SupportsDeferredDrain => (Flags & 4096) != 0;
     public bool RoutingConfirmed => SupportsReadWrite && (Flags & 512) != 0;
     public bool Operational => Enabled && !Faulted && LastError == 0 && !Removed && !Suspended && !Draining &&
         BudgetBytes > 0 && ReservedBytes > 0 && PayloadCapacity > 0 && (!SupportsReadWrite || RoutingConfirmed);
