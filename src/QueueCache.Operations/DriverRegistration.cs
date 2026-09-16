@@ -1,6 +1,6 @@
+using System.Runtime.Versioning;
 using Microsoft.Win32;
 using QueueCache.Management;
-using System.Runtime.Versioning;
 
 namespace QueueCache.Operations;
 
@@ -38,7 +38,10 @@ public static class DriverRegistration
             // A missing/unloaded filter has no cache to drain. Never swallow a
             // real control failure from a filter which is responding.
             using var device = new CacheDevice(target.Device, writable: true);
-            try { device.GetWriteCacheState(); }
+            try
+            {
+                device.GetWriteCacheState();
+            }
             catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50) { goto Remove; }
             device.Control(WriteCacheAction.Disable);
         Remove:

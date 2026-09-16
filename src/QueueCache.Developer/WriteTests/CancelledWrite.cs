@@ -20,7 +20,8 @@ internal sealed class CancelledWrite : IDisposable
             try
             {
                 threadHandle = OpenThread(1, false, GetCurrentThreadId()); // THREAD_TERMINATE required by CancelSynchronousIo.
-                if (threadHandle.IsInvalid) throw new Win32Exception();
+                if (threadHandle.IsInvalid)
+                    throw new Win32Exception();
                 ready.Set();
                 write();
             }
@@ -37,12 +38,18 @@ internal sealed class CancelledWrite : IDisposable
         var requested = false;
         while (!done.IsSet && watch.Elapsed < TimeSpan.FromSeconds(2))
         {
-            if (threadHandle is not null && CancelSynchronousIo(threadHandle)) { requested = true; break; }
+            if (threadHandle is not null && CancelSynchronousIo(threadHandle))
+            {
+                requested = true;
+                break;
+            }
             var error = Marshal.GetLastWin32Error();
-            if (error != 1168) throw new Win32Exception(error); // ERROR_NOT_FOUND: WriteFile has not entered kernel yet.
+            if (error != 1168)
+                throw new Win32Exception(error); // ERROR_NOT_FOUND: WriteFile has not entered kernel yet.
             Thread.Sleep(5);
         }
-        if (!done.Wait(TimeSpan.FromSeconds(5))) throw new IOException("Cancellation did not complete within five seconds.");
+        if (!done.Wait(TimeSpan.FromSeconds(5)))
+            throw new IOException("Cancellation did not complete within five seconds.");
         thread.Join();
         if (!requested || failure is not Win32Exception { NativeErrorCode: 995 })
             throw new IOException("Expected ERROR_OPERATION_ABORTED from cancelled write.", failure);
@@ -53,7 +60,9 @@ internal sealed class CancelledWrite : IDisposable
         // Keep disk/buffer and native thread handle alive until the original WriteFile really completes.
         // Cancellation API success alone is not completion.
         thread.Join();
-        threadHandle?.Dispose(); ready.Dispose(); done.Dispose();
+        threadHandle?.Dispose();
+        ready.Dispose();
+        done.Dispose();
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

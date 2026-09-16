@@ -1,7 +1,7 @@
 using System.Buffers.Binary;
+using QueueCache.Developer.Verification;
 using QueueCache.Management;
 using QueueCache.Operations;
-using QueueCache.Developer.Verification;
 
 if (OperatingSystem.IsWindows() && args.Length == 4 && args[0] == "--fake-verification" && args[2] == "--verification-worker")
 {
@@ -12,7 +12,8 @@ if (OperatingSystem.IsWindows() && args.Length == 4 && args[0] == "--fake-verifi
 // Isolated fake child for runner contract tests; never opens a disk/driver.
 if (args.Length > 0 && args[0] == "--runner-child")
 {
-    if (args[1] == "hang") await Task.Delay(Timeout.Infinite);
+    if (args[1] == "hang")
+        await Task.Delay(Timeout.Infinite);
     Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(args.Skip(1)));
     Console.Error.WriteLine("captured stderr");
     return;
@@ -45,19 +46,20 @@ BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(176), 4L << 30);
 var s = CacheStatistics.Decode(data);
 new CacheConfiguration().Validate(true);
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
-foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
-foreach (var share in new[] { 0, 50, 100 })
-{
-    var options = new CacheOptions(allocation, share, Drain: algorithm, Parallelism: 4);
-    Check(CacheOptions.Decode(options.Encode()) == options, "policy wire roundtrip");
-}
+    foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
+        foreach (var share in new[] { 0, 50, 100 })
+        {
+            var options = new CacheOptions(allocation, share, Drain: algorithm, Parallelism: 4);
+            Check(CacheOptions.Decode(options.Encode()) == options, "policy wire roundtrip");
+        }
 Reject(() => new CacheOptions(WritePercent: 101).Validate(), "invalid share");
 Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inverted watermarks");
 Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
 Reject(() => new CacheOptions(Parallelism: 5).Validate(), "unbounded parallelism");
 Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
 var rw = new byte[WriteCacheState.ReadWriteWireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(rw, 3); BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(4), 288);
+BinaryPrimitives.WriteUInt32LittleEndian(rw, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(4), 288);
 BinaryPrimitives.WriteUInt32LittleEndian(rw.AsSpan(8), 256 | 512 | 1);
 BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(24), 8192UL << 20);
 BinaryPrimitives.WriteUInt64LittleEndian(rw.AsSpan(32), 8192UL << 20);
@@ -112,7 +114,9 @@ var writeState = WriteCacheState.Decode(cacheData);
 Check(writeState.Enabled && writeState.Faulted && writeState.LastError == unchecked((int)0xC0000185), "write-cache flags and error ABI");
 Check(writeState.BudgetBytes == 4UL << 30 && writeState.AcceptedBytes == 9UL << 30 && writeState.Flushes == 7 && writeState.ThrottleWaits == 19, "write-cache 64-bit offsets");
 Reject(() => WriteCacheState.Decode(cacheData.AsSpan(0, 127)), "short write-cache snapshot");
-cacheData[0] = 2; Reject(() => WriteCacheState.Decode(cacheData), "write-cache version"); cacheData[0] = 1;
+cacheData[0] = 2;
+Reject(() => WriteCacheState.Decode(cacheData), "write-cache version");
+cacheData[0] = 1;
 BinaryPrimitives.WriteUInt64LittleEndian(cacheData.AsSpan(32), 5UL << 30);
 Reject(() => WriteCacheState.Decode(cacheData), "cache reserved exceeds budget");
 Console.WriteLine("Write-cache ABI and bounds regression checks passed.");
@@ -147,7 +151,9 @@ for (var i = 0; i < diagnosticValues.Length; i++) BinaryPrimitives.WriteUInt64Li
 var diagnostics = CacheDiagnostics.Decode(diagnosticsBytes);
 Check(diagnostics.DeferredFlushes == 4 && diagnostics.DeferredWriteThroughWrites == 3 && diagnostics.LastBarrierCode == 0x2d4804, "diagnostics ABI offsets");
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes.AsSpan(0, 79)), "short diagnostics");
-diagnosticsBytes[0] = 2; Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "diagnostics version"); diagnosticsBytes[0] = 1;
+diagnosticsBytes[0] = 2;
+Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "diagnostics version");
+diagnosticsBytes[0] = 1;
 BinaryPrimitives.WriteUInt64LittleEndian(diagnosticsBytes.AsSpan(16), 10);
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "deferred count exceeds requests");
 Console.WriteLine("Flush-policy/diagnostics protocol regression checks passed.");
@@ -163,6 +169,10 @@ if (OperatingSystem.IsWindows())
 static void Check(bool value, string label) { if (!value) throw new Exception("FAIL: " + label); }
 static void Reject(Action action, string label)
 {
-    try { action(); } catch (Exception e) when (e is InvalidDataException or ArgumentException) { return; }
+    try
+    {
+        action();
+    }
+    catch (Exception e) when (e is InvalidDataException or ArgumentException) { return; }
     throw new Exception("FAIL: " + label);
 }

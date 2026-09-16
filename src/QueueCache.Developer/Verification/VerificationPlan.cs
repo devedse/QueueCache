@@ -1,60 +1,250 @@
 namespace QueueCache.Developer.Verification;
 
-public sealed record PerformanceCase(string Id, string Allocation, string Drain, int DelayMs,
-    int QueueDepth, bool Writer, int Repeat, bool ApplicationFlush = false, string Workload = "interference");
+public sealed record PerformanceCase(
+    string Id,
+    string Allocation,
+    string Drain,
+    int DelayMs,
+    int QueueDepth,
+    bool Writer,
+    int Repeat,
+    bool ApplicationFlush = false,
+    string Workload = "interference");
 
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
     public const int Version = 2;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
-    public static readonly string[] Suites = ["quick", "policies", "flush-interference", "performance", "full"];
+
+    public static readonly string[] Suites =
+    [
+        "quick",
+        "policies",
+        "flush-interference",
+        "performance",
+        "full"
+    ];
+
+    /// <summary>
+    /// Expands the selected suite into a stable, ordered list of immutable cases.
+    /// The order is part of the recorded plan: console test numbers and raw-evidence
+    /// filenames are derived from these IDs.
+    /// </summary>
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
         var cases = new List<PerformanceCase>();
+
         if (options.Suite == "flush-interference")
         {
-            for (var repeat = 1; repeat <= options.Repeats; repeat++)
-            foreach (var allocation in repeat % 2 == 1 ? new[] { "Automatic", "Fixed" } : ["Fixed", "Automatic"])
-            foreach (var flush in new[] { false, true })
-                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{allocation}-flush{flush}", allocation, "Eager", 25, 128, true, repeat, flush));
+            AddFlushInterferenceCases(cases, options.Repeats);
             return cases;
         }
-        for (var repeat = 1; repeat <= options.Repeats; repeat++)
-        // Alternate order between repeats instead of comparing two long fixed-order policy runs.
-        foreach (var allocation in repeat % 2 == 1 ? new[] { "Automatic", "Fixed" } : ["Fixed", "Automatic"])
-        foreach (var drain in repeat % 2 == 1 ? new[] { "Eager", "Idle" } : ["Idle", "Eager"])
-        foreach (var delay in new[] { 0, 25 })
-        foreach (var queue in new[] { 8, 32, 128 })
-        foreach (var loaded in new[] { false, true })
-            cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{allocation}-{drain}-d{delay}-q{queue}-{(loaded ? "loaded" : "alone")}",
-                allocation, drain, delay, queue, loaded, repeat));
-        // Independent scaling/cold-read cells complement the hot-reader interference matrix.
-        for (var repeat = 1; repeat <= options.Repeats; repeat++)
-        foreach (var workload in new[] { "sequential-read", "sequential-write", "random-read", "random-write", "mixed" })
-        foreach (var queue in new[] { 1, 32 })
-        foreach (var cache in new[] { "Off", "Eager" })
-            cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-q{queue}-{cache}", "Automatic", cache, 0, queue, false, repeat, false, workload));
+
+        AddInterferenceCases(cases, options.Repeats);
+        AddScalingCases(cases, options.Repeats);
+
         if (options.Suite == "full")
-            foreach (var focused in Performance(options with { Suite = "flush-interference" }))
-                cases.Add(focused with { Id = $"{cases.Count + 1:D4}-focused-{focused.Id}" });
+        {
+            AddFocusedCases(cases, options);
+        }
+
         return cases;
     }
+
+    private static void AddInterferenceCases(List<PerformanceCase> cases, int repeats)
+    {
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        {
+            // Alternate order between repeats instead of comparing two long,
+            // fixed-order policy runs.
+            var allocations = repeat % 2 == 1
+                ? new[] { "Automatic", "Fixed" }
+                : ["Fixed", "Automatic"];
+
+            var drainPolicies = repeat % 2 == 1
+                ? new[] { "Eager", "Idle" }
+                : ["Idle", "Eager"];
+
+            foreach (var allocation in allocations)
+            {
+                foreach (var drain in drainPolicies)
+                {
+                    foreach (var delayMs in new[] { 0, 25 })
+                    {
+                        foreach (var queueDepth in new[] { 8, 32, 128 })
+                        {
+                            foreach (var writer in new[] { false, true })
+                            {
+                                // "loaded" means the foreground reader runs alongside an
+                                // independent writer; "alone" is the matching control case.
+                                var id = $"{NextNumber(cases)}-r{repeat}-{allocation}-{drain}" +
+                                    $"-d{delayMs}-q{queueDepth}-{(writer ? "loaded" : "alone")}";
+
+                                cases.Add(new PerformanceCase(
+                                    id,
+                                    allocation,
+                                    drain,
+                                    delayMs,
+                                    queueDepth,
+                                    writer,
+                                    repeat));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static void AddScalingCases(List<PerformanceCase> cases, int repeats)
+    {
+        string[] workloads =
+        [
+            "sequential-read",
+            "sequential-write",
+            "random-read",
+            "random-write",
+            "mixed"
+        ];
+
+        // Independent scaling and cold-read cells complement the hot-reader
+        // interference matrix.
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        {
+            foreach (var workload in workloads)
+            {
+                foreach (var queueDepth in new[] { 1, 32 })
+                {
+                    foreach (var cacheMode in new[] { "Off", "Eager" })
+                    {
+                        var id = $"{NextNumber(cases)}-r{repeat}-{workload}" +
+                            $"-q{queueDepth}-{cacheMode}";
+
+                        cases.Add(new PerformanceCase(
+                            id,
+                            "Automatic",
+                            cacheMode,
+                            DelayMs: 0,
+                            queueDepth,
+                            Writer: false,
+                            repeat,
+                            ApplicationFlush: false,
+                            workload));
+                    }
+                }
+            }
+        }
+    }
+
+    private static void AddFlushInterferenceCases(List<PerformanceCase> cases, int repeats)
+    {
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        {
+            var allocations = repeat % 2 == 1
+                ? new[] { "Automatic", "Fixed" }
+                : ["Fixed", "Automatic"];
+
+            foreach (var allocation in allocations)
+            {
+                foreach (var applicationFlush in new[] { false, true })
+                {
+                    var id = $"{NextNumber(cases)}-r{repeat}-{allocation}" +
+                        $"-flush{applicationFlush}";
+
+                    cases.Add(new PerformanceCase(
+                        id,
+                        allocation,
+                        "Eager",
+                        DelayMs: 25,
+                        QueueDepth: 128,
+                        Writer: true,
+                        repeat,
+                        applicationFlush));
+                }
+            }
+        }
+    }
+
+    private static void AddFocusedCases(
+        List<PerformanceCase> cases,
+        VerificationOptions options)
+    {
+        var focusedCases = Performance(options with
+        {
+            Suite = "flush-interference"
+        });
+
+        foreach (var focusedCase in focusedCases)
+        {
+            cases.Add(focusedCase with
+            {
+                Id = $"{NextNumber(cases)}-focused-{focusedCase.Id}"
+            });
+        }
+    }
+
+    private static string NextNumber(IReadOnlyCollection<PerformanceCase> cases) =>
+        $"{cases.Count + 1:D4}";
+
+    /// <summary>
+    /// Rejects an unknown suite, unsafe resource/time bounds, and unusable DiskSpd
+    /// configuration before the runner captures state or opens the workload disk.
+    /// Quick correctness suites do not need DiskSpd, so its path is checked only for
+    /// suites that contain performance measurements.
+    /// </summary>
     public static void Validate(VerificationOptions options)
     {
-        if (!Suites.Contains(options.Suite)) throw new ArgumentException("Unknown verification suite.");
-        if (options.BudgetMiB is < 256 or > 8192 || options.Repeats is < 1 or > 10 ||
-            options.DurationSeconds is < 5 or > 60 || options.DeadlineMinutes is < 0 or > 1440)
-            throw new ArgumentException("Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, deadline 0 (unlimited) or 1..1440 minutes.");
-        if (options.Suite is "performance" or "full" or "flush-interference")
+        if (!Suites.Contains(options.Suite))
         {
-            if (string.IsNullOrWhiteSpace(options.DiskSpd))
-                throw new ArgumentException($"Suite '{options.Suite}' requires --diskspd <path-to-exe>.\nUse Microsoft DiskSpd ({DiskSpdDownload}, extracted amd64\\diskspd.exe) or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.\nExample: qcache developer verify Q: --suite {options.Suite} --diskspd \"C:\\Tools\\DiskSpd\\amd64\\diskspd.exe\"");
-            var path = Path.GetFullPath(options.DiskSpd);
-            if (Directory.Exists(path))
-                throw new ArgumentException($"--diskspd points to a directory, not an executable: {path}\nSelect Microsoft's amd64\\diskspd.exe or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.");
-            if (!File.Exists(path))
-                throw new FileNotFoundException($"DiskSpd executable was not found or is not accessible: {path}\nCheck the exact filename and quote paths containing spaces.\nSupported: Microsoft's amd64\\diskspd.exe ({DiskSpdDownload}) or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe.", path);
+            throw new ArgumentException("Unknown verification suite.");
+        }
+
+        // These are runner safety limits, not driver limits. They bound VM RAM use,
+        // repeated work, individual sample duration, and unattended run duration.
+        if (options.BudgetMiB is < 256 or > 8192 ||
+            options.Repeats is < 1 or > 10 ||
+            options.DurationSeconds is < 5 or > 60 ||
+            options.DeadlineMinutes is < 0 or > 1440)
+        {
+            throw new ArgumentException(
+                "Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, " +
+                "deadline 0 (unlimited) or 1..1440 minutes.");
+        }
+
+        if (options.Suite is not ("performance" or "full" or "flush-interference"))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.DiskSpd))
+        {
+            throw new ArgumentException(
+                $"Suite '{options.Suite}' requires --diskspd <path-to-exe>.\n" +
+                $"Use Microsoft DiskSpd ({DiskSpdDownload}, extracted amd64\\diskspd.exe) " +
+                "or CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.\n" +
+                $"Example: qcache developer verify Q: --suite {options.Suite} " +
+                "--diskspd \"C:\\Tools\\DiskSpd\\amd64\\diskspd.exe\"");
+        }
+
+        var path = Path.GetFullPath(options.DiskSpd);
+
+        if (Directory.Exists(path))
+        {
+            throw new ArgumentException(
+                $"--diskspd points to a directory, not an executable: {path}\n" +
+                "Select Microsoft's amd64\\diskspd.exe or CrystalDiskMark's " +
+                "CdmResource\\DiskSpd\\DiskSpd64.exe on x64 Windows.");
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException(
+                $"DiskSpd executable was not found or is not accessible: {path}\n" +
+                "Check the exact filename and quote paths containing spaces.\n" +
+                $"Supported: Microsoft's amd64\\diskspd.exe ({DiskSpdDownload}) or " +
+                "CrystalDiskMark's CdmResource\\DiskSpd\\DiskSpd64.exe.",
+                path);
         }
     }
 }

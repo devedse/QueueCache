@@ -1,66 +1,115 @@
 #Requires -Version 7
 [CmdletBinding()]
-param([ValidateSet('Debug','Release')][string]$Configuration='Release', [string]$CliPath)
+param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release', [string]$CliPath)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $candidates = @("src/QueueCache.Cli/bin/$Configuration/net10.0/win-x64/qcache.exe", "src/QueueCache.Cli/bin/$Configuration/net10.0/qcache.exe")
 $cli = $candidates | ForEach-Object { Get-Item (Join-Path $root $_) -ErrorAction SilentlyContinue } | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1 -ExpandProperty FullName
-if ($CliPath) { $cli = (Resolve-Path -LiteralPath $CliPath).Path }
-foreach ($arguments in @(@('--help'),@('apply','--help'),@('policy','--help'),@('policy','apply','--help'),@('policy','enable','--help'),@('policy','set','--help'),@('disk','list','--help'),@('disk','attach','--help'),@('test','--help'),@('benchmark','--help'),@('--version'))) {
+if ($CliPath)
+{
+    $cli = (Resolve-Path -LiteralPath $CliPath).Path
+}
+foreach ($arguments in @(@('--help'), @('apply', '--help'), @('policy', '--help'), @('policy', 'apply', '--help'), @('policy', 'enable', '--help'), @('policy', 'set', '--help'), @('disk', 'list', '--help'), @('disk', 'attach', '--help'), @('test', '--help'), @('benchmark', '--help'), @('--version')))
+{
     & $cli @arguments
-    if ($LASTEXITCODE) { throw "Help/version failed: $arguments" }
+    if ($LASTEXITCODE)
+    {
+        throw "Help/version failed: $arguments"
+    }
 }
 & $cli test --does-not-exist 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 2) { throw 'Invalid arguments must return 2 before device access.' }
+if ($LASTEXITCODE -ne 2)
+{
+    throw 'Invalid arguments must return 2 before device access.'
+}
 & $cli apply 'Q:' --budget-mib 0 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 1) { throw 'Invalid budget must fail before device access.' }
+if ($LASTEXITCODE -ne 1)
+{
+    throw 'Invalid budget must fail before device access.'
+}
 & $cli policy apply 'Q:' --budget-mib 131073 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 1) { throw 'Grouped invalid budget must fail before device access.' }
-foreach($name in @('pause','resume','remove')) {
+if ($LASTEXITCODE -ne 1)
+{
+    throw 'Grouped invalid budget must fail before device access.'
+}
+foreach ($name in @('pause', 'resume', 'remove'))
+{
     & $cli policy $name --help
-    if($LASTEXITCODE) { throw "Task help failed: $name" }
+    if ($LASTEXITCODE)
+    {
+        throw "Task help failed: $name"
+    }
     & $cli policy $name 'Q:\not-a-volume' 2>&1 | Out-Host
-    if($LASTEXITCODE -ne 2) { throw 'Invalid task volume must fail before disk access.' }
+    if ($LASTEXITCODE -ne 2)
+    {
+        throw 'Invalid task volume must fail before disk access.'
+    }
 }
 & $cli disk attach 'Q:\not-a-volume' 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 2) { throw 'Invalid attachment target must fail during parsing.' }
+if ($LASTEXITCODE -ne 2)
+{
+    throw 'Invalid attachment target must fail during parsing.'
+}
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer','verify'), @('developer','verify-status'), @('developer','verify-recover'), @('developer','test'), @('developer','write-tests'), @('developer','file-tests'), @('developer','driver'), @('developer','driver','delay'), @('developer','driver','fault'), @('developer','driver','inspect'))) {
+foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'inspect')))
+{
     & $cli @command --help
-    if ($LASTEXITCODE) { throw "Developer help failed: $command" }
+    if ($LASTEXITCODE)
+    {
+        throw "Developer help failed: $command"
+    }
 }
 foreach ($arguments in @(
-    @('developer','verify','Q:','--suite','not-a-suite'),
-    @('developer','verify','Q:','--detach'),
-    @('developer','write-tests','1','4294967296','invalid','unknown-mode'),
-    @('developer','write-tests','0','4294967296','invalid','write-disposable-region'),
-    @('developer','write-tests','1','4294967296','invalid','write-dirty-prefix','--prefix-bytes','65536'),
-    @('developer','write-tests','1','4294967296','invalid','verify-base-prefix','--prefix-bytes','1'),
-    @('developer','file-tests','Q','1','4294967296','invalid','verify-files','--run-id','invalid'),
-    @('developer','file-tests','Q','1','4294967296','invalid','test-coalescing','--size-mib','64'),
-    @('developer','file-tests','Q','0','4294967296','invalid','write-new-files'),
-    @('developer','test','-1','4294967296','invalid')
-)) {
+        @('developer', 'verify', 'Q:', '--suite', 'not-a-suite'),
+        @('developer', 'verify', 'Q:', '--detach'),
+        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'unknown-mode'),
+        @('developer', 'write-tests', '0', '4294967296', 'invalid', 'write-disposable-region'),
+        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'write-dirty-prefix', '--prefix-bytes', '65536'),
+        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'verify-base-prefix', '--prefix-bytes', '1'),
+        @('developer', 'file-tests', 'Q', '1', '4294967296', 'invalid', 'verify-files', '--run-id', 'invalid'),
+        @('developer', 'file-tests', 'Q', '1', '4294967296', 'invalid', 'test-coalescing', '--size-mib', '64'),
+        @('developer', 'file-tests', 'Q', '0', '4294967296', 'invalid', 'write-new-files'),
+        @('developer', 'test', '-1', '4294967296', 'invalid')
+    ))
+{
     & $cli @arguments 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 2) { throw "Developer invalid arguments must fail before disk access: $arguments" }
+    if ($LASTEXITCODE -ne 2)
+    {
+        throw "Developer invalid arguments must fail before disk access: $arguments"
+    }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
 $verificationHelp = & $cli developer verify --help | Out-String
-if ($LASTEXITCODE -ne 0 -or $verificationHelp -notmatch 'DiskSpd64.exe' -or $verificationHelp -notmatch 'Microsoft' -or $verificationHelp -notmatch 'flush-interference') {
+if ($LASTEXITCODE -ne 0 -or $verificationHelp -notmatch 'DiskSpd64.exe' -or $verificationHelp -notmatch 'Microsoft' -or $verificationHelp -notmatch 'flush-interference')
+{
     throw 'Verification help must describe suites and both DiskSpd variants.'
 }
 & $cli developer verify 'Q:' --suite quick --repeats 0 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 1) { throw 'Invalid runner settings must fail before device access.' }
-if ($verificationHelp -notmatch 'run.log') { throw 'Verification help must describe persistent logging.' }
+if ($LASTEXITCODE -ne 1)
+{
+    throw 'Invalid runner settings must fail before device access.'
+}
+if ($verificationHelp -notmatch 'run.log')
+{
+    throw 'Verification help must describe persistent logging.'
+}
 $testIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
-try {
+try
+{
     $testElevated = ([Security.Principal.WindowsPrincipal]::new($testIdentity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-} finally { $testIdentity.Dispose() }
-if (-not $testElevated) {
-    foreach ($command in @('verify', 'verify-recover')) {
+}
+finally
+{
+    $testIdentity.Dispose()
+}
+if (-not $testElevated)
+{
+    foreach ($command in @('verify', 'verify-recover'))
+    {
         # The guard must reject before even resolving this deliberately invalid target.
         $guardOutput = & $cli developer $command 'not-a-target' 2>&1 | Out-String
-        if ($LASTEXITCODE -ne 1 -or $guardOutput -notmatch 'Administrator access required' -or $guardOutput -notmatch 'Run as administrator') {
+        if ($LASTEXITCODE -ne 1 -or $guardOutput -notmatch 'Administrator access required' -or $guardOutput -notmatch 'Run as administrator')
+        {
             throw "Missing elevation guidance for $command"
         }
     }

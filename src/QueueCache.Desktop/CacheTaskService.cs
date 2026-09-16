@@ -1,6 +1,6 @@
+using System.Runtime.Versioning;
 using QueueCache.Management;
 using QueueCache.Operations;
-using System.Runtime.Versioning;
 
 namespace QueueCache.Desktop;
 
@@ -27,7 +27,10 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     {
         using var device = new CacheDevice(disk.Device);
         var state = device.GetWriteCacheState();
-        return state.SupportsPerformance ? state with { Performance = device.GetPerformance() } : state;
+        return state.SupportsPerformance ? state with
+        {
+            Performance = device.GetPerformance()
+        } : state;
     });
     public bool IsPersistent(DiskDescription disk) => SavedConfigurations.List().Any(p => p.Instance.Equals(disk.Instance, StringComparison.OrdinalIgnoreCase));
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>

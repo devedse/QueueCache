@@ -25,7 +25,8 @@ public static class DiskWorkloads
     public static Task<WorkloadReport> BenchmarkAsync(DiskTarget target, int sizeMiB = 256, int passes = 4,
         IProgress<string>? progress = null, CancellationToken cancellationToken = default)
     {
-        if (sizeMiB is < 16 or > 8192 || passes is < 1 or > 64) throw new ArgumentException("Size must be 16..8192 MiB; passes 1..64.");
+        if (sizeMiB is < 16 or > 8192 || passes is < 1 or > 64)
+            throw new ArgumentException("Size must be 16..8192 MiB; passes 1..64.");
         return Task.Run(() => Run(target, true, sizeMiB, passes, progress, cancellationToken), cancellationToken);
     }
 
@@ -36,14 +37,18 @@ public static class DiskWorkloads
         using var cache = new CacheDevice(target.Device, writable: true);
         var before = cache.GetWriteCacheState();
         ConfigurationManager.EnsureHealthy(before);
-        if (before.DeviceBytes != (ulong)target.Bytes) throw new IOException("Driver target mismatch.");
+        if (before.DeviceBytes != (ulong)target.Bytes)
+            throw new IOException("Driver target mismatch.");
         var length = (long)sizeMiB << 20;
-        if (new DriveInfo(target.Root).AvailableFreeSpace < length * 2 + (1L << 30)) throw new IOException("Insufficient free space (including 1 GiB headroom).");
+        if (new DriveInfo(target.Root).AvailableFreeSpace < length * 2 + (1L << 30))
+            throw new IOException("Insufficient free space (including 1 GiB headroom).");
         var id = Guid.NewGuid();
         var directory = Path.Combine(target.Root, "QueueCache-Test-" + id.ToString("N"));
-        if (Directory.Exists(directory)) throw new IOException("Test directory already exists.");
+        if (Directory.Exists(directory))
+            throw new IOException("Test directory already exists.");
         Directory.CreateDirectory(directory);
-        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException("Reparse test target rejected.");
+        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Reparse test target rejected.");
         var started = DateTimeOffset.UtcNow;
         var checks = new List<CheckResult>();
         long bytesWritten = 0;
@@ -66,15 +71,18 @@ public static class DiskWorkloads
                     {
                         token.ThrowIfCancellationRequested();
                         Pattern(block, offset, seed + (ulong)pass);
-                        data.Write(offset, block); bytesWritten += block.Length;
+                        data.Write(offset, block);
+                        bytesWritten += block.Length;
                     }
                     writeSeconds += timer.Elapsed.TotalSeconds;
                     // Verify before any explicit flush, bypassing the Windows file cache.
                     for (long offset = 0; offset < length; offset += block.Length)
                     {
                         token.ThrowIfCancellationRequested();
-                        Pattern(block, offset, seed + (ulong)pass); data.Read(offset, read);
-                        if (!block.AsSpan().SequenceEqual(read)) throw new IOException($"Live read mismatch at {offset}, pass {pass}.");
+                        Pattern(block, offset, seed + (ulong)pass);
+                        data.Read(offset, read);
+                        if (!block.AsSpan().SequenceEqual(read))
+                            throw new IOException($"Live read mismatch at {offset}, pass {pass}.");
                     }
                 }
                 checks.Add(new("write/overwrite/live-read", "PASS", "Every byte verified using unbuffered reads before explicit flush."));
@@ -95,23 +103,28 @@ public static class DiskWorkloads
                         data.Write(offset, small);
                         replacements[offset] = replacementSeed;
                         data.Read(offset, smallRead);
-                        if (!small.AsSpan().SequenceEqual(smallRead)) throw new IOException("Random overwrite/live read mismatch.");
+                        if (!small.AsSpan().SequenceEqual(smallRead))
+                            throw new IOException("Random overwrite/live read mismatch.");
                     }
                     checks.Add(new("random-overwrite/live-read", "PASS", "2048 unbuffered 4 KiB overwrites with repeated addresses and immediate byte verification."));
                 }
                 data.Flush();
             }
             progress?.Report("Waiting for explicit driver drain; cancellation cannot discard acknowledged data.");
-            var drain = Stopwatch.StartNew(); cache.Control(WriteCacheAction.Flush); drainSeconds = drain.Elapsed.TotalSeconds;
+            var drain = Stopwatch.StartNew();
+            cache.Control(WriteCacheAction.Flush);
+            drainSeconds = drain.Elapsed.TotalSeconds;
             using (var data = new AlignedFile(file, block.Length, create: false))
             {
                 for (long offset = 0; offset < length; offset += block.Length)
                 {
-                    Pattern(block, offset, seed + (ulong)passes - 1); data.Read(offset, read);
+                    Pattern(block, offset, seed + (ulong)passes - 1);
+                    data.Read(offset, read);
                     foreach (var replacement in replacements)
                         if (replacement.Key >= offset && replacement.Key < offset + block.Length)
                             Pattern(block.AsSpan((int)(replacement.Key - offset), 4096), replacement.Key, replacement.Value);
-                    if (!block.AsSpan().SequenceEqual(read)) throw new IOException("Post-drain reopen mismatch.");
+                    if (!block.AsSpan().SequenceEqual(read))
+                        throw new IOException("Post-drain reopen mismatch.");
                 }
             }
             checks.Add(new("flush/reopen", "PASS", "Explicit drain completed and all reopened bytes matched."));
@@ -121,8 +134,10 @@ public static class DiskWorkloads
                 File.Copy(file, copy, overwrite: false);
                 var renamed = Path.Combine(directory, "renamed.bin");
                 File.Move(copy, renamed, overwrite: false);
-                using var left = File.OpenRead(file); using var right = File.OpenRead(renamed);
-                if (!SHA256.HashData(left).AsSpan().SequenceEqual(SHA256.HashData(right))) throw new IOException("Copy/rename hash mismatch.");
+                using var left = File.OpenRead(file);
+                using var right = File.OpenRead(renamed);
+                if (!SHA256.HashData(left).AsSpan().SequenceEqual(SHA256.HashData(right)))
+                    throw new IOException("Copy/rename hash mismatch.");
                 checks.Add(new("copy/rename", "PASS", "SHA-256 matched; both newly created files retained."));
                 // Keep a portable verification record beside the retained files.
                 // No machine credentials or private repository context is recorded.
@@ -131,7 +146,9 @@ public static class DiskWorkloads
                     using var sourceHash = File.OpenRead(file);
                     System.Text.Json.JsonSerializer.Serialize(manifest, new
                     {
-                        Version = 1, RunId = id, Bytes = length,
+                        Version = 1,
+                        RunId = id,
+                        Bytes = length,
                         Files = new[] { "source.bin", "renamed.bin" },
                         Sha256 = Convert.ToHexString(SHA256.HashData(sourceHash))
                     });
@@ -144,7 +161,11 @@ public static class DiskWorkloads
                 using (var discard = new AlignedFile(trimFile, block.Length, create: true))
                 {
                     for (long offset = 0; offset < length; offset += block.Length)
-                    { token.ThrowIfCancellationRequested(); Pattern(block, offset, seed); discard.Write(offset, block); }
+                    {
+                        token.ThrowIfCancellationRequested();
+                        Pattern(block, offset, seed);
+                        discard.Write(offset, block);
+                    }
                     try
                     {
                         discard.Trim(block.Length, length - 2 * block.Length);
@@ -152,21 +173,31 @@ public static class DiskWorkloads
                         // then rewrite every byte to test reuse before a real drain.
                         foreach (var offset in new[] { 0L, length - block.Length })
                         {
-                            Pattern(block, offset, seed); discard.Read(offset, read);
-                            if (!block.AsSpan().SequenceEqual(read)) throw new IOException("TRIM modified an untrimmed guard.");
+                            Pattern(block, offset, seed);
+                            discard.Read(offset, read);
+                            if (!block.AsSpan().SequenceEqual(read))
+                                throw new IOException("TRIM modified an untrimmed guard.");
                         }
                         for (long offset = 0; offset < length; offset += block.Length)
-                        { token.ThrowIfCancellationRequested(); Pattern(block, offset, seed + 99); discard.Write(offset, block); }
+                        {
+                            token.ThrowIfCancellationRequested();
+                            Pattern(block, offset, seed + 99);
+                            discard.Write(offset, block);
+                        }
                         cache.Control(WriteCacheAction.Flush);
                         for (long offset = 0; offset < length; offset += block.Length)
                         {
-                            Pattern(block, offset, seed + 99); discard.Read(offset, read);
-                            if (!block.AsSpan().SequenceEqual(read)) throw new IOException("TRIM/rewrite integrity mismatch.");
+                            Pattern(block, offset, seed + 99);
+                            discard.Read(offset, read);
+                            if (!block.AsSpan().SequenceEqual(read))
+                                throw new IOException("TRIM/rewrite integrity mismatch.");
                         }
                         checks.Add(new("file-trim/guards/reuse", "PASS", "File-relative trim on the new probe only; untrimmed guards and rewritten contents verified."));
                     }
                     catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 326)
-                    { checks.Add(new("file-trim/guards/reuse", "SKIP", "Filesystem/storage does not support file-level TRIM.")); }
+                    {
+                        checks.Add(new("file-trim/guards/reuse", "SKIP", "Filesystem/storage does not support file-level TRIM."));
+                    }
                 }
                 File.Delete(trimFile);
                 checks.Add(new("delete-new-file", "PASS", "Only this run's discard-probe.bin was deleted; source and copy retained."));
@@ -174,7 +205,9 @@ public static class DiskWorkloads
                 checks.Add(new("TRIM-observed", trimAfter.TrimRequests > trimBefore.TrimRequests ? "PASS" : "SKIP",
                     $"Windows controls notification timing; discarded delta {trimAfter.DiscardedBytes - trimBefore.DiscardedBytes} bytes. This is not a complete range/race test."));
             }
-            var finalDrain = Stopwatch.StartNew(); cache.Control(WriteCacheAction.Flush); drainSeconds += finalDrain.Elapsed.TotalSeconds;
+            var finalDrain = Stopwatch.StartNew();
+            cache.Control(WriteCacheAction.Flush);
+            drainSeconds += finalDrain.Elapsed.TotalSeconds;
             var after = cache.GetWriteCacheState();
             ConfigurationManager.EnsureHealthy(after);
             if (after.Errors != before.Errors || after.Enabled != before.Enabled || after.UnsafeDefer != before.UnsafeDefer || after.BudgetBytes != before.BudgetBytes ||

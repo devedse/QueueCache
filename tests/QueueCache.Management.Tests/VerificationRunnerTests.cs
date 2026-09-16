@@ -11,10 +11,18 @@ internal static class VerificationRunnerTests
     }
     public static async Task RunAsync()
     {
-        void Check(bool value, string name) { if (!value) throw new Exception("Verification runner: " + name); }
+        void Check(bool value, string name)
+        {
+            if (!value)
+                throw new Exception("Verification runner: " + name);
+        }
         void Reject(Action action)
         {
-            try { action(); } catch (Exception e) when (e is ArgumentException or InvalidDataException or System.Xml.XmlException) { return; }
+            try
+            {
+                action();
+            }
+            catch (Exception e) when (e is ArgumentException or InvalidDataException or System.Xml.XmlException) { return; }
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
@@ -28,52 +36,127 @@ internal static class VerificationRunnerTests
         var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture");
         QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "FIXTURE", "ntfs");
         QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
-        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (2, 1L << 20, 199L << 30), "fixture", "NTFS"); throw new Exception("Disk-number mismatch accepted."); }
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (2, 1L << 20, 199L << 30), "fixture", "NTFS");
+            throw new Exception("Disk-number mismatch accepted.");
+        }
         catch (IOException) { }
-        try { QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 201UL << 30); throw new Exception("Disk-length mismatch accepted."); }
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 201UL << 30);
+            throw new Exception("Disk-length mismatch accepted.");
+        }
         catch (IOException) { }
-        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "replacement", "NTFS"); throw new Exception("PnP identity mismatch accepted."); }
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "replacement", "NTFS");
+            throw new Exception("PnP identity mismatch accepted.");
+        }
         catch (IOException) { }
-        try { QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 201L << 30), "fixture", "NTFS"); throw new Exception("Out-of-bounds extent accepted."); }
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 201L << 30), "fixture", "NTFS");
+            throw new Exception("Out-of-bounds extent accepted.");
+        }
         catch (IOException) { }
         if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISK_TARGET") is { Length: > 0 } nativeVolume)
         {
             var nativeTarget = await QueueCache.Operations.DiskTarget.InspectAsync(nativeVolume);
             nativeTarget.ValidateCurrent();
             // Exercise the real native enumeration/marshalling path without cache controls or disk writes.
-            try { (nativeTarget with { Instance = "QueueCache-nonexistent-test-device" }).ValidateCurrent(); throw new Exception("Native PnP mismatch accepted."); }
+            try
+            {
+                (nativeTarget with
+                {
+                    Instance = "QueueCache-nonexistent-test-device"
+                }).ValidateCurrent();
+                throw new Exception("Native PnP mismatch accepted.");
+            }
             catch (IOException) { }
-            try { (nativeTarget with { Number = int.MaxValue }).ValidateCurrent(); throw new Exception("Native disk-number mismatch accepted."); }
+            try
+            {
+                (nativeTarget with
+                {
+                    Number = int.MaxValue
+                }).ValidateCurrent();
+                throw new Exception("Native disk-number mismatch accepted.");
+            }
             catch (IOException) { }
             using var cancelledIdentity = new CancellationTokenSource();
             cancelledIdentity.Cancel();
-            try { nativeTarget.ValidateCurrent(cancelledIdentity.Token); throw new Exception("Native identity cancellation ignored."); }
+            try
+            {
+                nativeTarget.ValidateCurrent(cancelledIdentity.Token);
+                throw new Exception("Native identity cancellation ignored.");
+            }
             catch (OperationCanceledException) { }
             Console.WriteLine($"Native disk identity validated: {nativeTarget.Device} / {nativeTarget.Instance}");
         }
-        VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 0 });
-        VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1440 });
+        VerificationPlan.Validate(options with
+        {
+            Suite = "quick",
+            DeadlineMinutes = 0
+        });
+        VerificationPlan.Validate(options with
+        {
+            Suite = "quick",
+            DeadlineMinutes = 1440
+        });
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = -1 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", DeadlineMinutes = 1441 }));
         var plan = VerificationPlan.Performance(options);
         Check(plan.Count == 204 && plan.Select(c => c.Id).Distinct().Count() == plan.Count, "unique repeated-case identities");
-        var focused = VerificationPlan.Performance(options with { Suite = "flush-interference", Repeats = 2 });
+        Check(plan[75].Id == "0076-r2-Automatic-Idle-d0-q32-loaded",
+            "stable scenario ordering and readable case identity");
+        var focused = VerificationPlan.Performance(options with
+        {
+            Suite = "flush-interference",
+            Repeats = 2
+        });
         Check(focused.Count == 8 && focused.Count(c => c.ApplicationFlush) == 4, "focused eight-case contract");
-        Check(VerificationPlan.Performance(options with { Suite = "full" }).Count == 216, "full performance + focused scope");
+        Check(VerificationPlan.Performance(options with
+        {
+            Suite = "full"
+        }).Count == 216, "full performance + focused scope");
         Check(!RunStorage.Complete(["a", "b"], [new("a", "PASS", "", DateTimeOffset.UtcNow, 0)]), "incomplete rejected");
         Check(!RunStorage.Complete(["a"], [new("a", "FAIL", "", DateTimeOffset.UtcNow, 0)]), "failed rejected");
         Check(RunStorage.Complete(["a"], [new("a", "MEASURED", "", DateTimeOffset.UtcNow, 0)]), "measurement not correctness pass");
         Reject(() => VerificationPlan.Validate(options with { Suite = "typo" }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "quick", Repeats = 0 }));
-        try { VerificationPlan.Validate(options); throw new Exception("Missing tool was accepted."); }
+        try
+        {
+            VerificationPlan.Validate(options);
+            throw new Exception("Missing tool was accepted.");
+        }
         catch (ArgumentException ex) { Check(ex.Message.Contains("requires --diskspd") && ex.Message.Contains(VerificationPlan.DiskSpdDownload), "missing option guidance"); }
         var missingTool = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "diskspd.exe");
-        try { VerificationPlan.Validate(options with { DiskSpd = missingTool }); throw new Exception("Missing file was accepted."); }
+        try
+        {
+            VerificationPlan.Validate(options with
+            {
+                DiskSpd = missingTool
+            });
+            throw new Exception("Missing file was accepted.");
+        }
         catch (FileNotFoundException ex) { Check(ex.Message.Contains(missingTool), "missing executable prints resolved path"); }
-        try { VerificationPlan.Validate(options with { DiskSpd = Path.GetTempPath() }); throw new Exception("Directory was accepted."); }
+        try
+        {
+            VerificationPlan.Validate(options with
+            {
+                DiskSpd = Path.GetTempPath()
+            });
+            throw new Exception("Directory was accepted.");
+        }
         catch (ArgumentException ex) { Check(ex.Message.Contains("directory, not an executable"), "directory distinguished from file"); }
-        VerificationPlan.Validate(options with { Suite = "quick" });
-        VerificationPlan.Validate(options with { Suite = "policies" });
+        VerificationPlan.Validate(options with
+        {
+            Suite = "quick"
+        });
+        VerificationPlan.Validate(options with
+        {
+            Suite = "policies"
+        });
         var epoch = DateTimeOffset.UtcNow;
         TelemetryCoverage.Validate([epoch, epoch.AddSeconds(1), epoch.AddSeconds(2)], epoch, epoch.AddSeconds(2));
         Reject(() => TelemetryCoverage.Validate([epoch.AddSeconds(1), epoch.AddSeconds(2)], epoch, epoch.AddSeconds(2)));
@@ -81,27 +164,56 @@ internal static class VerificationRunnerTests
         Reject(() => TelemetryCoverage.Validate([epoch, epoch.AddSeconds(3)], epoch, epoch.AddSeconds(3)));
         Reject(() => TelemetryCoverage.Validate([epoch, epoch, epoch.AddSeconds(1)], epoch, epoch.AddSeconds(1)));
         var draining = new QueueCache.Management.WriteCacheState(8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        try { QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining); throw new Exception("Drain was accepted."); }
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining);
+            throw new Exception("Drain was accepted.");
+        }
         catch (QueueCache.Operations.CacheDrainingException) { }
-        try { QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining with { LastError = 1 }); throw new Exception("Fault was accepted."); }
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.EnsureHealthy(draining with
+            {
+                LastError = 1
+            });
+            throw new Exception("Fault was accepted.");
+        }
         catch (IOException ex) { Check(ex is not QueueCache.Operations.CacheDrainingException, "faults must never be retried as transient drains"); }
-        var healthy = draining with { Flags = 0 };
+        var healthy = draining with
+        {
+            Flags = 0
+        };
         var reads = 0;
         var settled = QueueCache.Operations.ConfigurationManager.WaitForHealthyState(
             () => ++reads < 3 ? draining : healthy, healthy);
         Check(settled == healthy && reads == 3, "post-apply transient draining is polled without replaying mutations");
         Check(QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => healthy, draining) == healthy,
             "initial draining may settle too, including disabled cache");
-        try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => draining, healthy, timeout: TimeSpan.Zero); throw new Exception("Permanent draining accepted."); }
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => draining, healthy, timeout: TimeSpan.Zero);
+            throw new Exception("Permanent draining accepted.");
+        }
         catch (TimeoutException) { }
         foreach (var invalid in new[] { healthy with { Flags = 2 }, healthy with { Flags = 4 }, healthy with { Flags = 16 },
             healthy with { LastError = 1 }, healthy with { Errors = 1 }, healthy with { Instance = 1 }, healthy with { DeviceBytes = 1 } })
         {
             var attempts = 0;
-            try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => { attempts++; return invalid; }, healthy); throw new Exception("Fault or identity change accepted."); }
+            try
+            {
+                QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => { attempts++; return invalid; }, healthy);
+                throw new Exception("Fault or identity change accepted.");
+            }
             catch (IOException) { Check(attempts == 1, "non-transient state fails immediately"); }
         }
-        try { QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => healthy, draining with { LastError = 1 }); throw new Exception("Initial fault hidden."); }
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.WaitForHealthyState(() => healthy, draining with
+            {
+                LastError = 1
+            });
+            throw new Exception("Initial fault hidden.");
+        }
         catch (IOException) { }
         // Minimal independent fixture matching Microsoft's XmlResultParser structure, not text columns.
         const string xml = """
@@ -125,13 +237,13 @@ internal static class VerificationRunnerTests
         if (Environment.GetEnvironmentVariable("QCACHE_TEST_COMPATIBILITY_RESULTS") is { Length: > 0 } evidence)
         {
             foreach (var variant in new[] { "cdm", "microsoft" })
-            foreach (var workload in new[] { "read", "write", "mixed" })
-            {
-                var observed = DiskSpdParser.Parse(File.ReadAllText(Path.Combine(evidence, $"{variant}-{workload}-xml-stdout.txt")));
-                Check(observed.Operations > 0, "VM XML fixture: " + variant + " " + workload);
-                Check(workload == "write" ? observed.WriteP99Milliseconds is not null : observed.ReadP99Milliseconds is not null,
-                    "VM latency fixture: " + variant + " " + workload);
-            }
+                foreach (var workload in new[] { "read", "write", "mixed" })
+                {
+                    var observed = DiskSpdParser.Parse(File.ReadAllText(Path.Combine(evidence, $"{variant}-{workload}-xml-stdout.txt")));
+                    Check(observed.Operations > 0, "VM XML fixture: " + variant + " " + workload);
+                    Check(workload == "write" ? observed.WriteP99Milliseconds is not null : observed.ReadP99Milliseconds is not null,
+                        "VM latency fixture: " + variant + " " + workload);
+                }
             Console.WriteLine("All six VM DiskSpd compatibility outputs parsed successfully.");
         }
         Check(score.Operations == 20 && score.Iops == 2 && score.ReadP99Milliseconds == .123 && score.WriteP99Milliseconds is null, "XML totals and latency units");
@@ -146,20 +258,41 @@ internal static class VerificationRunnerTests
         {
             var readyPath = store.PathFor("readiness.json");
             var alive = new TaskCompletionSource();
-            try { await TelemetryCoverage.WaitReadyAsync(readyPath, Task.CompletedTask, TimeSpan.FromSeconds(1), CancellationToken.None); throw new Exception("Early observer exit accepted."); }
+            try
+            {
+                await TelemetryCoverage.WaitReadyAsync(readyPath, Task.CompletedTask, TimeSpan.FromSeconds(1), CancellationToken.None);
+                throw new Exception("Early observer exit accepted.");
+            }
             catch (IOException) { }
-            try { await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.Zero, CancellationToken.None); throw new Exception("Readiness timeout ignored."); }
+            try
+            {
+                await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.Zero, CancellationToken.None);
+                throw new Exception("Readiness timeout ignored.");
+            }
             catch (TimeoutException) { }
             using (var cancelledReady = new CancellationTokenSource())
             {
                 cancelledReady.Cancel();
-                try { await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.FromSeconds(1), cancelledReady.Token); throw new Exception("Readiness cancellation ignored."); }
+                try
+                {
+                    await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.FromSeconds(1), cancelledReady.Token);
+                    throw new Exception("Readiness cancellation ignored.");
+                }
                 catch (OperationCanceledException) { }
             }
-            RunStorage.AtomicJson(readyPath, new { Ready = true });
+            RunStorage.AtomicJson(readyPath, new
+            {
+                Ready = true
+            });
             await TelemetryCoverage.WaitReadyAsync(readyPath, alive.Task, TimeSpan.FromSeconds(1), CancellationToken.None);
-            store.Write("state.json", new { Status = "RUNNING" });
-            store.Write("state.json", new { Status = "COMPLETED" });
+            store.Write("state.json", new
+            {
+                Status = "RUNNING"
+            });
+            store.Write("state.json", new
+            {
+                Status = "COMPLETED"
+            });
             Check(File.ReadAllText(store.PathFor("state.json")).Contains("COMPLETED"), "atomic replace");
             Reject(() => store.PathFor("../escape"));
             store.Add(new("one", "PASS", "", DateTimeOffset.UtcNow, 1));
@@ -192,12 +325,19 @@ internal static class VerificationRunnerTests
                 var progress = new InlineProgress(message =>
                 {
                     messages.Add(message);
-                    if (mode == "cancel" && message.EndsWith("Starting file-integrity")) cancellation.CancelAfter(300);
+                    if (mode == "cancel" && message.EndsWith("Starting file-integrity"))
+                        cancellation.CancelAfter(300);
                 });
                 var exit = await runner.RunAsync(new("Q:", Output: runParent), progress, cancellation.Token);
                 var directory = Directory.GetDirectories(runParent).Single();
                 var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                var expectedStatus = mode switch { "success" => "COMPLETED", "capture-failure" or "check-failure" or "identity-failure" => "INCOMPLETE", "restore-failure" or "observer-failure" => "RESTORATION_FAILED", _ => "CANCELLED" };
+                var expectedStatus = mode switch
+                {
+                    "success" => "COMPLETED",
+                    "capture-failure" or "check-failure" or "identity-failure" => "INCOMPLETE",
+                    "restore-failure" or "observer-failure" => "RESTORATION_FAILED",
+                    _ => "CANCELLED"
+                };
                 Check(state.RootElement.GetProperty("Status").GetString() == expectedStatus, "coordinator " + mode);
                 Check((exit == 0) == (mode == "success") && File.Exists(Path.Combine(directory, "FINISHED.txt")), "exit/marker " + mode);
                 Check(File.Exists(Path.Combine(directory, "restored.json")) == (mode is not ("restore-failure" or "capture-failure" or "observer-failure")), "independent restoration " + mode);
@@ -235,8 +375,14 @@ internal static class VerificationRunnerTests
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(path))!;
         if (mode == "identity-failure" && job.Operation == "files")
         {
-            RunStorage.AtomicJson(path, job with { Volume = "R:" });
-            try { return await VerificationWorker.ExecuteAsync(path); }
+            RunStorage.AtomicJson(path, job with
+            {
+                Volume = "R:"
+            });
+            try
+            {
+                return await VerificationWorker.ExecuteAsync(path);
+            }
             catch (IOException ex) { Console.Error.WriteLine(ex); return 1; }
         }
         if (job.Operation == "telemetry")
@@ -246,18 +392,30 @@ internal static class VerificationRunnerTests
                 Console.Error.WriteLine("fixture failure detail: target discovery timed out before telemetry readiness.");
                 return 1;
             }
-            RunStorage.AtomicJson(job.Reply, new { Fake = true });
-            if (job.ReadyFile is not null) RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
-            while (!File.Exists(job.StopFile)) await Task.Delay(20);
+            RunStorage.AtomicJson(job.Reply, new
+            {
+                Fake = true
+            });
+            if (job.ReadyFile is not null)
+                RunStorage.AtomicJson(job.ReadyFile, new
+                {
+                    Ready = true
+                });
+            while (!File.Exists(job.StopFile))
+                await Task.Delay(20);
             return 0;
         }
-        if (mode == "cancel" && job.Operation == "files") await Task.Delay(Timeout.Infinite);
+        if (mode == "cancel" && job.Operation == "files")
+            await Task.Delay(Timeout.Infinite);
         if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore" || mode == "capture-failure" && job.Operation == "capture")
         {
             Console.Error.WriteLine("fixture failure detail: Access is denied.");
             return 1;
         }
-        object reply = new { Fake = true };
+        object reply = new
+        {
+            Fake = true
+        };
         if (job.Operation == "capture")
             reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only"),
                 new QueueCache.Management.WriteCacheState(0, 0, 50UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),

@@ -68,8 +68,10 @@ internal static class VerificationCommands
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         command.Arguments.Add(volume);
-        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline }) command.Options.Add(option);
-        command.SetAction((p, token) => {
+        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline })
+            command.Options.Add(option);
+        command.SetAction((p, token) =>
+        {
             RequireAdministrator();
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline)),
@@ -80,14 +82,16 @@ internal static class VerificationCommands
     public static Command CreateRecovery()
     {
         var recover = new Command("verify-recover", "Requires Run as administrator. Retry restoration after ensuring owned processes have stopped. Progress and errors are saved to run.log in the new recovery subfolder.");
-        var directory = new Argument<string>("run-directory"); recover.Arguments.Add(directory);
+        var directory = new Argument<string>("run-directory");
+        recover.Arguments.Add(directory);
         recover.SetAction((p, token) => { RequireAdministrator(); return Runner().RecoverAsync(p.GetValue(directory)!, token, new ConsoleProgress()); });
         return recover;
     }
     public static Command CreateStatus()
     {
         var command = new Command("verify-status", "Print the status of a run without querying or changing the driver.");
-        var directory = new Argument<string>("run-directory"); command.Arguments.Add(directory);
+        var directory = new Argument<string>("run-directory");
+        command.Arguments.Add(directory);
         command.SetAction(p => { Console.WriteLine(File.ReadAllText(Path.Combine(Path.GetFullPath(p.GetValue(directory)!), "status.json"))); return 0; });
         return command;
     }

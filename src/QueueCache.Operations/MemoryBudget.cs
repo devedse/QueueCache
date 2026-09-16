@@ -11,7 +11,8 @@ public static class MemoryBudget
     public static ulong AvailableForCache()
     {
         var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
-        if (!GlobalMemoryStatusEx(ref status)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!GlobalMemoryStatusEx(ref status))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
         // Available physical memory is a point-in-time estimate, not a reservation.
         // Kernel allocation and the shared physical-RAM cap remain authoritative.
         return status.AvailablePhysical > (1UL << 30) ? status.AvailablePhysical - (1UL << 30) : 0;

@@ -10,7 +10,8 @@
 #include "writecache.h"
 #endif
 
-struct LAB_EXTENSION {
+struct LAB_EXTENSION
+{
     PDEVICE_OBJECT Lower;
     IO_REMOVE_LOCK RemoveLock;
     volatile LONG64 ReadBytes;
@@ -31,9 +32,9 @@ struct LAB_EXTENSION {
     LONG PendingControls;
     KEVENT DirectIdle;
     ULONGLONG NextSequence;
-    ULONGLONG ReadServiceEpoch; // Normal worker admissions, not drain wakeups.
+    ULONGLONG ReadServiceEpoch;                // Normal worker admissions, not drain wakeups.
     QcReadSelection<LIST_ENTRY> ReadSelection; // QueueLock; see readselection.h.
-    bool ReadSelectionAllowsFlush; // Reset cursors when the eligibility changes.
+    bool ReadSelectionAllowsFlush;             // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
 #endif
 };
@@ -47,37 +48,46 @@ DRIVER_UNLOAD LabUnload;
 IO_COMPLETION_ROUTINE LabCompletion;
 IO_COMPLETION_ROUTINE LabStartCompletion;
 
-static NTSTATUS Complete(PIRP irp, NTSTATUS status, ULONG_PTR bytes = 0) {
+static NTSTATUS Complete(PIRP irp, NTSTATUS status, ULONG_PTR bytes = 0)
+{
     irp->IoStatus.Status = status;
     irp->IoStatus.Information = bytes;
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     return status;
 }
 
-NTSTATUS LabCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context) {
+NTSTATUS LabCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
     auto ext = static_cast<LAB_EXTENSION*>(context);
-    if (irp->PendingReturned) IoMarkIrpPending(irp);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
 }
 
-NTSTATUS LabStartCompletion(PDEVICE_OBJECT, PIRP, PVOID context) {
+NTSTATUS LabStartCompletion(PDEVICE_OBJECT, PIRP, PVOID context)
+{
     KeSetEvent(static_cast<PKEVENT>(context), IO_NO_INCREMENT, FALSE);
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
-static NTSTATUS Forward(LAB_EXTENSION* ext, PIRP irp) {
+static NTSTATUS Forward(LAB_EXTENSION* ext, PIRP irp)
+{
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, LabCompletion, ext, TRUE, TRUE, TRUE);
     return IoCallDriver(ext->Lower, irp);
 }
 
 #if QCACHE_SERIALIZED_LAB
-static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context) {
+static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
     auto ext = static_cast<LAB_EXTENSION*>(context);
-    if (irp->PendingReturned) IoMarkIrpPending(irp);
-    KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
-    if (--ext->DirectCount == 0) KeSetEvent(&ext->DirectIdle, IO_NO_INCREMENT, FALSE);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    KIRQL irql;
+    KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (--ext->DirectCount == 0)
+        KeSetEvent(&ext->DirectIdle, IO_NO_INCREMENT, FALSE);
     KeReleaseSpinLock(&ext->QueueLock, irql);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
@@ -87,16 +97,23 @@ static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context) {
 #if QCACHE_SERIALIZED_LAB
 // Worker foundation: original requests only, NO early acknowledgements or cached data.
 // CSQ owns cancellation while queued; the lower driver owns it after dequeue/forward.
-static LAB_EXTENSION* QueueOwner(PIO_CSQ csq) { return CONTAINING_RECORD(csq, LAB_EXTENSION, Csq); }
-static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert) {
+static LAB_EXTENSION* QueueOwner(PIO_CSQ csq)
+{
+    return CONTAINING_RECORD(csq, LAB_EXTENSION, Csq);
+}
+static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert)
+{
     auto ext = QueueOwner(csq);
-    if (ext->Closing) return STATUS_DELETE_PENDING;
+    if (ext->Closing)
+        return STATUS_DELETE_PENDING;
     ext->Routing = TRUE;
-    if (reinsert) {
+    if (reinsert)
+    {
         InsertHeadList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
         ext->ReadSelection.Reset(ext->Pending.Flink);
     }
-    else {
+    else
+    {
         irp->Tail.Overlay.DriverContext[2] = nullptr; // Last unsuccessful bypass epoch.
         irp->Tail.Overlay.DriverContext[0] = reinterpret_cast<PVOID>(++ext->NextSequence);
         irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(KeQueryPerformanceCounter(nullptr).QuadPart);
@@ -107,91 +124,128 @@ static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert) {
     ++ext->QueueDepth;
     return STATUS_SUCCESS;
 }
-static void QueueRemove(PIO_CSQ csq, PIRP irp) {
-    auto ext = QueueOwner(csq); --ext->QueueDepth;
+static void QueueRemove(PIO_CSQ csq, PIRP irp)
+{
+    auto ext = QueueOwner(csq);
+    --ext->QueueDepth;
     auto now = static_cast<ULONGLONG>(KeQueryPerformanceCounter(nullptr).QuadPart);
     auto elapsed = now - reinterpret_cast<ULONGLONG>(irp->Tail.Overlay.DriverContext[1]);
-    ext->QueueWaitTicks += elapsed; ext->MaxQueueWaitTicks = max(ext->MaxQueueWaitTicks, elapsed);
+    ext->QueueWaitTicks += elapsed;
+    ext->MaxQueueWaitTicks = max(ext->MaxQueueWaitTicks, elapsed);
     irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(now);
     ext->ReadSelection.Removing(&irp->Tail.Overlay.ListEntry, irp->Tail.Overlay.ListEntry.Flink);
     RemoveEntryList(&irp->Tail.Overlay.ListEntry);
     // Cancellation can remove a fence/dependency without a new insertion.
     KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
 }
-struct READ_SELECTION { PIRP BlockedRequest; ULONGLONG AfterSequence; bool More; bool AllowApplicationFlush; };
+struct READ_SELECTION
+{
+    PIRP BlockedRequest;
+    ULONGLONG AfterSequence;
+    bool More;
+    bool AllowApplicationFlush;
+};
 #if QCACHE_WRITE_LAB
-static void Increment(ULONGLONG* value) {
+static void Increment(ULONGLONG* value)
+{
     InterlockedIncrement64(reinterpret_cast<volatile LONG64*>(value));
 }
 #endif
-static void RecordSelection(QC_PERFORMANCE* performance, PIRP request, ULONG scanned) {
+static void RecordSelection(QC_PERFORMANCE* performance, PIRP request, ULONG scanned)
+{
     auto stack = IoGetCurrentIrpStackLocation(request);
     performance->LastSelectionMajor = stack->MajorFunction;
-    performance->LastSelectionCode = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL ||
-        stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL ? stack->Parameters.DeviceIoControl.IoControlCode : 0;
+    performance->LastSelectionCode =
+        stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL
+            ? stack->Parameters.DeviceIoControl.IoControlCode
+            : 0;
     performance->LastSelectionSequence = reinterpret_cast<ULONGLONG>(request->Tail.Overlay.DriverContext[0]);
     performance->LastSelectionScanned = scanned;
-    if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) {
+    if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE)
+    {
         performance->LastSelectionOffset = stack->Parameters.Read.ByteOffset.QuadPart;
         performance->LastSelectionLength = stack->Parameters.Read.Length;
-    } else performance->LastSelectionOffset = performance->LastSelectionLength = 0;
+    }
+    else
+        performance->LastSelectionOffset = performance->LastSelectionLength = 0;
 }
-static bool Overlaps(PIRP read, PIRP write) {
-    auto r = IoGetCurrentIrpStackLocation(read); auto w = IoGetCurrentIrpStackLocation(write);
-    auto a = r->Parameters.Read.ByteOffset.QuadPart; auto b = w->Parameters.Write.ByteOffset.QuadPart;
-    if (a < 0 || b < 0) return true;
+static bool Overlaps(PIRP read, PIRP write)
+{
+    auto r = IoGetCurrentIrpStackLocation(read);
+    auto w = IoGetCurrentIrpStackLocation(write);
+    auto a = r->Parameters.Read.ByteOffset.QuadPart;
+    auto b = w->Parameters.Write.ByteOffset.QuadPart;
+    if (a < 0 || b < 0)
+        return true;
     return a <= b ? static_cast<ULONGLONG>(b - a) < r->Parameters.Read.Length
                   : static_cast<ULONGLONG>(a - b) < w->Parameters.Write.Length;
 }
 // Adapter keeps WDM classification/diagnostics separate from cursor ownership.
-struct ReadQueueView {
+struct ReadQueueView
+{
     LAB_EXTENSION* Ext;
     READ_SELECTION* Selection;
     ULONG Scanned;
-    static PIRP Request(PLIST_ENTRY node) { return CONTAINING_RECORD(node, IRP, Tail.Overlay.ListEntry); }
-    PLIST_ENTRY Next(PLIST_ENTRY node) { return node->Flink; }
-    void Count(ULONGLONG* value) {
+    static PIRP Request(PLIST_ENTRY node)
+    {
+        return CONTAINING_RECORD(node, IRP, Tail.Overlay.ListEntry);
+    }
+    PLIST_ENTRY Next(PLIST_ENTRY node)
+    {
+        return node->Flink;
+    }
+    void Count(ULONGLONG* value)
+    {
 #if QCACHE_WRITE_LAB
-        if (Ext->Cache.Timing) Increment(value);
+        if (Ext->Cache.Timing)
+            Increment(value);
 #else
         UNREFERENCED_PARAMETER(value);
 #endif
     }
-    bool Fence(PLIST_ENTRY node) {
+    bool Fence(PLIST_ENTRY node)
+    {
         auto request = Request(node);
         auto stack = IoGetCurrentIrpStackLocation(request);
         ++Scanned;
 #if QCACHE_WRITE_LAB
-        if (Ext->Cache.Timing) RecordSelection(&Ext->Cache.Performance, request, Scanned);
+        if (Ext->Cache.Timing)
+            RecordSelection(&Ext->Cache.Performance, request, Scanned);
 #endif
-        if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE ||
-            QcObservationRequest(stack)) return false;
+        if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE || QcObservationRequest(stack))
+            return false;
         // Do not dequeue/acknowledge the flush. A Fast application flush does not
         // alter cached bytes; independent reads may cross it, but validation must
         // still visit every older write on BOTH sides of it. Other fences remain.
-        if (stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS && Selection->AllowApplicationFlush) return false;
+        if (stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS && Selection->AllowApplicationFlush)
+            return false;
 #if QCACHE_WRITE_LAB
         Count(&Ext->Cache.Performance.SelectionRejectFence);
 #endif
         return true;
     }
-    bool Eligible(PLIST_ENTRY node) {
+    bool Eligible(PLIST_ENTRY node)
+    {
         auto request = Request(node);
         auto stack = IoGetCurrentIrpStackLocation(request);
-        if (stack->MajorFunction != IRP_MJ_READ) {
+        if (stack->MajorFunction != IRP_MJ_READ)
+        {
 #if QCACHE_WRITE_LAB
             Count(&Ext->Cache.Performance.SelectionRejectNotRead);
 #endif
             return false;
         }
-        if (reinterpret_cast<ULONGLONG>(request->Tail.Overlay.DriverContext[2]) == Ext->ReadServiceEpoch) return false;
-        if (stack->Parameters.Read.Length > 1024 * 1024) {
+        if (reinterpret_cast<ULONGLONG>(request->Tail.Overlay.DriverContext[2]) == Ext->ReadServiceEpoch)
+            return false;
+        if (stack->Parameters.Read.Length > 1024 * 1024)
+        {
 #if QCACHE_WRITE_LAB
             Count(&Ext->Cache.Performance.SelectionRejectMaxSize);
 #endif
             return false;
         }
-        if (Selection->BlockedRequest && Overlaps(request, Selection->BlockedRequest)) {
+        if (Selection->BlockedRequest && Overlaps(request, Selection->BlockedRequest))
+        {
 #if QCACHE_WRITE_LAB
             Count(&Ext->Cache.Performance.SelectionRejectActiveOverlap);
 #endif
@@ -199,81 +253,118 @@ struct ReadQueueView {
         }
         return true;
     }
-    bool Conflict(PLIST_ENTRY candidate, PLIST_ENTRY older) {
+    bool Conflict(PLIST_ENTRY candidate, PLIST_ENTRY older)
+    {
         auto request = Request(older);
         if (IoGetCurrentIrpStackLocation(request)->MajorFunction != IRP_MJ_WRITE ||
-            !Overlaps(Request(candidate), request)) return false;
+            !Overlaps(Request(candidate), request))
+            return false;
 #if QCACHE_WRITE_LAB
         Count(&Ext->Cache.Performance.SelectionRejectOlderWriteOverlap);
 #endif
         return true;
     }
 };
-static PIRP QueuePeek(PIO_CSQ csq, PIRP irp, PVOID context) {
-    auto ext = QueueOwner(csq); auto head = &ext->Pending;
+static PIRP QueuePeek(PIO_CSQ csq, PIRP irp, PVOID context)
+{
+    auto ext = QueueOwner(csq);
+    auto head = &ext->Pending;
     auto next = irp ? irp->Tail.Overlay.ListEntry.Flink : head->Flink;
-    if (!context) return next == head ? nullptr : CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
+    if (!context)
+        return next == head ? nullptr : CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry);
     auto selection = static_cast<READ_SELECTION*>(context);
     ReadQueueView view{ext, selection, 0};
     auto found = ext->ReadSelection.Step(head, view, 64, selection->More);
 #if QCACHE_WRITE_LAB
-    if (selection->More && ext->Cache.Timing) Increment(&ext->Cache.Performance.SelectionScanLimit);
+    if (selection->More && ext->Cache.Timing)
+        Increment(&ext->Cache.Performance.SelectionScanLimit);
 #endif
     return found ? ReadQueueView::Request(found) : nullptr;
 }
-static void QueueAcquire(PIO_CSQ csq, PKIRQL irql) { KeAcquireSpinLock(&QueueOwner(csq)->QueueLock, irql); }
-static void QueueRelease(PIO_CSQ csq, KIRQL irql) { KeReleaseSpinLock(&QueueOwner(csq)->QueueLock, irql); }
-static void QueueCancel(PIO_CSQ csq, PIRP irp) {
+static void QueueAcquire(PIO_CSQ csq, PKIRQL irql)
+{
+    KeAcquireSpinLock(&QueueOwner(csq)->QueueLock, irql);
+}
+static void QueueRelease(PIO_CSQ csq, KIRQL irql)
+{
+    KeReleaseSpinLock(&QueueOwner(csq)->QueueLock, irql);
+}
+static void QueueCancel(PIO_CSQ csq, PIRP irp)
+{
     IoReleaseRemoveLock(&QueueOwner(csq)->RemoveLock, irp);
     Complete(irp, STATUS_CANCELLED);
 }
 #if QCACHE_WRITE_LAB
-static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
+static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
+{
     auto ext = static_cast<LAB_EXTENSION*>(context);
-    QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
+    QC_STATE state;
+    QcCacheSnapshot(&ext->Cache, &state);
     const bool allowFlush = QcReadMayPassApplicationFlush(state.Flags);
-    KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
-    if (ext->ReadSelectionAllowsFlush != allowFlush) {
+    KIRQL irql;
+    KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (ext->ReadSelectionAllowsFlush != allowFlush)
+    {
         ext->ReadSelection.Reset(ext->Pending.Flink);
         ext->ReadSelectionAllowsFlush = allowFlush;
     }
     const bool diagnostics = ext->Cache.Timing != 0;
-    if (diagnostics) {
+    if (diagnostics)
+    {
         Increment(&ext->Cache.Performance.ServiceReadCalls);
         ext->Cache.Performance.LastAfterSequence = 0;
-        if (blockedRequest) {
+        if (blockedRequest)
+        {
             auto stack = IoGetCurrentIrpStackLocation(blockedRequest);
             ext->Cache.Performance.LastBlockedMajor = stack->MajorFunction;
             ext->Cache.Performance.LastBlockedOffset = stack->Parameters.Write.ByteOffset.QuadPart;
             ext->Cache.Performance.LastBlockedLength = stack->Parameters.Write.Length;
-        } else ext->Cache.Performance.LastBlockedMajor = ext->Cache.Performance.LastBlockedOffset =
-            ext->Cache.Performance.LastBlockedLength = 0;
+        }
+        else
+            ext->Cache.Performance.LastBlockedMajor = ext->Cache.Performance.LastBlockedOffset =
+                ext->Cache.Performance.LastBlockedLength = 0;
     }
     KeClearEvent(&ext->WorkAvailable);
     const bool closing = ext->Closing != FALSE;
     KeReleaseSpinLock(&ext->QueueLock, irql);
-    if (closing) return false;
+    if (closing)
+        return false;
     // Policy mutations are executed by this same foreground worker, never during
     // this callback. Queued policy changes remain fences. SnapshotLock is released
     // before QueueLock; no cache mutex acquisition inside a CSQ callback.
     READ_SELECTION selection{blockedRequest, 0, false, allowFlush};
     bool completed = false;
     ULONG used = 0;
-    for (ULONG n = 0; n < 8; ++n) {
+    for (ULONG n = 0; n < 8; ++n)
+    {
         auto read = IoCsqRemoveNextIrp(&ext->Csq, &selection);
-        if (!read) { if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadNoCandidate); break; }
+        if (!read)
+        {
+            if (diagnostics)
+                Increment(&ext->Cache.Performance.ServiceReadNoCandidate);
+            break;
+        }
         ++used;
-        if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadAttempts);
+        if (diagnostics)
+            Increment(&ext->Cache.Performance.ServiceReadAttempts);
         selection.AfterSequence = reinterpret_cast<ULONGLONG>(read->Tail.Overlay.DriverContext[0]);
-        if (diagnostics) InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&ext->Cache.Performance.LastAfterSequence), selection.AfterSequence);
+        if (diagnostics)
+            InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&ext->Cache.Performance.LastAfterSequence),
+                                  selection.AfterSequence);
         NTSTATUS status;
-        if (QcCacheTryReadHit(&ext->Cache, read, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &status)) {
+        if (QcCacheTryReadHit(&ext->Cache, read, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &status))
+        {
             auto bytes = NT_SUCCESS(status) ? read->IoStatus.Information : 0;
-            IoReleaseRemoveLock(&ext->RemoveLock, read); Complete(read, status, bytes);
-            if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadCompletions);
+            IoReleaseRemoveLock(&ext->RemoveLock, read);
+            Complete(read, status, bytes);
+            if (diagnostics)
+                Increment(&ext->Cache.Performance.ServiceReadCompletions);
             completed = true;
-        } else {
-            if (diagnostics) Increment(&ext->Cache.Performance.ServiceReadMisses);
+        }
+        else
+        {
+            if (diagnostics)
+                Increment(&ext->Cache.Performance.ServiceReadMisses);
             // The sole foreground owner is still blocked. Draining and cache hits
             // cannot populate a missing block; retry after normal admission advances.
             // DriverContext[3] belongs to CSQ and must never be used here.
@@ -284,26 +375,34 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest) {
             // here; the normal worker may later execute this independent miss.
             // CSQ may cancel/free it inline; never touch it after successful insert.
             status = IoCsqInsertIrpEx(&ext->Csq, read, nullptr, reinterpret_cast<PVOID>(1));
-            if (!NT_SUCCESS(status)) {
-                IoReleaseRemoveLock(&ext->RemoveLock, read); Complete(read, status);
+            if (!NT_SUCCESS(status))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, read);
+                Complete(read, status);
             }
         }
     }
-    if (diagnostics && used == 8) Increment(&ext->Cache.Performance.ServiceReadBudgetExhausted);
+    if (diagnostics && used == 8)
+        Increment(&ext->Cache.Performance.ServiceReadBudgetExhausted);
     // A chunk may finish without selecting an IRP. Let the owner recheck its
     // completion/capacity, then continue scanning without a 100 ms sleep. A
     // stable fence, exhausted queue or known miss returns false (no busy retry).
     return completed || selection.More;
 }
 #endif
-static void RequestWorker(PVOID context) {
+static void RequestWorker(PVOID context)
+{
     auto ext = static_cast<LAB_EXTENSION*>(context);
-    for (;;) {
+    for (;;)
+    {
         auto irp = IoCsqRemoveNextIrp(&ext->Csq, nullptr);
-        if (irp) {
-            KIRQL activeIrql; KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
+        if (irp)
+        {
+            KIRQL activeIrql;
+            KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
             ext->ActiveMajor = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
-            if (++ext->ReadServiceEpoch == 0) ++ext->ReadServiceEpoch;
+            if (++ext->ReadServiceEpoch == 0)
+                ++ext->ReadServiceEpoch;
             ext->ReadSelection.Reset(ext->Pending.Flink);
             ext->ActiveSince = KeQueryPerformanceCounter(nullptr).QuadPart;
             KeReleaseSpinLock(&ext->QueueLock, activeIrql);
@@ -337,39 +436,51 @@ static void RequestWorker(PVOID context) {
         KeAcquireSpinLock(&ext->QueueLock, &irql);
         const bool empty = IsListEmpty(&ext->Pending) != FALSE;
         const bool stop = ext->Closing && empty;
-        if (empty) {
+        if (empty)
+        {
 #if QCACHE_WRITE_LAB
-            QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
-            if (!ext->PendingControls && !(state.Flags & (1UL | 4UL | 16UL)) && !state.DirtyBytes && NT_SUCCESS(state.LastError)) ext->Routing = FALSE;
+            QC_STATE state;
+            QcCacheSnapshot(&ext->Cache, &state);
+            if (!ext->PendingControls && !(state.Flags & (1UL | 4UL | 16UL)) && !state.DirtyBytes &&
+                NT_SUCCESS(state.LastError))
+                ext->Routing = FALSE;
 #else
             ext->Routing = FALSE;
 #endif
         }
-        if (empty) KeClearEvent(&ext->WorkAvailable);
+        if (empty)
+            KeClearEvent(&ext->WorkAvailable);
         KeReleaseSpinLock(&ext->QueueLock, irql);
-        if (stop) break;
-        if (empty) KeWaitForSingleObject(&ext->WorkAvailable, Executive, KernelMode, FALSE, nullptr);
+        if (stop)
+            break;
+        if (empty)
+            KeWaitForSingleObject(&ext->WorkAvailable, Executive, KernelMode, FALSE, nullptr);
     }
 #if QCACHE_WRITE_LAB
     QcCacheBarrier(&ext->Cache, TRUE);
 #endif
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
-static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp) {
+static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp)
+{
 #if QCACHE_WRITE_LAB
     // Save before insertion: cancellation may complete/free the IRP inline.
     auto stack = IoGetCurrentIrpStackLocation(irp);
     const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
-        (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 || stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
+                         (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 ||
+                          stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
 #endif
     // The CSQ/worker can complete the original IRP before insertion returns.
     // Keep the extension alive for the admission-accounting epilogue.
     UCHAR submissionTag = 0;
     auto admission = IoAcquireRemoveLock(&ext->RemoveLock, &submissionTag);
-    if (!NT_SUCCESS(admission)) {
+    if (!NT_SUCCESS(admission))
+    {
 #if QCACHE_WRITE_LAB
-        if (control) {
-            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+        if (control)
+        {
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
             --ext->PendingControls;
             KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
             KeReleaseSpinLock(&ext->QueueLock, irql);
@@ -381,15 +492,18 @@ static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp) {
     IoMarkIrpPending(irp);
     auto status = IoCsqInsertIrpEx(&ext->Csq, irp, nullptr, nullptr);
 #if QCACHE_WRITE_LAB
-    if (control) {
-        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (control)
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&ext->QueueLock, &irql);
         --ext->PendingControls;
         // Also wake on cancellation/rejection, when QueueInsert may not run.
         KeSetEvent(&ext->WorkAvailable, IO_NO_INCREMENT, FALSE);
         KeReleaseSpinLock(&ext->QueueLock, irql);
     }
 #endif
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status))
+    {
         IoReleaseRemoveLock(&ext->RemoveLock, irp);
         Complete(irp, status);
     }
@@ -399,13 +513,17 @@ static NTSTATUS QueueRequest(LAB_EXTENSION* ext, PIRP irp) {
 }
 #endif
 
-NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
+NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp)
+{
     auto ext = static_cast<LAB_EXTENSION*>(device->DeviceExtension);
     auto status = IoAcquireRemoveLock(&ext->RemoveLock, irp);
-    if (!NT_SUCCESS(status)) return Complete(irp, status);
+    if (!NT_SUCCESS(status))
+        return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
-    if (stack->MajorFunction == IRP_MJ_PNP) {
-        if (stack->MinorFunction == IRP_MN_REMOVE_DEVICE) {
+    if (stack->MajorFunction == IRP_MJ_PNP)
+    {
+        if (stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
+        {
 #if QCACHE_SERIALIZED_LAB
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
@@ -431,55 +549,76 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             return status;
         }
 #if QCACHE_WRITE_LAB
-        if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL) {
+        if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL)
+        {
             InterlockedExchange(&ext->Cache.Gone, TRUE);
             KeSetEvent(&ext->Cache.Changed, IO_NO_INCREMENT, FALSE);
             KeSetEvent(&ext->Cache.Wake, IO_NO_INCREMENT, FALSE);
         }
-        if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE) {
-            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql); const bool routed = ext->Routing; KeReleaseSpinLock(&ext->QueueLock, irql);
+        if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
+        {
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
+            const bool routed = ext->Routing;
+            KeReleaseSpinLock(&ext->QueueLock, irql);
             return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
         }
 #endif
-        if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION &&
-            stack->Parameters.UsageNotification.InPath &&
+        if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION && stack->Parameters.UsageNotification.InPath &&
             (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
              stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
-             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile)) {
+             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
+        {
             // System storage must remain usable while this filter is inactive.
             // These notifications also establish the nonpageable power path;
             // our dispatch and extension are always nonpageable.
             return Forward(ext, irp);
         }
-        if (stack->MinorFunction == IRP_MN_START_DEVICE) {
+        if (stack->MinorFunction == IRP_MN_START_DEVICE)
+        {
             KEVENT event;
             KeInitializeEvent(&event, NotificationEvent, FALSE);
             IoCopyCurrentIrpStackLocationToNext(irp);
             IoSetCompletionRoutine(irp, LabStartCompletion, &event, TRUE, TRUE, TRUE);
             status = IoCallDriver(ext->Lower, irp);
-            if (status == STATUS_PENDING) KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+            if (status == STATUS_PENDING)
+                KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
             status = irp->IoStatus.Status;
-            if (NT_SUCCESS(status)) {
+            if (NT_SUCCESS(status))
+            {
                 GET_LENGTH_INFORMATION length = {};
                 IO_STATUS_BLOCK iosb = {};
                 KeClearEvent(&event);
-                auto query = IoBuildDeviceIoControlRequest(IOCTL_DISK_GET_LENGTH_INFO, ext->Lower,
-                    nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
-                if (query) {
+                auto query = IoBuildDeviceIoControlRequest(
+                    IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
+                if (query)
+                {
                     auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING) KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+                    if (queryStatus == STATUS_PENDING)
+                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
                     if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length))
                         InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
                 }
 #if QCACHE_WRITE_LAB
                 DISK_GEOMETRY geometry = {};
-                iosb = {}; KeClearEvent(&event);
-                query = IoBuildDeviceIoControlRequest(IOCTL_DISK_GET_DRIVE_GEOMETRY, ext->Lower,
-                    nullptr, 0, &geometry, sizeof(geometry), FALSE, &event, &iosb);
-                if (query) {
+                iosb = {};
+                KeClearEvent(&event);
+                query = IoBuildDeviceIoControlRequest(IOCTL_DISK_GET_DRIVE_GEOMETRY,
+                                                      ext->Lower,
+                                                      nullptr,
+                                                      0,
+                                                      &geometry,
+                                                      sizeof(geometry),
+                                                      FALSE,
+                                                      &event,
+                                                      &iosb);
+                if (query)
+                {
                     auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING) KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry)) ext->Cache.SectorBytes = geometry.BytesPerSector;
+                    if (queryStatus == STATUS_PENDING)
+                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
+                        ext->Cache.SectorBytes = geometry.BytesPerSector;
                 }
 #endif
             }
@@ -487,79 +626,122 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             return Complete(irp, status, irp->IoStatus.Information);
         }
     }
-    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL) {
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL)
+    {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
 #if QCACHE_WRITE_LAB
-        if (code == IOCTL_QCACHE_STATE_V3) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V3)) {
-                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+        if (code == IOCTL_QCACHE_STATE_V3)
+        {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V3))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
-            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
-            QC_STATE_V3 state; QcCacheSnapshotV3(&ext->Cache, &state);
-            if (ext->Routing && !ext->Closing) state.Base.Base.Flags |= 512;
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
+            QC_STATE_V3 state;
+            QcCacheSnapshotV3(&ext->Cache, &state);
+            if (ext->Routing && !ext->Closing)
+                state.Base.Base.Flags |= 512;
             KeReleaseSpinLock(&ext->QueueLock, irql);
             state.Base.Base.DeviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
-            if (ext->Cache.Gone) state.Base.Base.Flags |= 16;
+            if (ext->Cache.Gone)
+                state.Base.Base.Flags |= 16;
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &state, sizeof(state));
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(state));
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, sizeof(state));
         }
-        if (code == IOCTL_QCACHE_STATE_V2) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V2)) {
-                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+        if (code == IOCTL_QCACHE_STATE_V2)
+        {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V2))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
-            QC_STATE_V2 state; QcCacheSnapshotV2(&ext->Cache, &state);
+            QC_STATE_V2 state;
+            QcCacheSnapshotV2(&ext->Cache, &state);
             state.Base.DeviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
-            if (ext->Cache.Gone) state.Base.Flags |= 16;
+            if (ext->Cache.Gone)
+                state.Base.Flags |= 16;
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &state, sizeof(state));
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(state));
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, sizeof(state));
         }
-        if (code == IOCTL_QCACHE_DIAGNOSTICS_V1) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_DIAGNOSTICS)) {
-                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+        if (code == IOCTL_QCACHE_DIAGNOSTICS_V1)
+        {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_DIAGNOSTICS))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
-            QC_DIAGNOSTICS diagnostics; QcCacheDiagnostics(&ext->Cache, &diagnostics);
+            QC_DIAGNOSTICS diagnostics;
+            QcCacheDiagnostics(&ext->Cache, &diagnostics);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, sizeof(diagnostics));
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(diagnostics));
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, sizeof(diagnostics));
         }
-        if (code == IOCTL_QCACHE_PERFORMANCE_V1) {
+        if (code == IOCTL_QCACHE_PERFORMANCE_V1)
+        {
             auto outputLength = stack->Parameters.DeviceIoControl.OutputBufferLength;
-            if (outputLength < QcPerformanceV1Size) {
-                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+            if (outputLength < QcPerformanceV1Size)
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
-            QC_PERFORMANCE performance; QcCachePerformance(&ext->Cache, &performance);
+            QC_PERFORMANCE performance;
+            QcCachePerformance(&ext->Cache, &performance);
 #if QCACHE_SERIALIZED_LAB
-            KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
             auto now = static_cast<ULONGLONG>(KeQueryPerformanceCounter(nullptr).QuadPart);
-            performance.QueueDepth = ext->QueueDepth; performance.QueuedRequests = ext->NextSequence;
-            performance.QueueWaitTicks = ext->QueueWaitTicks; performance.MaxQueueWaitTicks = ext->MaxQueueWaitTicks;
+            performance.QueueDepth = ext->QueueDepth;
+            performance.QueuedRequests = ext->NextSequence;
+            performance.QueueWaitTicks = ext->QueueWaitTicks;
+            performance.MaxQueueWaitTicks = ext->MaxQueueWaitTicks;
             performance.ActiveMajor = ext->ActiveSince ? ext->ActiveMajor : 0;
             performance.ActiveAgeTicks = ext->ActiveSince ? now - ext->ActiveSince : 0;
-            if (!ext->ActiveSince) performance.Phase = QcIdlePhase;
-            else if (!performance.Phase) performance.Phase = QcRequestPhase;
-            if (!IsListEmpty(&ext->Pending)) {
+            if (!ext->ActiveSince)
+                performance.Phase = QcIdlePhase;
+            else if (!performance.Phase)
+                performance.Phase = QcRequestPhase;
+            if (!IsListEmpty(&ext->Pending))
+            {
                 auto first = CONTAINING_RECORD(ext->Pending.Flink, IRP, Tail.Overlay.ListEntry);
                 performance.OldestQueuedTicks = now - reinterpret_cast<ULONGLONG>(first->Tail.Overlay.DriverContext[1]);
             }
             KeReleaseSpinLock(&ext->QueueLock, irql);
 #endif
             auto bytes = outputLength < sizeof(performance) ? QcPerformanceV1Size : sizeof(performance);
-            if (bytes == QcPerformanceV1Size) { performance.Version = 1; performance.Size = QcPerformanceV1Size; }
-            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &performance, bytes);
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, bytes);
-        }
-        if (code == IOCTL_QCACHE_STATE_V1) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE)) {
-                IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+            if (bytes == QcPerformanceV1Size)
+            {
+                performance.Version = 1;
+                performance.Size = QcPerformanceV1Size;
             }
-            QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
+            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &performance, bytes);
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, bytes);
+        }
+        if (code == IOCTL_QCACHE_STATE_V1)
+        {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+            }
+            QC_STATE state;
+            QcCacheSnapshot(&ext->Cache, &state);
             state.DeviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
-            if (ext->Cache.Gone) state.Flags |= 16;
+            if (ext->Cache.Gone)
+                state.Flags |= 16;
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &state, sizeof(state));
-            IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_SUCCESS, sizeof(state));
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, sizeof(state));
         }
 #endif
-        if (code == IOCTL_QCACHE_GET_DEVICE_DATA) {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DEVICE_STATISTICS)) {
+        if (code == IOCTL_QCACHE_GET_DEVICE_DATA)
+        {
+            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(DEVICE_STATISTICS))
+            {
                 IoReleaseRemoveLock(&ext->RemoveLock, irp);
                 return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
@@ -569,29 +751,42 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
             stats.ReadBytes = InterlockedCompareExchange64(&ext->ReadBytes, 0, 0);
             stats.WrittenBytes = InterlockedCompareExchange64(&ext->WrittenBytes, 0, 0);
 #if QCACHE_WRITE_LAB
-            QC_STATE state; QcCacheSnapshot(&ext->Cache, &state);
-            stats.IsCached = (state.Flags & 1) != 0; stats.LastErrorCode = state.LastError;
-            stats.WriteQueueItems = state.OccupiedSlots; stats.WriteQueueSize = state.DirtyBytes;
-            stats.WriteQueueSizeTop = state.PeakDirtyBytes; stats.MaxQueueSize = state.PayloadCapacity;
+            QC_STATE state;
+            QcCacheSnapshot(&ext->Cache, &state);
+            stats.IsCached = (state.Flags & 1) != 0;
+            stats.LastErrorCode = state.LastError;
+            stats.WriteQueueItems = state.OccupiedSlots;
+            stats.WriteQueueSize = state.DirtyBytes;
+            stats.WriteQueueSizeTop = state.PeakDirtyBytes;
+            stats.MaxQueueSize = state.PayloadCapacity;
             stats.LowMemQueued = state.ThrottleWaits;
 #endif
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &stats, sizeof(stats));
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             return Complete(irp, STATUS_SUCCESS, sizeof(stats));
         }
-        if (code == IOCTL_QCACHE_ON || code == IOCTL_QCACHE_OFF || code == IOCTL_QCACHE_FLUSH) {
+        if (code == IOCTL_QCACHE_ON || code == IOCTL_QCACHE_OFF || code == IOCTL_QCACHE_FLUSH)
+        {
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             return Complete(irp, STATUS_NOT_SUPPORTED);
         }
     }
-    if (stack->MajorFunction == IRP_MJ_READ) InterlockedAdd64(&ext->ReadBytes, stack->Parameters.Read.Length);
-    if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedAdd64(&ext->WrittenBytes, stack->Parameters.Write.Length);
+    if (stack->MajorFunction == IRP_MJ_READ)
+        InterlockedAdd64(&ext->ReadBytes, stack->Parameters.Read.Length);
+    if (stack->MajorFunction == IRP_MJ_WRITE)
+        InterlockedAdd64(&ext->WrittenBytes, stack->Parameters.Write.Length);
 #if QCACHE_SERIALIZED_LAB
-    if (QcObservationRequest(stack)) {
-        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (QcObservationRequest(stack))
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&ext->QueueLock, &irql);
         const bool closing = ext->Closing != FALSE;
         KeReleaseSpinLock(&ext->QueueLock, irql);
-        if (closing) { IoReleaseRemoveLock(&ext->RemoveLock, irp); return Complete(irp, STATUS_DELETE_PENDING); }
+        if (closing)
+        {
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_DELETE_PENDING);
+        }
         // Preserve caller context, real lower response and normal cancellation.
         // RemoveLock spans completion/removal. No DirectCount: an observation
         // must not hold up subsequent cache admission behind DirectIdle.
@@ -600,18 +795,28 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
     // requests which must retain the original caller context. A control request
     // atomically switches subsequent traffic to the ordered worker.
-    if (stack->MajorFunction != IRP_MJ_PNP) {
-        KIRQL irql; KeAcquireSpinLock(&ext->QueueLock, &irql);
+    if (stack->MajorFunction != IRP_MJ_PNP)
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&ext->QueueLock, &irql);
 #if QCACHE_WRITE_LAB
-        const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL && (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 || stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
+        const bool control = stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
+                             (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1 ||
+                              stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1);
 #else
         const bool control = FALSE;
 #endif
-        if (control) { ext->Routing = TRUE; ++ext->PendingControls; }
+        if (control)
+        {
+            ext->Routing = TRUE;
+            ++ext->PendingControls;
+        }
         const bool direct = !ext->Routing && !ext->Closing;
-        if (direct && ++ext->DirectCount == 1) KeClearEvent(&ext->DirectIdle);
+        if (direct && ++ext->DirectCount == 1)
+            KeClearEvent(&ext->DirectIdle);
         KeReleaseSpinLock(&ext->QueueLock, irql);
-        if (direct) {
+        if (direct)
+        {
             IoCopyCurrentIrpStackLocationToNext(irp);
             IoSetCompletionRoutine(irp, DirectCompletion, ext, TRUE, TRUE, TRUE);
             return IoCallDriver(ext->Lower, irp);
@@ -619,7 +824,8 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     }
 #if QCACHE_WRITE_LAB
     if (stack->MajorFunction == IRP_MJ_SHUTDOWN ||
-        (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER && stack->Parameters.Power.Type == DevicePowerState))
+        (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER &&
+         stack->Parameters.Power.Type == DevicePowerState))
         return QueueRequest(ext, irp);
 #endif
     if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE ||
@@ -632,39 +838,60 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp) {
     return Forward(ext, irp);
 }
 
-NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
+NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
+{
     // Idempotent migration: class and old per-device registrations may coexist
     // if setup was interrupted. Never attach this driver twice to the same stack.
     auto existing = IoGetAttachedDeviceReference(pdo);
-    while (existing) {
-        if (existing->DriverObject == driver) { ObDereferenceObject(existing); return STATUS_SUCCESS; }
+    while (existing)
+    {
+        if (existing->DriverObject == driver)
+        {
+            ObDereferenceObject(existing);
+            return STATUS_SUCCESS;
+        }
         auto next = IoGetLowerDeviceObject(existing);
-        ObDereferenceObject(existing); existing = next;
+        ObDereferenceObject(existing);
+        existing = next;
     }
     WCHAR key[512] = {};
     ULONG required = 0;
     auto status = IoGetDeviceProperty(pdo, DevicePropertyDriverKeyName, sizeof(key), key, &required);
     if (!NT_SUCCESS(status) || required < sizeof(WCHAR) || required > sizeof(key) ||
-        key[required / sizeof(WCHAR) - 1] != 0) return STATUS_SUCCESS;
+        key[required / sizeof(WCHAR) - 1] != 0)
+        return STATUS_SUCCESS;
     UNICODE_STRING actual;
     RtlInitUnicodeString(&actual, key);
-    if (!ClassCoverage && !RtlEqualUnicodeString(&actual, &AllowedDriverKey, TRUE)) return STATUS_SUCCESS;
+    if (!ClassCoverage && !RtlEqualUnicodeString(&actual, &AllowedDriverKey, TRUE))
+        return STATUS_SUCCESS;
     PDEVICE_OBJECT device = nullptr;
-    status = IoCreateDevice(driver, sizeof(LAB_EXTENSION), nullptr, FILE_DEVICE_DISK,
-        FILE_DEVICE_SECURE_OPEN, FALSE, &device);
-    if (!NT_SUCCESS(status)) return status;
+    status = IoCreateDevice(
+        driver, sizeof(LAB_EXTENSION), nullptr, FILE_DEVICE_DISK, FILE_DEVICE_SECURE_OPEN, FALSE, &device);
+    if (!NT_SUCCESS(status))
+        return status;
     auto ext = static_cast<LAB_EXTENSION*>(device->DeviceExtension);
     RtlZeroMemory(ext, sizeof(*ext));
     IoInitializeRemoveLock(&ext->RemoveLock, 'bLCQ', 0, 0);
     status = IoAttachDeviceToDeviceStackSafe(device, pdo, &ext->Lower);
-    if (!NT_SUCCESS(status)) { IoDeleteDevice(device); return status; }
+    if (!NT_SUCCESS(status))
+    {
+        IoDeleteDevice(device);
+        return status;
+    }
     device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO);
     // All harness code/data is nonpageable; do not advertise pageable power dispatch.
     device->Characteristics |= ext->Lower->Characteristics;
 #if QCACHE_WRITE_LAB
     status = QcCacheInitialize(&ext->Cache, ext->Lower);
-    if (NT_SUCCESS(status)) status = IoRegisterLastChanceShutdownNotification(device);
-    if (!NT_SUCCESS(status)) { QcCacheDestroy(&ext->Cache); IoDetachDevice(ext->Lower); IoDeleteDevice(device); return status; }
+    if (NT_SUCCESS(status))
+        status = IoRegisterLastChanceShutdownNotification(device);
+    if (!NT_SUCCESS(status))
+    {
+        QcCacheDestroy(&ext->Cache);
+        IoDetachDevice(ext->Lower);
+        IoDeleteDevice(device);
+        return status;
+    }
 #endif
 #if QCACHE_SERIALIZED_LAB
     KeInitializeSpinLock(&ext->QueueLock);
@@ -677,57 +904,76 @@ NTSTATUS LabAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo) {
     ext->Cache.ServiceContext = ext;
     ext->Cache.RequestAvailable = &ext->WorkAvailable;
 #endif
-    status = IoCsqInitializeEx(&ext->Csq, QueueInsert, QueueRemove, QueuePeek,
-        QueueAcquire, QueueRelease, QueueCancel);
-    if (NT_SUCCESS(status)) {
+    status = IoCsqInitializeEx(&ext->Csq, QueueInsert, QueueRemove, QueuePeek, QueueAcquire, QueueRelease, QueueCancel);
+    if (NT_SUCCESS(status))
+    {
         OBJECT_ATTRIBUTES attrs;
         InitializeObjectAttributes(&attrs, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
         status = PsCreateSystemThread(&ext->Worker, THREAD_ALL_ACCESS, &attrs, nullptr, nullptr, RequestWorker, ext);
     }
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status))
+    {
 #if QCACHE_WRITE_LAB
-        IoUnregisterShutdownNotification(device); QcCacheDestroy(&ext->Cache);
+        IoUnregisterShutdownNotification(device);
+        QcCacheDestroy(&ext->Cache);
 #endif
-        IoDetachDevice(ext->Lower); IoDeleteDevice(device); return status;
+        IoDetachDevice(ext->Lower);
+        IoDeleteDevice(device);
+        return status;
     }
 #endif
     device->Flags &= ~DO_DEVICE_INITIALIZING;
     return STATUS_SUCCESS;
 }
 
-void LabUnload(PDRIVER_OBJECT driver) { NT_ASSERT(driver->DeviceObject == nullptr); UNREFERENCED_PARAMETER(driver); }
+void LabUnload(PDRIVER_OBJECT driver)
+{
+    NT_ASSERT(driver->DeviceObject == nullptr);
+    UNREFERENCED_PARAMETER(driver);
+}
 
-extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath) {
+extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryPath)
+{
     // No default/all-disk target. Installer records one exact device's driver key.
     OBJECT_ATTRIBUTES attrs;
     InitializeObjectAttributes(&attrs, registryPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     HANDLE key = nullptr;
     auto status = ZwOpenKey(&key, KEY_QUERY_VALUE, &attrs);
-    if (!NT_SUCCESS(status)) return status;
+    if (!NT_SUCCESS(status))
+        return status;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"LabAllowedDriverKey");
-    alignas(KEY_VALUE_PARTIAL_INFORMATION) UCHAR buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ExpectedDriverKey)] = {};
+    alignas(KEY_VALUE_PARTIAL_INFORMATION)
+        UCHAR buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ExpectedDriverKey)] = {};
     ULONG required;
     status = ZwQueryValueKey(key, &name, KeyValuePartialInformation, buffer, sizeof(buffer), &required);
     // Preserve compatibility with per-device packages while class coverage is
     // validated. An explicit installer DWORD selects the new attachment model.
     UNICODE_STRING className = RTL_CONSTANT_STRING(L"ClassCoverage");
-    alignas(KEY_VALUE_PARTIAL_INFORMATION) UCHAR classBuffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)] = {};
+    alignas(KEY_VALUE_PARTIAL_INFORMATION)
+        UCHAR classBuffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)] = {};
     ULONG classRequired;
-    if (NT_SUCCESS(ZwQueryValueKey(key, &className, KeyValuePartialInformation, classBuffer, sizeof(classBuffer), &classRequired))) {
+    if (NT_SUCCESS(ZwQueryValueKey(
+            key, &className, KeyValuePartialInformation, classBuffer, sizeof(classBuffer), &classRequired)))
+    {
         auto classValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
-        ClassCoverage = classValue->Type == REG_DWORD && classValue->DataLength == sizeof(ULONG) && *reinterpret_cast<ULONG*>(classValue->Data) == 1;
+        ClassCoverage = classValue->Type == REG_DWORD && classValue->DataLength == sizeof(ULONG) &&
+                        *reinterpret_cast<ULONG*>(classValue->Data) == 1;
     }
     ZwClose(key);
-    if (!NT_SUCCESS(status)) return status;
+    if (!NT_SUCCESS(status))
+        return status;
     auto value = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(buffer);
     if (value->Type != REG_SZ || value->DataLength < 2 * sizeof(WCHAR) ||
         value->DataLength > sizeof(ExpectedDriverKey) || value->DataLength % sizeof(WCHAR) != 0)
         return STATUS_INVALID_PARAMETER;
     RtlCopyMemory(ExpectedDriverKey, value->Data, value->DataLength);
-    if (ExpectedDriverKey[value->DataLength / sizeof(WCHAR) - 1] != 0) return STATUS_INVALID_PARAMETER;
+    if (ExpectedDriverKey[value->DataLength / sizeof(WCHAR) - 1] != 0)
+        return STATUS_INVALID_PARAMETER;
     RtlInitUnicodeString(&AllowedDriverKey, ExpectedDriverKey);
-    if (AllowedDriverKey.Length + sizeof(WCHAR) != value->DataLength) return STATUS_INVALID_PARAMETER;
-    for (ULONG i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; ++i) driver->MajorFunction[i] = LabDispatch;
+    if (AllowedDriverKey.Length + sizeof(WCHAR) != value->DataLength)
+        return STATUS_INVALID_PARAMETER;
+    for (ULONG i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; ++i)
+        driver->MajorFunction[i] = LabDispatch;
     driver->DriverExtension->AddDevice = LabAddDevice;
     driver->DriverUnload = LabUnload;
     return STATUS_SUCCESS;

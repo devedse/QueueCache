@@ -12,9 +12,11 @@
 #define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; the first 192 bytes remain V1.
-struct QC_PERFORMANCE {
+struct QC_PERFORMANCE
+{
     ULONG Version, Size;
-    ULONGLONG Frequency, TimingEnabled, QueueDepth, OldestQueuedTicks, QueuedRequests, QueueWaitTicks, MaxQueueWaitTicks;
+    ULONGLONG Frequency, TimingEnabled, QueueDepth, OldestQueuedTicks, QueuedRequests, QueueWaitTicks,
+        MaxQueueWaitTicks;
     ULONGLONG ActiveMajor, Phase, ActiveAgeTicks, CapacityWaits, CapacityWaitTicks, BypassReads, BypassMisses;
     ULONGLONG LockAcquires, LockWaitTicks, LockHoldTicks, MaxLockWaitTicks, MaxLockHoldTicks;
     ULONGLONG DrainBatches, DrainBytes, WakeSignals, LowerIoTicks;
@@ -29,24 +31,44 @@ struct QC_PERFORMANCE {
 };
 static constexpr ULONG QcPerformanceV1Size = 192;
 static_assert(sizeof(QC_PERFORMANCE) == 408);
-enum : ULONGLONG { QcIdlePhase, QcRequestPhase, QcCapacityPhase, QcDrainPhase, QcLowerFlushPhase, QcLowerReadPhase };
-struct QC_DIAGNOSTICS {
+enum : ULONGLONG
+{
+    QcIdlePhase,
+    QcRequestPhase,
+    QcCapacityPhase,
+    QcDrainPhase,
+    QcLowerFlushPhase,
+    QcLowerReadPhase
+};
+struct QC_DIAGNOSTICS
+{
     ULONG Version, Size;
     ULONGLONG ApplicationFlushes, DeferredFlushes, WriteThroughWrites, DeferredWriteThroughWrites;
     ULONGLONG ControlBarriers, OtherBarriers, ShutdownBarriers, PowerBarriers, LastBarrierCode;
 };
 static_assert(sizeof(QC_DIAGNOSTICS) == 80);
-struct QC_STATE {
+struct QC_STATE
+{
     ULONG Version, Size, Flags;
     NTSTATUS LastError;
     ULONGLONG DeviceBytes, BudgetBytes, ReservedBytes, DirtyBytes, InFlightBytes, PayloadCapacity;
-    ULONGLONG OccupiedSlots, AcceptedBytes, DrainedBytes, ThrottleWaits, CacheReadBytes, Errors, Flushes, PeakDirtyBytes;
+    ULONGLONG OccupiedSlots, AcceptedBytes, DrainedBytes, ThrottleWaits, CacheReadBytes, Errors, Flushes,
+        PeakDirtyBytes;
 };
-struct QC_COMMAND { ULONG Version, Size, Action, Reserved; ULONGLONG BudgetBytes, Value; };
+struct QC_COMMAND
+{
+    ULONG Version, Size, Action, Reserved;
+    ULONGLONG BudgetBytes, Value;
+};
 static_assert(sizeof(QC_STATE) == 128);
-struct QC_STATE_V2 { QC_STATE Base; ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests; };
+struct QC_STATE_V2
+{
+    QC_STATE Base;
+    ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests;
+};
 static_assert(sizeof(QC_STATE_V2) == 160);
-struct QC_STATE_V3 {
+struct QC_STATE_V3
+{
     QC_STATE_V2 Base;
     QC_OPTIONS Options;
     ULONGLONG CleanReadBytes, CleanWriteBytes, ReadHitBytes, ReadMissBytes, Evictions;
@@ -54,9 +76,22 @@ struct QC_STATE_V3 {
 };
 static_assert(sizeof(QC_STATE_V3) == 288);
 static_assert(sizeof(QC_COMMAND) == 32);
-enum : ULONG { QcConfigure = 1, QcEnable, QcFlush, QcDisable, QcRetry, QcLabDelay, QcLabFault, QcFlushPolicy, QcRelease,
-    QcDropClean, QcPerformanceTiming }; // Toggle optional detailed timing; never resets counters.
-struct QC_SLOT {
+enum : ULONG
+{
+    QcConfigure = 1,
+    QcEnable,
+    QcFlush,
+    QcDisable,
+    QcRetry,
+    QcLabDelay,
+    QcLabFault,
+    QcFlushPolicy,
+    QcRelease,
+    QcDropClean,
+    QcPerformanceTiming
+}; // Toggle optional detailed timing; never resets counters.
+struct QC_SLOT
+{
     PUCHAR Buffer;
     LARGE_INTEGER Offset;
     ULONG Length, HashNext, HashPrevious, QueueNext, QueuePrevious, FreeNext;
@@ -67,8 +102,14 @@ struct QC_SLOT {
     ULONGLONG DirtySince;
 };
 struct QC_CACHE;
-struct QC_DRAIN_WORKER { QC_CACHE* Cache; ULONG Number; HANDLE Thread; };
-struct QC_CACHE {
+struct QC_DRAIN_WORKER
+{
+    QC_CACHE* Cache;
+    ULONG Number;
+    HANDLE Thread;
+};
+struct QC_CACHE
+{
     PDEVICE_OBJECT Lower;
     KMUTEX Mutex;
     KSPIN_LOCK SnapshotLock;

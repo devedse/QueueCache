@@ -1,8 +1,7 @@
 #include "qcache.h"
 
 NTSTATUS
-QCacheQueueLazyWriteIrp(IN PDEVICE_EXTENSION DeviceExtension,
-    IN PIRP Irp);
+QCacheQueueLazyWriteIrp(IN PDEVICE_EXTENSION DeviceExtension, IN PIRP Irp);
 
 //
 // Adds an IRP to the request queue. If the request is an IRP_MJ_WRITE or
@@ -11,24 +10,18 @@ QCacheQueueLazyWriteIrp(IN PDEVICE_EXTENSION DeviceExtension,
 //
 
 NTSTATUS
-QCacheQueueIrp(
-    PDEVICE_EXTENSION DeviceExtension,
-    PIRP Irp)
+QCacheQueueIrp(PDEVICE_EXTENSION DeviceExtension, PIRP Irp)
 {
     auto io_stack = IoGetCurrentIrpStackLocation(Irp);
 
     if (DeviceExtension->Statistics.IsCached &&
-        (io_stack->MajorFunction == IRP_MJ_WRITE ||
-            io_stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS))
+        (io_stack->MajorFunction == IRP_MJ_WRITE || io_stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS))
     {
         if ((QCacheKernelHighNonPagedPoolCondition == NULL ||
-            KeReadStateEvent(QCacheKernelHighNonPagedPoolCondition)) &&
-            (QCacheKernelHighMemoryCondition == NULL ||
-                KeReadStateEvent(QCacheKernelHighMemoryCondition)) &&
-            DeviceExtension->Statistics.WriteQueueSize <
-            DeviceExtension->Statistics.MaxQueueSize &&
-            DeviceExtension->Statistics.WriteQueueItems <
-            DeviceExtension->Statistics.MaxQueueItems)
+             KeReadStateEvent(QCacheKernelHighNonPagedPoolCondition)) &&
+            (QCacheKernelHighMemoryCondition == NULL || KeReadStateEvent(QCacheKernelHighMemoryCondition)) &&
+            DeviceExtension->Statistics.WriteQueueSize < DeviceExtension->Statistics.MaxQueueSize &&
+            DeviceExtension->Statistics.WriteQueueItems < DeviceExtension->Statistics.MaxQueueItems)
         {
             KeResetEvent(QCacheLowMemCondition);
 
@@ -62,9 +55,10 @@ QCacheQueueIrp(
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint(
-            "QCacheQueueIrp:IoAcquireRemoveLock failed: DeviceExtension %p Item %p Status: 0x%X.\n",
-            DeviceExtension, item, status);
+        DbgPrint("QCacheQueueIrp:IoAcquireRemoveLock failed: DeviceExtension %p Item %p Status: 0x%X.\n",
+                 DeviceExtension,
+                 item,
+                 status);
 
         Irp->IoStatus.Status = status;
 
@@ -86,8 +80,7 @@ QCacheQueueIrp(
     KLOCK_QUEUE_HANDLE lock_handle;
     KIRQL lowest_irql = PASSIVE_LEVEL;
 
-    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle,
-        lowest_irql);
+    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle, lowest_irql);
 
     InsertTailList(&DeviceExtension->WriteQueue, &item->ListEntry);
 
@@ -95,18 +88,14 @@ QCacheQueueIrp(
 
     ++DeviceExtension->Statistics.WriteQueueItems;
 
-    if (DeviceExtension->Statistics.WriteQueueSize >
-        DeviceExtension->Statistics.WriteQueueSizeTop)
+    if (DeviceExtension->Statistics.WriteQueueSize > DeviceExtension->Statistics.WriteQueueSizeTop)
     {
-        DeviceExtension->Statistics.WriteQueueSizeTop =
-            DeviceExtension->Statistics.WriteQueueSize;
+        DeviceExtension->Statistics.WriteQueueSizeTop = DeviceExtension->Statistics.WriteQueueSize;
     }
 
-    if (DeviceExtension->Statistics.WriteQueueItems >
-        DeviceExtension->Statistics.WriteQueueItemsTop)
+    if (DeviceExtension->Statistics.WriteQueueItems > DeviceExtension->Statistics.WriteQueueItemsTop)
     {
-        DeviceExtension->Statistics.WriteQueueItemsTop =
-            DeviceExtension->Statistics.WriteQueueItems;
+        DeviceExtension->Statistics.WriteQueueItemsTop = DeviceExtension->Statistics.WriteQueueItems;
     }
 
     QCacheReleaseLock(&lock_handle, &lowest_irql);
@@ -116,7 +105,6 @@ QCacheQueueIrp(
     return STATUS_PENDING;
 }
 
-
 //
 // Adds an IRP_MJ_WRITE or IRP_MJ_FLUSH_BUFFERS request to the queue and
 // immediately completes the original request. The operation will
@@ -124,9 +112,7 @@ QCacheQueueIrp(
 //
 
 NTSTATUS
-QCacheQueueLazyWriteIrp(
-    IN PDEVICE_EXTENSION DeviceExtension,
-    IN PIRP Irp)
+QCacheQueueLazyWriteIrp(IN PDEVICE_EXTENSION DeviceExtension, IN PIRP Irp)
 {
     Irp->IoStatus.Information = 0;
 
@@ -150,9 +136,10 @@ QCacheQueueLazyWriteIrp(
 
     if (!NT_SUCCESS(status))
     {
-        DbgPrint(
-            "QCacheQueueLazyWriteIrp:IoAcquireRemoveLock failed: DeviceExtension %p Item %p Status: 0x%X.\n",
-            DeviceExtension, item, status);
+        DbgPrint("QCacheQueueLazyWriteIrp:IoAcquireRemoveLock failed: DeviceExtension %p Item %p Status: 0x%X.\n",
+                 DeviceExtension,
+                 item,
+                 status);
 
         Irp->IoStatus.Status = status;
 
@@ -172,8 +159,7 @@ QCacheQueueLazyWriteIrp(
         item->Offset = io_stack->Parameters.Write.ByteOffset;
         item->Length = io_stack->Parameters.Write.Length;
 
-        auto system_buffer = MmGetSystemAddressForMdlSafe(Irp->MdlAddress,
-            NormalPagePriority);
+        auto system_buffer = MmGetSystemAddressForMdlSafe(Irp->MdlAddress, NormalPagePriority);
 
         if (system_buffer == NULL)
         {
@@ -199,35 +185,28 @@ QCacheQueueLazyWriteIrp(
             return STATUS_INSUFFICIENT_RESOURCES;
         }
 
-        RtlCopyMemory(item->Buffer, system_buffer,
-            io_stack->Parameters.Write.Length);
+        RtlCopyMemory(item->Buffer, system_buffer, io_stack->Parameters.Write.Length);
     }
 
     KLOCK_QUEUE_HANDLE lock_handle;
     KIRQL lowest_irql = PASSIVE_LEVEL;
 
-    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle,
-        lowest_irql);
+    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle, lowest_irql);
 
     InsertTailList(&DeviceExtension->WriteQueue, &item->ListEntry);
 
-    DeviceExtension->Statistics.WriteQueueSize +=
-        sizeof(*item) + item->Length;
+    DeviceExtension->Statistics.WriteQueueSize += sizeof(*item) + item->Length;
 
     ++DeviceExtension->Statistics.WriteQueueItems;
 
-    if (DeviceExtension->Statistics.WriteQueueSize >
-        DeviceExtension->Statistics.WriteQueueSizeTop)
+    if (DeviceExtension->Statistics.WriteQueueSize > DeviceExtension->Statistics.WriteQueueSizeTop)
     {
-        DeviceExtension->Statistics.WriteQueueSizeTop =
-            DeviceExtension->Statistics.WriteQueueSize;
+        DeviceExtension->Statistics.WriteQueueSizeTop = DeviceExtension->Statistics.WriteQueueSize;
     }
 
-    if (DeviceExtension->Statistics.WriteQueueItems >
-        DeviceExtension->Statistics.WriteQueueItemsTop)
+    if (DeviceExtension->Statistics.WriteQueueItems > DeviceExtension->Statistics.WriteQueueItemsTop)
     {
-        DeviceExtension->Statistics.WriteQueueItemsTop =
-            DeviceExtension->Statistics.WriteQueueItems;
+        DeviceExtension->Statistics.WriteQueueItemsTop = DeviceExtension->Statistics.WriteQueueItems;
     }
 
     QCacheReleaseLock(&lock_handle, &lowest_irql);
@@ -246,11 +225,7 @@ QCacheQueueLazyWriteIrp(
     return STATUS_SUCCESS;
 }
 
-
-VOID
-QCacheDispatchQueuedItem(
-    PDEVICE_EXTENSION DeviceExtension,
-    PWRITE_QUEUE_ITEM Item)
+VOID QCacheDispatchQueuedItem(PDEVICE_EXTENSION DeviceExtension, PWRITE_QUEUE_ITEM Item)
 {
     KEVENT event;
 
@@ -267,12 +242,10 @@ QCacheDispatchQueuedItem(
         auto io_stack = IoGetCurrentIrpStackLocation(Item->Irp);
 
         if ((io_stack->MajorFunction == IRP_MJ_DEVICE_CONTROL ||
-            io_stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL ||
-            io_stack->MajorFunction == IRP_MJ_FILE_SYSTEM_CONTROL) &&
-            (io_stack->Parameters.DeviceIoControl.IoControlCode ==
-                IOCTL_QCACHE_OFF ||
-                io_stack->Parameters.DeviceIoControl.IoControlCode ==
-                IOCTL_QCACHE_FLUSH))
+             io_stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL ||
+             io_stack->MajorFunction == IRP_MJ_FILE_SYSTEM_CONTROL) &&
+            (io_stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OFF ||
+             io_stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_FLUSH))
         {
             Item->Irp->IoStatus.Information = 0;
             Item->Irp->IoStatus.Status = STATUS_SUCCESS;
@@ -281,8 +254,7 @@ QCacheDispatchQueuedItem(
         {
             IoCopyCurrentIrpStackLocationToNext(Item->Irp);
 
-            IoSetCompletionRoutine(Item->Irp, QCacheSynchronousIrpCompletion,
-                &event, TRUE, TRUE, TRUE);
+            IoSetCompletionRoutine(Item->Irp, QCacheSynchronousIrpCompletion, &event, TRUE, TRUE, TRUE);
 
             lower_irp = Item->Irp;
         }
@@ -296,17 +268,16 @@ QCacheDispatchQueuedItem(
         IO_STATUS_BLOCK io_status;
 
         lower_irp = IoBuildSynchronousFsdRequest(Item->MajorFunction,
-            DeviceExtension->TargetDeviceObject,
-            Item->Buffer,
-            Item->Length,
-            &Item->Offset,
-            &event,
-            &io_status);
+                                                 DeviceExtension->TargetDeviceObject,
+                                                 Item->Buffer,
+                                                 Item->Length,
+                                                 &Item->Offset,
+                                                 &event,
+                                                 &io_status);
 
         if (lower_irp == NULL)
         {
-            DeviceExtension->Statistics.LastErrorCode =
-                STATUS_INSUFFICIENT_RESOURCES;
+            DeviceExtension->Statistics.LastErrorCode = STATUS_INSUFFICIENT_RESOURCES;
 
             KdBreakPoint();
 
@@ -324,8 +295,7 @@ QCacheDispatchQueuedItem(
 
     if (lower_irp != NULL)
     {
-        auto status = IoCallDriver(DeviceExtension->TargetDeviceObject,
-            lower_irp);
+        auto status = IoCallDriver(DeviceExtension->TargetDeviceObject, lower_irp);
 
         if (status == STATUS_PENDING)
         {
@@ -335,9 +305,7 @@ QCacheDispatchQueuedItem(
 
     if (Item->Irp != NULL)
     {
-        IoCompleteRequest(Item->Irp,
-            NT_SUCCESS(Item->Irp->IoStatus.Status) ?
-            IO_DISK_INCREMENT : IO_NO_INCREMENT);
+        IoCompleteRequest(Item->Irp, NT_SUCCESS(Item->Irp->IoStatus.Status) ? IO_DISK_INCREMENT : IO_NO_INCREMENT);
 
         Item->Irp = NULL;
     }
@@ -345,11 +313,9 @@ QCacheDispatchQueuedItem(
     KLOCK_QUEUE_HANDLE lock_handle;
     KIRQL lowest_irql = PASSIVE_LEVEL;
 
-    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle,
-        lowest_irql);
+    QCacheAcquireLock(&DeviceExtension->WriteQueueLock, &lock_handle, lowest_irql);
 
-    DeviceExtension->Statistics.WriteQueueSize -=
-        sizeof(*Item) + Item->Length;
+    DeviceExtension->Statistics.WriteQueueSize -= sizeof(*Item) + Item->Length;
 
     --DeviceExtension->Statistics.WriteQueueItems;
 
