@@ -12,6 +12,7 @@ constexpr bool QcObservationCode(ULONG code)
     case IOCTL_STORAGE_QUERY_PROPERTY:
     case IOCTL_STORAGE_GET_DEVICE_NUMBER:
     case IOCTL_STORAGE_GET_DEVICE_NUMBER_EX:
+    case IOCTL_STORAGE_GET_HOTPLUG_INFO:
     case IOCTL_STORAGE_PREDICT_FAILURE:
     case IOCTL_STORAGE_FIRMWARE_GET_INFO:
     case IOCTL_DISK_GET_DRIVE_GEOMETRY:
@@ -35,6 +36,8 @@ inline bool QcObservationRequest(PIO_STACK_LOCATION stack)
            QcObservationCode(stack->Parameters.DeviceIoControl.IoControlCode);
 }
 static_assert(QcObservationCode(IOCTL_STORAGE_QUERY_PROPERTY));
+static_assert(QcObservationCode(IOCTL_STORAGE_GET_HOTPLUG_INFO));
+static_assert(!QcObservationCode(IOCTL_STORAGE_SET_HOTPLUG_INFO));
 static_assert(!QcObservationCode(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
 static_assert(!QcObservationCode(IOCTL_SCSI_PASS_THROUGH));
 static_assert(!QcObservationCode(IOCTL_STORAGE_RESET_DEVICE));
