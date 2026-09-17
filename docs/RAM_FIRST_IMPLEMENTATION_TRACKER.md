@@ -43,7 +43,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 |---|---|---|---|---|
 | 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Partial: worker startup stages logged/flushed to stderr; barrier attribution pending | Local build/contracts; startup fault/hang tests and VM attribution pending, no relaxed readiness |
 | 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; existing partial-write barriers still apply | Native truth table and managed/UI checks; real one-hour soak pending |
-| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | In design | Seeded partial/full overlaps, unchanged neighbours, pinned/in-flight versions, RAM and disk byte oracle |
+| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Initial source implementation: 512-byte validity masks, partial admission/read overlay/sparse drain, immutable inherited versions; not deployed | Native compile and exhaustive coverage-mask checks; VM byte/lifetime/failure tests still required before acceptance |
 | 4 | Zero-length/oversized/quota fallback handling | 0–20% affected cases; ordinary fitting 4 KiB often 0% | Partial: valid zero-length writes return without draining; oversized/quota work pending | Native compile; VM no-I/O and request/quota/failure/cancel tests pending |
 | 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile passed; focused VM comparison pending; SET remains fenced |
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | Slow lower I/O + overwrites, parallelism 1/2/4, allocation failure and lifetime checks |
@@ -85,6 +85,34 @@ to collect a speed number. Keep commits independently reviewable.
    missing data, relaxed timeouts or weaker durability.
 
 ## Evidence checkpoint
+
+### Partial-write implementation handoff
+
+Blocks remain 4 KiB allocations (no eightfold growth in index entries); each has
+an eight-bit 512-byte validity mask. Admission of a sector-valid partial write
+copies its bytes and publishes coverage without lower I/O. New versions inherit
+known bytes of pinned/in-flight predecessors, preserving untouched sectors. Full
+blocks retain adjacent-write batching; sparse blocks drain contiguous valid runs
+only. All runs must succeed before retiring the version; failure retains it for
+ordered retry. Reads requiring missing sectors use the lower read then overlay
+only known RAM sectors. Known-byte counters are separate from slot-based admission
+quotas. Partial clean blocks do not count unknown bytes as readable RAM.
+
+Before deployment acceptance, add/run maintained correctness scenarios on a
+disposable non-OS volume with known 512-byte sectors (4Kn rejects sub-sector I/O):
+all eight sector offsets; disjoint masks; cross-4KiB writes; partial -> full ->
+partial overwrites; cold neighbours; cached partial reads and mixed missing reads;
+old in-flight full/partial versions replaced at drain parallelism 1/2/4; retention
+off with pinned readers; failed second sparse segment then retry; TRIM/reuse;
+admission budget exhaustion; no forced lower flush during fitting Fast writes.
+Compare exact RAM bytes AND disabled-cache disk bytes, especially unchanged
+neighbours. Verify counter/slot accounting returns to zero after drain/release.
+Do not describe compile-time coverage tests as those VM correctness tests.
+
+Residual limits: oversized/zero-write-quota fallbacks still use ordered lower I/O;
+TRIM retains its existing 4KiB-alignment restrictions and broad fallback; sparse
+blocks keep partial coverage after read misses rather than populating missing
+sectors. These are explicit later work, not hidden performance guarantees.
 
 Baseline driver de76288 / 0.4.37.1; CLI focused suite added by 36969d1. Baseline
 20260916-213221 stopped at case 32 observer readiness; 31 measured cases only.

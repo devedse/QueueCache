@@ -99,6 +99,7 @@ struct QC_SLOT
     BOOLEAN Dirty, ReadClass;
     ULONG Pins;
     BOOLEAN Filling, RetireWhenUnpinned;
+    ULONG ValidSectors; // sectorcoverage.h: unknown sectors must never be read from this buffer or drained
     ULONGLONG DirtySince;
 };
 struct QC_CACHE;
@@ -118,6 +119,8 @@ struct QC_CACHE
     QC_STATE_V3 ReadWriteSnapshot;
     QC_OPTIONS Options;
     ULONG CleanHead[2], CleanTail[2], CleanCount[2]; // write/read LRU lists
+    ULONG DirtySlots;
+    ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
     BOOLEAN Pressure, WriterWaiting;
     ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests;

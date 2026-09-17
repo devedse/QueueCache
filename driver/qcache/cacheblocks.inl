@@ -50,7 +50,10 @@ static void Unlink(QC_CACHE* c, ULONG i)
     else
         *tail = s->QueuePrevious;
     if (!s->Dirty)
+    {
         --c->CleanCount[s->ReadClass ? 1 : 0];
+        c->CleanValidBytes[s->ReadClass ? 1 : 0] -= QcValidBytes(s->ValidSectors);
+    }
 }
 static void Link(QC_CACHE* c, ULONG i)
 {
@@ -67,6 +70,7 @@ static void Link(QC_CACHE* c, ULONG i)
     if (!s->Dirty)
     {
         ++c->CleanCount[s->ReadClass ? 1 : 0];
+        c->CleanValidBytes[s->ReadClass ? 1 : 0] += QcValidBytes(s->ValidSectors);
         s->DirtySince = NowMs();
     }
 }
@@ -80,6 +84,7 @@ static ULONG AllocateSlot(QC_CACHE* c, bool dirty = true, bool read = false)
     s->InFlight = FALSE;
     s->DirtySince = dirty ? NowMs() : 0;
     s->Pins = 0;
+    s->ValidSectors = 0;
     s->Filling = s->RetireWhenUnpinned = FALSE;
     Link(c, i);
     ++c->Count;

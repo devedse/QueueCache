@@ -5,6 +5,7 @@
 #include <ntdddisk.h>
 #include <ntddscsi.h>
 #include "observation.h"
+#include "sectorcoverage.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
@@ -87,8 +88,8 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Base.Base.Version = 3;
     c->ReadWriteSnapshot.Base.Base.Size = sizeof(QC_STATE_V3);
     c->ReadWriteSnapshot.Options = c->Options;
-    c->ReadWriteSnapshot.CleanReadBytes = static_cast<ULONGLONG>(c->CleanCount[1]) * Chunk;
-    c->ReadWriteSnapshot.CleanWriteBytes = static_cast<ULONGLONG>(c->CleanCount[0]) * Chunk;
+    c->ReadWriteSnapshot.CleanReadBytes = c->CleanValidBytes[1];
+    c->ReadWriteSnapshot.CleanWriteBytes = c->CleanValidBytes[0];
     c->ReadWriteSnapshot.ReadHitBytes = c->ReadHitBytes;
     c->ReadWriteSnapshot.ReadMissBytes = c->ReadMissBytes;
     c->ReadWriteSnapshot.Evictions = c->Evictions;
@@ -349,11 +350,13 @@ static void Drainer(PVOID context)
         // Arrival order can be random even when neighboring disk blocks are dirty.
         // Walk backwards by at most one batch before gathering forwards, keeping
         // the oldest eligible anchor in the batch and preserving version order.
-        auto batchBlocks = min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk;
+        auto batchBlocks = c->Slots[index].ValidSectors == 255
+                               ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
             auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
-            if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling)
+            if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling ||
+                c->Slots[previous].ValidSectors != 255)
                 break;
             index = previous;
         }
@@ -363,10 +366,12 @@ static void Drainer(PVOID context)
         ULONG merged = 0;
         io.Buffer = c->DrainBuffer + worker->Number * c->DrainCapacity;
         io.Length = 0;
-        while (index != NoSlot && merged < min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk)
+        while (index != NoSlot && merged < batchBlocks)
         {
             auto slot = &c->Slots[index];
             if (slot->InFlight || slot->Filling)
+                break;
+            if (merged && slot->ValidSectors != 255)
                 break;
             selected[merged++] = index;
             slot->InFlight = TRUE;
@@ -374,7 +379,8 @@ static void Drainer(PVOID context)
             io.Length += Chunk;
             index = FindOldestSlot(c, io.Offset.QuadPart + io.Length);
         }
-        c->State.InFlightBytes += io.Length;
+        const auto transferBytes = io.ValidSectors == 255 ? io.Length : QcValidBytes(io.ValidSectors);
+        c->State.InFlightBytes += transferBytes;
         auto delay = c->DelayMs;
         auto inject = c->InjectFault == 1 || c->InjectFault == 2 || c->InjectFault == 4 || c->InjectFault == 5
                           ? c->InjectFault
@@ -382,7 +388,7 @@ static void Drainer(PVOID context)
         if (inject)
             c->InjectFault = 0;
         ++c->Performance.DrainBatches;
-        c->Performance.DrainBytes += io.Length;
+        c->Performance.DrainBytes += transferBytes;
         Publish(c);
         ReleaseCache(c);
         // InFlight + Pins keep these exact payload versions immutable and alive.
@@ -398,11 +404,36 @@ static void Drainer(PVOID context)
         // Lab-only synthetic failure/short-completion path, deliberately identified in controls.
         auto status = inject == 1   ? STATUS_IO_DEVICE_ERROR
                       : inject == 2 ? STATUS_DEVICE_DATA_ERROR
-                                    : LowerIo(c, IRP_MJ_WRITE, &io, inject);
+                                    : STATUS_SUCCESS;
+        if (NT_SUCCESS(status))
+        {
+            if (io.ValidSectors == 255)
+                status = LowerIo(c, IRP_MJ_WRITE, &io, inject);
+            else
+            {
+                // Sparse writes own only these sectors. Issue contiguous valid runs;
+                // never read-modify-write unknown neighbours. The version stays pinned
+                // and InFlight until EVERY run succeeds; failure retains the whole
+                // version for ordered retry (already written runs are idempotent).
+                NT_ASSERT(merged == 1 && io.ValidSectors != 0);
+                for (ULONG sector = 0; sector < 8 && NT_SUCCESS(status);)
+                {
+                    if (!(io.ValidSectors & (1UL << sector))) { ++sector; continue; }
+                    const auto firstSector = sector;
+                    while (sector < 8 && (io.ValidSectors & (1UL << sector))) ++sector;
+                    auto part = io;
+                    part.Offset.QuadPart += firstSector * 512;
+                    part.Buffer += firstSector * 512;
+                    part.Length = (sector - firstSector) * 512;
+                    status = LowerIo(c, IRP_MJ_WRITE, &part, inject);
+                    inject = 0;
+                }
+            }
+        }
         AcquireCache(c);
         if (lowerStart)
             c->Performance.LowerIoTicks += Tick() - lowerStart;
-        c->State.InFlightBytes -= io.Length;
+        c->State.InFlightBytes -= transferBytes;
         for (ULONG i = 0; i < merged; ++i)
         {
             c->Slots[selected[i]].InFlight = FALSE;
@@ -413,8 +444,9 @@ static void Drainer(PVOID context)
             ++c->LowerWrites;
             if (merged > 1)
                 ++c->BatchedWrites;
-            c->State.DirtyBytes -= io.Length;
-            c->State.DrainedBytes += io.Length;
+            c->State.DirtyBytes -= transferBytes;
+            c->DirtySlots -= merged;
+            c->State.DrainedBytes += transferBytes;
             for (ULONG i = 0; i < merged; ++i)
             {
                 auto completedIndex = selected[i];
@@ -504,6 +536,8 @@ static void FreeSlots(QC_CACHE* c)
         ExFreePoolWithTag(c->Slots, Tag);
     }
     c->Count = c->CleanCount[0] = c->CleanCount[1] = 0;
+    c->DirtySlots = 0;
+    c->CleanValidBytes[0] = c->CleanValidBytes[1] = 0;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     c->Slots = nullptr;
     c->Capacity = 0;
@@ -794,7 +828,10 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         irp->IoStatus.Information = 0;
         return STATUS_SUCCESS;
     }
-    auto needed = (static_cast<ULONGLONG>(length) + Chunk - 1) / Chunk;
+    const auto firstBlock = offset.QuadPart / Chunk * Chunk;
+    const auto end = offset.QuadPart + length;
+    const auto blocks = static_cast<ULONG>((end - firstBlock + Chunk - 1) / Chunk);
+    auto needed = blocks;
     const bool writeThrough = (stack->Flags & SL_WRITE_THROUGH) != 0;
     if (writeThrough)
     {
@@ -806,10 +843,9 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         return OriginalIo(c, irp);
     }
-    // Partial cache-block writes retain exact lower-device semantics behind a real barrier.
-    // Never read/modify/write an entire 4 KiB block from an incomplete sector payload.
-    if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c) || length == 0 ||
-        offset.QuadPart % Chunk || length % Chunk)
+    // Sector-valid partial writes use the same RAM admission path as full blocks.
+    // Only explicit durability/disabled/over-budget fallbacks remain here.
+    if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
     {
         ReleaseCache(c);
         auto status = QcCacheBarrier(c, FALSE);
@@ -831,9 +867,9 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         // every wait because the drainer may have removed or pinned indexed slots.
         needed = 0;
         ULONG newDirty = 0, newWriteOccupancy = 0;
-        for (ULONG copied = 0; copied < length; copied += Chunk)
+        for (auto block = firstBlock; block < end; block += Chunk)
         {
-            auto index = FindSlot(c, offset.QuadPart + copied);
+            auto index = FindSlot(c, block);
             if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins)
                 ++needed;
             if (index == NoSlot || !c->Slots[index].Dirty || c->Slots[index].InFlight || c->Slots[index].Pins)
@@ -844,13 +880,13 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         }
         // Evictions may remove clean blocks referenced by this request; recalculate
         // the preflight after every eviction before touching any payload.
-        auto writeUsed = c->State.DirtyBytes / Chunk + c->CleanCount[0];
-        if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictForWrite(c, length / Chunk))
+        auto writeUsed = c->DirtySlots + c->CleanCount[0];
+        if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictForWrite(c, blocks))
             continue;
         if (c->Options.Allocation == QcFixed &&
             (needed > c->Capacity - c->Count || writeUsed + newWriteOccupancy > WriteLimit(c)) && Evict(c, 0))
             continue;
-        if ((needed <= c->Capacity - c->Count && c->State.DirtyBytes / Chunk + newDirty <= WriteLimit(c)) ||
+        if ((needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= WriteLimit(c)) ||
             !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
             break;
         c->WriterWaiting = TRUE;
@@ -904,18 +940,33 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         return error;
     }
-    for (ULONG copied = 0; copied < length;)
+    for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto index = FindSlot(c, offset.QuadPart + copied);
+        auto index = FindSlot(c, block);
         if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins)
         {
+            const auto previous = index;
             index = AllocateSlot(c);
             auto slot = &c->Slots[index];
             slot->Length = Chunk;
-            slot->Offset.QuadPart = offset.QuadPart + copied;
+            slot->Offset.QuadPart = block;
             slot->InFlight = FALSE;
+            // A newest version must contain every still-valid sector of the older
+            // version, since the index returns newest first. Copy only known bytes.
+            // Mutex keeps the previous slot alive; its pins/in-flight payload is immutable.
+            if (previous != NoSlot)
+            {
+                auto old = &c->Slots[previous];
+                slot->ValidSectors = old->ValidSectors;
+                for (ULONG sector = 0; sector < 8; ++sector)
+                    if (old->ValidSectors & (1UL << sector))
+                        RtlCopyMemory(slot->Buffer + sector * 512, old->Buffer + sector * 512, 512);
+                if (old->Dirty) slot->DirtySince = old->DirtySince;
+                else old->RetireWhenUnpinned = TRUE;
+            }
             IndexSlot(c, index);
-            c->State.DirtyBytes += Chunk;
+            c->State.DirtyBytes += QcValidBytes(slot->ValidSectors);
+            ++c->DirtySlots;
         }
         auto slot = &c->Slots[index];
         if (!slot->Dirty)
@@ -925,27 +976,41 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
             slot->ReadClass = FALSE;
             slot->DirtySince = NowMs();
             Link(c, index);
-            c->State.DirtyBytes += Chunk;
+            c->State.DirtyBytes += QcValidBytes(slot->ValidSectors);
+            ++c->DirtySlots;
         }
         slot->Filling = TRUE;
-        copied += slot->Length;
     }
     // No other foreground request runs during publication. Filling prevents
     // drain selection; bounded pointer batches allow payload copies unlocked.
-    for (ULONG copied = 0; copied < length;)
+    for (auto block = firstBlock; block < end;)
     {
         PUCHAR buffers[64];
-        ULONG count = min(64UL, (length - copied) / Chunk);
+        ULONG count = static_cast<ULONG>(min(64LL, (end - block + Chunk - 1) / Chunk));
         for (ULONG i = 0; i < count; ++i)
-            buffers[i] = c->Slots[FindSlot(c, offset.QuadPart + copied + i * Chunk)].Buffer;
+            buffers[i] = c->Slots[FindSlot(c, block + i * Chunk)].Buffer;
         ReleaseCache(c);
         for (ULONG i = 0; i < count; ++i)
-            RtlCopyMemory(buffers[i], source + copied + i * Chunk, Chunk);
+        {
+            const auto current = block + i * Chunk;
+            const auto from = max(current, offset.QuadPart);
+            const auto to = min(current + Chunk, end);
+            RtlCopyMemory(buffers[i] + (from - current), source + (from - offset.QuadPart),
+                          static_cast<SIZE_T>(to - from));
+        }
         AcquireCache(c);
-        copied += count * Chunk;
+        block += count * Chunk;
     }
-    for (ULONG copied = 0; copied < length; copied += Chunk)
-        c->Slots[FindSlot(c, offset.QuadPart + copied)].Filling = FALSE;
+    for (auto block = firstBlock; block < end; block += Chunk)
+    {
+        auto slot = &c->Slots[FindSlot(c, block)];
+        const auto from = max(block, offset.QuadPart);
+        const auto to = min(block + Chunk, end);
+        const auto added = QcSectorMask(static_cast<ULONG>(from - block), static_cast<ULONG>(to - from));
+        c->State.DirtyBytes += QcValidBytes(added & ~slot->ValidSectors);
+        slot->ValidSectors |= added;
+        slot->Filling = FALSE;
+    }
     c->State.AcceptedBytes += length;
     c->LastWriteTime = NowMs();
     if (writeThrough)
@@ -993,7 +1058,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false)
     for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);
-        if (index == NoSlot || c->Slots[index].Filling)
+        const auto from = max(start, block);
+        const auto to = min(end, block + Chunk);
+        if (index == NoSlot || c->Slots[index].Filling ||
+            !QcCovers(c->Slots[index].ValidSectors, static_cast<ULONG>(from - block), static_cast<ULONG>(to - from)))
         {
             full = false;
             break;
@@ -1031,20 +1099,21 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false)
         for (auto block = start / Chunk * Chunk; block < end;)
         {
             PUCHAR buffers[64];
+            ULONG valid[64];
             ULONG count = 0;
             auto first = block;
             for (; count < RTL_NUMBER_OF(buffers) && block < end; ++count, block += Chunk)
             {
                 auto index = FindSlot(c, block);
-                auto bytes = min(end, block + Chunk) - max(start, block);
                 buffers[count] = index == NoSlot ? nullptr : c->Slots[index].Buffer;
-                if (index == NoSlot)
-                    c->ReadMissBytes += bytes;
-                else
-                {
-                    c->ReadHitBytes += bytes;
-                    c->State.CacheReadBytes += bytes;
-                }
+                valid[count] = index == NoSlot ? 0 : c->Slots[index].ValidSectors;
+                const auto from = max(start, block);
+                const auto bytes = static_cast<ULONG>(min(end, block + Chunk) - from);
+                const auto hits = valid[count] == 255 ? bytes :
+                    QcValidBytes(valid[count] & QcSectorMask(static_cast<ULONG>(from - block), bytes));
+                c->ReadHitBytes += hits;
+                c->State.CacheReadBytes += hits;
+                c->ReadMissBytes += bytes - hits;
             }
             ReleaseCache(c);
             for (ULONG i = 0; i < count; ++i)
@@ -1053,8 +1122,12 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false)
                     auto current = first + i * Chunk;
                     auto from = max(start, current);
                     auto to = min(end, current + Chunk);
-                    RtlCopyMemory(
-                        target + (from - start), buffers[i] + (from - current), static_cast<SIZE_T>(to - from));
+                    if (valid[i] == 255)
+                        RtlCopyMemory(target + (from - start), buffers[i] + (from - current), static_cast<SIZE_T>(to - from));
+                    else
+                        for (auto sector = from; sector < to; sector += 512)
+                            if (valid[i] & (1UL << ((sector - current) / 512)))
+                                RtlCopyMemory(target + (sector - start), buffers[i] + (sector - current), 512);
                 }
             AcquireCache(c);
         }
@@ -1083,6 +1156,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false)
                 auto fill = &c->Slots[index];
                 fill->Offset.QuadPart = block;
                 fill->Length = Chunk;
+                fill->ValidSectors = 255;
+                c->CleanValidBytes[1] += Chunk; // AllocateSlot linked it with an empty mask.
                 RtlCopyMemory(fill->Buffer, target + (block - start), Chunk);
                 IndexSlot(c, index);
             }
@@ -1197,8 +1272,9 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             {
                 if (c->Slots[i].Dirty)
                 {
-                    c->DiscardedBytes += c->Slots[i].Length;
-                    c->State.DirtyBytes -= c->Slots[i].Length;
+                    c->DiscardedBytes += QcValidBytes(c->Slots[i].ValidSectors);
+                    c->State.DirtyBytes -= QcValidBytes(c->Slots[i].ValidSectors);
+                    --c->DirtySlots;
                 }
                 RetireSlot(c, i);
             }

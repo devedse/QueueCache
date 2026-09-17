@@ -107,7 +107,7 @@ public sealed class CacheSettingsWindow : Window
                 0 => "Eager: each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites are still coalesced in RAM, but watermarks, maximum age and the idle interval are ignored.",
                 1 => "Balanced: pending writes stay in RAM until the write pool reaches the start watermark or the oldest pending block exceeds its maximum age; draining then continues down to the stop watermark. Absorbs repeated overwrites and write bursts, at the cost of more data waiting in volatile RAM.",
                 2 => "Idle: the Balanced triggers, plus draining whenever no new cached write has arrived for the write-idle interval. Keeps the disk quiet during a burst and catches up between bursts.",
-                _ => "Deferred: background draining starts only at the oldest pending block's age. No early idle or watermark trigger. Explicit flush, capacity and lifecycle boundaries still apply. Partial-write fallback barriers remain until the RAM-first storage rewrite is complete.",
+                _ => "Deferred: background draining starts only at the oldest pending block's age. No early idle or watermark trigger. Explicit flush, capacity and lifecycle boundaries still apply. This scheduling policy is not a durability guarantee.",
             };
             watermarks.IsVisible = algorithm.SelectedIndex is 1 or 2;
             ageField.IsVisible = algorithm.SelectedIndex != 0;
