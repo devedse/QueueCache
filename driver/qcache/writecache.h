@@ -45,8 +45,19 @@ struct QC_DIAGNOSTICS
     ULONG Version, Size;
     ULONGLONG ApplicationFlushes, DeferredFlushes, WriteThroughWrites, DeferredWriteThroughWrites;
     ULONGLONG ControlBarriers, OtherBarriers, ShutdownBarriers, PowerBarriers, LastBarrierCode;
+    ULONGLONG LowerReadAttempts, LowerWriteAttempts, LowerFlushAttempts;
+    ULONGLONG BarrierReasons[9];
+    ULONGLONG LastReason, LastMajor, LastCode, LastOffset, LastLength;
 };
-static_assert(sizeof(QC_DIAGNOSTICS) == 80);
+static constexpr ULONG QcDiagnosticsV1Size = 80;
+static_assert(sizeof(QC_DIAGNOSTICS) == 216);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
+enum QC_BARRIER_REASON : ULONG
+{
+    QcControlBarrier = 1, QcStrictWriteBarrier, QcDisabledWriteBarrier, QcQuotaWriteBarrier,
+    QcApplicationBarrier, QcShutdownBarrier, QcPowerBarrier, QcOrderedBarrier, QcRemoveBarrier
+};
 struct QC_STATE
 {
     ULONG Version, Size, Flags;
@@ -125,6 +136,7 @@ struct QC_CACHE
     BOOLEAN Pressure, WriterWaiting;
     ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests;
     QC_DIAGNOSTICS Diagnostics, DiagnosticsSnapshot;
+    volatile LONG64 LowerReadAttempts, LowerWriteAttempts, LowerFlushAttempts;
     QC_PERFORMANCE Performance, PerformanceSnapshot;
     ULONGLONG LockStarted;
     volatile LONG Timing;
@@ -155,7 +167,9 @@ void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
+void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
-NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable);
+NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable, QC_BARRIER_REASON reason,
+                       PIRP request = nullptr, ULONG code = 0);

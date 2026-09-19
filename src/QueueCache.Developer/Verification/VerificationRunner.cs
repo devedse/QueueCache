@@ -17,6 +17,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private int sequence;
     private RunStorage storage = null!;
     private RecoverySnapshot original = null!;
+    private DiskTarget? fileTarget;
     private VerificationOptions options = null!;
     private string workDirectory = "";
     private readonly object logGate = new();
@@ -116,17 +117,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             throw new InvalidDataException("Worker did not write its result: " + id);
         return job.Reply;
     }
-    private WorkerJob Job(string operation) => new(operation, options.Volume, "", original.Target);
+    private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original.Target);
     private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0) =>
         Worker(Job("control") with
         {
             Action = action,
             Value = value
-        }, token, 180);
+        }, token, action == WriteCacheAction.Flush ? options.PreparationFlushSeconds : 180);
 
     public async Task<int> RunAsync(VerificationOptions selected, IProgress<string>? progress, CancellationToken token)
     {
         VerificationPlan.Validate(selected);
+        fileTarget = null;
         options = selected with
         {
             Output = Path.GetFullPath(selected.Output),
@@ -137,16 +139,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" ? VerificationPlan.Performance(options) : [];
-        var expected = new List<string>();
-        if (options.Suite is "quick" or "full")
-            expected.Add("file-integrity");
-        if (options.Suite is "policies" or "full")
-            expected.Add("policy-integrity");
+        var integrity = VerificationPlan.Integrity(options);
+        var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
+        Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -171,20 +171,47 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         FileStream? diskLease = null;
         try
         {
-            var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json")), deadline.Token);
-            original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
+            DiskTarget target;
+            if (options.Suite == "trim-file")
+            {
+                var identity = await Worker(new("capture-file", options.Volume, storage.PathFor("target.json")), deadline.Token);
+                target = fileTarget = JsonSerializer.Deserialize<DiskTarget>(await File.ReadAllTextAsync(identity, deadline.Token))!;
+                storage.Write("restoration.json", new { Required = false, Reason = "File-only probe; no cache configuration or driver access." });
+            }
+            else
+            {
+                var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json")), deadline.Token);
+                original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
+                target = original.Target;
+            }
             var leases = LeaseDirectory;
             Directory.CreateDirectory(leases);
-            diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            captured = true;
-            workDirectory = Path.Combine(original.Target.Root, Path.GetFileName(storage.DirectoryPath));
+            diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            captured = options.Suite != "trim-file";
+            workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
             storage.Write("workloads.json", new
             {
                 Directory = workDirectory,
                 Retained = true
             });
-            foreach (var test in expected.TakeWhile(id => id is "file-integrity" or "policy-integrity"))
-                await Case(test, async () => { await Worker(Job(test == "file-integrity" ? "files" : "policies"), deadline.Token, 900); return null; });
+            foreach (var test in integrity)
+                await Case(test.Id, async () =>
+                {
+                    if (test.CacheEnabled is { } enabled)
+                    {
+                        var configuration = CacheConfiguration.FromState(original.State) with
+                        {
+                            Enabled = enabled,
+                            BudgetMiB = original.State.BudgetBytes == 0 ? options.BudgetMiB : (int)(original.State.BudgetBytes >> 20)
+                        };
+                        await Worker(Job("configure") with { Configuration = configuration }, deadline.Token);
+                    }
+                    var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
+                    if (test.Operation == "trim-file")
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing file-only check results.");
+                    return null;
+                });
             if (performance.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
@@ -226,8 +253,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             diskLease?.Dispose();
         }
-        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results);
-        var status = complete ? "COMPLETED" : restorationFailure is not null ? "RESTORATION_FAILED" :
+        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: options.Suite == "trim-file");
+        var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
             token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         if (complete && performance.Count > 0)
         {
@@ -283,8 +310,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     }
 
     private int totalCases;
+    private IReadOnlyList<CheckResult>? caseChecks;
     private async Task Case(string id, Func<Task<DiskSpdScore?>> run)
     {
+        caseChecks = null;
         progressLabel = $"Test {storage.Results.Count + 1} of {totalCases}";
         Log("Starting " + id);
         storage.Write("status.json", new
@@ -299,8 +328,13 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         try
         {
             var score = await run();
-            storage.Add(new(id, score is null ? "PASS" : "MEASURED", "Case completed; raw evidence retained. Performance thresholds require comparison.", started, timer.Elapsed.TotalSeconds, score));
-            Log($"Case {id}: {(score is null ? "PASS" : "MEASURED")} ({timer.Elapsed.TotalSeconds:F1}s).");
+            if (caseChecks is { Count: 0 } || caseChecks?.Any(check => check.Result is not ("PASS" or "SKIP")) == true)
+                throw new InvalidDataException("Missing or failed file-only checks.");
+            var resultStatus = caseChecks?.Any(check => check.Result == "SKIP") == true ? "SKIP" : score is null ? "PASS" : "MEASURED";
+            var detail = caseChecks is null ? "Case completed; raw evidence retained. Performance thresholds require comparison." :
+                string.Join("; ", caseChecks.Select(check => $"{check.Name}: {check.Detail}"));
+            storage.Add(new(id, resultStatus, detail, started, timer.Elapsed.TotalSeconds, score));
+            Log($"Case {id}: {resultStatus} ({timer.Elapsed.TotalSeconds:F1}s). {detail}");
         }
         catch (Exception ex) { storage.Add(new(id, "FAIL", ex.Message, started, timer.Elapsed.TotalSeconds)); throw; }
     }

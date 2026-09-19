@@ -26,6 +26,48 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
+        Check(VerificationPlan.Version == 8, "Sector lower-I/O attempt proof contract version");
+        var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
+            "admission retains exact attempt evidence");
+        foreach (var changed in new[] { admissionAttempts with { LowerReadAttempts = 2 }, admissionAttempts with { LowerWriteAttempts = 3 },
+            admissionAttempts with { LowerFlushAttempts = 4 }, admissionAttempts with { LowerReadAttempts = 0 } })
+        {
+            try
+            {
+                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, changed);
+                throw new Exception("Lower attempt difference accepted.");
+            }
+            catch (IOException) { }
+        }
+        foreach (var pair in new[] { (Before: (QueueCache.Management.CacheAttribution?)null, After: (QueueCache.Management.CacheAttribution?)admissionAttempts),
+            (Before: (QueueCache.Management.CacheAttribution?)admissionAttempts, After: (QueueCache.Management.CacheAttribution?)null) })
+        {
+            try
+            {
+                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(pair.Before, pair.After);
+                throw new Exception("Missing attempt counters accepted.");
+            }
+            catch (NotSupportedException) { }
+        }
+        Check(options.PreparationFlushSeconds == 180, "original flush deadline remains default");
+        VerificationPlan.Validate(options with { Suite = "quick", PreparationFlushSeconds = 600 });
+        Reject(() => VerificationPlan.Validate(options with { Suite = "quick", PreparationFlushSeconds = 179 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "quick", PreparationFlushSeconds = 3601 }));
+        VerificationPlan.Validate(new VerificationOptions("Q:", "trim-file"));
+        Check(VerificationPlan.Integrity(options with { Suite = "trim-file" }).SequenceEqual(
+            new IntegrityCase[] { new("trim-file", "trim-file") }), "file-only TRIM requires no cache routing mutation");
+        VerificationPlan.Validate(new VerificationOptions("Q:", "policies"));
+        VerificationPlan.Validate(new VerificationOptions("Q:", "trim-diagnostic"));
+        Check(VerificationPlan.Integrity(options with { Suite = "trim-diagnostic" }).SequenceEqual(
+            new IntegrityCase[] { new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false) }),
+            "TRIM diagnostic runs enabled/disabled routing with distinct case IDs");
+        Check(VerificationPlan.Integrity(options with { Suite = "quick" }).SequenceEqual(
+            new IntegrityCase[] { new("file-integrity", "files") }), "quick keeps its original routing");
+        Check(VerificationPlan.Integrity(options with { Suite = "full" }).SequenceEqual(
+            new IntegrityCase[] { new("file-integrity", "files"), new("policy-integrity", "policies") }),
+            "full integrity scope unchanged; TRIM diagnostic is opt-in");
+        Check(VerificationPlan.Integrity(options).Count == 0, "performance has no integrity cases");
         using (var errors = new StringWriter())
         {
             VerificationWorker.ReportFailures([new("warm-read", "PASS", "okay"), new("retention", "FAIL", "hot data evicted; barrier=0x74804")], errors);
@@ -34,6 +76,21 @@ internal static class VerificationRunnerTests
         }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
         var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture");
+        var dataDisk = new QueueCache.Operations.DiskDescription(1, "fixture", 200L << 30, "fixture", ["Q:"], false, false);
+        VerificationWorker.ValidateFileTarget(identity, dataDisk);
+        foreach (var excluded in new[] { dataDisk with { IsBoot = true }, dataDisk with { IsSystem = true }, dataDisk with { IsPaging = true }, dataDisk with { Bytes = 1 }, dataDisk with { Instance = "other" } })
+        {
+            try
+            {
+                VerificationWorker.ValidateFileTarget(identity, excluded);
+                throw new Exception("File-only unsafe target accepted.");
+            }
+            catch (IOException) { }
+        }
+        CaseResult[] skippedTrim = [new("trim-file", "SKIP", "Win32 326", DateTimeOffset.UtcNow, 1)];
+        Check(!RunStorage.Complete(["trim-file"], skippedTrim), "SKIP is not normal suite success");
+        Check(RunStorage.Complete(["trim-file"], skippedTrim, allowSkipped: true), "diagnostic can finish with explicit SKIP");
+        Check(!RunStorage.Complete(["trim-file", "missing"], skippedTrim, allowSkipped: true), "diagnostic cannot accept missing cases");
         QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "FIXTURE", "ntfs");
         QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
         try
@@ -188,6 +245,31 @@ internal static class VerificationRunnerTests
         {
             Flags = 0
         };
+        var original = new RecoverySnapshot(1, identity, healthy, false, "[]", epoch, "fixture");
+        Check(VerificationWorker.RestorationMismatches(original, healthy, "[]", 0).Count == 0,
+            "matching restoration accepted");
+        foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]
+        {
+            ("DirtyBytes", healthy with { DirtyBytes = 1 }),
+            ("InFlightBytes", healthy with { InFlightBytes = 1 }),
+            ("Errors", healthy with { Errors = 1 }),
+            ("Instance", healthy with { Instance = 1 }),
+            ("BudgetBytes", healthy with { BudgetBytes = 1 }),
+            ("Enabled", healthy with { Flags = 1 }),
+            ("UnsafeDefer", healthy with { Flags = 32 }),
+            ("Options", healthy with { Options = new QueueCache.Management.CacheOptions() })
+        })
+        {
+            var mismatch = VerificationWorker.RestorationMismatches(original, changed, "[]", 0);
+            Check(mismatch.Count == 1 && mismatch[0].StartsWith(name + ": expected ") && mismatch[0].Contains(", actual "),
+                "restoration preserves and identifies " + name);
+        }
+        Check(VerificationWorker.RestorationMismatches(original, healthy, "changed", 1).Count == 2,
+            "profile and timing mismatches both retained");
+        var originalOptions = new QueueCache.Management.CacheOptions();
+        Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
+            healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
+            "restoration compares option values rather than object identity");
         var reads = 0;
         var settled = QueueCache.Operations.ConfigurationManager.WaitForHealthyState(
             () => ++reads < 3 ? draining : healthy, healthy);
@@ -320,6 +402,22 @@ internal static class VerificationRunnerTests
                 throw new Exception("Cancellation did not fire.");
             }
             catch (OperationCanceledException) { }
+            var completeOutput = typeof(OwnedProcess).GetMethod("CompleteOutputAsync", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var pendingOutput = new TaskCompletionSource();
+            foreach (var primary in new Exception[] { new TimeoutException("fixture deadline"), new IOException("fixture PID did not exit"), new OperationCanceledException() })
+            {
+                var pipeEvidence = store.PathFor("pipe-" + primary.GetType().Name);
+                await (Task)completeOutput.Invoke(null, [pendingOutput.Task, Task.CompletedTask, pipeEvidence, primary, TimeSpan.Zero])!;
+                Check(primary.Data["OutputPipeFailure"] is string && File.ReadAllText(pipeEvidence + ".pipe-failure.json").Contains(primary.GetType().Name),
+                    "pipe timeout preserves primary termination failure and evidence");
+            }
+            try
+            {
+                await (Task)completeOutput.Invoke(null, [pendingOutput.Task, Task.CompletedTask, store.PathFor("pipe-only"), null, TimeSpan.Zero])!;
+                throw new Exception("Open pipe without primary failure accepted.");
+            }
+            catch (IOException ex) { Check(ex.Message.Contains("Output pipes did not close"), "standalone pipe failure remains fatal"); }
+            pendingOutput.SetResult();
             OwnedProcess.EnsureStopped(store.DirectoryPath);
             foreach (var mode in new[] { "success", "capture-failure", "check-failure", "restore-failure", "identity-failure", "observer-failure", "cancel" })
             {

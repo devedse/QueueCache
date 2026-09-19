@@ -98,7 +98,7 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Instance = c->Instance;
     c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    c->Diagnostics.Version = 1;
+    c->Diagnostics.Version = 2;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 2;
@@ -135,6 +135,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     KIRQL irql;
     KeAcquireSpinLock(&c->SnapshotLock, &irql);
     *output = c->DiagnosticsSnapshot;
+    output->LowerReadAttempts = InterlockedCompareExchange64(&c->LowerReadAttempts, 0, 0);
+    output->LowerWriteAttempts = InterlockedCompareExchange64(&c->LowerWriteAttempts, 0, 0);
+    output->LowerFlushAttempts = InterlockedCompareExchange64(&c->LowerFlushAttempts, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
@@ -168,6 +171,15 @@ static NTSTATUS InjectLowerCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     // This driver created the IRP; do not propagate PendingReturned to a nonexistent upper stack location.
     return STATUS_CONTINUE_COMPLETION;
 }
+void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major)
+{
+    if (major == IRP_MJ_READ)
+        InterlockedIncrement64(&cache->LowerReadAttempts);
+    else if (major == IRP_MJ_WRITE)
+        InterlockedIncrement64(&cache->LowerWriteAttempts);
+    else if (major == IRP_MJ_FLUSH_BUFFERS)
+        InterlockedIncrement64(&cache->LowerFlushAttempts);
+}
 static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG inject = 0)
 {
     KEVENT completed;
@@ -187,6 +199,7 @@ static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG
     if (inject == 4 || inject == 5)
         IoSetCompletionRoutine(
             irp, InjectLowerCompletion, reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(inject)), TRUE, TRUE, TRUE);
+    QcCacheRecordLowerAttempt(c, major);
     auto status = IoCallDriver(c->Lower, irp);
     if (status == STATUS_PENDING)
         KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
@@ -257,6 +270,7 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp)
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
+    QcCacheRecordLowerAttempt(c, IoGetCurrentIrpStackLocation(irp)->MajorFunction);
     auto status = IoCallDriver(c->Lower, irp);
     if (status == STATUS_PENDING)
     {
@@ -550,9 +564,27 @@ static void FreeSlots(QC_CACHE* c)
     c->DrainBuffer = nullptr;
     c->State.ReservedBytes = c->State.PayloadCapacity = c->State.BudgetBytes = 0;
 }
-NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable)
+NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, PIRP request, ULONG code)
 {
     AcquireCache(c);
+    ++c->Diagnostics.BarrierReasons[static_cast<ULONG>(reason) - 1];
+    c->Diagnostics.LastReason = reason;
+    c->Diagnostics.LastMajor = 0;
+    c->Diagnostics.LastCode = code;
+    c->Diagnostics.LastOffset = 0;
+    c->Diagnostics.LastLength = 0;
+    if (request)
+    {
+        auto stack = IoGetCurrentIrpStackLocation(request);
+        c->Diagnostics.LastMajor = stack->MajorFunction;
+        if (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE)
+        {
+            c->Diagnostics.LastOffset = stack->Parameters.Read.ByteOffset.QuadPart;
+            c->Diagnostics.LastLength = stack->Parameters.Read.Length;
+        }
+        else if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
+            c->Diagnostics.LastCode = code ? code : stack->Parameters.DeviceIoControl.IoControlCode;
+    }
     if (disable)
         c->Enabled = FALSE;
     c->Barrier = TRUE;
@@ -710,7 +742,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         return Configure(c, command.BudgetBytes);
     if (command.Action == QcRelease)
     {
-        auto status = QcCacheBarrier(c, TRUE);
+        auto status = QcCacheBarrier(c, TRUE, QcControlBarrier, irp, command.Action);
         if (!NT_SUCCESS(status))
             return status;
         AcquireCache(c);
@@ -725,7 +757,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         ++c->Diagnostics.ControlBarriers;
         Publish(c);
         ReleaseCache(c);
-        return QcCacheBarrier(c, command.Action == QcDisable);
+        return QcCacheBarrier(c, command.Action == QcDisable, QcControlBarrier, irp, command.Action);
     }
     AcquireCache(c);
     NTSTATUS status = STATUS_SUCCESS;
@@ -798,7 +830,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     Publish(c);
     ReleaseCache(c);
     if (NT_SUCCESS(status) && command.Action == QcRetry)
-        status = QcCacheBarrier(c, FALSE);
+        status = QcCacheBarrier(c, FALSE, QcControlBarrier, irp, command.Action);
     return status;
 }
 static PUCHAR Map(PIRP irp)
@@ -847,8 +879,10 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     // Only explicit durability/disabled/over-budget fallbacks remain here.
     if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
     {
+        auto reason = !c->Enabled ? QcDisabledWriteBarrier :
+            (writeThrough && !c->UnsafeDefer) ? QcStrictWriteBarrier : QcQuotaWriteBarrier;
         ReleaseCache(c);
-        auto status = QcCacheBarrier(c, FALSE);
+        auto status = QcCacheBarrier(c, FALSE, reason, irp);
         AcquireCache(c);
         InvalidateCleanRange(c, offset.QuadPart, length);
         Publish(c);
@@ -1337,7 +1371,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         ++c->Diagnostics.ShutdownBarriers;
         Publish(c);
         ReleaseCache(c);
-        auto status = QcCacheBarrier(c, TRUE);
+        auto status = QcCacheBarrier(c, TRUE, QcShutdownBarrier, irp);
         AcquireCache(c);
         c->Suspended = TRUE;
         Publish(c);
@@ -1352,7 +1386,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             ++c->Diagnostics.PowerBarriers;
             Publish(c);
             ReleaseCache(c);
-            auto status = QcCacheBarrier(c, TRUE);
+            auto status = QcCacheBarrier(c, TRUE, QcPowerBarrier, irp);
             if (!NT_SUCCESS(status))
                 return status;
             AcquireCache(c);
@@ -1403,7 +1437,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         // Unsafe policy changes only application/OS flush semantics. Never hide an existing I/O error.
         if (defer)
             return error;
-        return QcCacheBarrier(c, FALSE);
+        return QcCacheBarrier(c, FALSE, QcApplicationBarrier, irp);
     }
     // A query cannot modify media, so it must neither drain nor invalidate cached data.
     // Windows' storage service, NTFS and monitoring tools poll read-only controls (disk
@@ -1438,7 +1472,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         Publish(c);
         ReleaseCache(c);
     }
-    auto status = dirty || stack->MajorFunction == IRP_MJ_PNP ? QcCacheBarrier(c, stack->MajorFunction == IRP_MJ_PNP)
+    auto status = dirty || stack->MajorFunction == IRP_MJ_PNP ? QcCacheBarrier(c, stack->MajorFunction == IRP_MJ_PNP, QcOrderedBarrier, irp)
                                                               : STATUS_SUCCESS;
     // Unknown commands can modify media (including unsupported TRIM shapes).
     // Invalidate AFTER the drain, which may itself have retained clean blocks.

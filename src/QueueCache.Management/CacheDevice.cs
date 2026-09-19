@@ -52,12 +52,12 @@ public sealed class CacheDevice : IDisposable
 
     public CacheDiagnostics GetDiagnostics()
     {
-        var data = new byte[CacheDiagnostics.WireSize];
+        var data = new byte[CacheDiagnostics.AttributionWireSize];
         if (!Native.DeviceIoControl(handle, DiagnosticsIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache diagnostics unavailable (requires matching new driver).");
-        if (returned != data.Length)
+        if (returned > data.Length)
             throw new InvalidDataException("Invalid diagnostics length.");
-        return CacheDiagnostics.Decode(data);
+        return CacheDiagnostics.Decode(data.AsSpan(0, (int)returned));
     }
 
     public WriteCacheState GetWriteCacheState()

@@ -75,6 +75,9 @@ static NTSTATUS Forward(LAB_EXTENSION* ext, PIRP irp)
 {
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, LabCompletion, ext, TRUE, TRUE, TRUE);
+#if QCACHE_WRITE_LAB
+    QcCacheRecordLowerAttempt(&ext->Cache, IoGetCurrentIrpStackLocation(irp)->MajorFunction);
+#endif
     return IoCallDriver(ext->Lower, irp);
 }
 
@@ -457,7 +460,7 @@ static void RequestWorker(PVOID context)
             KeWaitForSingleObject(&ext->WorkAvailable, Executive, KernelMode, FALSE, nullptr);
     }
 #if QCACHE_WRITE_LAB
-    QcCacheBarrier(&ext->Cache, TRUE);
+    QcCacheBarrier(&ext->Cache, TRUE, QcRemoveBarrier);
 #endif
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
@@ -669,16 +672,20 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp)
         }
         if (code == IOCTL_QCACHE_DIAGNOSTICS_V1)
         {
-            if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_DIAGNOSTICS))
+            auto outputLength = stack->Parameters.DeviceIoControl.OutputBufferLength;
+            if (outputLength < QcDiagnosticsV1Size)
             {
                 IoReleaseRemoveLock(&ext->RemoveLock, irp);
                 return Complete(irp, STATUS_BUFFER_TOO_SMALL);
             }
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
-            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, sizeof(diagnostics));
+            auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) : QcDiagnosticsV1Size;
+            diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : 2;
+            diagnostics.Size = static_cast<ULONG>(returned);
+            RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
-            return Complete(irp, STATUS_SUCCESS, sizeof(diagnostics));
+            return Complete(irp, STATUS_SUCCESS, returned);
         }
         if (code == IOCTL_QCACHE_PERFORMANCE_V1)
         {
@@ -819,6 +826,9 @@ NTSTATUS LabDispatch(PDEVICE_OBJECT device, PIRP irp)
         {
             IoCopyCurrentIrpStackLocationToNext(irp);
             IoSetCompletionRoutine(irp, DirectCompletion, ext, TRUE, TRUE, TRUE);
+#if QCACHE_WRITE_LAB
+            QcCacheRecordLowerAttempt(&ext->Cache, stack->MajorFunction);
+#endif
             return IoCallDriver(ext->Lower, irp);
         }
     }

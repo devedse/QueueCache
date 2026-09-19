@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-17. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-19. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -41,21 +41,59 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 
 | # | Area / change | Expected improvement / metric | Implementation status | Verification status / required checks |
 |---|---|---|---|---|
-| 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Partial: worker startup stages logged/flushed to stderr; barrier attribution pending | Local build/contracts; startup fault/hang tests and VM attribution pending, no relaxed readiness |
-| 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; existing partial-write barriers still apply | Native truth table and managed/UI checks; real one-hour soak pending |
-| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Initial source implementation: 512-byte validity masks, partial admission/read overlay/sparse drain, immutable inherited versions; not deployed | Native compile and exhaustive coverage-mask checks; VM byte/lifetime/failure tests still required before acceptance |
+| 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Partial: worker startup stages logged/flushed; primary termination/deadline errors preserved when pipe cleanup also times out; plan-7 explicit preparation-flush deadline; named restoration mismatch evidence; kernel reason/attempt counters pending | Host-safe timeout/cancel/pipe-error, deadline-bound and every restoration-predicate contract passed. Plan-7 collected all 72 cases with validated coverage/raw scores; final clean-state check failed with late writes visible, separate supported recovery passed. No automatic clean-run or performance acceptance |
+| 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; sector-valid partial admission deployed | Native truth table and managed/UI checks; short deferred sector-admission VM checks passed; real one-hour soak pending |
+| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Initial implementation deployed as e8b37be / 0.4.40.1: 512-byte validity masks, partial admission/read overlay/sparse drain, immutable inherited versions; maintained policy scenario added | Native compile/coverage-mask checks and focused VM byte oracles passed at parallelism 1/2/4, retention off/on; fault/lifetime and zero-lower-I/O-attempt proof remain open |
 | 4 | Zero-length/oversized/quota fallback handling | 0–20% affected cases; ordinary fitting 4 KiB often 0% | Partial: valid zero-length writes return without draining; oversized/quota work pending | Native compile; VM no-I/O and request/quota/failure/cancel tests pending |
-| 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile passed; focused VM comparison pending; SET remains fenced |
-| 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | Slow lower I/O + overwrites, parallelism 1/2/4, allocation failure and lifetime checks |
+| 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile and VM policy retention checks across metadata/discovery passed; focused performance comparison pending; SET remains fenced |
+| 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
 | 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | Pending; wake coalescing already exists | CPU/request, timing on/off, Q1/Q32, snapshot freshness |
-| 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Pending | Partial ranges, reuse, overlapping old writes, malformed/failed requests |
+| 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
 | 13 | Indexed ready selection / independent-range workers if still justified | 0–100%+ high QD; Q1 usually 0% | Deferred until remaining profiles justify redesign | Range ordering, barriers, cancellation, faults, cross-thread lifetime |
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
 | 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; UI work pending | UI/CLI parity, sample staleness, interval/lifetime labels |
+
+## Next execution order (2026-09-19)
+
+The row numbers above are stable work-item IDs, not a requirement to finish every
+diagnostic before implementing anything. Use the following batches to prioritize
+resident small-write speed first, then loaded/mixed workloads. Potential gains are
+not measured rankings. A reproducible data-loss, ordering or lifecycle failure
+preempts this order.
+
+| Priority | Existing IDs | Deliverable and stop condition |
+|---|---|---|
+| 1 | 1, measurement portion of 15 | Add the smallest versioned barrier/lower-I/O-attempt counters needed to identify a foreground stall and prove admission. Fix observer startup only if the focused reproduction still fails; do not weaken readiness. Stop investigating once a test identifies the controlling wait/path. |
+| 2 | 3, safety portion of 6 | Finish accepting the deployed partial-write implementation: bounded lower-I/O gate and maintained RAM-admission scenario; deterministic old/new bytes, sparse failure/retry, pins/allocation/cancel checks. Repair failures in this slice immediately rather than expand the audit. Preserve Strict/explicit-flush checks. |
+| 3 | 2 | Verify Deferred trigger boundaries and first-dirty age; run one real one-hour soak on the VM with no competing workload. Local implementation work may continue during the soak. |
+| 4 | 5, 4, 8 | Remove confirmed incidental foreground waits: proven-safe queries, fitting-request fallback problems, and Automatic clean-space borrowing. Respect Fixed quotas; requests larger than available RAM still need backpressure. Implement one cause per comparison. |
+| 5 | 9 | Optimize measured per-request CPU/lookup/publication overhead on healthy fitting 4 KiB writes. If waits dominate instead, move directly to their owning item; do not speculate about lock-free rewrites. |
+| 6 | remaining 6, 12, 7 | Improve writes while draining and mixed/cold-read latency: bounded version reserves/locking, lower-I/O scheduling, then independent ready-request service. Require observed contention before adding workers or scheduler complexity. |
+| 7 | 11 | Cutoff flush and safe live configuration/resize, with exact durability and cancellation tests. Do not trade Strict semantics for throughput. |
+| 8 | 10 | Range-aware TRIM once delete/TRIM stalls are reproduced and a supported oracle is available. Current Win32 326 is a verification gap, not justification to rewrite the kernel path. No detach/reboot/raw mounted-volume TRIM as automatic investigation. |
+| 9 | remaining 15 | Finish windowed UI statistics and wait/trigger visibility. Minimal trustworthy measurement labels belong in priority 1; cosmetic/UI expansion does not block driver improvements. |
+| 10 | 14 | Dedicated full/lifecycle acceptance milestone. Relevant lifecycle/teardown safety checks also accompany each earlier ownership/scheduling change; this is not permission to defer known safety defects. |
+| 11 | 13, conditional | Indexed selection or independent-range workers only if residual high-QD profiles justify them after the simpler improvements. Otherwise leave this item deferred. |
+
+Keep the loop small: one local hypothesis, one discriminating check, one scoped
+implementation, host checks, then the focused VM regression. Reuse the maintained
+runner, exact run IDs and this tracker; no new private orchestration or repeated
+whole-repository audits. Record only changed status, evidence and the next blocker.
+Do not rerun broad matrices after documentation-only or diagnostic-only changes.
+
+Before the first further performance-affecting edit, freeze the accepted current
+build and obtain a fresh complete 72-case `write-performance --budget-mib 2048`
+baseline with the same DiskSpd hash and three repetitions. The old 31-case batch
+cannot substitute for it. Use focused matched cases during iteration (add maintained
+selection if needed), and repeat the complete matrix at performance milestones.
+Never compare the two TRIM diagnostic elapsed times as a performance benchmark.
+Investigate repeatable >5% healthy-throughput or >10% tail regressions beyond VM
+spread. The immediate next coding task is priority 1's narrow instrumentation and
+priority 2's admission proof, not another general research pass.
 
 ## Execution and verification gates
 
@@ -85,6 +123,276 @@ to collect a speed number. Keep commits independently reviewable.
    missing data, relaxed timeouts or weaker durability.
 
 ## Evidence checkpoint
+
+### Attribution candidate: plan 8, 2026-09-19
+
+Implementation: diagnostics V2 adds live lower read/write/flush submission
+counters (including direct inactive forwarding) and nine barrier reason counts
+with last reason/major/code/offset/length. The original 80-byte V1 reply remains
+available on the same IOCTL; new clients show unavailable attribution as null on
+old drivers. No admission, ordering, scheduling or durability behavior changed.
+The existing sector scenario now requires unchanged attempt counts across fitting
+partial/full writes and cached reads, and verifies positive counters for the
+subsequent explicit drain/flush/disk oracle. Plan 8 versions this stronger test.
+
+Local verification: Release native build passed with zero warnings/errors;
+management/runner/ABI and desktop fixture tests passed. V1/V2 wire decoding,
+missing counters, each changed counter and reset/reversed counters are covered.
+VM installation and focused `policies` verification are pending. This does not
+complete the bounded lower-I/O gate, deterministic allocation/fault/cancellation
+tests, Strict/lifecycle coverage or the one-hour soak. Use the signed CI build
+and record its loaded identity before claiming VM verification.
+
+### Fresh write baseline: incomplete, 2026-09-19
+
+The next agreed gate was attempted on the restored, hash-verified 0.4.40.1 driver:
+`write-performance --budget-mib 2048 --repeats 3`, default 10-second score windows,
+CDM 9.0.3's x64 DiskSpd SHA-256
+`7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+Run `QueueCache-Verify-20260919-014223-992df2c2db0f4bce887fe0d6ba58ff1e`
+ended **INCOMPLETE**, with three MEASURED cases and one FAIL out of 72 expected.
+Do not combine these rows with earlier runs or report medians/performance acceptance.
+Full private evidence is retained in `.lab/write-baseline-20260919` and the VM's
+matching `ManualRuns\write-baseline-20260919` directory.
+
+The fourth case failed during its explicit pre-workload flush, before its score
+window. Worker 00074 reached driver control dispatch and exceeded the existing
+180-second deadline. Its exit record says exited / -1; an additional output-pipe
+cleanup timeout masked the primary failure in the old runner's final message.
+The runner now retains the primary deadline/cancellation/non-exit failure and
+records a separate `.pipe-failure.json` when cleanup also times out. Deterministic
+host-safe regressions cover these combined failures and fatal pipe-only failures.
+At that checkpoint the source fix was not yet staged and no deadline had been
+increased. The subsequent authorized plan-7 deployment below includes this fix.
+
+Control trace 00072 contains 938 samples over 190.108 seconds, maximum gap
+0.237 seconds. Dirty data decreases from 679.136 MiB to 13.121 MiB; drained bytes
+increase by 666.016 MiB (about 3.50 MiB/s), with 51,836 lower-write completions,
+no newly accepted bytes and zero driver errors. The last phase is dirty-data
+draining (3), not lower-flush waiting (4). This is continuing slow drain progress,
+not evidence of a deadlock. It is outside the DiskSpd score window and its
+completion counts do not prove lower-I/O attempt behavior.
+
+Independent restoration completed in about 12 seconds with observer readiness,
+original 2 GiB enabled Fast/Idle options, unchanged profiles/timing, zero
+dirty/in-flight bytes and zero errors. A subsequent live check found no workload
+processes and confirmed the clean original runtime state. No driver changed.
+
+**Authorized next gate:** on 2026-09-19 the user explicitly approved changing the
+deadline and continuing. Plan 7 adds `--preparation-flush-seconds` (default 180,
+bounded 180..3600); this VM's new baseline uses 600. The value is recorded in the
+manifest and log and extends the paired preparation-control observer lifetime.
+The 72-case matrix, 10-second score windows, 45-second readiness handshake,
+coverage requirements, other control timeouts and independent 300-second
+restoration deadline remain unchanged. Host-safe contracts and self-contained
+CLI publish passed; the updated CLI is staged separately from the installed
+driver. Do not merge the incomplete plan-6 rows with the new run. Kernel
+instrumentation remains pending behind the complete baseline gate.
+
+The new run is
+`QueueCache-Verify-20260919-101745-c820e051450f4f3b8f511f42a9aaf595`, in the VM's
+`ManualRuns\write-baseline-plan7-20260919` directory. The foreground SSH
+connection ended after about 48 minutes, but coordinator PID 688 and its owned
+workers were verified alive with the exact command line. Persistent progress
+advanced through 28 measured cases into case 29, without restarting the run.
+The 600-second flush timeout is visible in raw progress; the old case-4 failure
+point was passed. It finished at 12:11:56 UTC with **72/72 MEASURED and
+RESTORATION_FAILED**, not a clean-run PASS. All 72 unique IDs match the manifest,
+with three repetitions in each of 24 groups. Every raw DiskSpd XML matches the
+reported byte count, operation count, measured seconds and write p99. Readiness,
+normal child exits, full process-interval coverage and expected mode/timing were
+checked for all cases. All 5,430 workload telemetry samples have zero driver
+errors and stable instance 2; maximum sample gap is 0.6437385 seconds (limit 2).
+The original status/summary/finished marker must remain unchanged.
+The complete private archive is `.lab/write-baseline-plan7-20260919-evidence`:
+9,128 files, 101,208,027 bytes including separate recovery evidence. Robocopy
+reported zero failed/mismatched files; local inventory and completion/recovery
+records were checked after the copy finished.
+
+Final restoration did not time out: worker 01517 failed its composite state
+check after about 28 seconds. Trace 01515's final sample has 10,752 dirty bytes,
+zero in-flight bytes and timing disabled; accepted bytes increased by 10,752
+after the main drain. This supports late writes after Flush as the reason for
+the clean-state failure, but the old worker did not retain its exact failed
+comparison snapshot. Do not label their source definitively or weaken the
+zero-dirty requirement. Later read-only checks found a clean healthy cache,
+unchanged saved profile/options/timing, and no workload processes.
+
+The runner now reports every mismatched field with expected/actual values and
+writes a `.reply.json.mismatch.json` failure snapshot. All original predicates
+remain enforced; no retry, deadline or workload contract changed. Host-safe
+regressions cover each predicate, simultaneous profile/timing differences and
+option value equality; publish and editor diagnostics passed.
+
+After confirming no competing processes, the supported `verify-recover` on
+the exact run passed in separate recovery
+`QueueCache-Verify-20260919-121942-1c94768f67904aea9ad75a2a36602713`.
+Its `recovery-result.json` says RESTORED and its worker reply verifies the
+original Fast/Idle 2 GiB configuration, profile, timing off, instance 2 and
+zero dirty/in-flight bytes/errors. The VM is ready for the next focused run;
+"restoration" here means runtime cleanup, not a VM snapshot rollback.
+
+The complete measurement collection is a qualified comparison reference, not
+an automatically accepted performance milestone or a restoration-clean run.
+Medians and three-repeat ranges are in
+[WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md). No partial
+run was merged, no performance gain is claimed, and no kernel changed. Keep
+the restoration caveat attached to comparisons; priority 1 attribution and
+priority 2 admission proof remain the next implementation work.
+
+### VirtIO and volume retrim follow-up, 2026-09-19
+
+Both installed VirtIO-SCSI controller PnP records report driver
+`100.100.104.27100`, INF `oem0.inf`, driver date 2025-01-13. This supports the
+user's recollection of package 0.1.271; it is not inferred from the mounted ISO.
+NTFS delete notifications are enabled (`DisableDeleteNotify=0`). Q: reports
+512-byte logical/physical sectors, aligned device/partition, NoSeekPenalty,
+TrimSupported, and a thin-provisioned slab size of 4096 bytes.
+
+On the idle, identity-checked non-OS Q: disk, `defrag Q: /L /U /V` printed
+`Retrim: skipped` and `Incorrect function. (0x80070001)`. Its process exit code
+was zero: **the operation failed; exit zero is not a successful retrim oracle**.
+Before/after cache state and raw output are retained in the VM share's
+`ManualRuns\trim-volume-20260919`. Afterward dirty/in-flight bytes and errors
+were zero and the original Fast/Idle settings remained active. This attached
+volume-level result is separate from the earlier attached/unfiltered file-level
+Win32 326 comparison; it does not prove unfiltered volume-retrim behavior.
+
+The matching upstream report is
+[virtio-win issue 1574](https://github.com/virtio-win/kvm-guest-drivers-windows/issues/1574),
+opened 2026-05-24 following May Windows updates. Community reports describe the
+same volume-retrim error and successful 16/32/64 KiB discard-granularity
+workarounds depending on storage geometry. The statement that 0.1.271 always
+avoids this is not an established compatibility guarantee; the thread also
+reports persistence after downgrading to 0.1.226. Our installed .27100 still
+fails. A granularity mismatch is a credible hypothesis, not a proven local cause.
+Actual Proxmox current/pending configuration, live QEMU device mapping and
+backing-storage geometry have not been inspected. No Proxmox args, Windows
+drivers, system binaries or VM power state were changed for this investigation.
+
+The subsequent maintained file-only probe
+`QueueCache-Verify-20260919-101718-615885a4d9da47c3830ec9edfc5f78e9` finished
+`COMPLETED_WITH_SKIPS`, again Win32 326 with guards/reuse unexecuted. Its finished
+marker, status and result agree; it is not a TRIM correctness pass. A private
+local copy of this investigation is retained in `.lab/trim-volume-20260919`.
+
+### Authorized detached comparison, 2026-09-19
+
+**Conclusion:** file-level TRIM error 326 reproduces with QueueCache completely
+absent from Q:'s live device stack. Cache-disabled and filter-detached are distinct
+conditions; both have now been tested. General Windows TRIM capability does not
+guarantee support for this file-level API. Do not treat these SKIPs as TRIM
+correctness passes or spend the next performance iteration rewriting this path.
+The exact rejecting Windows/storage layer remains unidentified. The original
+driver and cache configuration were restored and verified. Resume priority 1
+instrumentation and priority 2 admission proof after the fresh write baseline.
+
+Plan 6 adds opt-in `trim-file` within the existing runner/owned-worker pipeline,
+without opening a cache device or changing cache settings. It rejects
+boot/system/paging disks and changed identity, writes a fresh 3 MiB file, and
+attempts middle-1-MiB file-level TRIM with guard/rewrite checks on success.
+Unsupported errors are top-level SKIP / COMPLETED_WITH_SKIPS, not a correctness
+PASS. Host-safe contracts and CLI publish passed. No driver source changed.
+
+Matched attached baseline
+`QueueCache-Verify-20260919-012558-c5df6410a19d447cbcaf1a5861ea3fa5`
+completed with Win32 326; guards/reuse were not executed. VM evidence is under
+`ManualRuns\trim-detached-20260919` on its existing share. The same CLI remains
+staged there. The full installed 0.4.40.1 package backup passed its checksum
+manifest. `recovery.json` preserves the original Q: enabled 2 GiB Fast/Idle
+configuration, timing off and saved profiles; `c-before.json` records C: disabled
+with zero budget. Driver hash remains the hash in the earlier checkpoint below.
+
+The user explicitly authorized this removal/reboot comparison. The installed
+`setup\Install-Driver.ps1 -Uninstall` completed with exit 3010 after reporting
+both disks clean. Class UpperFilters became only `partmgr`; `EhStorClass` was
+preserved. Applications, profiles, service and driver binaries were retained.
+`uninstall.log`, class registration, original boot and driver state were saved.
+Restart temporarily closed SSH; it recovered without a forced reset. Early
+`boot-detached.json` / `driver-detached.json` snapshots still showed the old boot
+and do NOT prove detachment. The subsequent `boot-unfiltered.json` confirms a new
+boot. `stack-unfiltered.txt` shows Q: as `partmgr -> disk -> vioscsi`, without
+QueueCache, and its cache protocol fails. The retained boot-start service remains
+Running without attachment, so service state alone would have been misleading.
+
+Unfiltered run `QueueCache-Verify-20260919-013229-67150a4f8fd446439f4e8f632c9a973e`
+also returned 326 / COMPLETED_WITH_SKIPS. CLI and entry-assembly hashes matched
+the attached baseline. Both runs have complete reports and raw replies; local
+private copies are in `.lab/trim-file-20260919/evidence`. This demonstrates that
+the file-level rejection reproduces without QueueCache attached. It does not
+identify the rejecting Windows/storage layer, prove physical discard propagation,
+or validate the driver's TRIM ordering/guard/reuse paths.
+
+The same installed setup script restored `qcachelab,partmgr` registration and
+the startup policy task with exit 3010, retaining the same 0.4.40.1 binary.
+Restoration completed after the second reboot: live Q: stack again includes
+`partmgr -> qcachelab -> disk -> vioscsi`, driver hash matches the original, and
+the startup task completed with result 0. `restored-snapshot.json` matches the
+original Q: disk identity, enabled 2 GiB Fast/Idle configuration, options, timing
+off and saved profiles. Dirty/in-flight bytes and errors are zero. C: remains
+disabled with zero budget, pending bytes and errors. No workload/UI processes
+remained at final capture. Class UpperFilters/LowerFilters match the originals.
+Final evidence was copied into the same private local evidence directory. No
+driver changes, OS-disk workloads, forced resets or performance claims resulted.
+
+### File-level TRIM diagnosis, 2026-09-19
+
+On the same hash-verified 0.4.40.1 driver and disposable Q: disk, Windows reports
+TRIM supported and delete notifications enabled. The exact file-level rejection is
+Win32 326 (`ERROR_DEVICE_DOES_NOT_SUPPORT_TRIM`), not a generic inferred absence of
+TRIM. The plan-4 diagnostic run
+`QueueCache-Verify-20260919-000150-d3723a5158094f49ad7c021f4089e7cf`
+captured that error. The new opt-in plan-5 `trim-diagnostic` suite completed both
+cases in `QueueCache-Verify-20260919-000441-66e57d9c9fe34f8b9125b8439e00a2cd`:
+cache routing enabled and disabled both returned 326, with no increase in the
+driver TRIM counter during either probe. Both retained guard/reuse SKIP outcomes;
+top-level PASS records diagnostic completion, not TRIM correctness.
+
+General TRIM requests were observed in lifetime counters between runs, but are not
+attributable to these probes. Disabling cache routing does not detach the filter,
+so this comparison does not exonerate every filter path or identify the rejecting
+filesystem/storage layer. No hardware changes are justified by this evidence yet.
+The test now catches unsupported errors only around the TRIM call, not subsequent
+guard/rewrite I/O, and preserves native error codes. Host-safe contracts passed.
+Restoration returned the original enabled 2 GiB configuration with zero pending
+bytes/errors; all three control observers reported ready. No driver code changed.
+
+### Focused sector verification, 2026-09-19
+
+Maintained `qcache developer verify Q: --suite policies`, plan 4, completed run
+`QueueCache-Verify-20260918-234805-f0f1986704e6474ea79d604e6375a32b`
+(run ID uses the VM's UTC clock). Loaded driver e8b37be / 0.4.40.1 matched the
+installed package SHA-256
+`1F1E8772A738D005D0A6E9ECBA4FFCD8FEEA98F21DF2B010D2F22E27F859C2BB`;
+installation preceded the current boot. The target was the disposable 200 GiB
+non-OS physical disk, with 512-byte logical sectors. No competing test/UI processes
+were present; delay and fault hooks were explicitly cleared before the run.
+
+All 29 detailed checks passed: 12 sector admission/disk-oracle checks across
+parallelism 1/2/4 and retention off/on, plus 17 existing policy checks. Coverage
+included every sector position, crossing writes, cold neighbours, sparse drains,
+and 128 full/partial overwrites per combination with 25 ms lower-write delay.
+Every combination observed nonzero in-flight bytes. Exact live and disabled-cache
+disk bytes matched. Deferred admission left observed lower-write/flush counters
+unchanged. Runtime restoration succeeded with no dirty/in-flight bytes or errors;
+saved profiles were unchanged. Raw evidence remains private in the exact run.
+
+The separate `quick` run
+`QueueCache-Verify-20260918-234946-15631f05af364a08b4be6696af25b18f`
+also completed and restored cleanly: six checks passed, including 2048 random
+overwrites, explicit drain/reopen bytes and copy/rename hashes; four checks were
+explicitly skipped. File-level TRIM was unsupported on this target; no TRIM
+coverage is claimed. Fault/lifecycle/concurrency/capacity cases were excluded.
+Host-safe management/runner contracts passed again on 2026-09-19. Both complete
+raw runs are preserved under the private `.lab/sector-verification-20260919-results/`
+directory. No performance matrix was run in this verification checkpoint.
+
+This is limited correctness evidence, not full acceptance or a performance claim.
+Observing in-flight data does not prove a specific old/new-version interleaving.
+The current scenario does not count lower-read attempts or gate all lower I/O;
+unchanged completion counters are not proof of zero lower-I/O attempts. Sparse
+segment failures/retry, pinned-reader lifetime, allocation failure, cancellation,
+partial TRIM/reuse, capacity pressure, 4Kn, and the one-hour soak remain unverified.
 
 ### Partial-write implementation handoff
 

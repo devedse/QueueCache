@@ -16,18 +16,75 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 3)
+## Suites (plan version 8)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
-| `policies` | Existing six cache configurations, retained-data checks and disabled-cache byte oracle; restores runtime configuration. |
+| `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof, followed by six cache configurations, retained-data checks and disabled-cache byte oracle; restores runtime configuration. Requires the attribution driver. |
+| `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
+| `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 ### Small-write investigation
+
+Plan 8 strengthens the sector cases in `policies`/`full`: from a clean boundary,
+all eight sector positions, a crossing write and a full 4 KiB write plus immediate
+cached reads must leave lower read/write/flush attempt counters unchanged. The
+later explicit drain and disabled-cache disk read must increment those counters.
+The exact before/after values are retained in each admission check. Missing V2
+diagnostics fails this proof rather than substituting zero. The 72-case write
+matrix and its timing/deadline contract are unchanged.
+
+Diagnostics uses the existing IOCTL with output-size negotiation: old clients
+receive the unchanged 80-byte V1 response; new clients accept V1 (Attribution
+null) or the 216-byte V2 response. V2 lower counters increment immediately before
+`IoCallDriver` for read/write/flush, including generated drains, original requests
+and direct inactive routing. They are live atomic lifetime counters, independent
+of detailed timing and completion snapshots, not one transactionally coherent
+snapshot with the other diagnostics. Allocation failures and injected failures
+before submission are not attempts. Control/IOCTL traffic is not a data attempt;
+other filters' submissions are outside this filter's counters.
+
+V2 records barrier counts by reason: 1 management control, 2 Strict write-through,
+3 disabled-with-dirty write, 4 request exceeds write quota, 5 nondeferred application
+flush, 6 shutdown, 7 power, 8 ordered media/unknown/PnP, 9 removal. The last barrier
+also retains major function, code (management action or IOCTL), byte offset and
+length for data requests. Offset/length modulo 4096 identifies partial-block
+alignment. These describe barrier entry, not successful persistence. Capacity
+waits remain in existing telemetry. No scheduling/durability rules are changed.
+Zero observed attempts is a focused result, not a bounded lower-I/O gate or a
+proof of unexercised allocation, fault, cancellation and lifetime paths.
+
+Plan 5 adds `qcache developer verify Q: --suite trim-diagnostic`. A completed
+diagnostic run can contain unsupported TRIM skips; inspect each `files` worker
+reply, not just the top-level case status. Only errors from the TRIM call itself
+can be classified as unsupported; guard/rewrite failures remain failures. This
+compares cache routing, not filter attachment or physical-storage isolation.
+
+Plan 6 adds `qcache developer verify Q: --suite trim-file` for an explicitly
+driver-independent comparison. It uses the same owned-worker timeouts, run/disk
+leases and immutable run folders, but neither opens a cache device nor changes
+runtime configuration. It performs fresh inventory and native identity checks
+before the file probe. Driver telemetry, its ready handshake and cache recovery
+are intentionally inapplicable to this suite only; `restoration.json` records
+that distinction. It never removes filters or reboots. To compare attachment,
+record the actual post-reboot device stack separately; disabling caching or
+checking the registered service alone is insufficient. Keep the same CLI for
+both runs. A rejected TRIM produces `COMPLETED_WITH_SKIPS`, not a byte-correctness
+PASS, and must not be compared as a performance measurement.
+
+Plan 4 adds partial-write correctness to `policies` (also included in `full`).
+On a 512-byte logical-sector volume it checks every sector position, disjoint and
+cross-4-KiB writes, cold-neighbour preservation, deferred admission without observed
+lower writes/flushes, and sparse-drain disk bytes. Full/partial overwrites run with
+25 ms drain delay at parallelism 1/2/4 and retention off/on. Reports state whether
+in-flight data was observed; this is not proof of every race. Native 4Kn volumes
+are explicitly unsupported by this scenario, not reported as passed. Fault
+injection, cancellation and partial TRIM coverage remain separate work.
 
 ```powershell
 qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
@@ -50,6 +107,11 @@ Keep the original run as the baseline; rerun the same command/binary/budget afte
 each driver change. Do not change broad ordering/barrier rules on throughput alone.
 
 Parameters: `--budget-mib 1024`, `--repeats 3`, `--duration-seconds 10`,
+`--preparation-flush-seconds 180` (explicit range 180..3600; use 600 for the
+authorized slow-drain VM baseline). Plan 7 records this deadline in the manifest
+and progress log. It affects only pre-workload explicit flushes and their
+associated observer lifetime, not score windows, readiness/coverage requirements,
+other control deadlines or the independent restoration deadline.
 `--deadline-minutes 0` (default: **no overall time limit**). The suite runs until
 completion, cancellation or a failure; individual operation timeouts remain enabled.
 An optional positive deadline still limits the whole measurement batch. Preparation,
@@ -62,6 +124,12 @@ Every coordinator progress line, including child-process waiting messages, shows
 their own labels and counters. These count top-level cases, not elapsed-time
 percentages; a long-running case stays at the same number. The same lines appear
 in `run.log`.
+
+If a worker exceeds its deadline or cannot terminate and its output pipes also
+remain open, the primary termination failure is preserved. The separate
+`*.pipe-failure.json` records both failures; inspect it with the worker's stderr,
+exit record and control trace. A pipe-only failure remains fatal. This does not
+extend worker deadlines or make an incomplete run acceptable.
 
 Before a workload or management command starts, its telemetry observer must finish
 disk discovery and flush its first sample to disk (45-second readiness limit).
@@ -96,6 +164,10 @@ profiles are still checked before reporting restored. After a failed run, confir
 its owned processes have stopped and use the newly installed CLI's
 `qcache developer verify-recover <failed-run-directory>` before starting another
 suite. Recovery creates its own subfolder/log and does not relabel old results.
+Restoration comparison failures report named expected/actual fields and retain
+the observed state, profiles, timing and all mismatches in
+`<reply-path>.mismatch.json`. Late writes after a flush can still fail the
+zero-dirty check; this evidence does not bypass that check or retry mutations.
 
 Performance workloads use a hot set one quarter of the selected cache budget and
 a separate writer file twice the budget. Fresh random-filled files are prepared

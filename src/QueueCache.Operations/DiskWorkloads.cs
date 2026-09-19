@@ -19,6 +19,45 @@ public sealed record WorkloadReport(Guid RunId, string Directory, string Mode, D
 [SupportedOSPlatform("windows")]
 public static class DiskWorkloads
 {
+    public static IReadOnlyList<CheckResult> TrimFile(DiskTarget target, string directory)
+    {
+        target.ValidateCurrent();
+        if (Directory.Exists(directory) || !string.Equals(Path.GetDirectoryName(Path.GetFullPath(directory)), target.Root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("TRIM workload must use a new directory on the validated volume.");
+        Directory.CreateDirectory(directory);
+        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Reparse test target rejected.");
+        var expected = new byte[3 << 20];
+        new Random(718).NextBytes(expected);
+        var actual = new byte[expected.Length];
+        using var file = new AlignedFile(Path.Combine(directory, "trim-probe.bin"), expected.Length, create: true);
+        file.Write(0, expected);
+        file.Flush();
+        file.Read(0, actual);
+        if (!expected.AsSpan().SequenceEqual(actual))
+            throw new IOException("Pre-TRIM byte mismatch.");
+        try
+        {
+            file.Trim(1 << 20, 1 << 20);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 326)
+        {
+            return [new("file-trim/guards/reuse", "SKIP",
+                $"FSCTL_FILE_LEVEL_TRIM rejected: Win32 {ex.NativeErrorCode} (0x{ex.NativeErrorCode:X8}): {ex.Message}. Guard/reuse checks not executed.")];
+        }
+        file.Read(0, actual);
+        if (!expected.AsSpan(0, 1 << 20).SequenceEqual(actual.AsSpan(0, 1 << 20)) ||
+            !expected.AsSpan(2 << 20, 1 << 20).SequenceEqual(actual.AsSpan(2 << 20, 1 << 20)))
+            throw new IOException("TRIM changed an untrimmed guard.");
+        new Random(719).NextBytes(expected);
+        file.Write(0, expected);
+        file.Flush();
+        file.Read(0, actual);
+        if (!expected.AsSpan().SequenceEqual(actual))
+            throw new IOException("TRIM/reuse byte mismatch.");
+        return [new("file-trim/guards/reuse", "PASS", "File-relative TRIM, untrimmed guards and flushed rewrite bytes verified; no cache controls used.")];
+    }
+
     public static Task<WorkloadReport> TestAsync(DiskTarget target, IProgress<string>? progress = null,
         CancellationToken cancellationToken = default) => Task.Run(() => Run(target, false, 64, 4, progress, cancellationToken), cancellationToken);
 
@@ -166,9 +205,19 @@ public static class DiskWorkloads
                         Pattern(block, offset, seed);
                         discard.Write(offset, block);
                     }
+                    var trimmed = false;
                     try
                     {
                         discard.Trim(block.Length, length - 2 * block.Length);
+                        trimmed = true;
+                    }
+                    catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 326)
+                    {
+                        checks.Add(new("file-trim/guards/reuse", "SKIP",
+                            $"FSCTL_FILE_LEVEL_TRIM rejected: Win32 {ex.NativeErrorCode} (0x{ex.NativeErrorCode:X8}): {ex.Message}. Guard/reuse checks not executed."));
+                    }
+                    if (trimmed)
+                    {
                         // Trimmed contents are undefined; verify only untouched guards,
                         // then rewrite every byte to test reuse before a real drain.
                         foreach (var offset in new[] { 0L, length - block.Length })
@@ -193,10 +242,6 @@ public static class DiskWorkloads
                                 throw new IOException("TRIM/rewrite integrity mismatch.");
                         }
                         checks.Add(new("file-trim/guards/reuse", "PASS", "File-relative trim on the new probe only; untrimmed guards and rewritten contents verified."));
-                    }
-                    catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 326)
-                    {
-                        checks.Add(new("file-trim/guards/reuse", "SKIP", "Filesystem/storage does not support file-level TRIM."));
                     }
                 }
                 File.Delete(trimFile);

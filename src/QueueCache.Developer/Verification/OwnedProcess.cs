@@ -37,6 +37,7 @@ public static class OwnedProcess
         var error = process.StandardError.BaseStream.CopyToAsync(stderr);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(timeout);
+        Exception? terminationFailure = null;
         try
         {
             await process.WaitForExitAsync(deadline.Token);
@@ -54,10 +55,10 @@ public static class OwnedProcess
             {
                 await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
             }
-            catch (TimeoutException) { throw new IOException($"Owned PID {process.Id} did not exit. Stop testing; inspect the VM before recovery."); }
-            if (token.IsCancellationRequested)
-                throw;
-            throw new TimeoutException($"Process deadline exceeded: {executable}; evidence: {prefix}");
+            catch (TimeoutException) { terminationFailure = new IOException($"Owned PID {process.Id} did not exit. Stop testing; inspect the VM before recovery."); }
+            terminationFailure ??= token.IsCancellationRequested
+                ? new OperationCanceledException(token)
+                : new TimeoutException($"Process deadline exceeded: {executable}; evidence: {prefix}");
         }
         finally
         {
@@ -67,19 +68,33 @@ public static class OwnedProcess
                 Exited = process.HasExited,
                 ExitCode = process.HasExited ? (int?)process.ExitCode : null
             });
-            // A descendant can inherit the pipe; it must not hold the coordinator forever.
-            try
-            {
-                await Task.WhenAll(output, error).WaitAsync(TimeSpan.FromSeconds(10));
-            }
-            catch (TimeoutException) { throw new IOException("Output pipes did not close; collection incomplete: " + prefix); }
+            await CompleteOutputAsync(output, error, prefix, terminationFailure, TimeSpan.FromSeconds(10));
         }
+        if (terminationFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(terminationFailure).Throw();
         await stdout.FlushAsync(CancellationToken.None);
         await stderr.FlushAsync(CancellationToken.None);
         await stdout.DisposeAsync();
         await stderr.DisposeAsync();
         return new(process.ExitCode, await File.ReadAllTextAsync(prefix + ".stdout.txt", token),
             await File.ReadAllTextAsync(prefix + ".stderr.txt", token));
+    }
+
+    private static async Task CompleteOutputAsync(Task output, Task error, string prefix,
+        Exception? terminationFailure, TimeSpan timeout)
+    {
+        try
+        {
+            await Task.WhenAll(output, error).WaitAsync(timeout);
+        }
+        catch (TimeoutException)
+        {
+            var pipeFailure = new IOException("Output pipes did not close; collection incomplete: " + prefix);
+            RunStorage.AtomicJson(prefix + ".pipe-failure.json", new { Error = pipeFailure.Message, PrimaryError = terminationFailure?.ToString() });
+            if (terminationFailure is null)
+                throw pipeFailure;
+            terminationFailure.Data["OutputPipeFailure"] = pipeFailure.Message;
+        }
     }
 
     public static void EnsureStopped(string directory)

@@ -26,6 +26,7 @@ public static class CacheScenarios
             new(CacheAllocation.Fixed, 100, RetainWrites: false), new(CacheAllocation.Fixed, 0), new(Parallelism: 4, BatchKiB: 1024)];
         try
         {
+            SectorScenarios.Run(target, device, directory, results, progress, token);
             for (int scenario = 0; scenario < cases.Length; scenario++)
             {
                 token.ThrowIfCancellationRequested();
@@ -98,6 +99,7 @@ public static class CacheScenarios
         catch (Exception ex) { results.Add(new("scenario", "FAIL", ex.Message)); }
         finally
         {
+            device.Control(WriteCacheAction.LabDelay, value: 0);
             progress?.Report("Restoring original runtime configuration; retained files: " + directory);
             // Report restoration failure rather than pretending the previous cache is active.
             if (original.BudgetBytes == 0)

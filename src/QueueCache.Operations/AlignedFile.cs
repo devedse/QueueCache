@@ -11,8 +11,12 @@ internal sealed class AlignedFile : IDisposable
     private readonly SafeFileHandle handle;
     private readonly IntPtr memory;
     private readonly int capacity;
-    public AlignedFile(string path, int capacity, bool create)
+    private readonly int alignment;
+    public AlignedFile(string path, int capacity, bool create, int alignment = 4096)
     {
+        if (alignment is not (512 or 4096))
+            throw new ArgumentOutOfRangeException(nameof(alignment));
+        this.alignment = alignment;
         if (capacity <= 0 || capacity % 4096 != 0)
             throw new ArgumentException("Transfer buffer must be 4 KiB aligned.");
         this.capacity = capacity;
@@ -51,7 +55,7 @@ internal sealed class AlignedFile : IDisposable
     }
     private void Seek(long offset, int length)
     {
-        if (offset < 0 || offset % 4096 != 0 || length <= 0 || length % 4096 != 0 || length > capacity)
+        if (offset < 0 || offset % alignment != 0 || length <= 0 || length % alignment != 0 || length > capacity)
             throw new ArgumentException("Unaligned transfer.");
         if (!SetFilePointerEx(handle, offset, out _, 0))
             throw new Win32Exception(Marshal.GetLastWin32Error());

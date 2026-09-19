@@ -153,6 +153,22 @@ ulong[] diagnosticValues = [9, 4, 7, 3, 2, 8, 1, 6, 0x2d4804];
 for (var i = 0; i < diagnosticValues.Length; i++) BinaryPrimitives.WriteUInt64LittleEndian(diagnosticsBytes.AsSpan(8 + i * 8), diagnosticValues[i]);
 var diagnostics = CacheDiagnostics.Decode(diagnosticsBytes);
 Check(diagnostics.DeferredFlushes == 4 && diagnostics.DeferredWriteThroughWrites == 3 && diagnostics.LastBarrierCode == 0x2d4804, "diagnostics ABI offsets");
+Check(diagnostics.Attribution is null, "V1 attribution is unavailable, not zero");
+var attributionBytes = new byte[CacheDiagnostics.AttributionWireSize];
+diagnosticsBytes.CopyTo(attributionBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(attributionBytes, 2);
+BinaryPrimitives.WriteUInt32LittleEndian(attributionBytes.AsSpan(4), CacheDiagnostics.AttributionWireSize);
+ulong[] attributionValues = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 4, 4, 0, 512, 1536];
+for (var index = 0; index < attributionValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(attributionBytes.AsSpan(CacheDiagnostics.WireSize + index * 8), attributionValues[index]);
+Check(CacheDiagnostics.Decode(attributionBytes).Attribution ==
+    new CacheAttribution(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 4, 4, 0, 512, 1536), "V2 attribution offsets");
+Reject(() => CacheDiagnostics.Decode(attributionBytes.AsSpan(0, 215)), "short attribution");
+attributionBytes[0] = 1;
+Reject(() => CacheDiagnostics.Decode(attributionBytes), "V1 cannot claim V2 length");
+attributionBytes[0] = 2;
+BinaryPrimitives.WriteUInt64LittleEndian(attributionBytes.AsSpan(176), 10);
+Reject(() => CacheDiagnostics.Decode(attributionBytes), "unknown attribution reason");
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes.AsSpan(0, 79)), "short diagnostics");
 diagnosticsBytes[0] = 2;
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "diagnostics version");

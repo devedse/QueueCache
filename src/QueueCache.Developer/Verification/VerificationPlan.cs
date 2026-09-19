@@ -1,5 +1,7 @@
 namespace QueueCache.Developer.Verification;
 
+public sealed record IntegrityCase(string Id, string Operation, bool? CacheEnabled = null);
+
 public sealed record PerformanceCase(
     string Id,
     string Allocation,
@@ -16,18 +18,30 @@ public sealed record PerformanceCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 3;
+    public const int Version = 8;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
         "policies",
+        "trim-diagnostic",
+        "trim-file",
         "write-performance",
         "flush-interference",
         "performance",
         "full"
     ];
+
+    public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
+    {
+        "quick" => [new("file-integrity", "files")],
+        "policies" => [new("policy-integrity", "policies")],
+        "full" => [new("file-integrity", "files"), new("policy-integrity", "policies")],
+        "trim-diagnostic" => [new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false)],
+        "trim-file" => [new("trim-file", "trim-file")],
+        _ => []
+    };
 
     /// <summary>
     /// Expands the selected suite into a stable, ordered list of immutable cases.
@@ -219,7 +233,7 @@ public static class VerificationPlan
         if (options.BudgetMiB is < 256 or > 8192 ||
             options.Repeats is < 1 or > 10 ||
             options.DurationSeconds is < 5 or > 60 ||
-            options.DeadlineMinutes is < 0 or > 1440)
+            options.DeadlineMinutes is < 0 or > 1440 || options.PreparationFlushSeconds is < 180 or > 3600)
         {
             throw new ArgumentException(
                 "Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, " +

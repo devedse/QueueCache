@@ -4,7 +4,7 @@ namespace QueueCache.Developer.Verification;
 
 public sealed record VerificationOptions(string Volume, string Suite = "quick", string Output = ".",
     string? DiskSpd = null, int BudgetMiB = 1024, int Repeats = 3, int DurationSeconds = 10,
-    int DeadlineMinutes = 0);
+    int DeadlineMinutes = 0, int PreparationFlushSeconds = 180);
 public sealed record CaseResult(string Id, string Status, string Detail, DateTimeOffset Started,
     double Seconds, DiskSpdScore? Score = null);
 
@@ -42,8 +42,8 @@ public sealed class RunStorage
         Results.Add(result);
         Write("results.json", Results);
     }
-    public static bool Complete(IReadOnlyList<string> expected, IReadOnlyList<CaseResult> results) =>
+    public static bool Complete(IReadOnlyList<string> expected, IReadOnlyList<CaseResult> results, bool allowSkipped = false) =>
         expected.Count > 0 && expected.Distinct().Count() == expected.Count && results.Count == expected.Count &&
         results.Select(r => r.Id).Distinct().Count() == results.Count &&
-        expected.All(id => results.Any(r => r.Id == id && r.Status is "PASS" or "MEASURED"));
+        expected.All(id => results.Any(r => r.Id == id && (r.Status is "PASS" or "MEASURED" || allowSkipped && r.Status == "SKIP")));
 }

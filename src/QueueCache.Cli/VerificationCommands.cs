@@ -34,7 +34,12 @@ internal static class VerificationCommands
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
-              policies           Six cache configurations and disk-byte verification. No DiskSpd needed.
+              policies           Sector regressions, six cache configurations and disk-byte verification.
+                                 No DiskSpd needed.
+              trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
+                                 Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
+              trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
+                                 No cache controls or telemetry. Non-OS/non-paging NTFS only; SKIP is not PASS.
               flush-interference Focused hot-reader/blocked-writer test, with/without application flush.
                                  Use --repeats 2 for eight cases. Requires DiskSpd.
               performance        Repeated allocation/drain/queue-depth, delay and off/on workload matrix.
@@ -62,7 +67,7 @@ internal static class VerificationCommands
             Run elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             """);
         var volume = new Argument<string>("volume");
-        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies do not require DiskSpd." };
+        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies/trim-diagnostic/trim-file do not require DiskSpd." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };
         var disk = new Option<string?>("--diskspd") { Description = "Executable path: Microsoft amd64\\diskspd.exe or CrystalDiskMark CdmResource\\DiskSpd\\DiskSpd64.exe. Quote paths with spaces." };
@@ -70,14 +75,15 @@ internal static class VerificationCommands
         var repeats = new Option<int>("--repeats") { DefaultValueFactory = _ => 3, Description = "Repetitions per performance case, 1..10; each retains separate evidence." };
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
+        var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
         command.Arguments.Add(volume);
-        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline })
+        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
             RequireAdministrator();
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
-            p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline)),
+            p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush)),
             new ConsoleProgress(), token);
         });
         return command;

@@ -19,12 +19,42 @@ public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, Writ
 [SupportedOSPlatform("windows")]
 public static class VerificationWorker
 {
+    public static void ValidateFileTarget(DiskTarget target, DiskDescription inventory)
+    {
+        if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
+            throw new IOException("File-only verification excludes boot/system/paging disks.");
+        if (inventory.Number != target.Number || inventory.Bytes != target.Bytes ||
+            !string.Equals(inventory.Instance, target.Instance, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("File-only target identity changed.");
+    }
+
     public static void ReportFailures(IEnumerable<CheckResult> checks, TextWriter error)
     {
         foreach (var check in checks.Where(c => c.Result != "PASS"))
             error.WriteLine($"{check.Result}: {check.Name}: {check.Detail}");
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
+    public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
+        WriteCacheState restored, string profiles, ulong timing)
+    {
+        var mismatches = new List<string>();
+        void Compare<T>(string name, T expected, T actual)
+        {
+            if (!EqualityComparer<T>.Default.Equals(expected, actual))
+                mismatches.Add($"{name}: expected {JsonSerializer.Serialize(expected)}, actual {JsonSerializer.Serialize(actual)}");
+        }
+        Compare(nameof(restored.DirtyBytes), 0UL, restored.DirtyBytes);
+        Compare(nameof(restored.InFlightBytes), 0UL, restored.InFlightBytes);
+        Compare(nameof(restored.Errors), original.State.Errors, restored.Errors);
+        Compare(nameof(restored.Instance), original.State.Instance, restored.Instance);
+        Compare(nameof(original.Profiles), original.Profiles, profiles);
+        Compare(nameof(restored.BudgetBytes), original.State.BudgetBytes, restored.BudgetBytes);
+        Compare(nameof(restored.Enabled), original.State.Enabled, restored.Enabled);
+        Compare(nameof(restored.UnsafeDefer), original.State.UnsafeDefer, restored.UnsafeDefer);
+        Compare(nameof(restored.Options), original.State.Options, restored.Options);
+        Compare(nameof(original.Timing), original.Timing ? 1UL : 0UL, timing);
+        return mismatches;
+    }
     public static async Task<int> ExecuteAsync(string jobPath)
     {
         var job = JsonSerializer.Deserialize<WorkerJob>(await File.ReadAllTextAsync(jobPath)) ?? throw new InvalidDataException("Missing worker job.");
@@ -50,6 +80,21 @@ public static class VerificationWorker
         }
         else
             target = await DiskTarget.InspectAsync(job.Volume);
+        if (job.Operation is "capture-file" or "trim-file")
+        {
+            var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
+            ValidateFileTarget(target, inventory);
+            target.ValidateCurrent();
+            if (job.Operation == "capture-file")
+            {
+                RunStorage.AtomicJson(job.Reply, target);
+                return 0;
+            }
+            var checks = DiskWorkloads.TrimFile(target, job.WorkDirectory!);
+            RunStorage.AtomicJson(job.Reply, checks);
+            ReportFailures(checks, Console.Error);
+            return checks.All(check => check.Result != "FAIL") ? 0 : 1;
+        }
         Stage("target validated; opening cache device");
         using var device = new CacheDevice(target.Device, writable: true);
         Stage("cache device opened; validating device length");
@@ -94,12 +139,17 @@ public static class VerificationWorker
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
-                if (restored.DirtyBytes != 0 || restored.InFlightBytes != 0 || restored.Errors != original.State.Errors ||
-                    restored.Instance != original.State.Instance || Profiles() != original.Profiles ||
-                    restored.BudgetBytes != original.State.BudgetBytes || restored.Enabled != original.State.Enabled ||
-                    restored.UnsafeDefer != original.State.UnsafeDefer || restored.Options != original.State.Options ||
-                    device.GetPerformance().TimingEnabled != (original.Timing ? 1UL : 0UL))
-                    throw new IOException("Restoration/state/profile verification failed. Inspect recovery.json and the VM.");
+                var restoredProfiles = Profiles();
+                var restoredTiming = device.GetPerformance().TimingEnabled;
+                var mismatches = RestorationMismatches(original, restored, restoredProfiles, restoredTiming);
+                if (mismatches.Count != 0)
+                {
+                    RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
+                    {
+                        State = restored, Profiles = restoredProfiles, Timing = restoredTiming, Mismatches = mismatches
+                    });
+                    throw new IOException("Restoration/state/profile verification failed: " + string.Join("; ", mismatches));
+                }
                 result = restored;
                 break;
             case "configure":
