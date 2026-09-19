@@ -49,7 +49,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
-| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: reuse the reserved single-block write slot, removing two repeated hash lookups; wake coalescing already exists | Native/Debug/Release CI and focused VM correctness passed. Matched three-repeat Idle timing-off medians: Q1 -3.61%, Q32 +1.62%; Q1 has a slow outlier. No demonstrated speedup or performance acceptance; request-time attribution is next |
+| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: reuse the reserved single-block write slot. Candidate 360ab9a / 0.4.44.1 gates foreground drainer wakes with the existing drain predicate | Slot-reuse focused VM correctness passed; timing-off medians Q1 -3.61%, Q32 +1.62%, no accepted gain. Wake candidate native/policy/host checks and Debug/Release CI passed; installation blocked by interactive desktop file locks. Observer-present diagnostic is qualified; repeat clean baseline before deployment. No wake-candidate VM correctness or performance claim |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
@@ -93,9 +93,11 @@ selection if needed), and repeat the complete matrix at performance milestones.
 Never compare the two TRIM diagnostic elapsed times as a performance benchmark.
 Investigate repeatable >5% healthy-throughput or >10% tail regressions beyond VM
 spread. Attribution and observed admission proof are now deployed. The first
-single-slot lookup experiment below did not establish a speedup. Next distinguish
-existing request queue/service time from copy/publication time using the maintained
-focused selection and existing timing diagnostics before further item-9 edits.
+single-slot lookup experiment below did not establish a speedup. Wake candidate
+360ab9a is built but not deployed. First close the interactive VM desktop/CDM
+applications, confirm their absence with CIM, and repeat the focused baseline.
+Then install the signed candidate, verify loaded identity after a normal reboot,
+run focused correctness, and compare Q32 wake/lock counters plus timing-off Q1/Q32.
 Timing-on data is diagnostic, not directly comparable to timing-off scores. Do not
 repeat the whole matrix, remove the slow sample, or add scheduler complexity without
 an identified controlling cost. Remaining bounded-gate/fault/lifetime checks stay open.
@@ -132,14 +134,19 @@ to collect a speed number. Keep commits independently reviewable.
 ### Policy-gated write wakes: 2026-09-19
 
 The priority remains fitting random 4 KiB writes at Q1/Q32, not sequential scores.
-On hash-verified 0.4.42.1, after gracefully closing CDM and the desktop observer,
+On hash-verified 0.4.42.1, with CDM and the desktop observer still present,
 plan-9 diagnostic run `QueueCache-Verify-20260919-192811-b362af0b8e4f434b9f19c69b399e7abe`
 collected one Q32 Idle timing-on case (25433 IOPS, 1.669 ms write p99).
 Its 15.318813-second sampled process interval recorded 344924 queued requests,
 335145 wake signals, 2105795 lock acquisitions, 18.4145805 seconds aggregate
 cross-thread lock wait, 3.1454909 seconds lock hold and zero capacity waits.
 These are interval/lifetime-counter deltas, not isolated score-window costs or
-CPU time; they do not separately measure copy/publication time.
+CPU time; they do not separately measure copy/publication time. Raw XML score,
+readiness and all 75 telemetry samples were checked (maximum gap 0.255625 seconds,
+zero sampled error delta). The initial claim that the applications had closed was
+incorrect: a later CIM check found the same PIDs (6172 and 7544). The earlier
+Get-Process-by-name remote check returned no rows and was not reliable proof.
+This is observer-present diagnostic evidence, not a clean comparison baseline.
 
 Local hypothesis: unconditional foreground wake signals make all four allocated
 drainer threads contend for the cache mutex even when Idle policy is not ready
@@ -149,9 +156,23 @@ other wake sites, timer checks, Eager/age/watermark/forced triggers and the
 drainer's final eligibility check. No admission, byte ownership or durability
 rule is relaxed. Native Release build and compile-time hot-Idle/hysteresis/age/
 forced policy checks passed; host-safe management/runner contracts passed.
-Signed CI deployment and VM checks remain pending. The discriminating check is
-the same Q32 timing-on case: wakes and lock waits should drop substantially.
-Then compare maintained timing-off Q1/Q32 cases; no gain is claimed yet.
+Commit 360ab9aa74af9b1d434f9a5ad414e0847c5d2e0f passed CI 35464860844:
+Debug/Release builds, host-safe/CLI/package checks and signing. Signed 0.4.44.1
+driver SHA-256 is D2D9794B6F061D59C9ADF9D973BE7632771E981E8B3D07369BFF7839F499680B;
+all 450 package manifest entries were verified. Certificate thumbprint is
+DAF02E2D3CDAB895F358B67DC183DC6FD40383F9 (disposable test certificate).
+Installation exited 5 and rolled back before driver setup: QueueCache.Desktop
+held Avalonia.Base.dll open in another session. Normal CloseMainWindow requests
+returned false for both verified application PIDs; neither was killed, and no
+reboot was attempted. Loaded 0.4.42.1 identity, its unchanged next-boot service
+path, clean original Q: settings and disabled/zero-budget C: were rechecked.
+Despite the installer reporting rollback, installed application build metadata
+now says 0.4.44.1; this is a partial application update, not a complete rollback
+or a deployed candidate driver. Finish the supported installer after closing the
+desktop application. VM candidate verification is blocked until those windows close.
+Repeat the clean Q32 timing-on baseline, then deploy: wakes and lock waits should
+drop substantially. Compare maintained timing-off Q1/Q32 cases afterward; no gain
+is claimed yet.
 
 The diagnostic's original verdict remains RESTORATION_FAILED: only DirtyBytes
 27648 mismatched, with zero errors/in-flight bytes and original settings/timing.
