@@ -49,7 +49,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
-| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: reuse the reserved single-block write slot. Candidate 360ab9a / 0.4.44.1 gates foreground drainer wakes with the existing drain predicate | Slot-reuse focused VM correctness passed; timing-off medians Q1 -3.61%, Q32 +1.62%, no accepted gain. Wake candidate native/policy/host checks and Debug/Release CI passed; installation blocked by interactive desktop file locks. Observer-present diagnostic is qualified; repeat clean baseline before deployment. No wake-candidate VM correctness or performance claim |
+| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: single-block slot reuse. 360ab9a, deployed in 0.4.45.1: policy-gated foreground wakes. 948ea1c / 0.4.46.1: suppress redundant foreground wakes while the sole drainer is busy | 0.4.46.1 loaded/hash verified; native/host checks, signed CI and VM policy/admission/byte oracles passed. Three timing-off repeats: Q1 median +9.74%, Q32 +172.96%; p99 improved. Qualified focused gain, not full acceptance: original late-dirty restoration failures remain, separate recoveries passed; full matrix and remaining lifetime/fault checks open |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
@@ -93,11 +93,16 @@ selection if needed), and repeat the complete matrix at performance milestones.
 Never compare the two TRIM diagnostic elapsed times as a performance benchmark.
 Investigate repeatable >5% healthy-throughput or >10% tail regressions beyond VM
 spread. Attribution and observed admission proof are now deployed. The first
-single-slot lookup experiment below did not establish a speedup. Wake candidate
-360ab9a is built but not deployed. First close the interactive VM desktop/CDM
-applications, confirm their absence with CIM, and repeat the focused baseline.
-Then install the signed candidate, verify loaded identity after a normal reboot,
-run focused correctness, and compare Q32 wake/lock counters plus timing-off Q1/Q32.
+single-slot lookup experiment below did not establish a speedup. The deployed
+policy-gated wake candidate passed focused correctness; clean-observer attribution
+identified renewed contention once draining starts. Busy-drainer candidate 948ea1c
+is deployed as hash-verified 0.4.46.1, passed focused correctness, and improved
+all three timing-off Q1/Q32 samples beyond their baseline ranges. Preserve this
+checkpoint. Next address the recurring late-dirty restoration discrepancy without
+weakening its predicate, then the remaining bounded-gate/fault/lifetime checks and
+full-matrix milestone. Residual Q1 overhead and the timing-on/off Q32 discrepancy
+need attribution before another synchronization change; the timing-on score is
+not a substitute for the timing-off comparison.
 Timing-on data is diagnostic, not directly comparable to timing-off scores. Do not
 repeat the whole matrix, remove the slow sample, or add scheduler complexity without
 an identified controlling cost. Remaining bounded-gate/fault/lifetime checks stay open.
@@ -167,15 +172,86 @@ mutex contention. QcShouldWakeAfterWrite now suppresses only that redundant wake
 multi-drainer behavior, timer, completion, control/barrier and capacity wake sites
 remain unchanged. The existing drain predicate still updates pressure hysteresis.
 Native Release compile plus exact policy/parallelism/forced/age/hysteresis assertions
-and host-safe management contracts passed. Signed CI and VM follow-up remain pending.
+and host-safe management contracts passed. Commit 948ea1c9c75236c4d59b6c1f2d757d5dd234b18f
+passed signed CI 35470024426 (0.4.46.1). All 450 payload manifest hashes match;
+driver SHA-256 is 90C50E7AD991E3EB0E9D7FFFC38C5B1CEA80935124B2CDEB6C2560980DD65060,
+test-certificate thumbprint B8738B37CB8F034006D1683BFCEDE42B6683CD46.
+Installer exited zero, driver setup succeeded and immutable staged binary matches.
+After explicit Q: flush and clean Q:/disabled C: state checks, a normal reboot was
+completed. Running immutable driver path/hash and Q: stack were verified;
+startup restoration returned zero, original Q: settings were clean and C: remained
+disabled. No competing processes were present.
 
 Before-follow-up Q1 run `QueueCache-Verify-20260919-210424-0e6e435ecfda43fcac80bf0db1c518bd`
 collected 3/3 timing-off samples: 21198.30, 20997.70, 19842.86 IOPS; p99
 0.076, 0.077, 0.082 ms. Original RESTORATION_FAILED: only 25088 dirty bytes,
 zero errors/in-flight, original timing/settings. Separate recovery
 `QueueCache-Verify-20260919-211759-5cb84ec9b34b4bdc84d43e457c3fdf74` returned RESTORED.
-Q32 baseline and matched follow-up measurements are still pending. No accepted
-performance gain yet. Exact VM evidence root: `ManualRuns/policy-wake-045-20260919`.
+
+Before-follow-up Q32 run `QueueCache-Verify-20260919-211844-9bf55eb5b48b4ace943bf6699319790a`
+collected 3/3 timing-off samples: 27940.06, 27190.60, 27305.20 IOPS; p99
+1.554, 1.560, 1.545 ms. Original RESTORATION_FAILED: only 31232 dirty bytes,
+zero errors/in-flight, original timing/settings. Separate recovery
+`QueueCache-Verify-20260919-212912-a042f593a4044129898fd4064ed6c722` returned RESTORED.
+Both recovery replies, readiness, control traces and logs were checked; original
+failed verdicts are unchanged. All seven current diagnostic/baseline XML scores
+and recognized CDM trailers match results; all 532 telemetry samples have ready
+handshakes, complete process-interval coverage and continuous required counters.
+Maximum sample gap 0.6522993 s; no interval capacity waits or sampled driver errors.
+Exact VM evidence root: `ManualRuns/policy-wake-045-20260919`.
+
+#### Loaded 0.4.46.1 results
+
+Policies run `QueueCache-Verify-20260919-213333-e5584b97e4404d2e9ed4d9ce85b628c3`
+COMPLETED with clean restoration. All six sector variants passed unchanged lower
+read/write/flush attempt checks and disk-byte oracles with delayed in-flight
+overwrites; all six policy configurations passed. This does not cover every
+ordering, fault or lifecycle path.
+
+Timing-on Q32 run `QueueCache-Verify-20260919-213404-7fdaf248799d46fa894898344b778e03`
+measured 174862.48 IOPS, p99 0.187 ms. Its sampled process interval recorded
+2500950 queued requests, 1674 wakes, 1671 drain batches, 7511413 lock acquisitions,
+1.2494448 s aggregate lock wait and 2.0018236 s hold. Baseline interval recorded
+252384 wakes and 10.9523166 s wait. Draining continued with zero capacity waits;
+the wake-per-write contention hypothesis is supported. These include warmup and
+are not score-window CPU measurements. The much higher timing-on Q32 score than
+timing-off below remains unexplained; do not combine modes or headline that score
+as the release comparison.
+
+Matched timing-off runs use the unchanged plan-9 CLI and CDM DiskSpd hashes,
+2 GiB budget, fitting 1 GiB random 4 KiB file, Idle/parallelism 1, five-second
+warmup and ten-second requested score window. Three complete repeats per group:
+
+| Queue | 0.4.45.1 IOPS median [min, max] | 0.4.46.1 IOPS median [min, max] | Change | Decimal MB/s before -> after | Write p99 ms median before -> after |
+|---|---:|---:|---:|---:|---:|
+| Q1 | 20997.70 [19842.86, 21198.30] | 23043.10 [22719.98, 23474.63] | +9.74% | 86.01 -> 94.38 | 0.077 -> 0.067 |
+| Q32 | 27305.20 [27190.60, 27940.06] | 74532.77 [72992.20, 74812.77] | +172.96% | 111.84 -> 305.29 | 1.554 -> 0.192 |
+
+Q1 run `QueueCache-Verify-20260919-213825-ae3dc7de5321435497abdccbf034f1c7`:
+22719.98 / 23474.63 / 23043.10 IOPS, p99 0.068 / 0.066 / 0.067 ms.
+Q32 run `QueueCache-Verify-20260919-215134-2c871519f23f47728bff8996dcf4503b`:
+74812.77 / 74532.77 / 72992.20 IOPS, p99 0.192 / 0.189 / 0.204 ms.
+No slow sample was removed. This is a qualified focused measured improvement,
+not full performance acceptance or durable disk throughput.
+
+All three after-runs retain RESTORATION_FAILED: only late dirty bytes
+14336 / 28672 / 30720 respectively, with zero errors/in-flight and restored
+timing/settings. Separate supported recoveries, after process absence checks:
+
+* Diagnostic: `QueueCache-Verify-20260919-213817-4bcbeb807b2a4b39b7f8cd2d09af2d89`.
+* Q1: `QueueCache-Verify-20260919-215127-e0d764f97ad344d1acdb2cdf5fdea721`.
+* Q32: `QueueCache-Verify-20260919-215811-e21bd36bd05440bf974a7db884279b1c`.
+
+All returned RESTORED; replies, readiness, traces and logs confirm clean original
+settings/timing. The late-write source is not established. All 14 before/after
+XML scores and recognized trailers plus 1064 telemetry samples were validated;
+maximum gap 0.6522993 s (after-only 0.2974603 s), complete interval coverage,
+required counters present/monotonic, zero interval capacity waits or driver errors.
+Final live Q: clean 2 GiB Fast/Idle, C: disabled/budget zero, no owned or competing
+workload processes. Frozen tool hashes reconfirmed. Raw evidence is retained
+privately under `.lab/policy-wake-045-20260919/evidence`. Full matrix, one-hour
+soak and remaining deterministic fault/lifetime checks were not run in this
+focused iteration; they remain open rather than being inferred from the gain.
 
 ### Policy-gated write wakes: 2026-09-19
 
