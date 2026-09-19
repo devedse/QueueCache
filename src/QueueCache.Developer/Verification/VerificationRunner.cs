@@ -147,6 +147,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
         Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
+        if (options.CaseFilter is not null)
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count} cases, not the complete write matrix.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -284,6 +286,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             RestorationFailure = restorationFailure
         });
         var report = new StringBuilder($"# QueueCache verification\n\nStatus: **{status}**\n\nCases: {storage.Results.Count}/{expected.Count}. Plan version: {VerificationPlan.Version}.\n\n");
+        if (options.CaseFilter is not null)
+            report.AppendLine($"Selected case ID substring: `{options.CaseFilter}`. This is not the complete write matrix.\n");
         report.AppendLine("PASS means the case's collection/checks succeeded, not that latency met a performance target or that every driver path is verified. No medians are computed from partial runs.\n");
         report.AppendLine("| Case | Status | IOPS | Read p99 ms | Write p99 ms |\n|---|---|---:|---:|---:|");
         foreach (var row in storage.Results)

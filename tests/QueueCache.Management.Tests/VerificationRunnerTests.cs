@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 8, "Sector lower-I/O attempt proof contract version");
+        Check(VerificationPlan.Version == 9, "Explicit write-case selection contract version");
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
             "admission retains exact attempt evidence");
@@ -168,6 +168,16 @@ internal static class VerificationRunnerTests
         Check(writes.All(c => c.Resident && !c.Writer && c.DelayMs == 0), "write matrix isolated fitting file, no injected delay");
         Check(writes.Count(c => c.Timing) == 36 && writes.Count(c => c.Drain == "Idle") == 24, "write matrix timing and policy controls");
         Check(writes.Where(c => c.Workload == "random-write").All(c => c.QueueDepth is 1 or 32), "CDM random write queue depths");
+        var selection = options with { Suite = "write-performance", CaseFilter = "random-write-q1-Idle-timingFalse" };
+        var selectedWrites = VerificationPlan.Performance(selection);
+        Check(selectedWrites.Count == 3 && selectedWrites.SequenceEqual(writes.Where(test => test.Id.Contains(selection.CaseFilter))),
+            "selected repetitions retain complete matrix IDs and workloads");
+        Check(!RunStorage.Complete(writes.Select(test => test.Id).ToArray(), selectedWrites.Select(test =>
+            new CaseResult(test.Id, "MEASURED", "", DateTimeOffset.UtcNow, 0)).ToArray()), "selected matrix is not full completion");
+        Reject(() => VerificationPlan.Validate(selection with { CaseFilter = " " }));
+        Reject(() => VerificationPlan.Validate(selection with { CaseFilter = "does-not-exist" }));
+        Reject(() => VerificationPlan.Validate(selection with { CaseFilter = "RANDOM-WRITE" }));
+        Reject(() => VerificationPlan.Validate(selection with { Suite = "quick" }));
         Check(plan.Count == 204 && plan.Select(c => c.Id).Distinct().Count() == plan.Count, "unique repeated-case identities");
         Check(plan[75].Id == "0076-r2-Automatic-Idle-d0-q32-loaded",
             "stable scenario ordering and readable case identity");

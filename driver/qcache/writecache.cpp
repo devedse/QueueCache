@@ -974,6 +974,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         return error;
     }
+    ULONG admittedSlot = NoSlot;
     for (auto block = firstBlock; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);
@@ -1014,6 +1015,8 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
             ++c->DirtySlots;
         }
         slot->Filling = TRUE;
+        if (blocks == 1)
+            admittedSlot = index;
     }
     // No other foreground request runs during publication. Filling prevents
     // drain selection; bounded pointer batches allow payload copies unlocked.
@@ -1022,7 +1025,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         PUCHAR buffers[64];
         ULONG count = static_cast<ULONG>(min(64LL, (end - block + Chunk - 1) / Chunk));
         for (ULONG i = 0; i < count; ++i)
-            buffers[i] = c->Slots[FindSlot(c, block + i * Chunk)].Buffer;
+            buffers[i] = c->Slots[admittedSlot != NoSlot ? admittedSlot : FindSlot(c, block + i * Chunk)].Buffer;
         ReleaseCache(c);
         for (ULONG i = 0; i < count; ++i)
         {
@@ -1037,7 +1040,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     }
     for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto slot = &c->Slots[FindSlot(c, block)];
+        auto slot = &c->Slots[admittedSlot != NoSlot ? admittedSlot : FindSlot(c, block)];
         const auto from = max(block, offset.QuadPart);
         const auto to = min(block + Chunk, end);
         const auto added = QcSectorMask(static_cast<ULONG>(from - block), static_cast<ULONG>(to - from));

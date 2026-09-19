@@ -41,15 +41,15 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 
 | # | Area / change | Expected improvement / metric | Implementation status | Verification status / required checks |
 |---|---|---|---|---|
-| 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Partial: worker startup stages logged/flushed; primary termination/deadline errors preserved when pipe cleanup also times out; plan-7 explicit preparation-flush deadline; named restoration mismatch evidence; kernel reason/attempt counters pending | Host-safe timeout/cancel/pipe-error, deadline-bound and every restoration-predicate contract passed. Plan-7 collected all 72 cases with validated coverage/raw scores; final clean-state check failed with late writes visible, separate supported recovery passed. No automatic clean-run or performance acceptance |
+| 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Implemented in f67080f / 0.4.41.1: live lower-attempt counters and nine barrier reasons with last request details; worker startup breadcrumbs, primary timeout preservation, preparation deadline and restoration mismatch evidence | Debug/Release CI and host contracts passed; plan-8 VM admission and positive lower-counter checks passed. Restoration mismatch snapshots identified late dirty bytes in both focused plan-9 baseline runs; separate recoveries passed. No automatic performance acceptance |
 | 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; sector-valid partial admission deployed | Native truth table and managed/UI checks; short deferred sector-admission VM checks passed; real one-hour soak pending |
-| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Initial implementation deployed as e8b37be / 0.4.40.1: 512-byte validity masks, partial admission/read overlay/sparse drain, immutable inherited versions; maintained policy scenario added | Native compile/coverage-mask checks and focused VM byte oracles passed at parallelism 1/2/4, retention off/on; fault/lifetime and zero-lower-I/O-attempt proof remain open |
+| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Sector ownership deployed as e8b37be / 0.4.40.1; plan-8 maintained scenario adds partial/full admission attempt checks and positive drain/disk-read counter checks | Plan-8 VM zero-attempt admission, positive drain/read counter checks and byte oracles passed at parallelism 1/2/4, retention off/on. Bounded lower-I/O gate and deterministic fault/lifetime tests remain open |
 | 4 | Zero-length/oversized/quota fallback handling | 0–20% affected cases; ordinary fitting 4 KiB often 0% | Partial: valid zero-length writes return without draining; oversized/quota work pending | Native compile; VM no-I/O and request/quota/failure/cancel tests pending |
 | 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile and VM policy retention checks across metadata/discovery passed; focused performance comparison pending; SET remains fenced |
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
-| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | Pending; wake coalescing already exists | CPU/request, timing on/off, Q1/Q32, snapshot freshness |
+| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | Candidate: reuse the reserved single-block write slot, removing two repeated hash lookups; wake coalescing already exists | Release native compile passed; matched Q1/Q32 three-repeat pre-change measurements collected on 0.4.41.1. Candidate CI/VM correctness and comparison pending; no gain claimed |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
@@ -125,6 +125,44 @@ to collect a speed number. Keep commits independently reviewable.
 ## Evidence checkpoint
 
 ### Attribution candidate: plan 8, 2026-09-19
+
+VM verification completed after the user installed/rebooted 0.4.41.1 / f67080f.
+Driverquery reports the running immutable image
+`QueueCache-0.4.41.1-436150AEFACC.sys`; its SHA-256 matches the installed package:
+`436150AEFACC0021F20241463EC82117695D9EFAEC89EDBBEA7400828C4392AD`.
+Q: attachment and V2 responses are confirmed; C: remains disabled/zero budget.
+Focused policies run `QueueCache-Verify-20260919-163316-ce4caabaa68241699d744154b7d1ae15`
+completed with no restoration failure. All six sector admission variants
+(parallelism 1/2/4, retention off/on) recorded exactly unchanged lower read/write/
+flush attempts. Explicit drain/disk-read positive checks, sparse disk-byte oracles,
+128 delayed partial/full overwrites per variant and six policy configurations
+passed. All six overwrite cases observed in-flight data. Restoration returned
+the original 2 GiB Fast/Idle settings, timing off, zero pending bytes/errors.
+This is observed no-attempt proof, not the remaining bounded-gate/fault/lifetime
+or one-hour-soak acceptance.
+
+Next optimization candidate (item 9): retain the admitted slot index for writes
+contained in one 4 KiB block. This removes two duplicate hash lookups during
+copy/publication; preflight and reservation lookups remain. Filling already
+excludes those slots from drain selection, and foreground publication is serialized.
+Multi-block writes keep the existing path. Local Release native build passed;
+candidate VM correctness and performance comparison are pending, no gain claimed.
+Plan 9 adds explicit maintained case selection so matched three-repeat random
+Q1/Q32 Idle timing-off comparisons need not repeat the full matrix during iteration.
+
+Matched pre-change plan-9 runs on 0.4.41.1, using the same side-by-side CLI,
+CDM DiskSpd hash, 2048 MiB budget and 600-second preparation deadline:
+Q1 `QueueCache-Verify-20260919-163631-3665b246a87b4dbfb5d1c903aaa41de1`
+(IOPS 21595.80, 21375.10, 21705.20), and Q32
+`QueueCache-Verify-20260919-165040-786d9792986e4a6e9784cd24963717c2`
+(26671.33, 26700.50, 26557.84). Both collected 3/3 MEASURED but failed the
+unchanged final zero-dirty predicate: 4096 and 20992 newly dirty bytes respectively.
+Snapshots show no other restoration mismatch, zero in-flight bytes and zero errors.
+After process-stop checks, separate supported recoveries
+`QueueCache-Verify-20260919-165022-be9e3c20bc104a9698817262f05e60c0` and
+`QueueCache-Verify-20260919-170300-bce6927e78dd49bf82b29b0e65de5e9e` passed.
+Original verdicts remain unchanged; these are qualified measurements, not clean
+acceptance runs. No candidate driver was installed during these measurements.
 
 Implementation: diagnostics V2 adds live lower read/write/flush submission
 counters (including direct inactive forwarding) and nine barrier reason counts

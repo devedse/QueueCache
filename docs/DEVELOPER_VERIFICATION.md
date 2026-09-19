@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 8)
+## Suites (plan version 9)
 
 | Suite | Scope |
 |---|---|
@@ -30,6 +30,15 @@ different disk so telemetry writes do not contaminate the workload.
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 ### Small-write investigation
+
+Plan 9 adds optional `--case-filter` to `write-performance`: a case-sensitive
+substring of existing case IDs, for example `random-write-q1-Idle-timingFalse`.
+At three repeats this selects three cases, preserving full-matrix IDs, workload
+parameters, score windows, telemetry and restoration checks. Empty, unmatched or
+other-suite selections fail before disk access. The manifest, log and summary
+identify the selection; COMPLETED applies only to that selection, never the full
+matrix. Omit the option for the unchanged 72-case suite. Compare the same selection,
+CLI, DiskSpd hash, budget and repeat count before/after each focused optimization.
 
 Plan 8 strengthens the sector cases in `policies`/`full`: from a clean boundary,
 all eight sector positions, a crossing write and a full 4 KiB write plus immediate

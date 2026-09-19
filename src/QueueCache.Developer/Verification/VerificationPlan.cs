@@ -18,7 +18,7 @@ public sealed record PerformanceCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 8;
+    public const int Version = 9;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
@@ -60,7 +60,7 @@ public static class VerificationPlan
             foreach (var timing in repeat % 2 == 1 ? new[] { false, true } : new[] { true, false })
                 cases.Add(new PerformanceCase($"{NextNumber(cases)}-r{repeat}-{workload}-q{depth}-{drain}-timing{timing}",
                     "Automatic", drain, 0, depth, false, repeat, Workload: workload, Resident: true, Timing: timing));
-            return cases;
+            return options.CaseFilter is null ? cases : cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
         }
 
         if (options.Suite == "flush-interference")
@@ -227,6 +227,9 @@ public static class VerificationPlan
         {
             throw new ArgumentException("Unknown verification suite.");
         }
+        if (options.CaseFilter is not null &&
+            (options.Suite != "write-performance" || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -239,6 +242,9 @@ public static class VerificationPlan
                 "Budget 256..8192 MiB, repeats 1..10, duration 5..60 seconds, " +
                 "deadline 0 (unlimited) or 1..1440 minutes.");
         }
+
+        if (options.CaseFilter is not null && Performance(options).Count == 0)
+            throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance"))
         {
