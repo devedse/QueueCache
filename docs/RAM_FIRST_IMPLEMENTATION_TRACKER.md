@@ -49,7 +49,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
-| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | Candidate: reuse the reserved single-block write slot, removing two repeated hash lookups; wake coalescing already exists | Release native compile passed; matched Q1/Q32 three-repeat pre-change measurements collected on 0.4.41.1. Candidate CI/VM correctness and comparison pending; no gain claimed |
+| 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: reuse the reserved single-block write slot, removing two repeated hash lookups; wake coalescing already exists | Native/Debug/Release CI and focused VM correctness passed. Matched three-repeat Idle timing-off medians: Q1 -3.61%, Q32 +1.62%; Q1 has a slow outlier. No demonstrated speedup or performance acceptance; request-time attribution is next |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
@@ -92,8 +92,13 @@ cannot substitute for it. Use focused matched cases during iteration (add mainta
 selection if needed), and repeat the complete matrix at performance milestones.
 Never compare the two TRIM diagnostic elapsed times as a performance benchmark.
 Investigate repeatable >5% healthy-throughput or >10% tail regressions beyond VM
-spread. The immediate next coding task is priority 1's narrow instrumentation and
-priority 2's admission proof, not another general research pass.
+spread. Attribution and observed admission proof are now deployed. The first
+single-slot lookup experiment below did not establish a speedup. Next distinguish
+existing request queue/service time from copy/publication time using the maintained
+focused selection and existing timing diagnostics before further item-9 edits.
+Timing-on data is diagnostic, not directly comparable to timing-off scores. Do not
+repeat the whole matrix, remove the slow sample, or add scheduler complexity without
+an identified controlling cost. Remaining bounded-gate/fault/lifetime checks stay open.
 
 ## Execution and verification gates
 
@@ -146,9 +151,18 @@ contained in one 4 KiB block. This removes two duplicate hash lookups during
 copy/publication; preflight and reservation lookups remain. Filling already
 excludes those slots from drain selection, and foreground publication is serialized.
 Multi-block writes keep the existing path. Local Release native build passed;
-candidate VM correctness and performance comparison are pending, no gain claimed.
+focused VM correctness passed and the comparison below does not establish a gain.
 Plan 9 adds explicit maintained case selection so matched three-repeat random
 Q1/Q32 Idle timing-off comparisons need not repeat the full matrix during iteration.
+Commit `b63e14baa4f4e2463588d834941e61b25ba2ac4b` passed CI run `35456903742`
+(Debug/Release builds, host-safe tests, CLI/package checks and signing), producing
+0.4.42.1. All 450 signed-package manifest entries were verified; driver SHA-256
+is `DE0E8E3EDF3E1E235A46DC5667BBC0B9322ADD7960E658C1739F85C931BEF733`.
+The supported installer succeeded on the clean VM, followed by an explicit Q:
+flush and normal reboot. Driverquery confirmed the running immutable candidate
+image with the exact hash above and Q: stack partmgr/qcachelab/disk/vioscsi.
+Startup policy restoration returned success and clean 2 GiB Fast/Idle; C: stayed
+disabled with zero budget. The VM currently has this candidate loaded.
 
 Matched pre-change plan-9 runs on 0.4.41.1, using the same side-by-side CLI,
 CDM DiskSpd hash, 2048 MiB budget and 600-second preparation deadline:
@@ -163,6 +177,45 @@ After process-stop checks, separate supported recoveries
 `QueueCache-Verify-20260919-170300-bce6927e78dd49bf82b29b0e65de5e9e` passed.
 Original verdicts remain unchanged; these are qualified measurements, not clean
 acceptance runs. No candidate driver was installed during these measurements.
+All six raw XML scores match their recorded results. Their 457 telemetry samples
+cover the recorded process intervals with readiness confirmed and maximum gap
+0.290293 seconds; capacity-wait and error deltas are zero. These counters describe
+the process intervals, not the 10-second score windows. Baseline/recovery evidence
+is archived privately in `.lab/slot-reuse-plan9-20260919/evidence` (870 files).
+
+Candidate policies run
+`QueueCache-Verify-20260919-171502-4178f405ca8841d3b2a2f67e8a04e69e`
+completed with clean restoration. All six sector variants passed unchanged
+lower-attempt admission, sparse/full byte oracles and delayed overwrites with
+in-flight data observed. The six policy configurations also passed.
+
+Candidate Q1 run `QueueCache-Verify-20260919-171534-a20c5d776df64c919d8e4e116513b310`
+and Q32 run `QueueCache-Verify-20260919-172931-b10719903c9d4641a598bf36208383d8`
+each collected 3/3 MEASURED. Both retained RESTORATION_FAILED: only DirtyBytes
+was mismatched (25088 and 10752 respectively), with zero in-flight bytes/errors
+and unchanged settings/profiles/timing. Separate supported recoveries
+`QueueCache-Verify-20260919-172920-7bb924463bbd4d708e84edc535fc504a` and
+`QueueCache-Verify-20260919-174330-07783ce4a6d040438005221543768a68` returned
+RESTORED after owned-process checks. This recurring late-dirty behavior predates
+the candidate; its source is not established and the final predicate was not relaxed.
+
+| Focused group | Before IOPS, median [range] | Candidate IOPS, median [range] | Median change | Write p99 median, before/candidate |
+|---|---|---|---|---|
+| Random Q1, Idle, timing off | 21595.80 [21375.10, 21705.20] | 20815.80 [16591.60, 21214.29] | -3.61% | 0.075 / 0.082 ms |
+| Random Q32, Idle, timing off | 26671.33 [26557.84, 26700.50] | 27102.90 [26554.30, 27277.22] | +1.62% | 1.574 / 1.562 ms |
+
+The third candidate Q1 sample is retained: 16591.60 IOPS, 0.131 ms p99. All
+twelve raw XML scores/tails and 916 telemetry samples passed the recorded readiness
+and process-interval coverage checks (maximum gap 0.290293 seconds). Candidate
+intervals have zero capacity-wait/error deltas. The slow Q1 interval has 3524
+completed lower writes versus 2868/2784 in its peers; this does not prove causation
+or isolate score-window drain interference. The candidate is correctness-verified
+for the focused scenario, but performance acceptance is withheld. Fewer lookups
+alone is not a measured optimization win; the Q1 result requires attribution
+before claiming healthy-path improvement. This was a sequential before/after
+comparison, not an interleaved rollback crossover or full-matrix acceptance.
+All current identity, baseline, candidate and recovery evidence is archived in
+the same private directory (1784 files); no test process remains running.
 
 Implementation: diagnostics V2 adds live lower read/write/flush submission
 counters (including direct inactive forwarding) and nine barrier reason counts
@@ -176,10 +229,9 @@ subsequent explicit drain/flush/disk oracle. Plan 8 versions this stronger test.
 Local verification: Release native build passed with zero warnings/errors;
 management/runner/ABI and desktop fixture tests passed. V1/V2 wire decoding,
 missing counters, each changed counter and reset/reversed counters are covered.
-VM installation and focused `policies` verification are pending. This does not
+The focused VM `policies` results are recorded above. This does not
 complete the bounded lower-I/O gate, deterministic allocation/fault/cancellation
-tests, Strict/lifecycle coverage or the one-hour soak. Use the signed CI build
-and record its loaded identity before claiming VM verification.
+tests, full Strict/lifecycle coverage or the one-hour soak.
 
 ### Fresh write baseline: incomplete, 2026-09-19
 
