@@ -73,3 +73,35 @@ constexpr bool PolicyChecks()
     return true;
 }
 static_assert(PolicyChecks(), "Cache scheduling/allocation regression");
+
+constexpr bool WriteWakeChecks()
+{
+    auto options = QcDefaultOptions();
+    for (ULONG policy = QcEager; policy <= QcDeferred; ++policy)
+    {
+        options.Drain = policy;
+        for (ULONG parallelism = 1; parallelism <= 4; ++parallelism)
+        {
+            options.Parallelism = parallelism;
+            bool pressure = false;
+            if (QcShouldWakeAfterWrite(options, 0, 100, options.MaxAgeMs, 0, true, pressure) ||
+                !QcShouldWakeAfterWrite(options, 10, 100, options.MaxAgeMs, 0, false, pressure) ||
+                !QcShouldWakeAfterWrite(options, 10, 100, 0, 0, true, pressure))
+                return false;
+            if (QcShouldWakeAfterWrite(options, 10, 100, options.MaxAgeMs, 512, false, pressure) != (parallelism > 1) ||
+                QcShouldWakeAfterWrite(options, 10, 100, 0, 512, true, pressure) != (parallelism > 1))
+                return false;
+            if (QcShouldWakeAfterWrite(options, 10, 100, 0, 0, false, pressure) != (policy == QcEager))
+                return false;
+        }
+    }
+    options.Drain = QcIdle;
+    options.Parallelism = 1;
+    bool pressure = false;
+    if (QcShouldWakeAfterWrite(options, 80, 100, 0, 512, false, pressure) || !pressure ||
+        !QcShouldWakeAfterWrite(options, 60, 100, 0, 0, false, pressure) || !pressure ||
+        QcShouldWakeAfterWrite(options, 40, 100, 0, 0, false, pressure) || pressure)
+        return false;
+    return true;
+}
+static_assert(WriteWakeChecks(), "Foreground drain wake regression");

@@ -131,6 +131,52 @@ to collect a speed number. Keep commits independently reviewable.
 
 ## Evidence checkpoint
 
+### Busy single-drainer follow-up: 2026-09-19
+
+The user installed/rebooted into 0.4.45.1 (ee33ea7, successful CI 35465390379).
+Loaded immutable driver and installed package SHA-256 both match
+465051174800D8BB331B588E102E263375DAC0B06BCED8D9172B0EFE1FB7CD2C.
+Q: stack is partmgr/qcachelab/disk/vioscsi; startup restoration returned zero,
+Q: was clean with original 2 GiB Fast/Idle settings. CIM confirmed no competing
+desktop/CDM/DiskSpd/qcache processes. Frozen plan-9 CLI and DiskSpd hashes match.
+This resolves the previous installation blocker; the older observer-present
+diagnostic remains qualified, not silently promoted to a clean baseline.
+
+Policies run `QueueCache-Verify-20260919-205754-7f622cca4f0f438d9cf02c53fdbfdbd2`
+COMPLETED with clean restoration. All six sector variants passed zero lower-attempt
+admission and sparse/full disk-byte oracles, including delayed in-flight overwrites;
+all six policy configurations passed. This verifies the first wake predicate,
+not yet the follow-up below.
+
+Q32 timing-on run `QueueCache-Verify-20260919-205828-41dd93191f5c4645ae7b169481712e5d`
+measured 27172.9 IOPS, p99 1.574 ms. Sampled process interval: 1265624 queued
+requests, 252384 wakes, 4545442 lock acquisitions, aggregate lock wait 10.9523166 s,
+hold 2.9894455 s, zero capacity waits. About one-second telemetry buckets show
+119k-268k requests/s with no repeated wakes before the 5-second age threshold;
+after draining begins, roughly 25k-26k requests/s with a wake per request and
+about one second of aggregate lock wait per second. Warmup is part of this interval,
+not the score: do not claim a 268k scored result or isolate CPU cost from these counters.
+Original RESTORATION_FAILED remains: only 10752 dirty bytes, zero errors/in-flight.
+Separate recovery `QueueCache-Verify-20260919-210314-998e74b49e7e44e4913eaaf853e82ea4`
+returned RESTORED with original clean settings.
+
+Follow-up hypothesis: when Parallelism=1 and InFlightBytes>0 under the cache mutex,
+the sole drainer already owns work and rechecks pending data on completion. A
+foreground wake cannot accelerate that drainer, but wakes inactive workers into
+mutex contention. QcShouldWakeAfterWrite now suppresses only that redundant wake;
+multi-drainer behavior, timer, completion, control/barrier and capacity wake sites
+remain unchanged. The existing drain predicate still updates pressure hysteresis.
+Native Release compile plus exact policy/parallelism/forced/age/hysteresis assertions
+and host-safe management contracts passed. Signed CI and VM follow-up remain pending.
+
+Before-follow-up Q1 run `QueueCache-Verify-20260919-210424-0e6e435ecfda43fcac80bf0db1c518bd`
+collected 3/3 timing-off samples: 21198.30, 20997.70, 19842.86 IOPS; p99
+0.076, 0.077, 0.082 ms. Original RESTORATION_FAILED: only 25088 dirty bytes,
+zero errors/in-flight, original timing/settings. Separate recovery
+`QueueCache-Verify-20260919-211759-5cb84ec9b34b4bdc84d43e457c3fdf74` returned RESTORED.
+Q32 baseline and matched follow-up measurements are still pending. No accepted
+performance gain yet. Exact VM evidence root: `ManualRuns/policy-wake-045-20260919`.
+
 ### Policy-gated write wakes: 2026-09-19
 
 The priority remains fitting random 4 KiB writes at Q1/Q32, not sequential scores.

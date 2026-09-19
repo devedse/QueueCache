@@ -1055,9 +1055,9 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     c->State.PeakDirtyBytes = max(c->State.PeakDirtyBytes, c->State.DirtyBytes);
     Publish(c);
     bool pressure = c->Pressure != FALSE;
-    if (QcShouldDrain(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
-                      c->LastWriteTime - c->Slots[c->Head].DirtySince, 0,
-                      c->Barrier || c->WriterWaiting, pressure))
+    if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
+                              c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
+                              c->Barrier || c->WriterWaiting, pressure))
         WakeDrainers(c);
     c->Pressure = pressure;
     ReleaseCache(c);

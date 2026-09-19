@@ -86,3 +86,14 @@ constexpr bool QcShouldDrain(const QC_OPTIONS& o,
         pressure = false;
     return forced || pressure || o.Drain == QcEager || ageMs >= o.MaxAgeMs || (o.Drain == QcIdle && idleMs >= o.IdleMs);
 }
+constexpr bool QcShouldWakeAfterWrite(const QC_OPTIONS& options,
+                                      ULONGLONG dirty,
+                                      ULONGLONG limit,
+                                      ULONGLONG ageMs,
+                                      ULONGLONG inFlightBytes,
+                                      bool forced,
+                                      bool& pressure)
+{
+    return QcShouldDrain(options, dirty, limit, ageMs, 0, forced, pressure) &&
+           (options.Parallelism > 1 || inFlightBytes == 0);
+}
