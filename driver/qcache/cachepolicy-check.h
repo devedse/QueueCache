@@ -35,6 +35,17 @@ constexpr bool PolicyChecks()
     if (!QcShouldDrain(o, 10, 100, 0, 0, true, pressure))
         return false;
     o.Drain = QcIdle;
+    pressure = false;
+    if (QcShouldDrain(o, 10, 100, 0, 0, false, pressure) || pressure)
+        return false;
+    if (!QcShouldDrain(o, 80, 100, 0, 0, false, pressure) || !pressure ||
+        !QcShouldDrain(o, 60, 100, 0, 0, false, pressure))
+        return false;
+    if (QcShouldDrain(o, 40, 100, 0, 0, false, pressure) || pressure)
+        return false;
+    if (!QcShouldDrain(o, 10, 100, o.MaxAgeMs, 0, false, pressure) ||
+        !QcShouldDrain(o, 10, 100, 0, 0, true, pressure))
+        return false;
     if (!QcShouldDrain(o, 10, 100, 0, o.IdleMs, false, pressure))
         return false;
     if (QcShouldDrain(o, 0, 100, 0, 0, true, pressure))

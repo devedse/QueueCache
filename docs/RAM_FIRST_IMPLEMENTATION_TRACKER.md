@@ -129,6 +129,36 @@ to collect a speed number. Keep commits independently reviewable.
 
 ## Evidence checkpoint
 
+### Policy-gated write wakes: 2026-09-19
+
+The priority remains fitting random 4 KiB writes at Q1/Q32, not sequential scores.
+On hash-verified 0.4.42.1, after gracefully closing CDM and the desktop observer,
+plan-9 diagnostic run `QueueCache-Verify-20260919-192811-b362af0b8e4f434b9f19c69b399e7abe`
+collected one Q32 Idle timing-on case (25433 IOPS, 1.669 ms write p99).
+Its 15.318813-second sampled process interval recorded 344924 queued requests,
+335145 wake signals, 2105795 lock acquisitions, 18.4145805 seconds aggregate
+cross-thread lock wait, 3.1454909 seconds lock hold and zero capacity waits.
+These are interval/lifetime-counter deltas, not isolated score-window costs or
+CPU time; they do not separately measure copy/publication time.
+
+Local hypothesis: unconditional foreground wake signals make all four allocated
+drainer threads contend for the cache mutex even when Idle policy is not ready
+and only one drainer is configured. Candidate change: use the exact existing
+QcShouldDrain predicate at write completion with idle age zero; preserve all
+other wake sites, timer checks, Eager/age/watermark/forced triggers and the
+drainer's final eligibility check. No admission, byte ownership or durability
+rule is relaxed. Native Release build and compile-time hot-Idle/hysteresis/age/
+forced policy checks passed; host-safe management/runner contracts passed.
+Signed CI deployment and VM checks remain pending. The discriminating check is
+the same Q32 timing-on case: wakes and lock waits should drop substantially.
+Then compare maintained timing-off Q1/Q32 cases; no gain is claimed yet.
+
+The diagnostic's original verdict remains RESTORATION_FAILED: only DirtyBytes
+27648 mismatched, with zero errors/in-flight bytes and original settings/timing.
+After process-stop confirmation, independent recovery
+`QueueCache-Verify-20260919-193450-4a2ad9936e1a4b61a9ce58e42eccd0d5` returned
+RESTORED. Private evidence: `.lab/small-write-attribution-20260919/evidence`.
+
 ### Attribution candidate: plan 8, 2026-09-19
 
 VM verification completed after the user installed/rebooted 0.4.41.1 / f67080f.
