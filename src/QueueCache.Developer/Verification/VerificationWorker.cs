@@ -34,6 +34,17 @@ public static class VerificationWorker
             error.WriteLine($"{check.Result}: {check.Name}: {check.Detail}");
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
+    public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
+        Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
+    {
+        record("before-volume-flush", snapshot());
+        flushVolume();
+        record("after-volume-flush", snapshot());
+        flushCache();
+        record("after-cache-flush", snapshot());
+        disableCache();
+        record("after-cache-disable", snapshot());
+    }
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
         WriteCacheState restored, string profiles, ulong timing)
     {
@@ -124,7 +135,21 @@ public static class VerificationWorker
                     throw new IOException("Recovery identity/version mismatch.");
                 // This suite never sets fault injection. Clear only its delay hook; do not hide device faults.
                 device.Control(WriteCacheAction.LabDelay, value: 0);
-                device.Control(WriteCacheAction.Flush);
+                FlushForRestoration(() =>
+                {
+                    Stage("flushing filesystem volume before cache drain");
+                    using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                    volume.Flush();
+                }, () =>
+                {
+                    Stage("filesystem volume flushed; draining cache");
+                    device.Control(WriteCacheAction.Flush);
+                }, () =>
+                {
+                    Stage("cache flushed; disabling and draining remaining writes");
+                    device.Control(WriteCacheAction.Disable);
+                }, device.GetWriteCacheState,
+                    (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot));
                 if (original.State.BudgetBytes == 0)
                 {
                     device.Control(WriteCacheAction.Release);

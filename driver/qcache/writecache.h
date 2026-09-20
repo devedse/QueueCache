@@ -11,7 +11,8 @@
 #define IOCTL_QCACHE_OPTIONS_V1 CTL_CODE(0x8844UL, 0xD15UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
-// V2 appends opt-in cooperative-read diagnostics; the first 192 bytes remain V1.
+// V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
+// The first 192 bytes remain V1 and the first 408 bytes remain V2.
 struct QC_PERFORMANCE
 {
     ULONG Version, Size;
@@ -28,9 +29,11 @@ struct QC_PERFORMANCE
     ULONGLONG LastBlockedMajor, LastBlockedOffset, LastBlockedLength;
     ULONGLONG LastSelectionMajor, LastSelectionCode, LastSelectionOffset, LastSelectionLength;
     ULONGLONG LastSelectionSequence, LastAfterSequence, LastSelectionScanned;
+    ULONGLONG DrainSelectionTicks, DrainCopyTicks, DrainRetirementTicks;
 };
 static constexpr ULONG QcPerformanceV1Size = 192;
-static_assert(sizeof(QC_PERFORMANCE) == 408);
+static constexpr ULONG QcPerformanceV2Size = 408;
+static_assert(sizeof(QC_PERFORMANCE) == 432);
 enum : ULONGLONG
 {
     QcIdlePhase,

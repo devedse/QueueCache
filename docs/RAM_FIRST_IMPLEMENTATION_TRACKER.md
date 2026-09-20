@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-19. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-20. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -55,7 +55,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
 | 13 | Indexed ready selection / independent-range workers if still justified | 0–100%+ high QD; Q1 usually 0% | Deferred until remaining profiles justify redesign | Range ordering, barriers, cancellation, faults, cross-thread lifetime |
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
-| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; UI work pending | UI/CLI parity, sample staleness, interval/lifetime labels |
+| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Performance V3 source appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. One Q32 clean restoration passed. Q1 main-drain deadline remains a blocker; new phase timings are not yet deployed or VM-verified. UI/CLI parity, sample staleness, interval/lifetime labels pending |
 
 ## Next execution order (2026-09-19)
 
@@ -135,6 +135,90 @@ to collect a speed number. Keep commits independently reviewable.
    missing data, relaxed timeouts or weaker durability.
 
 ## Evidence checkpoint
+
+### Private-alpha A01 handover checkpoint: 2026-09-20
+
+A01/T001-T003 is complete at HEAD
+`838a63ee4a56f450eb51ff39b9f8176afd9c0a91`. The index was empty and the only
+preserved candidate edits were the plan-10 restoration changes in
+`VerificationPlan.cs`, `VerificationWorker.cs`, `VerificationRunnerTests.cs`,
+`DEVELOPER_VERIFICATION.md` and this tracker. The host-safe management harness
+passed. Exact retained Q32 evidence remains `COMPLETED`; exact Q1 evidence remains
+`RESTORATION_FAILED` in the main cache flush before `after-cache-flush`. Its later
+supported recovery is separately `RESTORED` and does not change the failed verdict.
+
+The read-only elevated VM preflight found no QueueCache, DiskSpd or CrystalDiskMark
+processes. Q: is Basic partition 2 on non-boot/non-system Disk 1. The running Boot
+driver hashes to
+`90C50E7AD991E3EB0E9D7FFFC38C5B1CEA80935124B2CDEB6C2560980DD65060`, and the
+actual stack is `partmgr/qcachelab/disk/vioscsi`. Q: reported Active with the saved
+enabled 2 GiB Fast/Idle configuration, zero dirty and in-flight bytes, and zero
+error counters. No workload, cache mutation, install, reboot or C: action was
+performed. A02 evidence and instrumentation follow below.
+
+### Restoration boundary follow-up: 2026-09-20
+
+Implementation: managed runner only, plan 10. Restoration now submits filesystem
+buffers through the existing identity-checked volume handle, performs the main
+cache flush, disables/drains remaining admissions, and reapplies saved settings.
+Four state boundaries are retained. No kernel changes, retry-until-clean loop,
+weakened zero-dirty/error predicate or extended restoration deadline. Disable
+invalidates clean residency; this is outside the score window. Host-safe management
+contracts cover ordering, late admissions and fail-fast propagation at all three
+operations. Publish and editor diagnostics passed.
+
+Verification used loaded 0.4.46.1 and the same CDM DiskSpd hash as above. All runs
+are separate single-case probes under `ManualRuns/restore-plan10-20260920`, not a
+performance comparison or complete matrix. Earlier candidate binaries are retained
+in separate directories. Final runner `QueueCache.Developer.dll` SHA-256:
+`B3CD2C29944D010F8B956272605A474B9446B6B011365758A630778737E71544`;
+all 212 published files matched the VM copy.
+
+| Probe / exact run ID | Result and interpretation |
+|---|---|
+| Volume then flush only: `QueueCache-Verify-20260920-005026-2a28d7936a134c3cbc8770c97d8540c0` | RESTORATION_FAILED, 12,288 dirty bytes. Accepted bytes increased by 53,248 across the volume-flush snapshots and another 12,288 across the cache-flush snapshots. These observations do not place admission inside the barrier; writes can resume after it returns, before the next snapshot. Volume flush alone is insufficient; the exact filesystem source is not proven. |
+| Volume then disable only: `QueueCache-Verify-20260920-005613-c6391ccd1cea46d4a4d87075a4777d76` | RESTORATION_FAILED at 300-second deadline. No new admissions after disable; dirty bytes still decreased to 20,480 with 4,096 in flight in the final observer sample, errors zero. No deadlock claim or causal drain-speed conclusion. |
+| Final Q32: `QueueCache-Verify-20260920-010716-391acebd187e435a85335857178a9aaf` | COMPLETED, 1/1 MEASURED. Main flush left 12,288 dirty bytes; disable reached zero dirty/in-flight with admission off. Saved enabled 2 GiB Fast/Idle settings, profiles, timing and error checks passed; restore took 100.9 seconds. |
+| Final Q1: `QueueCache-Verify-20260920-012051-3eef2ddb4db84be8af7a4281a3f2fe08` | RESTORATION_FAILED, 1/1 MEASURED. Main flush exceeded 300 seconds before reaching disable. Final samples decreased from 3,170,304 to 2,818,048 dirty bytes, with no new admissions or errors. Separate slow-drain blocker, not a passing restoration. |
+
+After confirming owned workers exited, supported separate recovery runs returned
+RESTORED with clean original settings and no errors:
+`QueueCache-Verify-20260920-005441-84a1088b19804a25acf14ece1df1c883`,
+`QueueCache-Verify-20260920-010536-10449276690d4c3fa9ea06cc0a2bbdb9`, and
+`QueueCache-Verify-20260920-013257-a43ef34f73ec42a38f3b62132f548fe5` respectively.
+Original failed verdicts are unchanged. No full matrix, one-hour soak, new driver
+installation or lifecycle/fault acceptance is claimed. Next isolate the slow main
+drain before broader acceptance; the late-admission boundary is verified only in
+the focused Q32 run and clean recoveries so far.
+
+### Private-alpha A02 slow-drain attribution: 2026-09-20
+
+T004 parsed the exact failed Q1 restoration trace
+`QueueCache-Verify-20260920-012051-3eef2ddb4db84be8af7a4281a3f2fe08`.
+The main flush drained 759,386,112 bytes in 309.614 seconds (2.3391 MiB/s) through
+51,335 batches averaging 14,792.7 bytes. Accepted bytes did not grow during this
+interval, errors remained zero, and progress continued without a long stall. This
+is a 300-second deadline overrun, not evidence of deadlock. The later supported
+recovery remains separate and does not change the failed verdict.
+
+T005 compared three retained timing-enabled random-Q1 runs. They consistently
+drained about 1.23-1.54 MiB/s with roughly 10-11 KiB per lower write. Existing
+`LowerIoTicks` accounted for 46.6-49.2% of observed wall time. The supported local
+hypothesis is therefore fragmented/random residency producing many small serialized
+synchronous lower writes, with substantial remaining time in unmeasured drain
+selection, payload copy, cache-lock reacquisition and retirement bookkeeping. The
+evidence does not establish quadratic selection cost or justify a scheduler rewrite.
+
+T006 adds only attribution counters, not a drain behavior change. Performance V3
+appends cumulative QPC ticks for drain selection, copy and retirement; lower-I/O
+timing now ends before retirement lock reacquisition so the phases do not overlap.
+The 192-byte V1 and 408-byte V2 responses remain supported, and V3 is 432 bytes.
+The host-safe management harness passed V1/V2 compatibility and explicit V3 value
+decoding. Current-driver native Debug and Release builds passed with the repository
+lab-write-cache flags. No driver was installed and no VM run was made, so phase
+attribution and any optimization remain pending. The next discriminating check is
+a focused timing-enabled random-Q1 drain with these counters; do not extend the
+restoration deadline or alter durability/zero-dirty predicates.
 
 ### Busy single-drainer follow-up: 2026-09-19
 

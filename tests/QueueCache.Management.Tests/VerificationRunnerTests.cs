@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 9, "Explicit write-case selection contract version");
+        Check(VerificationPlan.Version == 10, "Filesystem-before-cache restoration flush contract version");
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
             "admission retains exact attempt evidence");
@@ -256,6 +256,39 @@ internal static class VerificationRunnerTests
             Flags = 0
         };
         var original = new RecoverySnapshot(1, identity, healthy, false, "[]", epoch, "fixture");
+        var flushOrder = new List<string>();
+        var pending = healthy with { DirtyBytes = 10 };
+        VerificationWorker.FlushForRestoration(
+            () => { flushOrder.Add("volume"); pending = pending with { DirtyBytes = 20 }; },
+            () => { flushOrder.Add("cache"); pending = pending with { DirtyBytes = 4 }; },
+            () => { flushOrder.Add("disable"); pending = pending with { DirtyBytes = 0, Flags = 0 }; },
+            () => pending,
+            (phase, snapshot) => flushOrder.Add($"{phase}:{snapshot.DirtyBytes}"));
+        Check(flushOrder.SequenceEqual(new[] { "before-volume-flush:10", "volume", "after-volume-flush:20", "cache", "after-cache-flush:4", "disable", "after-cache-disable:0" }),
+            "restoration flushes filesystem and cache before disabling/draining late admissions and records each boundary");
+        foreach (var failedStage in new[] { "volume", "cache", "disable" })
+        {
+            flushOrder.Clear();
+            var failure = new IOException("flush failure");
+            try
+            {
+                VerificationWorker.FlushForRestoration(
+                    () => { flushOrder.Add("volume"); if (failedStage == "volume") throw failure; },
+                    () => { flushOrder.Add("cache"); if (failedStage == "cache") throw failure; },
+                    () => { flushOrder.Add("disable"); throw failure; },
+                    () => healthy,
+                    (phase, _) => flushOrder.Add(phase));
+                throw new Exception("Failed flush accepted.");
+            }
+            catch (IOException ex) { Check(ReferenceEquals(ex, failure), "original flush error preserved"); }
+            Check(flushOrder.SequenceEqual(failedStage switch
+            {
+                "volume" => new[] { "before-volume-flush", "volume" },
+                "cache" => new[] { "before-volume-flush", "volume", "after-volume-flush", "cache" },
+                _ => new[] { "before-volume-flush", "volume", "after-volume-flush", "cache", "after-cache-flush", "disable" }
+            }),
+                "failed flush stops restoration without recording a successful boundary");
+        }
         Check(VerificationWorker.RestorationMismatches(original, healthy, "[]", 0).Count == 0,
             "matching restoration accepted");
         foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]

@@ -22,12 +22,20 @@ if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 2);
+BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 3);
 BinaryPrimitives.WriteUInt32LittleEndian(perfWire.AsSpan(4), CachePerformance.WireSize);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 10_000_000);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 8), 2);
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 50), 101);
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 51), 102);
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 52), 103);
 var perf = CachePerformance.Decode(perfWire);
 Check(perf.PhaseName == "Waiting for write capacity" && perf.Milliseconds(10_000) == 1, "performance wire phase and QPC conversion");
+Check(perf.DrainSelectionTicks == 101 && perf.DrainCopyTicks == 102 && perf.DrainRetirementTicks == 103, "performance v3 drain phase timings");
+var v2PerfWire = perfWire[..CachePerformance.V2WireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire, 2);
+BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire.AsSpan(4), CachePerformance.V2WireSize);
+Check(CachePerformance.Decode(v2PerfWire).DrainSelectionTicks == 0, "performance v2 compatibility defaults drain phase timings");
 var legacyPerfWire = perfWire[..CachePerformance.LegacyWireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(legacyPerfWire, 1);
 BinaryPrimitives.WriteUInt32LittleEndian(legacyPerfWire.AsSpan(4), CachePerformance.LegacyWireSize);

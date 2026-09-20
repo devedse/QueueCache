@@ -101,7 +101,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.Version = 2;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
-    c->Performance.Version = 2;
+    c->Performance.Version = 3;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
     c->Performance.TimingEnabled = c->Timing != 0;
     c->PerformanceSnapshot = c->Performance;
@@ -346,6 +346,7 @@ static void Drainer(PVOID context)
         // address so a later completion can never overwrite newer data on disk.
         // The oldest eligible block remains the fairness anchor. Gather forward
         // by address below; never scan the whole cache under the mutex.
+        const auto selectionStart = c->Timing ? Tick() : 0;
         auto index = c->Head;
         // Distinct disk ranges can drain concurrently. Never issue a newer version
         // while an older write to that address is still outstanding.
@@ -354,6 +355,8 @@ static void Drainer(PVOID context)
             index = c->Slots[index].QueueNext;
         if (index == NoSlot)
         {
+            if (selectionStart)
+                c->Performance.DrainSelectionTicks += Tick() - selectionStart;
             KeClearEvent(&c->Wake);
             ReleaseCache(c);
             LARGE_INTEGER interval;
@@ -403,11 +406,15 @@ static void Drainer(PVOID context)
             c->InjectFault = 0;
         ++c->Performance.DrainBatches;
         c->Performance.DrainBytes += transferBytes;
+        if (selectionStart)
+            c->Performance.DrainSelectionTicks += Tick() - selectionStart;
         Publish(c);
         ReleaseCache(c);
         // InFlight + Pins keep these exact payload versions immutable and alive.
+        const auto copyStart = c->Timing ? Tick() : 0;
         for (ULONG i = 0; i < merged; ++i)
             RtlCopyMemory(io.Buffer + i * Chunk, c->Slots[selected[i]].Buffer, Chunk);
+        const auto copyTicks = copyStart ? Tick() - copyStart : 0;
         const auto lowerStart = c->Timing ? Tick() : 0;
         if (delay)
         {
@@ -444,9 +451,11 @@ static void Drainer(PVOID context)
                 }
             }
         }
+        const auto lowerTicks = lowerStart ? Tick() - lowerStart : 0;
+        const auto retirementStart = c->Timing ? Tick() : 0;
         AcquireCache(c);
-        if (lowerStart)
-            c->Performance.LowerIoTicks += Tick() - lowerStart;
+        c->Performance.LowerIoTicks += lowerTicks;
+        c->Performance.DrainCopyTicks += copyTicks;
         c->State.InFlightBytes -= transferBytes;
         for (ULONG i = 0; i < merged; ++i)
         {
@@ -478,11 +487,17 @@ static void Drainer(PVOID context)
                 else
                     RetireSlot(c, completedIndex);
             }
+            if (retirementStart)
+                c->Performance.DrainRetirementTicks += Tick() - retirementStart;
             Publish(c);
             KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
         }
         else
+        {
+            if (retirementStart)
+                c->Performance.DrainRetirementTicks += Tick() - retirementStart;
             Fault(c, status); // Keep the dirty slot and stop retries until explicit recovery.
+        }
         WakeDrainers(c);
         ReleaseCache(c);
     }

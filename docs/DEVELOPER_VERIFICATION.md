@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 9)
+## Suites (plan version 10)
 
 | Suite | Scope |
 |---|---|
@@ -177,6 +177,23 @@ Restoration comparison failures report named expected/actual fields and retain
 the observed state, profiles, timing and all mismatches in
 `<reply-path>.mismatch.json`. Late writes after a flush can still fail the
 zero-dirty check; this evidence does not bypass that check or retry mutations.
+
+Plan 10 restoration flushes the identity-checked filesystem volume, flushes the
+cache, then disables and drains remaining admissions before reapplying the saved
+configuration. The main flush remains separate from disable; draining a large
+dirty set directly through disable exceeded the restoration deadline in a VM
+probe. Each boundary records a state snapshot beside the reply:
+`.before-volume-flush.json`, `.after-volume-flush.json`, `.after-cache-flush.json`
+and `.after-cache-disable.json`. A missing boundary means that stage did not
+complete, not a zero-dirty result. Any operation failure stops restoration.
+The independent restoration deadline and all final state/profile/timing/error
+checks are unchanged. Disable clears clean residency; restoration promises saved
+settings and durable pending writes, not preservation of cached clean contents.
+Workloads, case IDs and score/telemetry windows are unchanged from plan 9.
+This does not guarantee quietness after re-enabling against external writers.
+Focused Q32 restoration passed; a subsequent Q1 main flush exceeded the existing
+deadline before reaching disable. See the RAM-first tracker for retained failed
+probes and separate recovery evidence; full restoration acceptance remains open.
 
 Performance workloads use a hot set one quarter of the selected cache budget and
 a separate writer file twice the budget. Fresh random-filled files are prepared
