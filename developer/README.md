@@ -36,31 +36,33 @@ reboot automatically. A failure is not permission to discard dirty data: inspect
 state, clear the synthetic hook, retry and drain explicitly. These tests do not
 prove crash durability or complete kernel coverage.
 
-## Repository-only scripts and recovery
+## Retired-script replacement map
 
-`scripts/Measure-Performance.ps1` runs the repeatable performance experiments: small-request
-cost, foreground/background interference, capacity pressure, controlled slow storage,
-random-drain efficiency, drain parallelism and flush-under-load. It interleaves configurations,
-repeats them, reports medians with spread, and restores the original policy and clears the lab
-delay hook even after a failure. It refuses disk 0 and boot/system volumes and only touches its
-own files under `<volume>\QueueCache-Perf`. Historical context is retained in the
-[performance baseline and method](../docs/secondary_docs/PERFORMANCE.md) and
-[performance and concurrency plan](../docs/secondary_docs/PERFORMANCE_PLAN.md); use
-the [RAM-first tracker](../docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md) for current work.
+The old PowerShell workload wrappers were removed after their modes were compared
+with the maintained executable. Historical results remain in Git history and the
+secondary documentation; do not recreate those wrappers as another runner.
 
-`scripts/Test-CacheFaults.ps1` retains the historical multi-scenario fault sequence
-and now invokes `qcache developer write-tests`, not another executable. It requires
-the recorded identity from the earlier per-device test setup. `Test-LabReads.ps1`
-is a compatibility wrapper for that same setup. New installations should invoke
-the CLI directly with the current identity.
+| Retired source/mode | Maintained replacement or disposition |
+|---|---|
+| `Measure-Performance`: small-request reads/writes | `verify --suite performance` scaling cells plus the separate `write-performance` matrix |
+| interference and controlled slow storage | `verify --suite performance`, with hot-reader alone/loaded, delay 0/25 ms, QD8/32/128 and Automatic/Fixed allocation |
+| capacity pressure | Performance writer cells record capacity waits; plan-11 `policies` separately proves fitting traffic has zero waits. A dedicated forced-exhaustion acceptance case remains deferred in the tracker. |
+| random drain | Random-write performance cells plus recorded explicit preparation/restoration drains |
+| drain-parallelism throughput comparison | Deferred until residual evidence justifies multi-worker tuning. Correctness at parallelism 1/2/4 remains in `policies`. |
+| flush under load | `verify --suite flush-interference` |
+| `Test-LabReads` attached/detached | `qcache developer test <disk> <bytes> <instance> [--detached]` |
+| `Test-CacheFaults` lower completion error/retry | `file-tests ... test-coalescing` uses fault 4, retains dirty data, retries and verifies an independent file hash |
+| `Test-CacheFaults` lower flush error/retry | `file-tests ... test-flush-policy` uses fault 3, requires visible failure, retries and verifies the file hash |
+| raw pre-submission/short-completion faults 1/2/5 | Deferred raw-only variants. They are not needed to claim the A06 minimum fault paths and remain an explicit gap. |
+| allocation faults 6/7 | Deferred until allocation-path work is touched; the gap remains in the tracker. |
+| `Manage-Lab` install/reattach/upgrade/uninstall | The single installer and `packaging/Install-Driver.ps1`; no per-device legacy installation path remains. |
 
-`scripts/Manage-Lab.ps1` is historical per-device bring-up/recovery tooling, **not
-the product installer**. Do not use its Install/Reattach/Upgrade actions on a
-class-filter installation. Current installation/removal belongs to the single
-installer and `packaging/Install-Driver.ps1`; registration backups and logs are
-kept under ProgramData/QueueCache. Offline recovery cannot depend on a running
-CLI: retain the VM snapshot and registration backup outside the guest before
-driver/boot experiments. See the root README's recovery notes.
+Registration backups and logs are stored under `%ProgramData%\QueueCache` before
+setup changes registration. `packaging/Recover-Registration.ps1` restores an exact
+version-1 backup without the driver or CLI, either in Safe Mode or against an
+offline SYSTEM hive. Copy that script and the selected backup outside the guest
+before boot experiments. It requires `-ConfirmRestore`, supports `-WhatIf`, refuses
+to rewrite registration under a running QueueCache driver, and never reboots.
 
 No `lab`, `tests`, `write-tests` or `file-tests` folder is shipped. During upgrades,
 setup removes the old applications/runtime files and known scripts, removing the

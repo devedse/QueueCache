@@ -46,7 +46,7 @@ internal static class LegacyCommands
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
         try
         {
-            // Installer plumbing. Disk safety/identity gates live in lab/Manage-Lab.ps1.
+            // Compatibility installer plumbing. Product safety/identity gates live in packaging/Install-Driver.ps1.
             if (args is ["lab-filter", "inspect", var instance])
             {
                 Console.WriteLine(JsonSerializer.Serialize(DeviceFilters.Inspect(instance)));

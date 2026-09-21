@@ -25,6 +25,7 @@ SetupIconFile=..\assets\branding\queuecache.ico
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Install-Driver.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
+Source: "Recover-Registration.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "Update-QueueCache.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "Update-QueueCache.ps1"; DestDir: "{commondesktop}"; Flags: ignoreversion
 Source: "Update QueueCache.cmd"; DestDir: "{commondesktop}"; Flags: ignoreversion

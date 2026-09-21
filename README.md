@@ -121,7 +121,10 @@ The installer stages an immutable version/hash-named driver and retains the
 `qcachelab` service identity across upgrades. A reboot loads a changed driver.
 Setup does not reboot automatically or silently configure a cache. Recovery and
 registration backups live under `%ProgramData%\QueueCache`; keep an external VM
-snapshot before boot/lifecycle testing.
+snapshot plus a copy of the selected backup and
+`setup\Recover-Registration.ps1` before boot/lifecycle testing. The recovery script
+does not require the driver or CLI and can target an offline SYSTEM hive; it never
+reboots automatically.
 
 ## Repository layout
 

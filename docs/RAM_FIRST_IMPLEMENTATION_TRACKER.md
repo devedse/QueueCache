@@ -298,6 +298,24 @@ Native Debug/Release and solution builds pass locally; host, UI, CLI and packagi
 checks are recorded separately. A clean VM policy regression awaits the single
 new signed build shared with A03/A05/A06.
 
+### Private-alpha A05 implementation: 2026-09-21
+
+The four historical runtime wrappers were inventoried mode-by-mode and removed.
+Current performance, read attachment, lower-write completion failure and lower-flush
+failure coverage maps to the maintained developer CLI and verification runner; the
+developer guide records each replacement. Raw short-write/completion modes 1/2/5,
+allocation faults 6/7, forced capacity exhaustion and drain-parallelism performance
+remain explicit deferred gaps rather than implied passes.
+
+The legacy per-device installer was replaced by the single class-filter installer.
+Before setup changes registration it already writes a versioned backup outside the
+application directory. `packaging/Recover-Registration.ps1` now restores that exact
+backup without a functioning driver or CLI, refuses live-driver registry rewriting,
+supports Safe Mode or an offline SYSTEM hive and never reboots. Packaging syntax
+and independence checks cover this recovery surface. Three ignored old test
+directories contain only regenerable `bin`/`obj` output; no `.lab`, raw evidence or
+unknown owner files were removed.
+
 | # | A02 completion overview | Current disposition |
 |---|---|---|
 | 1 | Barrier/lower-I/O attribution | Implemented and retained; exact lower-attempt evidence remains required. |

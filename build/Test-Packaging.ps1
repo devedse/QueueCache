@@ -14,7 +14,7 @@ foreach ($project in @('LabTests', 'WriteTests', 'FileTests'))
         throw "Standalone test executable project remains: $project"
     }
 }
-foreach ($name in @('Install-Driver.ps1', 'Update-QueueCache.ps1'))
+foreach ($name in @('Install-Driver.ps1', 'Recover-Registration.ps1', 'Update-QueueCache.ps1'))
 {
     $path = Join-Path $root "packaging/$name"
     $tokens = $null; $parseErrors = $null
@@ -23,6 +23,11 @@ foreach ($name in @('Install-Driver.ps1', 'Update-QueueCache.ps1'))
     {
         throw ($parseErrors | Out-String)
     }
+}
+$recovery = Get-Content "$root/packaging/Recover-Registration.ps1" -Raw
+if ($recovery -match 'qcache\.exe' -or $recovery -notmatch 'OfflineSystemHive' -or $recovery -notmatch 'ConfirmRestore')
+{
+    throw 'Registration recovery must be backup-driven, guarded and independent of the CLI.'
 }
 $installer = Get-Content "$root/packaging/Install-Driver.ps1" -Raw
 if ($installer -match '\bRead-Host\b|SnapshotConfirmed|AllowFormattedDisk')

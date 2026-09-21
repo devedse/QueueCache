@@ -42,7 +42,6 @@ the current [third-party notices](../THIRD_PARTY_NOTICES.md) and
 
 ## Still separate work
 
-Developer-script consolidation is A05, not part of this native-source cleanup.
 Installer/service identity migration is intentionally deferred to coordinated A10
 upgrade testing. Raw evidence, `.lab` files and generated packages remain private
 and untracked.
