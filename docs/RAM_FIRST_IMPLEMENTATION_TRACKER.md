@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-20. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-21. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -52,10 +52,10 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: single-block slot reuse. 360ab9a, deployed in 0.4.45.1: policy-gated foreground wakes. 948ea1c / 0.4.46.1: suppress redundant foreground wakes while the sole drainer is busy | 0.4.46.1 loaded/hash verified; native/host checks, signed CI and VM policy/admission/byte oracles passed. Three timing-off repeats: Q1 median +9.74%, Q32 +172.96%; p99 improved. Qualified focused gain, not full acceptance: original late-dirty restoration failures remain, separate recoveries passed; full matrix and remaining lifetime/fault checks open |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
-| 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
+| 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Plan 11 adds the bounded fitting-write/cached-read case under normal Idle draining; cold-miss scheduling remains pending | VM plan-11 policy run must show foreground byte correctness, zero initial lower-attempt admission, zero capacity waits and nonzero background progress; mixed/cold + sustained capacity pressure remains open |
 | 13 | Indexed ready selection / independent-range workers if still justified | 0–100%+ high QD; Q1 usually 0% | Deferred until remaining profiles justify redesign | Range ordering, barriers, cancellation, faults, cross-thread lifetime |
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
-| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 is deployed in 0.4.51.1 and the focused Q1 attribution plus current-driver Q1/Q32 cleanup regressions completed. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
+| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Plan 11 records the sustained policy case's foreground latency, capacity waits, bounded occupancy and background progress. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 is deployed in 0.4.51.1 and the focused Q1 attribution plus current-driver Q1/Q32 cleanup regressions completed. Plan-11 VM policy verification awaits the new build. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
 
 ## Next execution order (2026-09-19)
 
@@ -259,6 +259,26 @@ dirty/in-flight bytes with no error and restored the original enabled Fast/Idle
 settings. These single repetitions close the cleanup regression, not the later
 three-repeat performance acceptance matrix. Earlier failed runs retain their
 original verdicts. The next dependency-ready step is A03.
+
+### Private-alpha A03 implementation: 2026-09-21
+
+New tasks now use one coherent Fast/Idle baseline in the native driver, managed
+contract, CLI and desktop: 5,000 ms first-dirty age, 250 ms write-idle trigger,
+40/80 write-pool watermarks, 256 KiB batches and one lower write. Fast still
+requires explicit volatile-flush acceptance. Driver initialization remains
+disabled, so installation alone does not activate a cache; startup restoration
+applies only a validated, previously opted-in profile. State reconstruction and
+saved-profile serialization preserve explicit existing Strict/Fast and drain
+choices, including Eager.
+
+Verification plan 11 extends the maintained `policies` worker rather than adding
+a private script. Its 60-second 8 MiB hot-set case runs below a 64 MiB budget,
+serializes deterministic writes and immediate cached reads, proves the first
+admission has unchanged lower-attempt counters, and records p99/maximum foreground
+latency, capacity waits, dirty occupancy and nonzero background drain progress.
+Disable then provides an independent persisted-byte oracle. Host/native/UI checks
+are separate from the pending VM plan-11 run on the newly signed build; no VM
+result is claimed here.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

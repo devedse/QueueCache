@@ -34,7 +34,7 @@ static_assert(sizeof(QC_OPTIONS) == 48);
 constexpr QC_OPTIONS QcDefaultOptions()
 {
     return {
-        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcEager, 40, 80, 5000, 250, 256, 1};
+        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcIdle, 40, 80, 5000, 250, 256, 1};
 }
 constexpr bool QcValidOptions(const QC_OPTIONS& o)
 {

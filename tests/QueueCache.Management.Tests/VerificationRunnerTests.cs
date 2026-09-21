@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 10, "Filesystem-before-cache restoration flush contract version");
+        Check(VerificationPlan.Version == 11, "sustained foreground/background policy contract version");
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
             "admission retains exact attempt evidence");

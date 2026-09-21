@@ -9,7 +9,10 @@ constexpr bool PolicyChecks()
     bool pressure = false;
     if (!QcValidOptions(o) || QcWriteLimit(o, 1000) != 1000)
         return false;
-    if (!QcShouldDrain(o, 1, 100, 0, 0, false, pressure))
+    if (o.Drain != QcIdle || o.MaxAgeMs != 5000 || o.IdleMs != 250 || o.LowPercent != 40 ||
+        o.HighPercent != 80 || o.BatchKiB != 256 || o.Parallelism != 1 ||
+        QcShouldDrain(o, 1, 100, 0, 0, false, pressure) || pressure ||
+        !QcShouldDrain(o, 1, 100, 0, o.IdleMs, false, pressure))
         return false;
     o.Allocation = QcFixed;
     o.WritePercent = 40;

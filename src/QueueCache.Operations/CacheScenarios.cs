@@ -27,6 +27,7 @@ public static class CacheScenarios
         try
         {
             SectorScenarios.Run(target, device, directory, results, progress, token);
+            RunSustainedForeground(target, device, directory, results, progress, token);
             for (int scenario = 0; scenario < cases.Length; scenario++)
             {
                 token.ThrowIfCancellationRequested();
@@ -109,4 +110,112 @@ public static class CacheScenarios
         }
         return results;
     }, token);
+
+    private static void RunSustainedForeground(DiskTarget target, CacheDevice device, string directory,
+        List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
+    {
+        const int budgetMiB = 64;
+        const int hotSetBytes = 8 << 20;
+        const int transferBytes = 64 << 10;
+        const int durationSeconds = 60;
+        var label = "foreground-background";
+        progress?.Report($"{label}: {durationSeconds}s fitting writes and cached reads while Idle drains");
+
+        var blocks = Enumerable.Range(0, hotSetBytes / transferBytes).Select(index =>
+        {
+            var block = new byte[transferBytes];
+            new Random(8100 + index).NextBytes(block);
+            return block;
+        }).ToArray();
+        var actual = new byte[transferBytes];
+        using var file = new AlignedFile(Path.Combine(directory, "foreground-background.bin"), transferBytes, true);
+        for (var index = 0; index < blocks.Length; index++)
+            file.Write((long)index * transferBytes, blocks[index]);
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+
+        var options = new CacheOptions(Drain: DrainAlgorithm.Idle, MaxDirtyAgeMs: 5000, IdleMs: 250,
+            LowPercent: 40, HighPercent: 80, BatchKiB: 256, Parallelism: 1);
+        ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast) { Options = options }, true);
+        var before = device.GetWriteCacheState();
+        var attemptsBefore = device.GetDiagnostics().Attribution ??
+            throw new NotSupportedException("Sustained admission proof requires diagnostics V2.");
+        var writeMilliseconds = new List<double>();
+        var readMilliseconds = new List<double>();
+        ulong readBytes = 0;
+        ulong peakDirty = before.DirtyBytes;
+        var sequence = 0;
+
+        void WriteAndRead()
+        {
+            var index = sequence % blocks.Length;
+            var block = blocks[index];
+            block[sequence % block.Length] ^= (byte)(0x5A + sequence % 31);
+            var started = Stopwatch.GetTimestamp();
+            file.Write((long)index * transferBytes, block);
+            writeMilliseconds.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            started = Stopwatch.GetTimestamp();
+            file.Read((long)index * transferBytes, actual);
+            readMilliseconds.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            if (!block.AsSpan().SequenceEqual(actual))
+                throw new IOException(label + ": cached read mismatch");
+            readBytes += transferBytes;
+            sequence++;
+        }
+
+        // At a clean boundary, one fitting write and its cached read must not issue lower I/O.
+        WriteAndRead();
+        var attemptsAfterAdmission = device.GetDiagnostics().Attribution;
+        var admissionEvidence = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, attemptsAfterAdmission);
+
+        var timer = Stopwatch.StartNew();
+        var nextSample = TimeSpan.Zero;
+        while (timer.Elapsed < TimeSpan.FromSeconds(durationSeconds))
+        {
+            token.ThrowIfCancellationRequested();
+            WriteAndRead();
+            if (timer.Elapsed >= nextSample)
+            {
+                var sample = device.GetWriteCacheState();
+                peakDirty = Math.Max(peakDirty, sample.DirtyBytes);
+                nextSample = timer.Elapsed + TimeSpan.FromSeconds(1);
+            }
+        }
+
+        var after = device.GetWriteCacheState();
+        var attemptsAfter = device.GetDiagnostics().Attribution!;
+        if (after.AcceptedBytes <= before.AcceptedBytes || after.DrainedBytes <= before.DrainedBytes ||
+            attemptsAfter.LowerWriteAttempts <= attemptsAfterAdmission!.LowerWriteAttempts)
+            throw new IOException(label + ": foreground or background made no measurable progress");
+        if (after.ReadHitBytes - before.ReadHitBytes < readBytes || attemptsAfter.LowerReadAttempts != attemptsBefore.LowerReadAttempts)
+            throw new IOException(label + ": a known-current cached read missed RAM");
+        if (after.ThrottleWaits != before.ThrottleWaits)
+            throw new IOException(label + ": fitting foreground writes waited for capacity");
+        if (peakDirty >= before.PayloadCapacity || after.LastError != 0 || after.Errors != before.Errors)
+            throw new IOException(label + ": capacity or driver error invariant failed");
+
+        device.Control(WriteCacheAction.Disable);
+        for (var index = 0; index < blocks.Length; index++)
+        {
+            file.Read((long)index * transferBytes, actual);
+            if (!blocks[index].AsSpan().SequenceEqual(actual))
+                throw new IOException(label + ": persisted disk oracle mismatch");
+        }
+        var final = device.GetWriteCacheState();
+        if (final.DirtyBytes != 0 || final.InFlightBytes != 0 || final.LastError != 0 || final.Errors != before.Errors)
+            throw new IOException(label + ": final drain/state mismatch");
+
+        static double Percentile99(List<double> samples)
+        {
+            samples.Sort();
+            return samples[Math.Min(samples.Count - 1, (int)Math.Ceiling(samples.Count * 0.99) - 1)];
+        }
+        results.Add(new(label, "PASS",
+            $"{sequence} serialized 64 KiB write/read pairs over {durationSeconds}s; write p99/max {Percentile99(writeMilliseconds):F3}/{writeMilliseconds.Max():F3} ms; " +
+            $"read p99/max {Percentile99(readMilliseconds):F3}/{readMilliseconds.Max():F3} ms; accepted/drained deltas " +
+            $"{after.AcceptedBytes - before.AcceptedBytes}/{after.DrainedBytes - before.DrainedBytes} bytes; read-hit delta " +
+            $"{after.ReadHitBytes - before.ReadHitBytes} bytes; capacity-wait delta {after.ThrottleWaits - before.ThrottleWaits}; " +
+            $"peak dirty {peakDirty}/{before.PayloadCapacity} bytes; lower-write attempts delta " +
+            $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}. {admissionEvidence} Persisted bytes verified after Disable."));
+    }
 }

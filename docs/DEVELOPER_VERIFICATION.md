@@ -16,18 +16,30 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 10)
+## Suites (plan version 11)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
-| `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof, followed by six cache configurations, retained-data checks and disabled-cache byte oracle; restores runtime configuration. Requires the attribution driver. |
+| `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
+
+Plan 11 adds the maintained foreground/background case to `policies` and `full`.
+It uses an 8 MiB hot set under a 64 MiB Fast/Idle cache for 60 seconds. The first
+fitting write and its immediate cached read must issue zero lower-I/O attempts.
+The sustained window serializes each known-byte write/read pair so its oracle is
+unambiguous, records foreground p99/maximum latency, accepted/drained bytes, read
+hits, capacity waits, peak dirty bytes and lower-write attempts, and requires both
+foreground completion and nonzero background progress. It finally disables the
+cache and verifies every owned byte from disk. The default is Idle with a 5,000 ms
+age trigger, 250 ms idle trigger, 40/80 watermarks, 256 KiB batches and parallelism
+1. Age starts scheduling; it is not a persistence deadline. Existing saved profiles
+retain their explicit policy and Strict/Fast choice.
 
 ### Small-write investigation
 

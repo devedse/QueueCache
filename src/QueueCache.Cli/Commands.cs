@@ -57,7 +57,7 @@ internal static class Commands
         var writePercent = new Option<int>("--write-percent") { DefaultValueFactory = _ => 50, Description = "Fixed allocation: 0 = read-only, 100 = write-only." };
         // Drain scheduling. Eager ignores the watermark/age/idle settings; Balanced adds watermarks and
         // maximum age; Idle adds the write-idle interval. Batch size and parallelism apply to all three.
-        var drain = new Option<DrainAlgorithm>("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Eager, Description = "Eager: drain as writes arrive. Balanced: watermarks/age. Idle: Balanced plus write-idle. Deferred: age only, no early watermark/idle trigger; explicit flush/capacity boundaries still apply." };
+        var drain = new Option<DrainAlgorithm>("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Idle, Description = "Eager: drain as writes arrive. Balanced: watermarks/age. Idle (default): Balanced plus write-idle. Deferred: age only, no early watermark/idle trigger; explicit flush/capacity boundaries still apply." };
         var discard = new Option<bool>("--discard-drained") { Description = "Release written blocks after draining instead of retaining them for reads." };
         var noPromotion = new Option<bool>("--no-promotion") { Description = "Keep retained writes in the write quota when read." };
         var low = new Option<int>("--low-percent") { DefaultValueFactory = _ => 40, Description = "Balanced/Idle: stop pressure draining at this share of the write pool." };

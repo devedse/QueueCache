@@ -52,7 +52,11 @@ BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(104), 9L << 30);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(136), 3L << 30);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(176), 4L << 30);
 var s = CacheStatistics.Decode(data);
-new CacheConfiguration().Validate(true);
+var alphaDefault = new CacheConfiguration();
+alphaDefault.Validate(true);
+Check(alphaDefault.Preset == CachePreset.Fast && alphaDefault.Enabled && alphaDefault.Options == new CacheOptions(
+    Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
+    IdleMs: 250, BatchKiB: 256, Parallelism: 1), "new task uses explicit Fast/Idle alpha defaults");
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
     foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
         foreach (var share in new[] { 0, 50, 100 })
@@ -93,6 +97,13 @@ new CacheConfiguration(8192).Validate(true);
 Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configuration budget");
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
 var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
+var existingProfile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30,
+    new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) }, false);
+var existingJson = System.Text.Json.JsonSerializer.Serialize(existingProfile);
+var existingRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(existingJson)!;
+existingRoundTrip.Validate();
+Check(existingRoundTrip == existingProfile && existingRoundTrip.Configuration.Options.Drain == DrainAlgorithm.Eager,
+    "saved Strict/Eager profile survives new defaults exactly");
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");

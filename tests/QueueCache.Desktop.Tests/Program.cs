@@ -74,6 +74,12 @@ fixture.PendingInventory = null;
 Dispatcher.UIThread.RunJobs();
 Check(blockedSample.IsCompleted && discovery.IsCompleted, "pending sampling/discovery finish independently");
 window.Close();
+var newState = fixture.State with { Flags = fixture.State.Flags | 4096, BudgetBytes = 0, ReservedBytes = 0, Options = null };
+var newSettings = new CacheSettingsWindow(fixture.Disks[1], newState, false);
+newSettings.Show();
+Dispatcher.UIThread.RunJobs();
+Check(newSettings.GetVisualDescendants().OfType<ComboBox>().Any(c => Equals(c.SelectedItem, "Idle")), "new cache editor selects Idle alpha default");
+newSettings.Close();
 var settings = new CacheSettingsWindow(fixture.Disks[1], fixture.State with { Flags = fixture.State.Flags | 4096 }, true);
 settings.Show();
 Dispatcher.UIThread.RunJobs();
@@ -117,7 +123,7 @@ sealed class Fixture : ICacheTaskService
     public DiskDescription[] Disks = [new(0, "System SSD", 100L << 30, "fixture-system", ["C:"], true, true), new(1, "Game library SSD", 200L << 30, "fixture-data", ["Q:"], false, false)];
     public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
     {
-        Options = new(),
+        Options = new(Drain: DrainAlgorithm.Eager),
         CleanReadBytes = 1024UL << 20,
         CleanWriteBytes = 256UL << 20,
         Instance = 1,
