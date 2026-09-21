@@ -209,13 +209,17 @@ public static class Runner
                 if (!failedCompletion || !faulted.Faulted || faulted.DirtyBytes == 0)
                     throw new IOException("Coalesced payload not retained after injected lower completion error.");
                 control.Control(WriteCacheAction.Retry);
+                // Retry is a persistence boundary, but the enabled filesystem can admit
+                // unrelated metadata writes before the following state query. Disable at
+                // the same clean boundary so the conservation check and disk hash cannot
+                // race a new write after the recovery completed.
+                control.Control(WriteCacheAction.Disable);
                 var final = control.GetWriteCacheState();
                 using (var verified = File.OpenRead(source))
                     if (Convert.ToHexString(SHA256.HashData(verified)) != HashOracle(finalSeed, false, length))
                         throw new IOException("Drained coalesced file hash mismatch.");
                 if (final.Faulted || final.DirtyBytes != 0 || final.AcceptedBytes != final.DrainedBytes + final.CoalescedBytes + final.DiscardedBytes)
                     throw new IOException("Coalescing conservation/drain failed.");
-                control.Control(WriteCacheAction.Disable);
                 control.Control(WriteCacheAction.FlushPolicy, value: 0);
                 control.Control(WriteCacheAction.Enable);
                 // Restore the original oracle so the retained manifest remains usable for
