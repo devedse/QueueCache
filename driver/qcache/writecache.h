@@ -161,7 +161,7 @@ struct QC_CACHE
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
-    volatile LONG Gone;
+    volatile LONG Gone, PagingPathCount;
     ULONG DelayMs, InjectFault;
 };
 NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT lower);
@@ -171,6 +171,8 @@ void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
 void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major);
+void QcCacheRecordUsage(QC_CACHE* cache, BOOLEAN inPath);
+LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);

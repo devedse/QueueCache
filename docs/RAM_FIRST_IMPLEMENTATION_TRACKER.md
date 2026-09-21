@@ -26,7 +26,7 @@ verification contract to plan 12; its new `pressure` VM run is pending.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054 | PARTIAL | T049 coverage ledger and plan-12 focused `pressure` scenario implemented; drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Managed Release build and host-safe runner contracts pass; exact-build VM `pressure` run pending. Required safety and recovery evidence gates C: activation; A07 design can proceed. |
-| A07 / T023-T027 | FALSE | System-disk contract and safeguards pending. | No active C: qualification. |
+| A07 / T023-T027 | PARTIAL | T023 system-disk operation map completed. Paging/hibernation/dump usage notifications are counted and ordered; Enable is fail-closed while any such path exists. | Native Debug/Release and host contracts pass; installed-driver verification pending. T024-T027 and active C: qualification remain. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
@@ -47,10 +47,11 @@ verification contract to plan 12; its new `pressure` VM run is pending.
    supports investigating request shape/concurrency and the lower stack; it does
    not prove the physical disk is the limiting component. No scheduler rewrite or
    performance improvement is established by those counters alone.
-3. Begin A07 code mapping alongside A06a design. Complete T051-T053 for capacity,
-   timing, deterministic ordering and the allocation/lifetime/cancel paths needed
-   by the declared system-disk contract. Add focused maintained checks and fix
-   failures; unchanged code is not automatically safe for broader exposure.
+3. Use the completed A07/T023 operation map to implement T024-T026. Complete
+   T051-T053 for capacity, timing, deterministic ordering and the reachable
+   allocation/lifetime/cancel paths before active C: caching. The current
+   paging/hibernation/dump restriction stays enforced until its replacement is
+   qualified; unchanged code is not automatically safe for broader exposure.
 4. Build A08 from that contract. Rehearse T054 independent recovery before A09
    activation. Finish the remaining A10 servicing matrix on the resulting candidate.
 5. Run A11 after necessary fixes, then A12. Define A13 support scope and A14

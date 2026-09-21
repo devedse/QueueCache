@@ -50,6 +50,7 @@ BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(8), unchecked((int)0xC000009
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(16), 200L << 30);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(104), 9L << 30);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(136), 3L << 30);
+BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(152), 2);
 BinaryPrimitives.WriteInt64LittleEndian(data.AsSpan(176), 4L << 30);
 var s = CacheStatistics.Decode(data);
 var alphaDefault = new CacheConfiguration();
@@ -107,6 +108,15 @@ Check(existingRoundTrip == existingProfile && existingRoundTrip.Configuration.Op
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
+Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");
+ActivationSafety.ValidateUsagePaths(false, 1);
+Reject(() => ActivationSafety.ValidateUsagePaths(true, -1), "invalid usage-path count");
+try
+{
+    ActivationSafety.ValidateUsagePaths(true, 1);
+    throw new Exception("Active usage path was accepted.");
+}
+catch (NotSupportedException) { }
 profile.Validate();
 Reject(() => (profile with { Version = 2 }).Validate(), "unknown profile version");
 Reject(() => (profile with { Volume = @"Q:\folder" }).Validate(), "profile requires volume not path");
@@ -117,6 +127,7 @@ Reject(() => (profile with { VolatileFlushAccepted = false }).Validate(), "saved
 Check(s.Enabled && s.LastError == unchecked((int)0xC000009A), "flags and signed NTSTATUS");
 Check(s.DeviceBytes == 200L << 30 && s.WrittenBytes == 9L << 30, "64-bit byte counters");
 Check(s.QueueMemoryBytes == 3L << 30 && s.MaxQueueBytes == 4L << 30, "cache budgets above 2 GiB");
+Check(s.PagingPathCount == 2, "paging/hibernation/dump path count");
 Reject(() => CacheStatistics.Decode(data.AsSpan(0, 183)), "short response");
 data[0] = 0;
 Reject(() => CacheStatistics.Decode(data), "incompatible version");

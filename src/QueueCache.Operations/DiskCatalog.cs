@@ -8,7 +8,8 @@ public sealed record DiskDescription(int Number, string Name, long Bytes, string
 {
     public string Device => $"PhysicalDrive{Number}";
     public double SizeGiB => Bytes / 1073741824.0;
-    public string Display => $"{string.Join(", ", Volumes)} · {Device} · {SizeGiB:0.##} GiB · {Name}" + (IsBoot || IsSystem ? " [boot/system]" : "");
+    public string Display => $"{string.Join(", ", Volumes)} · {Device} · {SizeGiB:0.##} GiB · {Name}" +
+        (IsBoot || IsSystem ? " [boot/system]" : "") + (IsPaging ? " [paging]" : "");
 }
 
 [SupportedOSPlatform("windows")]

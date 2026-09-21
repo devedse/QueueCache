@@ -180,6 +180,26 @@ void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major)
     else if (major == IRP_MJ_FLUSH_BUFFERS)
         InterlockedIncrement64(&cache->LowerFlushAttempts);
 }
+void QcCacheRecordUsage(QC_CACHE* cache, BOOLEAN inPath)
+{
+    if (inPath)
+    {
+        InterlockedIncrement(&cache->PagingPathCount);
+        return;
+    }
+    auto current = InterlockedCompareExchange(&cache->PagingPathCount, 0, 0);
+    while (current > 0)
+    {
+        auto observed = InterlockedCompareExchange(&cache->PagingPathCount, current - 1, current);
+        if (observed == current)
+            return;
+        current = observed;
+    }
+}
+LONG QcCachePagingPathCount(QC_CACHE* cache)
+{
+    return InterlockedCompareExchange(&cache->PagingPathCount, 0, 0);
+}
 static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG inject = 0)
 {
     KEVENT completed;
@@ -793,6 +813,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     case QcEnable:
         if (c->BlockedPlacement)
             status = STATUS_INVALID_DEVICE_STATE;
+        // Until A07 qualifies these nonpageable lifetime paths, never activate
+        // volatile write caching underneath paging, hibernation or dump files.
+        // The usage notifications themselves remain ordered and may disable an
+        // already-active cache if Windows adds such a path concurrently.
+        else if (QcCachePagingPathCount(c) > 0)
+            status = STATUS_NOT_SUPPORTED;
         else if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096))
             status = STATUS_DEVICE_NOT_READY;
         else if (!NT_SUCCESS(c->State.LastError))
@@ -1503,5 +1529,14 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     ClearClean(c);
     Publish(c);
     ReleaseCache(c);
-    return NT_SUCCESS(status) ? OriginalIo(c, irp) : status;
+    if (!NT_SUCCESS(status))
+        return status;
+    status = OriginalIo(c, irp);
+    if (NT_SUCCESS(status) && stack->MajorFunction == IRP_MJ_PNP &&
+        stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION &&
+        (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
+         stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
+         stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
+        QcCacheRecordUsage(c, stack->Parameters.UsageNotification.InPath);
+    return status;
 }

@@ -71,6 +71,41 @@ NTSTATUS QcStartCompletion(PDEVICE_OBJECT, PIRP, PVOID context)
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
 
+#if QCACHE_CACHE_DRIVER
+static NTSTATUS UsageInCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto ext = static_cast<QC_EXTENSION*>(context);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    // In-path is recorded before forwarding so cache activation cannot race a
+    // pending usage notification. Roll it back only if the lower stack rejects it.
+    if (!NT_SUCCESS(irp->IoStatus.Status))
+        QcCacheRecordUsage(&ext->Cache, FALSE);
+    IoReleaseRemoveLock(&ext->RemoveLock, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+
+static NTSTATUS UsageOutCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto ext = static_cast<QC_EXTENSION*>(context);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    if (NT_SUCCESS(irp->IoStatus.Status))
+        QcCacheRecordUsage(&ext->Cache, FALSE);
+    IoReleaseRemoveLock(&ext->RemoveLock, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+
+static NTSTATUS ForwardUsage(QC_EXTENSION* ext, PIRP irp, BOOLEAN inPath)
+{
+    if (inPath)
+        QcCacheRecordUsage(&ext->Cache, TRUE);
+    IoCopyCurrentIrpStackLocationToNext(irp);
+    IoSetCompletionRoutine(irp, inPath ? UsageInCompletion : UsageOutCompletion, ext, TRUE, TRUE, TRUE);
+    return IoCallDriver(ext->Lower, irp);
+}
+#endif
+
 static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
 {
     IoCopyCurrentIrpStackLocationToNext(irp);
@@ -572,10 +607,24 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
              stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
              stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
         {
-            // System storage must remain usable while this filter is inactive.
-            // These notifications also establish the nonpageable power path;
-            // our dispatch and extension are always nonpageable.
-            return Forward(ext, irp);
+            // An active notification must not overtake acknowledged dirty data.
+            // Inactive notification handling stays direct and nonpageable.
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
+            const bool routed = ext->Routing != FALSE;
+            KeReleaseSpinLock(&ext->QueueLock, irql);
+            return routed ? QueueRequest(ext, irp) : ForwardUsage(ext, irp, TRUE);
+        }
+        if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION && !stack->Parameters.UsageNotification.InPath &&
+            (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
+             stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
+             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
+        {
+            KIRQL irql;
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
+            const bool routed = ext->Routing != FALSE;
+            KeReleaseSpinLock(&ext->QueueLock, irql);
+            return routed ? QueueRequest(ext, irp) : ForwardUsage(ext, irp, FALSE);
         }
         if (stack->MinorFunction == IRP_MN_START_DEVICE)
         {
@@ -774,6 +823,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             stats.WriteQueueSizeTop = state.PeakDirtyBytes;
             stats.MaxQueueSize = state.PayloadCapacity;
             stats.LowMemQueued = state.ThrottleWaits;
+            stats.PagingPathCount = QcCachePagingPathCount(&ext->Cache);
 #endif
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &stats, sizeof(stats));
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
