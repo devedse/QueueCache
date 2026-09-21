@@ -32,6 +32,11 @@ if ($LASTEXITCODE -ne 1)
 {
     throw 'Grouped invalid budget must fail before device access.'
 }
+$consentOutput = & $cli policy apply 'Q:' --budget-mib 64 2>&1 | Out-String
+if ($LASTEXITCODE -ne 1 -or $consentOutput -notmatch 'Explicitly accept volatile flushes')
+{
+    throw 'Fast apply must require explicit volatility consent before device access.'
+}
 foreach ($name in @('pause', 'resume', 'remove'))
 {
     & $cli policy $name --help

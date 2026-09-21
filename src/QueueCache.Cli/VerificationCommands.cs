@@ -34,7 +34,7 @@ internal static class VerificationCommands
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
-              policies           Sector regressions, six cache configurations and disk-byte verification.
+              policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.

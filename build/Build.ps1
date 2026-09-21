@@ -3,10 +3,7 @@
 param(
     [ValidateSet('Debug', 'Release')][string]$Configuration = 'Release',
     [string]$Version = '0.1.0.0',
-    [switch]$ManagedOnly,
-    [switch]$LabPassThrough,
-    [switch]$LabSerialized,
-    [switch]$LabWriteCache
+    [switch]$ManagedOnly
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$' -or
@@ -26,61 +23,16 @@ try
             throw "$Command failed with exit code $LASTEXITCODE"
         }
     }
-    if ($LabWriteCache)
-    {
-        $LabPassThrough = [switch]::new($true); $LabSerialized = [switch]::new($true)
-    }
-    if ($ManagedOnly -and $LabPassThrough)
-    {
-        throw 'Choose controller-only or lab, not both.'
-    }
-    if ($LabSerialized -and -not $LabPassThrough)
-    {
-        throw 'Serialized worker is an explicit lab-only option; also specify -LabPassThrough.'
-    }
-    $flavor = if ($LabPassThrough)
-    {
-        'lab'
-    }
-    else
-    {
-        'legacy'
-    }
-    if ($LabSerialized)
-    {
-        $flavor = 'lab-serialized'
-    }
-    if ($LabWriteCache)
-    {
-        $flavor = 'lab-writecache'
-    }
-    $driverName = if ($LabPassThrough)
-    {
-        'qcachelab'
-    }
-    else
-    {
-        'qcache'
-    }
+    $flavor = 'current'
+    # Installed binary/service identity is retained for upgrade compatibility.
+    $driverName = 'qcachelab'
     $kind = if ($ManagedOnly)
     {
         'controller'
     }
-    elseif ($LabPassThrough)
-    {
-        'lab-passthrough-unsigned'
-    }
     else
     {
-        'unsigned'
-    }
-    if ($LabSerialized)
-    {
-        $kind = 'lab-serialized-unsigned'
-    }
-    if ($LabWriteCache)
-    {
-        $kind = 'lab-writecache-unsigned'
+        'current-cache-unsigned'
     }
     # Each invocation uses a fresh staging directory; no stale binaries or private files.
     $name = "QueueCache-$Version-x64-$Configuration-$kind"
@@ -111,9 +63,6 @@ try
         $env:Path = $buildPath
         Invoke-Checked $msbuild @('driver/qcache/QueueCache.Driver.vcxproj', '/m', '/t:Rebuild',
             "/p:Configuration=$Configuration", '/p:Platform=x64', "/p:BuildVersion=$Version",
-            "/p:LabPassThrough=$($LabPassThrough.IsPresent.ToString().ToLowerInvariant())",
-            "/p:LabSerialized=$($LabSerialized.IsPresent.ToString().ToLowerInvariant())",
-            "/p:LabWriteCache=$($LabWriteCache.IsPresent.ToString().ToLowerInvariant())",
             "/bl:artifacts/driver-$flavor-$Configuration.binlog")
         $driverVersion = (Get-Item "artifacts/driver/$flavor/$Configuration/$driverName.sys").VersionInfo
         if ($driverVersion.FileVersion -ne $Version -or $driverVersion.ProductVersion -ne $Version)
@@ -135,9 +84,9 @@ try
     $dirty = [bool](& git status --porcelain --untracked-files=normal)
     [ordered]@{ version = $Version; configuration = $Configuration; architecture = 'x64';
         commit = $commit; workingTreeDirty = $dirty; driverIncluded = (-not $ManagedOnly);
-        driverSigned = $false; labPassThrough = ($LabPassThrough.IsPresent -and -not $LabWriteCache); storageCorrectnessValidated = $false;
-        labWriteCache = $LabWriteCache.IsPresent;
-        labSerialized = $LabSerialized.IsPresent;
+        driverSigned = $false; storageCorrectnessValidated = $false;
+        # Compatibility schema retained while installer/signing migration is deferred.
+        labPassThrough = $false; labWriteCache = $true; labSerialized = $true;
         dotnetSdk = (& dotnet --version); wdkSdkPackage = '10.0.28000.2526';
         createdUtc = [DateTime]::UtcNow.ToString('O')
     } |

@@ -75,10 +75,12 @@ internal static class Commands
                 Options = new(p.GetValue(allocation), p.GetValue(writePercent), !p.GetValue(discard), !p.GetValue(noPromotion),
                     p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel))
             };
-            configuration.Validate(true); // Validate before opening a disk. The selected preset defines semantics.
+            var accepted = p.GetValue(accept);
+            configuration.Validate(accepted); // Validate before opening a disk. Fast requires explicit CLI acknowledgement.
             if (p.GetValue(save) && p.GetValue(runtimeOnly))
                 throw new ArgumentException("--save and --runtime-only cannot be combined.");
-            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), new ConsoleProgress(), token, p.GetValue(runtimeOnly));
+            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), accepted,
+                new ConsoleProgress(), token, p.GetValue(runtimeOnly));
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
         });

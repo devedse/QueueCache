@@ -21,7 +21,7 @@ public static class CacheTasks
         }, token);
     }
     public static async Task<WriteCacheState> SaveAsync(string volume, CacheConfiguration configuration, bool persistent,
-        IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false)
+        bool acceptVolatileFlush, IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false)
     {
         if (persistent && preserveSaved)
             throw new ArgumentException("Cannot save a configuration while preserving the saved profile unchanged.");
@@ -31,9 +31,9 @@ public static class CacheTasks
             // One management transaction across CLI/UI processes, including persistence.
             using var gate = ConfigurationGate.Enter();
             token.ThrowIfCancellationRequested();
-            var state = ConfigurationManager.Apply(target, configuration, true, progress);
+            var state = ConfigurationManager.Apply(target, configuration, acceptVolatileFlush, progress);
             if (persistent)
-                SavedConfigurations.Save(target, configuration, true);
+                SavedConfigurations.Save(target, configuration, acceptVolatileFlush);
             else if (!preserveSaved)
                 SavedConfigurations.Remove(target.Instance);
             return state;

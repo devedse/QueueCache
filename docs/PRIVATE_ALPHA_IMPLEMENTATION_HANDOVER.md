@@ -119,7 +119,7 @@ Paths below describe the pre-cleanup tree. Update this map as files are renamed.
 
 | Responsibility | Concrete starting point | Important boundary |
 |---|---|---|
-| Active request dispatch, queue, direct admission, PnP/power | `driver/qcache/lab.cpp`: `RequestWorker`, `ServiceCachedReads`, usage notifications | Active product code despite its name. Forwarding paging/hibernate/dump notifications is not proof of active caching safety. |
+| Active request dispatch, queue, direct admission, PnP/power | `driver/qcache/driver.cpp`: `RequestWorker`, `ServiceCachedReads`, usage notifications | Forwarding paging/hibernate/dump notifications while inactive is not proof of active caching safety. |
 | Cache storage, reads/writes, drainer, barriers | `driver/qcache/writecache.cpp`: `Drainer`, `QcCacheBarrier`, `QcCacheProcess`; `writecache.h` | Preserve newest-version reads, in-flight ownership, sparse sectors and ordered completion. |
 | Policy and native contracts | `driver/qcache/cachepolicy.h`, `cachepolicy-check.h`, `readselection-check.h`, `abi-check.cpp`, `qcstats.h` | Keep default policy/capability/ABI definitions coherent with management. |
 | Configuration and target validation | `src/QueueCache.Operations/CacheConfiguration.cs`, `DiskTarget.cs` | `ConfigurationManager.Apply` is shared; `WaitForHealthyState` is not a zero-dirty predicate. Do not change it to mask test cleanup. |
@@ -128,7 +128,7 @@ Paths below describe the pre-cleanup tree. Update this map as files are renamed.
 | Maintained orchestration | `src/QueueCache.Developer/Verification`: `VerificationRunner`, `VerificationWorker`, `VerificationPlan`, `OwnedProcess` | Reuse worker ownership, ready observers, trace records, deadlines and recovery. CLI only binds arguments. |
 | Host-safe contracts | `tests/QueueCache.Management.Tests/VerificationRunnerTests.cs` and existing console harness | Custom `dotnet run` test harness, not an assumed `dotnet test` project. |
 | Frontend and policy presentation | `src/QueueCache.Cli`, `src/QueueCache.Desktop`, `src/QueueCache.Management`; desktop tests | Both frontends use shared operations; don't shell from UI into a second app. |
-| Product build | `build/Build.ps1`, `driver/qcache/QueueCache.Driver.vcxproj`, `.github/workflows/githubactionsbuilds.yml` | CI selects `LabWriteCache`; no-switch build currently selects legacy. Fix during A04. |
+| Product build | `build/Build.ps1`, `driver/qcache/QueueCache.Driver.vcxproj`, `.github/workflows/githubactionsbuilds.yml` | A04 leaves one current driver path; the no-switch build and CI select it. `qcachelab` remains only as the installed compatibility identity. |
 | Setup and update | `packaging/QueueCache.iss`, `Install-Driver.ps1`, `Update-QueueCache.ps1`, build packaging tests | Class-filter installation; service/metadata migration requires compatibility, not search-and-replace. |
 
 ## 5. Ordered execution plan
@@ -287,7 +287,7 @@ commands were used. Check availability once rather than repeatedly failing it.
 | H1 | Host: `dotnet run --project tests/QueueCache.Management.Tests -c Release` | Host-safe console contracts; no driver or workload-disk access. |
 | H2 | Host: `dotnet run --project tests/QueueCache.Desktop.Tests -c Release` | Required for frontend/default presentation changes. |
 | H3 | Host: `dotnet publish src/QueueCache.Cli -c Release -r win-x64 --self-contained true -o <fresh-private-controller-directory>` | Unique output per candidate; verify all published file hashes after copy. Not a driver deployment. |
-| H4 | Host: `MSBuild.exe driver/qcache/QueueCache.Driver.vcxproj /t:Build /p:Configuration=Release /p:Platform=x64 /p:LabPassThrough=true /p:LabSerialized=true /p:LabWriteCache=true /v:minimal` | Locate installed MSBuild/WDK first; use current build pipeline for package/CI. Also validate Debug for native cleanup. Do not manually bump application versions; CI owns them. |
+| H4 | Host: `MSBuild.exe driver/qcache/QueueCache.Driver.vcxproj /t:Build /p:Configuration=Release /p:Platform=x64 /v:minimal` | Locate installed MSBuild/WDK first; use current build pipeline for package/CI. Also validate Debug for native cleanup. Do not manually bump application versions; CI owns them. |
 | H5 | Host: existing `build/Test-PackageLayout.ps1`, `Test-Packaging.ps1`, `Test-RegistryFilters.ps1`, `Test-Cli.ps1` | Read each parameter block before invocation; run relevant host-safe tests. Do not guess switches or execute a VM-mutating script locally. |
 | V1 | Elevated test VM: `qcache developer verify Q: --suite write-performance --budget-mib 2048 --repeats 3 --case-filter random-write-q1-Idle-timingFalse --preparation-flush-seconds 600 --diskspd <verified-diskspd.exe> --output <off-target-results-root>` | Verified clean non-OS target only; replace Q: with discovered target. Same binary/hash before and after. |
 | V2 | Same as V1 with `--case-filter random-write-q32-Idle-timingFalse` | Q32 means queue depth 32, one workload thread. It is not a corruption test by itself. |

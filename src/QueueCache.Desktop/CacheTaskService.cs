@@ -34,7 +34,8 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     });
     public bool IsPersistent(DiskDescription disk) => SavedConfigurations.List().Any(p => p.Instance.Equals(disk.Instance, StringComparison.OrdinalIgnoreCase));
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
-        await CacheTasks.SaveAsync(volume, configuration, persistent, progress);
+        // Choosing Fast in the editor is the desktop's explicit volatility acknowledgement.
+        await CacheTasks.SaveAsync(volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress);
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume, enabled, persistent);
     public Task FlushAsync(DiskDescription disk) => Task.Run(() =>
     {

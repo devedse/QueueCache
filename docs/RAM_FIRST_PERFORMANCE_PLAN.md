@@ -114,7 +114,7 @@ benefit depends on exercising a path. Do not approve a change based on these ran
 
 - driver/qcache/writecache.cpp: Write, Read, Drainer, QcCacheBarrier, Control,
   TryTrim and QcCacheProcess.
-- driver/qcache/lab.cpp: RequestWorker, queue selection, PnP/remove lifetime.
+- driver/qcache/driver.cpp: RequestWorker, queue selection, PnP/remove lifetime.
 - driver/qcache/cachepolicy.h: QcValidOptions, QcWriteLimit, QcShouldDrain.
 - src/QueueCache.Management/CacheOptions.cs and desktop CacheSettingsWindow.cs:
   maximum-age validation/controls.

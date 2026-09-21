@@ -45,7 +45,7 @@ jobs:
           global-json-file: global.json
       - name: Build, host-safe tests and package
         shell: pwsh
-        run: ./build/Build.ps1 -LabWriteCache -Configuration '${{ matrix.configuration }}' -Version '${{ needs.generate_version_number.outputs.version }}'
+        run: ./build/Build.ps1 -Configuration '${{ matrix.configuration }}' -Version '${{ needs.generate_version_number.outputs.version }}'
       - name: CLI contract checks (no disk access)
         shell: pwsh
         run: |

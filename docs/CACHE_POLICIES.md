@@ -16,7 +16,7 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 
 Clean data is meant to stay resident for as long as the workload keeps it useful: a game's files can remain in RAM for hours of play. Clean blocks leave the cache only when (1) newly admitted reads or writes need the slot, LRU order first, (2) a write, TRIM or unknown media-changing control makes them stale, or (3) the cache is paused, removed, resized or reconfigured. There is no time-based expiry. Read-only controls are forwarded without a drain or invalidation. A control code whose access bits omit `FILE_WRITE_ACCESS` cannot modify stored data, so geometry/layout/attribute queries, media presence checks, SMART, `IOCTL_STORAGE_FIRMWARE_GET_INFO` and vendor queries no longer touch cached blocks; media-swap, bus/device reset, block reassignment and unoptimized `MANAGE_DATA_SET_ATTRIBUTES` (TRIM) requests keep the conservative drain-and-invalidate path.
 
-This replaced a per-code allow list that treated every other control as possibly destructive. Measured on the lab VM (driver 0.4.12.1): 168 MiB of clean read data vanished within two seconds of an idle disk, with one extra `OtherBarriers` count and exactly the resident block count added to `Evictions`; `LastBarrierCode` was `0x2D1C00` = `IOCTL_STORAGE_FIRMWARE_GET_INFO`, which Windows' storage service polls (also triggered by every `Get-Disk`-based inventory refresh, so opening the QueueCache desktop emptied the cache it was displaying). With the same driver and no poller running, 64 MiB of clean read data stayed resident with zero evictions. The fix itself is a source change awaiting live-driver verification.
+This replaced a per-code allow list that treated every other control as possibly destructive. Measured on the lab VM (driver 0.4.12.1): 168 MiB of clean read data vanished within two seconds of an idle disk, with one extra `OtherBarriers` count and exactly the resident block count added to `Evictions`; `LastBarrierCode` was `0x2D1C00` = `IOCTL_STORAGE_FIRMWARE_GET_INFO`, which Windows' storage service polls (also triggered by every `Get-Disk`-based inventory refresh, so opening the QueueCache desktop emptied the cache it was displaying). With the same driver and no poller running, 64 MiB of clean read data stayed resident with zero evictions. The safe observation allowlist and retained-data policy cases have since passed on the current secondary-disk VM. Unknown media-changing requests remain conservative.
 
 For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB installation, even after it reaches disk. Subsequent reads use that data from RAM and can promote it to the read quota. Metadata and staging buffers count against the total budget, so payload is slightly smaller than 8 GiB. Another workload may evict clean data; retention is not pinning.
 
@@ -24,20 +24,21 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 
 | Algorithm | Behaviour |
 |---|---|
-| Eager (default) | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
+| Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. Keeps the disk quiet during a burst and catches up between bursts. |
+| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The alpha baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 256 KiB batches and parallelism 1. |
+| Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
 
 Each algorithm reads only some tuning settings; the desktop editor shows the relevant ones in its Background draining panel, each with hover help.
 
-| Setting | Eager | Balanced | Idle |
-|---|---|---|---|
-| `--low-percent` / `--high-percent` | not used | yes | yes |
-| `--max-dirty-age-ms` | not used | yes | yes |
-| `--idle-ms` | not used | not used | yes |
-| `--batch-kib` / `--drain-parallelism` | yes | yes | yes |
+| Setting | Eager | Balanced | Idle | Deferred |
+|---|---|---|---|---|
+| `--low-percent` / `--high-percent` | not used | yes | yes | not used |
+| `--max-dirty-age-ms` | not used | yes | yes | yes |
+| `--idle-ms` | not used | not used | yes | not used |
+| `--batch-kib` / `--drain-parallelism` | yes | yes | yes | yes |
 
 All algorithms yield to explicit flushes, shutdown barriers and writers waiting for capacity. Maximum age is a scheduling trigger, not a promise that slow/failing storage will finish by a deadline. No mandatory 30-second delay is imposed.
 
@@ -48,7 +49,7 @@ Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes. `
 ## CLI examples
 
 ```powershell
-qcache policy apply Q: --budget-mib 4096 --save
+qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --save
 qcache policy apply Q: --budget-mib 8192 --allocation Fixed --write-percent 50 --save
 qcache policy apply Q: --budget-mib 4096 --drain Balanced --low-percent 40 --high-percent 80 --max-dirty-age-ms 5000 --batch-kib 1024 --drain-parallelism 2 --save
 qcache policy apply Q: --budget-mib 2048 --allocation Fixed --write-percent 0 --preset Strict
@@ -70,7 +71,7 @@ Mixed-hit reads currently use an original lower read plus cached-block overlays;
 
 ## Dashboard
 
-Validation status: the file-only retention regression still observed eviction after an unrelated small-file write and disk discovery. Additional read-only-control handling and diagnostic detail are included, but have not yet passed that scenario on a live driver. Treat this as an open retention issue, not a verified fix.
+Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. Plan 11 adds a sustained fitting-write/cached-read case while Idle draining; its new-build VM result remains separate from those earlier retention results.
 
 Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 

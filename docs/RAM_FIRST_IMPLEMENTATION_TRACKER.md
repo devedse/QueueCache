@@ -280,6 +280,24 @@ Disable then provides an independent persisted-byte oracle. Host/native/UI check
 are separate from the pending VM plan-11 run on the newly signed build; no VM
 result is claimed here.
 
+### Private-alpha A04 implementation: 2026-09-21
+
+The native project now has one current-cache source path and it is the no-switch
+default used by CI. Obsolete legacy engine sources, legacy-only headers/projects,
+three historical utilities and Team Foundation bindings were removed after active
+include/reference checks. The native solution now contains only the current x64
+driver. Active compile flags and dispatch symbols use product-oriented names;
+inactive devices still forward normally and cache transitions retain the serialized
+worker, ABI and diagnostics.
+
+The installed `qcachelab` binary/service, `LabAllowedDriverKey` registry value and
+fixed `labWriteCache` manifest field remain temporary upgrade-compatibility
+surfaces. They do not select another implementation. Product documentation and
+licensing notices now describe the current tree rather than the deleted engine.
+Native Debug/Release and solution builds pass locally; host, UI, CLI and packaging
+checks are recorded separately. A clean VM policy regression awaits the single
+new signed build shared with A03/A05/A06.
+
 | # | A02 completion overview | Current disposition |
 |---|---|---|
 | 1 | Barrier/lower-I/O attribution | Implemented and retained; exact lower-attempt evidence remains required. |
