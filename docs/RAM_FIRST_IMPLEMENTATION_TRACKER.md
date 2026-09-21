@@ -55,7 +55,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Pending | Mixed/cold + slow disk, sustained capacity pressure, bounded drain progress |
 | 13 | Indexed ready selection / independent-range workers if still justified | 0–100%+ high QD; Q1 usually 0% | Deferred until remaining profiles justify redesign | Range ordering, barriers, cancellation, faults, cross-thread lifetime |
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
-| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Performance V3 source appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. One Q32 clean restoration passed. Q1 main-drain deadline remains a blocker; new phase timings are not yet deployed or VM-verified. UI/CLI parity, sample staleness, interval/lifetime labels pending |
+| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 is deployed in 0.4.51.1 and the focused Q1 attribution plus current-driver Q1/Q32 cleanup regressions completed. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
 
 ## Next execution order (2026-09-19)
 
@@ -98,9 +98,10 @@ policy-gated wake candidate passed focused correctness; clean-observer attributi
 identified renewed contention once draining starts. Busy-drainer candidate 948ea1c
 is deployed as hash-verified 0.4.46.1, passed focused correctness, and improved
 all three timing-off Q1/Q32 samples beyond their baseline ranges. Preserve this
-checkpoint. Next address the recurring late-dirty restoration discrepancy without
-weakening its predicate, then the remaining bounded-gate/fault/lifetime checks and
-full-matrix milestone. Residual Q1 overhead and the timing-on/off Q32 discrepancy
+checkpoint. The plan-10 restoration sequence and V3 attribution have now closed
+the recurring late-dirty cleanup blocker on the current driver without weakening
+its predicate. Next set coherent alpha defaults, then complete the remaining
+bounded-gate/fault/lifetime checks and full-matrix milestone. Residual Q1 overhead and the timing-on/off Q32 discrepancy
 need attribution before another synchronization change; the timing-on score is
 not a substitute for the timing-off comparison.
 Timing-on data is diagnostic, not directly comparable to timing-off scores. Do not
@@ -219,6 +220,63 @@ lab-write-cache flags. No driver was installed and no VM run was made, so phase
 attribution and any optimization remain pending. The next discriminating check is
 a focused timing-enabled random-Q1 drain with these counters; do not extend the
 restoration deadline or alter durability/zero-dirty predicates.
+
+### Private-alpha A02 completion: 2026-09-21
+
+A02/T004-T008 is complete on signed build 0.4.51.1 from
+`ec07e3663f375decfa5c68b75a633b88b68fd53c`. The loaded driver SHA-256 was
+`738241F362DE8B1D2799C7F33688D6F9742658F57E49656E1ED9AF41EFD55605`; the
+CDM DiskSpd SHA-256 remained
+`7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+Preflight confirmed an elevated session, no competing workloads, clean Q: on
+non-boot/non-system Disk 1, 512-byte logical/physical sectors and the saved 2 GiB
+Fast/Idle configuration. No driver installation or reboot was performed.
+
+The timing-enabled discriminating run
+`QueueCache-Verify-20260921-124642-bed8a5e9d4694a58a4fcdd101bce9ea4`
+completed and restored in 69.5 seconds. During the observed main drain it persisted
+658,882,560 bytes through 53,892 lower writes in 69.476 seconds. V3 attributed
+69.052 seconds to serialized lower I/O, versus 0.028 seconds selecting, 0.103
+seconds copying and 0.041 seconds retiring. Lower completion therefore accounted
+for about 99.4% of wall time with parallelism 1; there is no evidence here for a
+selection/retirement optimization or timeout relaxation. The case score was
+20,972.43 IOPS with 0.126 ms write p99, but timing-on is diagnostic and is not a
+release throughput comparison. Telemetry contained 343 samples with a maximum
+0.227-second gap.
+
+Current-driver timing-off cleanup regressions also completed without changing the
+300-second restoration deadline or zero-dirty/error predicate:
+
+| Case / exact run ID | Result |
+|---|---|
+| Q1: `QueueCache-Verify-20260921-125419-3397469d5cc94c6f9e569ad2949e45f9` | COMPLETED, 1/1 MEASURED; 22,512.29 IOPS, 0.096 ms write p99; restoration completed in 57.0 seconds. |
+| Q32: `QueueCache-Verify-20260921-125649-9def04fc12ca461a9d37aeb436e08d3a` | COMPLETED, 1/1 MEASURED; 90,389.01 IOPS, 0.161 ms write p99; restoration completed in 29.2 seconds. |
+
+Both runs retained `FINISHED.txt`, status, summary, results, run log, worker
+records, ready telemetry, interval files, raw XML and all restoration boundaries.
+Filesystem flush -> cache flush -> Disable -> saved configuration reached zero
+dirty/in-flight bytes with no error and restored the original enabled Fast/Idle
+settings. These single repetitions close the cleanup regression, not the later
+three-repeat performance acceptance matrix. Earlier failed runs retain their
+original verdicts. The next dependency-ready step is A03.
+
+| # | A02 completion overview | Current disposition |
+|---|---|---|
+| 1 | Barrier/lower-I/O attribution | Implemented and retained; exact lower-attempt evidence remains required. |
+| 2 | Deferred policy | Implemented; real one-hour soak remains outside A02. |
+| 3 | RAM-first partial-sector admission | Implemented and previously VM-verified; remaining fault/lifetime work moves to A06. |
+| 4 | Zero-length/oversized/quota handling | Partial; no A02 change. |
+| 5 | Safe observation/query bypass | Implemented for the scoped allowlist; no A02 change. |
+| 6 | Versions/locking/transient reserves | Partial; no speculative redesign justified by A02 timings. |
+| 7 | Independent ready-request service | Partial; no A02 change. |
+| 8 | Admission budget improvements | Pending; no A02 change. |
+| 9 | Per-4KiB synchronization overhead | Existing qualified gain preserved; no new performance claim. |
+| 10 | Range-aware TRIM | Pending and explicitly postponed. |
+| 11 | Cutoff flush/live policy/resize | Pending; plan-10 cleanup does not claim cutoff semantics. |
+| 12 | Cold-read/drain scheduling | Pending; lower storage controlled this focused drain. |
+| 13 | Indexed selection/independent workers | Deferred; V3 evidence does not justify it. |
+| 14 | Power/shutdown/PnP/system disk | Pending A07-A09. |
+| 15 | Statistics/evidence/restoration | V3 deployed and A02 restoration verified; UI/windowed presentation remains partial. |
 
 ### Busy single-drainer follow-up: 2026-09-19
 
