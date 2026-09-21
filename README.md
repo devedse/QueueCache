@@ -350,6 +350,6 @@ The original credit to Mayur Thigale's LoopBack Filter Driver is retained as an 
 See [Licensing and provenance](docs/LICENSING_REVIEW.md) for source comparisons and the basis for the exceptions.
 # RAM read/write policies
 
-Measured throughput/latency, the request-path scaling ceiling and the method behind them are in [performance baseline and method](docs/PERFORMANCE.md); the ordered concurrency/interference work plan is in [performance and concurrency plan](docs/PERFORMANCE_PLAN.md).
+Historical throughput/latency measurements and their method are in the [performance baseline](docs/secondary_docs/PERFORMANCE.md); the superseded concurrency/interference plan is in the [historical performance plan](docs/secondary_docs/PERFORMANCE_PLAN.md). Current work and evidence are tracked in the [RAM-first implementation tracker](docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
 See [cache policies and CLI examples](docs/CACHE_POLICIES.md) for read caching, retained writes, fixed/automatic allocation, background drain algorithms, memory budgets and driver-confirmed state.

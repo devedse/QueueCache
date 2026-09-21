@@ -56,7 +56,7 @@ hooks just to fill a coverage table. Large concurrent writes are not assumed ato
 3. Use the source-controlled C# runner, not another copy of the private PowerShell
    harness: `qcache developer verify Q: --suite flush-interference --repeats 2
    --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results`.
-   See `DEVELOPER_VERIFICATION.md` for the output contract and recovery commands.
+   See `../DEVELOPER_VERIFICATION.md` for the output contract and recovery commands.
 4. This selects eight cases: Automatic/Fixed50, with/without requested application
    flush, two repetitions, writer QD128, 25 ms lower-write delay. Defaults retain
    the 1 GiB cache, 256 MiB hot reader, separate 2 GiB writer, 256 KiB batch and one

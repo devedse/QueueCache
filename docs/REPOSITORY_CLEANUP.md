@@ -63,11 +63,14 @@ policy/ABI checks, packaging tests and recovery tooling.
   verification status; retain stable 15-step IDs.
 - `docs/RAM_FIRST_PERFORMANCE_PLAN.md`: detailed design/rationale and open work.
 - `docs/WRITE_PERFORMANCE_TRAJECTORY.md`: comparison provenance and interpretation.
-- `docs/CONCURRENCY_VERIFICATION.md`, `docs/FAST_FLUSH_READ_VERIFICATION.md`,
-  `docs/OBSERVER_FIX_VERIFICATION.md`, `docs/PROGRESSIVE_SELECTION_VERIFICATION.md`:
+- `docs/secondary_docs/CONCURRENCY_VERIFICATION.md`,
+  `docs/secondary_docs/FAST_FLUSH_READ_VERIFICATION.md`,
+  `docs/secondary_docs/OBSERVER_FIX_VERIFICATION.md`, and
+  `docs/secondary_docs/PROGRESSIVE_SELECTION_VERIFICATION.md`:
   retain until outstanding ordering/scheduler/observer checks and useful reasoning
   are transferred to maintained tests and the tracker, then consolidate/remove.
-- `docs/PERFORMANCE.md`, `docs/PERFORMANCE_PLAN.md`: tracked versions remain;
+- `docs/secondary_docs/PERFORMANCE.md` and
+  `docs/secondary_docs/PERFORMANCE_PLAN.md`: tracked versions remain;
   modified research copies are preserved under ignored
   `.lab/private-handover-20260920/docs/`. Reconcile before deleting or rewriting.
 - The former `docs/FOCUSED_ATTRIBUTION_HANDOFF.md`,

@@ -21,7 +21,7 @@ so their throughput ratios are not an isolated measurement of lock contention.
 Ordered work plan for the foreground/background interference and small-request cost problems.
 Written to be executed by one implementing agent (or person) phase by phase. The measurements
 behind it are in [performance baseline and method](PERFORMANCE.md); the runtime semantics being
-preserved are in [cache policies](CACHE_POLICIES.md).
+preserved are in [cache policies](../CACHE_POLICIES.md).
 
 **Design goal being added:** foreground/background interference is now an explicit requirement,
 not a side effect of thread count.

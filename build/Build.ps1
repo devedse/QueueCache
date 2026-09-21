@@ -126,7 +126,7 @@ try
     Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, README.md $stage
     Copy-Item LICENSES "$stage/LICENSES" -Recurse
     New-Item -ItemType Directory -Path "$stage/docs" | Out-Null
-    Copy-Item docs/secondary_docs/KNOWN_ISSUES.md, docs/secondary_docs/LICENSING_REVIEW.md, docs/secondary_docs/CACHE_POLICIES.md "$stage/docs"
+    Copy-Item docs/KNOWN_ISSUES.md, docs/LICENSING_REVIEW.md, docs/CACHE_POLICIES.md "$stage/docs"
     $commit = & git rev-parse HEAD
     if ($LASTEXITCODE)
     {

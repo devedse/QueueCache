@@ -2,7 +2,7 @@
 
 Measured numbers for the bounded RAM cache, plus the method used to get them. Every figure
 below is **experimental lab data from one virtual machine**, not a product benchmark or a
-certification. Read [cache policies](CACHE_POLICIES.md) for the settings these runs used.
+certification. Read [cache policies](../CACHE_POLICIES.md) for the settings these runs used.
 
 ## Method
 

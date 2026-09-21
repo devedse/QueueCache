@@ -4,7 +4,7 @@
     Repeatable QueueCache performance experiments on a disposable cached volume.
 
 .DESCRIPTION
-    Runs the focused experiment set the performance plan requires (docs/PERFORMANCE_PLAN.md):
+    Runs the focused experiment set retained in docs/secondary_docs/PERFORMANCE_PLAN.md:
     small-request overhead, foreground/background interference, capacity pressure, controlled
     slow storage, random-drain efficiency, drain parallelism and flush-under-load.
 

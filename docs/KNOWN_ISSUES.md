@@ -116,7 +116,7 @@ The [AttachDevices registry parser](../driver/qcache/mainwdm.cpp#L378) also does
 
 **Confirmed repository gaps; no fresh build was attempted in this review.**
 
-[qcache.vcxproj](../driver/qcache/qcache.vcxproj) and [qcachecmd.vcxproj](../qcachecmd/qcachecmd.vcxproj) use WDK 8.1 toolsets. The command project imports an absent `PropertySheet.props` and includes helper headers not supplied here. [scsilog.vcxproj](../legacy/scsilog/scsilog.vcxproj) uses v141 and references a sibling `LTRLib40.dll`; [scsichk.vcxproj](../legacy/scsichk/scsichk.vcxproj) uses the Windows 10 driver toolset. The only committed INF installs the separate SCSI logger.
+[qcache.vcxproj](../driver/qcache/qcache.vcxproj) and [qcachecmd.vcxproj](../legacy/qcachecmd/qcachecmd.vcxproj) use WDK 8.1 toolsets. The command project imports an absent `PropertySheet.props` and includes helper headers not supplied here. [scsilog.vcxproj](../legacy/scsilog/scsilog.vcxproj) uses v141 and references a sibling `LTRLib40.dll`; [scsichk.vcxproj](../legacy/scsichk/scsichk.vcxproj) uses the Windows 10 driver toolset. The only committed INF installs the separate SCSI logger.
 
 [legacy/scsilog/debug.cpp](../legacy/scsilog/debug.cpp#L21) places the formatting-function definitions under `_DEBUG`, while the reader calls them unconditionally. That is a source-visible Release-link concern to verify when restoring the build.
 

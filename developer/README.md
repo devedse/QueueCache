@@ -43,8 +43,10 @@ cost, foreground/background interference, capacity pressure, controlled slow sto
 random-drain efficiency, drain parallelism and flush-under-load. It interleaves configurations,
 repeats them, reports medians with spread, and restores the original policy and clears the lab
 delay hook even after a failure. It refuses disk 0 and boot/system volumes and only touches its
-own files under `<volume>\QueueCache-Perf`. See [performance baseline and method](../docs/PERFORMANCE.md)
-and the [performance and concurrency plan](../docs/PERFORMANCE_PLAN.md).
+own files under `<volume>\QueueCache-Perf`. Historical context is retained in the
+[performance baseline and method](../docs/secondary_docs/PERFORMANCE.md) and
+[performance and concurrency plan](../docs/secondary_docs/PERFORMANCE_PLAN.md); use
+the [RAM-first tracker](../docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md) for current work.
 
 `scripts/Test-CacheFaults.ps1` retains the historical multi-scenario fault sequence
 and now invokes `qcache developer write-tests`, not another executable. It requires
