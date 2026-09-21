@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 11, "sustained foreground/background policy contract version");
+        Check(VerificationPlan.Version == 12, "pressure and trigger verification contract version");
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
             "admission retains exact attempt evidence");
@@ -58,6 +58,10 @@ internal static class VerificationRunnerTests
         Check(VerificationPlan.Integrity(options with { Suite = "trim-file" }).SequenceEqual(
             new IntegrityCase[] { new("trim-file", "trim-file") }), "file-only TRIM requires no cache routing mutation");
         VerificationPlan.Validate(new VerificationOptions("Q:", "policies"));
+        VerificationPlan.Validate(new VerificationOptions("Q:", "pressure"));
+        Check(VerificationPlan.Integrity(options with { Suite = "pressure" }).SequenceEqual(
+            new IntegrityCase[] { new("pressure-integrity", "pressure") }),
+            "pressure remains a focused opt-in integrity suite");
         VerificationPlan.Validate(new VerificationOptions("Q:", "trim-diagnostic"));
         Check(VerificationPlan.Integrity(options with { Suite = "trim-diagnostic" }).SequenceEqual(
             new IntegrityCase[] { new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false) }),

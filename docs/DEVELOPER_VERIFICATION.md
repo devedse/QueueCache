@@ -16,12 +16,13 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 11)
+## Suites (plan version 12)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
+| `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred age, Idle and Balanced high-watermark start boundaries; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
@@ -40,6 +41,20 @@ cache and verifies every owned byte from disk. The default is Idle with a 5,000 
 age trigger, 250 ms idle trigger, 40/80 watermarks, 256 KiB batches and parallelism
 1. Age starts scheduling; it is not a persistence deadline. Existing saved profiles
 retain their explicit policy and Strict/Fast choice.
+
+Plan 12 adds the separate `pressure` suite. It proves a fitting first write has no
+lower-I/O attempts, observes no cache drain for 750 ms of a 1,000 ms Deferred-age
+window or 350 ms of a 500 ms Idle window, then requires progress within three or
+two seconds respectively. A Balanced case must stay idle below its 20% high
+watermark and make progress after crossing it. These bounds distinguish premature
+drain from eventual completion without treating the timer as a persistence deadline.
+Capacity cases write 80 MiB through
+a 64 MiB cache using Automatic and Fixed 50/100 allocation, require observed
+backpressure and bounded dirty ownership, then disable and compare every 64 KiB
+block. Fixed 0 instead requires its explicit quota barrier and no capacity wait.
+The suite restores runtime settings and clears its delay in `finally`. It does not
+cover allocation faults, cancellation, a single request larger than its quota,
+4Kn or TRIM. Those remain in the A06a coverage ledger.
 
 ### Small-write investigation
 

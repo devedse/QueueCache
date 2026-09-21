@@ -36,6 +36,8 @@ internal static class VerificationCommands
               quick              File-integrity checks; default. No DiskSpd needed.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
+              pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
+                                 Separate from full; no DiskSpd needed.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
@@ -67,7 +69,7 @@ internal static class VerificationCommands
             Run elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             """);
         var volume = new Argument<string>("volume");
-        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies/trim-diagnostic/trim-file do not require DiskSpd." };
+        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies/pressure/trim-diagnostic/trim-file do not require DiskSpd." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };
         var disk = new Option<string?>("--diskspd") { Description = "Executable path: Microsoft amd64\\diskspd.exe or CrystalDiskMark CdmResource\\DiskSpd\\DiskSpd64.exe. Quote paths with spaces." };

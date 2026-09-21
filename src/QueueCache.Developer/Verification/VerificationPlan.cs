@@ -18,13 +18,14 @@ public sealed record PerformanceCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 11;
+    public const int Version = 12;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
         "policies",
+        "pressure",
         "trim-diagnostic",
         "trim-file",
         "write-performance",
@@ -37,6 +38,7 @@ public static class VerificationPlan
     {
         "quick" => [new("file-integrity", "files")],
         "policies" => [new("policy-integrity", "policies")],
+        "pressure" => [new("pressure-integrity", "pressure")],
         "full" => [new("file-integrity", "files"), new("policy-integrity", "policies")],
         "trim-diagnostic" => [new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false)],
         "trim-file" => [new("trim-file", "trim-file")],

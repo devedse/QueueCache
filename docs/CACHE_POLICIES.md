@@ -71,7 +71,7 @@ Mixed-hit reads currently use an original lower read plus cached-block overlays;
 
 ## Dashboard
 
-Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. Plan 11 adds a sustained fitting-write/cached-read case while Idle draining; its new-build VM result remains separate from those earlier retention results.
+Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 12 adds separate trigger/capacity checks whose exact-build VM run is still pending.
 
 Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 
