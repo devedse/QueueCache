@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-21. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-22. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -43,19 +43,19 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 |---|---|---|---|---|
 | 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Implemented in f67080f / 0.4.41.1: live lower-attempt counters and nine barrier reasons with last request details; worker startup breadcrumbs, primary timeout preservation, preparation deadline and restoration mismatch evidence | Debug/Release CI and host contracts passed; plan-8 VM admission and positive lower-counter checks passed. Restoration mismatch snapshots identified late dirty bytes in both focused plan-9 baseline runs; separate recoveries passed. No automatic performance acceptance |
 | 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; sector-valid partial admission deployed | Native truth table and managed/UI checks; short deferred sector-admission VM checks passed; real one-hour soak pending |
-| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Sector ownership deployed as e8b37be / 0.4.40.1; plan-8 maintained scenario adds partial/full admission attempt checks and positive drain/disk-read counter checks | Plan-8 VM zero-attempt admission, positive drain/read counter checks and byte oracles passed at parallelism 1/2/4, retention off/on. Bounded lower-I/O gate and deterministic fault/lifetime tests remain open |
+| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Sector ownership deployed as e8b37be / 0.4.40.1; plan-8 maintained scenario adds partial/full admission attempt checks and positive drain/disk-read counter checks | Plan-11 VM zero-attempt admission and byte oracles passed again on 0.4.57.1 at parallelism 1/2/4, retention off/on. Lower-write failure/retry and persisted-hash recovery passed. Deterministic allocation/cancellation lifetime checks remain open |
 | 4 | Zero-length/oversized/quota fallback handling | 0–20% affected cases; ordinary fitting 4 KiB often 0% | Partial: valid zero-length writes return without draining; oversized/quota work pending | Native compile; VM no-I/O and request/quota/failure/cancel tests pending |
 | 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile and VM policy retention checks across metadata/discovery passed; focused performance comparison pending; SET remains fenced |
-| 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with 25 ms delay, parallelism 1/2/4, retention off/on and in-flight observations; deterministic race, allocation failure and lifetime checks remain open |
+| 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with parallelism 1/2/4, retention off/on and actual in-flight observations. Coalesced lower-write failure retained dirty data and passed retry/persisted-hash recovery on 0.4.57.1; deterministic allocation, cancellation and remaining lifetime checks stay open |
 | 7 | Independent ready-request service around capacity waits/fences | 0–50%+ mixed throughput; unstalled Q1 little gain | Partial: cooperative read lane exists; general admission work pending | Deep queues, ordering, cancel/reinsert, starvation |
 | 8 | Admission budget clarity and Automatic clean-space borrowing | 0–20% under pressure; fitting cases ~0% | Pending | Fixed 0/50/100%, Automatic, transient versions, multi-disk budget |
 | 9 | Per-4KiB lookup/publication/synchronization overhead | Hypothesis 5–25% CPU-limited; 0% if waits dominate | b63e14b / 0.4.42.1: single-block slot reuse. 360ab9a, deployed in 0.4.45.1: policy-gated foreground wakes. 948ea1c / 0.4.46.1: suppress redundant foreground wakes while the sole drainer is busy | 0.4.46.1 loaded/hash verified; native/host checks, signed CI and VM policy/admission/byte oracles passed. Three timing-off repeats: Q1 median +9.74%, Q32 +172.96%; p99 improved. Qualified focused gain, not full acceptance: original late-dirty restoration failures remain, separate recoveries passed; full matrix and remaining lifetime/fault checks open |
 | 10 | Range-aware TRIM instead of broad drain/in-flight waits | Isolated writes ~0%; concurrent delete workloads 0–50%+ | Range-aware implementation pending; maintained plan-6 driver-independent file probe added after plan-5 routing comparison | Matched attached/unfiltered VM probes both return Win32 326; Q: live stack without QueueCache verified. Same driver/configuration restored and verified after reboot. Partial ranges, reuse, overlapping old writes, malformed/failed requests remain unverified |
 | 11 | Cutoff flush, safe live policy changes, transactional resize | Isolated writes 0%; concurrent workloads 0–50%+ | Pending | Exact durable cutoff, concurrent writes, Strict flush, failure/cancel/resize |
-| 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Plan 11 adds the bounded fitting-write/cached-read case under normal Idle draining; cold-miss scheduling remains pending | VM plan-11 policy run must show foreground byte correctness, zero initial lower-attempt admission, zero capacity waits and nonzero background progress; mixed/cold + sustained capacity pressure remains open |
+| 12 | Foreground cold-read versus drain scheduling | 0–500% mixed recovery envelope; no RAM-only promise | Plan 11 adds the bounded fitting-write/cached-read case under normal Idle draining; cold-miss scheduling remains pending | Plan-11 VM case passed on 0.4.57.1: 612,810 serialized 64 KiB write/read pairs in 60 seconds, zero capacity waits, unchanged initial lower attempts, exact persisted bytes and nonzero background progress. Mixed cold misses and sustained capacity pressure remain open |
 | 13 | Indexed ready selection / independent-range workers if still justified | 0–100%+ high QD; Q1 usually 0% | Deferred until remaining profiles justify redesign | Range ordering, barriers, cancellation, faults, cross-thread lifetime |
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
-| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Plan 11 records the sustained policy case's foreground latency, capacity waits, bounded occupancy and background progress. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 is deployed in 0.4.51.1 and the focused Q1 attribution plus current-driver Q1/Q32 cleanup regressions completed. Plan-11 VM policy verification awaits the new build. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
+| 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Plan 11 records the sustained policy case's foreground latency, capacity waits, bounded occupancy and background progress. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 focused attribution and Q1/Q32 cleanup regressions completed; the plan-11 policy case passed on 0.4.57.1. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
 
 ## Next execution order (2026-09-19)
 
@@ -277,8 +277,32 @@ serializes deterministic writes and immediate cached reads, proves the first
 admission has unchanged lower-attempt counters, and records p99/maximum foreground
 latency, capacity waits, dirty occupancy and nonzero background drain progress.
 Disable then provides an independent persisted-byte oracle. Host/native/UI checks
-are separate from the pending VM plan-11 run on the newly signed build; no VM
-result is claimed here.
+are separate from VM evidence.
+
+### Private-alpha A03 verification: 2026-09-22
+
+A03/T009-T011 is complete on the installed and rebooted 0.4.57.1 candidate from
+`a07013f7f474b4b9018254fdb8b4ac4a4b2809bf`. The loaded driver was
+`System32\drivers\QueueCache-0.4.57.1-A2C4BCB38F57.sys`, SHA-256
+`A2C4BCB38F57C1D6D6185EC4E74451C8EABD4DF9F262AD965F8D30DE60233935F`.
+Preflight confirmed an elevated session, the disposable non-boot/non-system
+200 GiB Disk 1 / Q: target, 512-byte logical/physical sectors, no competing
+QueueCache/DiskSpd/UI workload, cleared synthetic hooks and the saved 2 GiB
+Fast/Idle profile with volatile flush acceptance.
+
+Maintained plan-11 `policies` run
+`QueueCache-Verify-20260921-220242-6fd1c8aa060140bc899cd8a775420cf9`
+finished **COMPLETED**, 1/1 PASS, with restoration success. All 30 detailed checks
+passed. The sustained case completed 612,810 serialized 64 KiB write/read pairs
+over 60 seconds while Idle draining made progress. Write p99/max was
+0.085/10.230 ms and read p99/max was 0.076/4.638 ms. It admitted
+40,161,263,616 bytes, drained 119,005,184 bytes in the observation, served
+40,161,116,160 read-hit bytes, recorded zero capacity waits, and bounded dirty
+occupancy at 8,523,776 of 61,865,984 bytes. The initial fitting admission left
+lower read/write/flush attempts unchanged; lower-write attempts later increased
+by 470 as background work progressed. Disable and direct disk reads verified the
+persisted bytes. These are correctness/interference observations, not a throughput
+acceptance claim or cold-miss/capacity-pressure coverage.
 
 ### Private-alpha A04 implementation: 2026-09-21
 
@@ -295,8 +319,20 @@ fixed `labWriteCache` manifest field remain temporary upgrade-compatibility
 surfaces. They do not select another implementation. Product documentation and
 licensing notices now describe the current tree rather than the deleted engine.
 Native Debug/Release and solution builds pass locally; host, UI, CLI and packaging
-checks are recorded separately. A clean VM policy regression awaits the single
-new signed build shared with A03/A05/A06.
+checks are recorded separately.
+
+### Private-alpha A04 verification: 2026-09-22
+
+A04/T012-T015 is complete. CI built, tested and published the single current-driver
+0.4.57.1 candidate from the source identity above; the installed/rebooted VM loaded
+that exact registered driver path and hash. The same final-candidate `policies` run
+passed all sector, retention, policy and disk-oracle checks with the renamed active
+path. Maintained `quick` run
+`QueueCache-Verify-20260921-220027-26913a5995ea459e86255ee5ee0ac0b2`
+also finished **COMPLETED**, 1/1 PASS, and restored cleanly. Its byte checks passed
+for live write/overwrite reads, 2,048 random 4 KiB overwrites, explicit
+flush/reopen, copy/rename hashes and owned-file deletion. File-level TRIM returned
+Win32 326 and remains an explicit SKIP; this does not qualify TRIM or 4Kn behavior.
 
 ### Private-alpha A05 implementation: 2026-09-21
 
@@ -315,6 +351,48 @@ supports Safe Mode or an offline SYSTEM hive and never reboots. Packaging syntax
 and independence checks cover this recovery surface. Three ignored old test
 directories contain only regenerable `bin`/`obj` output; no `.lab`, raw evidence or
 unknown owner files were removed.
+
+### Private-alpha A06 completion: 2026-09-22
+
+A06/T019-T022 is complete for the code changed in A03-A05 on the same exact
+0.4.57.1 candidate and disposable 512-byte-sector Q: disk. T019/T020 are covered
+by the final-candidate `quick` and `policies` runs above. The policy run passed six
+sector variants (parallelism 1/2/4, retention off/on): every admission byte oracle
+passed with lower read/write/flush attempts unchanged, every disabled-cache disk
+oracle matched, and every variant actually observed in-flight state. Six policy
+configurations also passed warm-read, retention where applicable, and final disk
+oracles. The first immediate policy attempt,
+`QueueCache-Verify-20260921-220101-aec8fd1cdcf346a8b8c888bf40004cd5`,
+is preserved as **INCOMPLETE**: `sectors/p2/retainFalse` did not obtain its required
+clean/idle admission boundary after the preceding workloads. Its independent
+restoration succeeded. The later fresh run reached the boundary and completed; the
+incomplete verdict was not relabelled or merged.
+
+T021 used the maintained developer file tests after explicitly clearing fault and
+delay hooks and temporarily applying Strict at runtime without modifying the saved
+Fast profile. Evidence directory
+`A06-Faults-4c35385f9b4141e592d9c9e6bcde3be7` contains two exit-zero PASS results:
+
+* Coalesced lower-write completion fault, run
+  `74640fa5-9964-4068-bbf5-d47d36376a8d`: the injected error was visible, dirty
+  bytes remained owned, Retry succeeded, Disable established the persistence
+  boundary, invariants returned clean and SHA-256
+  `38F05DE1D835184FEAAEEC960DA866D29BD383D5FFDA0513007BAC35B3765856`
+  matched from disk.
+* Explicit lower-flush fault, run
+  `b8efd1c5-4860-4966-bd8c-cc1ceea9de9f`: failure/fault was observed, recovery
+  completed, Strict was restored, dirty/in-flight bytes returned to zero and the
+  independently recorded source/copy hashes matched.
+
+The synthetic checks raised the cumulative lifetime error counter from zero to two
+as expected, while final `LastError` was zero and the cache was not faulted. Saved
+profile restoration then returned Q: to active 2 GiB Fast/Idle with zero dirty and
+in-flight bytes, the exact original options and volatile-flush acceptance. T022 did
+not require new scenarios because A03-A05 and the verifier-order repair did not
+change pin, allocation or cancellation behavior. Allocation faults 6/7,
+cancellation, remaining pin/lifetime interleavings, capacity exhaustion, 4Kn and
+TRIM guards/reuse remain explicit gaps; they are not implied passes. Raw evidence
+is retained privately under `.lab/a06-0457-20260921` and is not committed.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|
