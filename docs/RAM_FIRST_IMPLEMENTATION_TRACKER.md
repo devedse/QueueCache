@@ -5,6 +5,62 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
+## Current release execution status: 2026-09-22
+
+The end goal is production readiness. A01-A12 are the private VM alpha milestone;
+A13-A16 cover production qualification and release. The detailed task definitions,
+benefits and dependencies are in
+[PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md).
+This tracker owns current status and evidence. TRUE means complete for the named
+scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
+not delivered. Completion of an A-step does not complete every original optimization
+row below. Planning revision 2 does not change executable verification plan 11.
+
+| Step / tasks | Status | Implementation | Verification / remaining boundary |
+|---|---|---|---|
+| A01 / T001-T003 | TRUE | Starting work and evidence preserved. | Host checks and VM identity/state checkpoint recorded. |
+| A02 / T004-T008 | TRUE, scoped | Restoration sequencing and V3 drain attribution delivered. | Focused Q1/Q32 cleanup completed on 0.4.51.1. Lower-I/O dominance does not prove a hardware limit; the optimization decision is now T050. |
+| A03 / T009-T011 | TRUE, scoped | Consistent Fast/Idle defaults and saved-profile preservation. | 0.4.57.1 fitting foreground/background case passed. Exact trigger/capacity pressure qualification is T051. |
+| A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
+| A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
+| A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
+| A06a / T049-T054 | FALSE | Newly planned coverage ledger, drain decision, capacity/ordering/lifetime checks and early recovery rehearsal. | Pending. Required safety and recovery evidence gates C: activation; A07 design can proceed. |
+| A07 / T023-T027 | FALSE | System-disk contract and safeguards pending. | No active C: qualification. |
+| A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
+| A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
+| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
+| A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
+| A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
+| A13 / T055-T057 | FALSE | Production support contract and safety gap closure planned. | Support scope can be designed during A07; qualification pending. |
+| A14 / T058-T060 | FALSE | Security, distribution/signing and production servicing planned. | Actual trust/privilege/servicing evidence pending. |
+| A15 / T061-T063 | FALSE | Environment/endurance/final performance qualification planned. | Frozen-candidate support matrix and long-run evidence pending. |
+| A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
+
+### Next implementation actions and why this order changed
+
+1. T049: map existing proof and missing safety cases to specific code and releases.
+   Preserve the incomplete policy precondition run. The source of its late activity
+   is not established; passing a later run does not diagnose it.
+2. T050: turn A02 attribution into an explicit drain decision using existing
+   parallelism/batch controls and matched workloads. About 99.4% lower-I/O wait
+   supports investigating request shape/concurrency and the lower stack; it does
+   not prove the physical disk is the limiting component. No scheduler rewrite or
+   performance improvement is established by those counters alone.
+3. Begin A07 code mapping alongside A06a design. Complete T051-T053 for capacity,
+   timing, deterministic ordering and the allocation/lifetime/cancel paths needed
+   by the declared system-disk contract. Add focused maintained checks and fix
+   failures; unchanged code is not automatically safe for broader exposure.
+4. Build A08 from that contract. Rehearse T054 independent recovery before A09
+   activation. Finish the remaining A10 servicing matrix on the resulting candidate.
+5. Run A11 after necessary fixes, then A12. Define A13 support scope and A14
+   security requirements early; close production qualification in A13-A16.
+
+The fresh complete 72-case baseline requirement still applies before a
+performance-affecting driver edit; focused comparisons guide iterations. A read-only
+audit or documentation change does not require a broad run. Safety failures preempt
+benchmarking. A06a is new work; its addition preserves A01-A06's original verdicts
+while preventing those scoped passes from being treated as general qualification.
+
 ## Firm contract
 
 In explicitly selected volatile Fast/deferred mode, while the device remains
@@ -43,7 +99,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 |---|---|---|---|---|
 | 1 | Barrier reason/size/alignment attribution and durable observer-startup breadcrumbs | 0% directly; enables attribution | Implemented in f67080f / 0.4.41.1: live lower-attempt counters and nine barrier reasons with last request details; worker startup breadcrumbs, primary timeout preservation, preparation deadline and restoration mismatch evidence | Debug/Release CI and host contracts passed; plan-8 VM admission and positive lower-counter checks passed. Restoration mismatch snapshots identified late dirty bytes in both focused plan-9 baseline runs; separate recoveries passed. No automatic performance acceptance |
 | 2 | Explicit Deferred policy with one-hour bounds, no idle/watermark early drain | 0% intrinsic copy gain; removes early interference | Implemented: driver/management/CLI/UI, capability-gated; sector-valid partial admission deployed | Native truth table and managed/UI checks; short deferred sector-admission VM checks passed; real one-hour soak pending |
-| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Sector ownership deployed as e8b37be / 0.4.40.1; plan-8 maintained scenario adds partial/full admission attempt checks and positive drain/disk-read counter checks | Plan-11 VM zero-attempt admission and byte oracles passed again on 0.4.57.1 at parallelism 1/2/4, retention off/on. Lower-write failure/retry and persisted-hash recovery passed. Deterministic allocation/cancellation lifetime checks remain open |
+| 3 | Cache sector-valid partial writes without reading disk or draining whole cache | 0–260% affected Q1 recovery envelope (~22 to ~80 MB/s); healthy path may gain 0% | Sector ownership deployed as e8b37be / 0.4.40.1; plan-8 maintained scenario adds partial/full admission attempt checks and positive drain/disk-read counter checks | Plan-11 VM zero-attempt admission and byte oracles passed again on 0.4.57.1 at parallelism 1/2/4, retention off/on. Lower-write failure/retry and persisted-hash recovery passed. Bounded lower-I/O gate, deterministic sparse failure and allocation/cancellation lifetime checks remain open; see T049/T052/T053/T056 |
 | 4 | Zero-length/oversized/quota fallback handling | 0–20% affected cases; ordinary fitting 4 KiB often 0% | Partial: valid zero-length writes return without draining; oversized/quota work pending | Native compile; VM no-I/O and request/quota/failure/cancel tests pending |
 | 5 | Proven-safe observation/query fences | Isolated writes ~0%; affected hot-reader traffic 0–100%+ | Hotplug GET allowlist implemented in 4dacd5e | Native compile and VM policy retention checks across metadata/discovery passed; focused performance comparison pending; SET remains fenced |
 | 6 | Independent drain versions, bounded copy/metadata locking, transient reserves | 0–30% writes during draining | Partial: existing pins and unlocked copies; further work pending | VM full/partial overwrite byte oracles passed with parallelism 1/2/4, retention off/on and actual in-flight observations. Coalesced lower-write failure retained dirty data and passed retry/persisted-hash recovery on 0.4.57.1; deterministic allocation, cancellation and remaining lifetime checks stay open |
@@ -57,7 +113,11 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 | 14 | Power/shutdown/PnP/removal boundaries | 0% throughput; reliability | Pending audit | Dedicated disposable VM lifecycle tests; no automatic destructive recovery |
 | 15 | Windowed UI statistics, trigger/wait visibility and faithful evidence windows | 0% driver gain; trustworthy analysis | Partial: repeatable write suite/report exists; plan-10 restoration records volume/flush/disable boundaries and closes late admission before restoring settings. Plan 11 records the sustained policy case's foreground latency, capacity waits, bounded occupancy and background progress. Performance V3 appends cumulative drain selection/copy/retirement timings while preserving V1/V2 wire responses; UI work pending | Host sequencing/failure contracts and V1/V2/V3 decode checks passed; native Debug/Release builds passed. V3 focused attribution and Q1/Q32 cleanup regressions completed; the plan-11 policy case passed on 0.4.57.1. UI/CLI parity, sample staleness and interval/lifetime labels remain pending |
 
-## Next execution order (2026-09-19)
+## Historical optimization order (2026-09-19)
+
+The current release sequence above and handover revision 2 supersede this ordering.
+Preserve the rationale and evidence requirements below. Do not restart completed
+attribution/default work or require every speculative optimization before alpha.
 
 The row numbers above are stable work-item IDs, not a requirement to finish every
 diagnostic before implementing anything. Use the following batches to prioritize
@@ -366,7 +426,9 @@ oracles. The first immediate policy attempt,
 is preserved as **INCOMPLETE**: `sectors/p2/retainFalse` did not obtain its required
 clean/idle admission boundary after the preceding workloads. Its independent
 restoration succeeded. The later fresh run reached the boundary and completed; the
-incomplete verdict was not relabelled or merged.
+incomplete verdict was not relabelled or merged. The source of the intervening
+activity was not established; temporal proximity to prior workloads is not proof
+of causation. T049 carries the missing boundary diagnosis/preparation evidence.
 
 T021 used the maintained developer file tests after explicitly clearing fault and
 delay hooks and temporarily applying Strict at runtime without modifying the saved
@@ -393,6 +455,16 @@ change pin, allocation or cancellation behavior. Allocation faults 6/7,
 cancellation, remaining pin/lifetime interleavings, capacity exhaustion, 4Kn and
 TRIM guards/reuse remain explicit gaps; they are not implied passes. Raw evidence
 is retained privately under `.lab/a06-0457-20260921` and is not committed.
+
+Planning revision 2 adds A06a/T049-T054 before active C: validation. The historical
+T022 applicability decision remains scoped to the A03-A05 changes; T053 now requires
+the relevant memory-pressure/lifetime proof for the larger system-disk exposure.
+The 60-second hot-set result is not proof of capacity exhaustion, deterministic
+old/new interleaving, every timer boundary or absent lower-I/O dependencies under
+all workloads. T050 makes the lower-I/O optimization decision explicit before the
+final performance stage; A13-A16 retain production safety/security/qualification
+work beyond the private alpha. No new implementation or VM result is claimed by
+this planning update.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

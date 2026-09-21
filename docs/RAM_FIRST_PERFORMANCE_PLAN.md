@@ -1,10 +1,20 @@
 # RAM-first cache contract and implementation plan
 
-Historical design audit, 2026-09-17. Execution is now authorized and tracked in
-RAM_FIRST_IMPLEMENTATION_TRACKER.md; consult its per-item status. Supersedes the prioritization in WRITE_PERFORMANCE_TRAJECTORY.md, not
-its preserved evidence. The most recent write baseline is incomplete: 31 measured
-cases, case 32 failed observer readiness, successful restoration. No complete-run
-medians or causal timing-on/off claim may be derived from it.
+Historical design audit, 2026-09-17. Current implementation/evidence status lives in
+[RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
+Release dependencies are defined in
+[PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md),
+revised 2026-09-22. Its A06a turns the lower-I/O attribution into an explicit
+optimization decision and adds pre-C: safety gates; A13-A16 extend the private-alpha
+milestone toward production. The historical descriptions below are not statements
+about current source or deployment.
+
+At this audit's original date the write baseline had only 31 measured cases and an
+observer-readiness failure; later evidence is in the tracker. Never combine those
+incomplete rows with later runs or infer causal timing-on/off gains. The original
+15 optimization items remain useful design options: supported correctness and
+RAM-first contract gaps must be closed, while speculative speed rewrites need
+measurements before implementation.
 
 ## Product principle
 

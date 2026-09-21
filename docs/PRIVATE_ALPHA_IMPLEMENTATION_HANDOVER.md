@@ -1,9 +1,11 @@
 # QueueCache private alpha implementation handover
 
-Date: 2026-09-20. Status: implementation plan, not an alpha readiness verdict.
-Audience: the next coding agent and project owner. Deliverable: one coherent
-QueueCache product for a small, recoverable-VM alpha, including Fast caching on
-the physical disk backing C:. This is not a public production certification plan.
+Revised: 2026-09-22, planning revision 2. Audience: the executing agent and project
+owner. End goal: a production-ready QueueCache product. A01-A12 deliver the first
+controlled milestone: a private recoverable-VM alpha including Fast caching on the
+physical disk backing C:. A13-A16 define the subsequent production qualification
+and release gates. None of these planned gates is a readiness verdict.
+This planning revision does not change the executable verification plan version 11.
 
 ## 1. Start here
 
@@ -11,12 +13,13 @@ the physical disk backing C:. This is not a public production certification plan
 |---|---|---|
 | 1 | Read root `AGENTS.md`, this document, `docs/ALPHA_PRODUCT_DECISIONS.md`, and `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md`. | Understand accepted volatility, preserved correctness requirements, and current evidence. |
 | 2 | Inspect Git status/diffs and current HEAD. Do not reset the worktree. | Identify prior uncommitted restoration work, decision documents, and unrelated owner changes. |
-| 3 | Begin A01 below. Do not reinstall drivers, enable C:, run a broad matrix, or start cleanup blindly. | Establish a reproducible starting checkpoint and access to exact prior evidence. |
-| 4 | Execute A01-A12 in dependency order, one small tested change at a time. | Each task records implementation separately from verification; no manufactured PASS. |
+| 3 | Read the current status in section 3 and the tracker; resume A06a/T049-T050 and A07 design. | A01-A06 already have scoped completion evidence. Recheck live state when needed; do not repeat completed work just because this document contains its original instructions. |
+| 4 | Follow the revised dependencies in section 5, one small tested change at a time. | Close pre-C: safety and recovery gates before activation; retain separate implementation and verification status. |
 
-This document is the alpha execution sequence. The RAM-first tracker remains
-the source of truth for the original 15 optimization work items. Update both
-when a task changes those items; do not create conflicting progress lists.
+This document defines the release sequence and a dated status summary. The
+[RAM-first tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md) is the authoritative
+execution/status source for both A-steps and the original 15 optimization items.
+Update the dated summary when status changes; the tracker owns detailed evidence.
 The decision and cleanup documents define product direction and inventory;
 this handover defines the execution sequence. It authorizes no Git history rewrite or automatic
 destructive VM recovery. Observe current owner authorization before deployment,
@@ -29,7 +32,7 @@ reboot, driver removal or destructive fault experiments.
 | REQ-01 | Private alpha for owner, colleagues and friends on recoverable VMs. | No valuable sole-copy data; document tested environments and gaps. Public signing/certification and a broad hardware matrix are later milestones. |
 | REQ-02 | Fast is the product default, including C:. | Preserve explicit volatility acknowledgement and Strict as a choice. Do not substitute a Strict-only or secondary-disk-only final alpha. Driver initialization can remain disabled/safe until an explicitly saved profile is applied. |
 | REQ-03 | Abrupt-loss volatility is accepted. | A power loss/crash can lose acknowledged RAM data and damage the filesystem. Do not promise persistence for Fast application flushes. This does not permit silent normal-operation corruption, stale reads, lost dirty data after an I/O error, or false success from an explicit administrative flush. |
-| REQ-04 | Seconds-scale background draining, not a default one-hour hold. | Use a short configurable trigger. Proposed alpha default: existing Idle policy, 5,000 ms dirty-age trigger, 250 ms idle trigger, 40/80 watermarks, 256 KiB batches, parallelism 1. This is a proposed concrete baseline, not a previously approved timing value. Validate it in A03; do not change existing saved choices. |
+| REQ-04 | Seconds-scale background draining, not a default one-hour hold. | Implemented A03 baseline: Idle, 5,000 ms dirty-age trigger, 250 ms idle trigger, 40/80 watermarks, 256 KiB batches, parallelism 1. Foreground/background checks passed on 0.4.57.1. Saved choices remain preserved; a trigger is not a persistence deadline. |
 | REQ-05 | Foreground fitting RAM writes and cached reads take priority. | Normal draining runs concurrently with minimal interference; reduce background aggressiveness only where evidence justifies it. Preserve capacity backpressure, bounded drain progress, ordering and explicit durability/lifecycle boundaries. Disk-miss reads are not promised RAM latency. |
 | REQ-06 | Resolve/explain long drain and cleanup failures. | Distinguish slow progress, stalled lower I/O, continual admissions and driver overhead with counters. No blind retries, larger deadlines merely to pass, or weakened final checks. |
 | REQ-07 | One installer, one current driver, one `qcache.exe`. | Developer diagnostics/scenarios live under `qcache developer` and the shared developer library. No separate lab edition, test executable, private orchestration script or parallel driver service. |
@@ -40,6 +43,7 @@ reboot, driver removal or destructive fault experiments.
 | REQ-12 | Current docs, understandable diagnostics and safe servicing. | Explain Fast risks, pending persistence, long operations, setup failure and recovery without historical-engine narratives. Fix/test partially updated installations. |
 | REQ-13 | Faithful measurements and reporting. | Immutable run IDs, exact loaded identity and tool hashes, ready observers, raw evidence, separate timing modes, and no comparison to outside screenshots. Include all 15 optimization rows after completing a step. |
 | REQ-14 | Preserve current implementation materials and legal obligations. | Keep the tracker, needed design/evidence notes, unrelated research, private raw results and applicable attribution. Remove obsolete legal references only after retained-source provenance review. |
+| REQ-15 | Production readiness extends beyond the private alpha. | Define supported environments, close safety gaps, validate security/servicing, qualify a frozen candidate and stage release with recovery/support. No production claim from a short VM test or test-signed alpha package. |
 
 Optional one-hour Deferred behavior is not the alpha default. Its real one-hour
 soak need not block the alpha if explicitly outside the alpha support claim;
@@ -47,6 +51,71 @@ either hide/label that optional mode as unqualified or qualify it separately.
 Do not delete it incidentally or pretend its soak has passed.
 
 ## 3. Evidence checkpoint, not assumptions
+
+### Current status, 2026-09-22
+
+TRUE means this step's stated scope is complete; PARTIAL means some deliverables
+exist but its exit gate is open; FALSE means the step is not delivered. It does not
+mean the entire driver is production-qualified. Source/verification details and
+immutable run IDs are in the tracker. New planning tasks below are all pending.
+
+| Step | Status | What changed or exists | Evidence and remaining boundary | Benefit |
+|---|---|---|---|---|
+| A01 | TRUE | Preserved work and established the starting checkpoint. | Host checks and exact prior failures/recoveries recorded. | Future decisions use identifiable code and trustworthy evidence. |
+| A02 | TRUE, scoped | Fixed runner restoration ordering; added V3 drain timing. | Q1/Q32 cleanup regressions completed on 0.4.51.1. About 99.4% of one observed drain was in lower-I/O wait. Throughput cause within that path is still open in T050. | Reliable cleanup and an actionable location for performance investigation. |
+| A03 | TRUE, scoped | Coherent Fast/Idle defaults in native/managed/CLI/UI; saved choices preserved. | 0.4.57.1 policy run passed 30 checks, including 60 seconds of writes/reads during drain. Capacity exhaustion and precise timer-boundary qualification remain in T051. | Useful default behavior with measured foreground responsiveness. |
+| A04 | TRUE | Removed obsolete engine/build/tools; one current driver. | Native builds, CI and installed-build quick/policy checks passed. Compatibility service/schema names remain deliberately. | Fixes and tests apply to one shipped implementation. |
+| A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
+| A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
+| A06a | FALSE | New bridge from A02/A06 findings to explicit fixes and safety gates. | T049-T054 pending; see below. | Prevents known gaps and performance questions from disappearing behind completed labels. |
+| A07 | FALSE | Active system-disk contract and safeguards pending. | C: remains unqualified. | Windows can page, restart and handle supported power events safely with caching active. |
+| A08 | FALSE | Guarded C: file-only verification pending. | No new C: suite command exists yet. | Tests the OS disk with durable independent expected results and strict target guards. |
+| A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
+| A10 | PARTIAL | Cleanup, packaging and recovery foundations exist. | Install/upgrade failure/uninstall/offline recovery matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
+| A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
+| A12 | FALSE | Private-alpha freeze and participant release pending. | Owner reviews candidate and limitations after preceding gates. | Controlled real-user feedback with an identifiable recoverable build. |
+| A13 | FALSE | Production support contract and safety coverage pending. | Planned scope/invariant/gap closure; no broad hardware claim. | Defines exactly where the product can safely be used. |
+| A14 | FALSE | Security and production servicing qualification pending. | Management/update trust, distribution/signing route and recovery testing required. | Protects privileged driver access and dependable deployment. |
+| A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
+| A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
+
+Latest verified installed candidate: 0.4.57.1 from
+`a07013f7f474b4b9018254fdb8b4ac4a4b2809bf`, SYS SHA-256
+`A2C4BCB38F57C1D6D6185EC4E74451C8EABD4DF9F262AD965F8D30DE60233935F`.
+The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
+bytes and no active fault. Two cumulative error events were deliberately injected;
+they are distinct from a current fault or a new unexpected error. Recheck live
+identity/state before another workload. These facts do not establish C: support.
+
+### What A02 proves and how it changes the work
+
+A02 separated late writes after a completed flush from slow progress inside a
+flush. The restoration sequence now submits filesystem buffers, flushes the cache,
+disables/drains remaining admissions, then reapplies the saved settings and checks
+the result. This fixes the test/configuration boundary; it does not implement a
+new concurrent cutoff-flush algorithm in the driver or eliminate future cleanup
+failures from unrelated external writes.
+
+The diagnostic drain persisted 658,882,560 bytes using 53,892 writes in 69.476
+seconds. Lower-I/O time was 69.052 seconds, versus 0.028 selecting, 0.103 copying
+and 0.041 retiring. This identifies the measured wait, not its ultimate cause.
+The lower path includes the Windows/virtual-storage stack, queueing and storage;
+request size, address pattern and driver-selected concurrency can affect it.
+There is no matched uncached drain proof that the physical disk is the unavoidable
+limit, and no measured drain speedup attributable to the diagnostic counters.
+
+T050 therefore brings the optimization decision forward: compare the relevant
+request sizes, address distribution, persistence semantics and existing parallelism
+before deciding on batching or scheduling edits. Make an evidenced fix when needed,
+or record the measured operational limit and its product consequence. A11 remains
+the final acceptance run, not the first opportunity to fix an identified problem.
+Any newly reproduced corruption, ordering, hang or recovery defect takes priority.
+
+### Historical starting checkpoint, 2026-09-20
+
+The following table and sections 3.1-3.3 preserve the original starting evidence.
+They are not current installed-state instructions. Later tracker entries supersede
+their pending-work statements without changing original failure verdicts.
 
 | Item | Recorded state at handover | What the next agent must not infer |
 |---|---|---|
@@ -115,7 +184,7 @@ the unchanged apphost EXE when differentiating managed-only builds.
 
 ## 4. Owning code map
 
-Paths below describe the pre-cleanup tree. Update this map as files are renamed.
+Paths below describe the current implementation. Update the map as files move.
 
 | Responsibility | Concrete starting point | Important boundary |
 |---|---|---|
@@ -133,11 +202,17 @@ Paths below describe the pre-cleanup tree. Update this map as files are renamed.
 
 ## 5. Ordered execution plan
 
-All rows start pending. A task is complete only after its listed evidence is
+Current status is summarized in section 3. A task is complete only after its listed evidence is
 recorded, not after code compiles. Reuse neighboring helpers/tests; no new
 standalone executables or duplicate orchestration. Before each edit state a local
 hypothesis and cheapest discriminating check; run that check immediately after
 the edit. Fix the touched slice before widening scope.
+
+An investigation must finish with a concrete disposition: implement and verify a
+fix, enforce a support restriction, or retain the behavior with measured evidence
+and a stated acceptance rationale. Assign any residual gap to a task/release gate.
+"We understand it" alone cannot close an exposed correctness defect or a failed
+usability requirement. Avoid reopening completed research without new evidence.
 
 | Step | Dependencies | Deliverable | Requirements | Exit / stop rule |
 |---|---|---|---|---|
@@ -147,12 +222,24 @@ the edit. Fix the touched slice before widening scope.
 | A04 | A03 | Single current driver build, obsolete code removed | REQ-07,08,14 | Native Debug/Release and managed builds reference only current implementation; ABI maintained. |
 | A05 | A04 | One developer CLI and reviewed scripts | REQ-07,09 | Unique useful checks retained, duplicate wrappers removed, setup/offline recovery retained. |
 | A06 | A05 | Secondary-disk focused correctness checkpoint | REQ-03,05,10,11 | Required tests pass with byte oracles; any new normal-operation corruption stops rollout. |
+| A06a | A06; informed by A07 design | Close critical coverage gaps and act on drain findings | REQ-03,05,06,10,12 | T049-T054 have explicit evidence/dispositions; required safety/recovery gates precede C: activation. |
 | A07 | A06 | Explicit C:-disk implementation contract and safeguards | REQ-01,02,03,10 | Active system-disk path is accounted for in code; no guard-removal shortcut. |
 | A08 | A07 | C:-safe verification workflow in existing runner | REQ-01,02,07,10,13 | Host tests prove OS/raw/fault separation and correct busy-volume result semantics before VM use. |
-| A09 | A08 | Disposable-VM C: Fast validation | REQ-01,02,03,10 | Normal operation and normal restart byte checks pass; supported power/pagefile scope explicit. |
-| A10 | A09 | Reliable single installer and current docs | REQ-01,07,08,09,12,14 | Fresh install, upgrade-failure handling, upgrade/uninstall/recovery checked; no misleading old docs. |
+| A09 | A07, A08, A06a safety/recovery gates | Disposable-VM C: Fast validation | REQ-01,02,03,10 | Normal operation and normal restart byte checks pass; supported power/pagefile scope explicit. |
+| A10 | A05 foundations; finish after A09 | Reliable single installer and current docs | REQ-01,07,08,09,12,14 | Rehearse recovery before A09 through T054; finish fresh install, upgrade-failure handling, upgrade/uninstall and final docs on the candidate. |
 | A11 | A10 | Final-candidate performance and bounded endurance | REQ-04,05,10,13 | Complete selected matrices, no unexplained significant regression or integrity failure; no exhaustive certification claim. |
 | A12 | A11 | Private alpha handoff and reporting loop | REQ-01,02,03,11,12,13 | Owner accepts evidence/limitations; exact candidate frozen and participant instructions ready. |
+| A13 | Design starts during A07; closure uses A12 feedback | Production support and safety contract | REQ-03,05,10,11,15 | Every exposed supported path has proof or an enforced exclusion; normal-operation safety gaps cannot be waived as volatility. |
+| A14 | A10 and A13 scope | Security and production servicing | REQ-07,09,12,15 | Privileged interfaces, update trust, signing/distribution and recovery qualified for the supported scope. |
+| A15 | A13, A14; frozen candidate | Environment and endurance qualification | REQ-03,05,10,13,15 | Declared matrix and longer stress/lifecycle checks complete; failures resolved and affected checks rerun. |
+| A16 | A12 feedback, A13-A15 | Production release and support | REQ-12,13,15 | Owner accepts release evidence, support procedure and staged rollout/rollback readiness. |
+
+Dependency order is not a requirement to serialize all research. Begin A07's code
+mapping while designing A06a checks; use the resulting system-disk contract to
+finish A08. Rehearse external recovery before the first A09 activation. A13 support
+scope and A14 security design should inform implementation early. A11/A15 run on
+stable candidates after relevant fixes, so expensive qualification is not repeatedly
+invalidated by planned code changes. No additional agents are required by this plan.
 
 ### A01. Preserve and verify the starting point
 
@@ -210,6 +297,30 @@ fault selector or diagnostic delay into a C: experiment.
 | T021 | Inventory existing fault/flush/coalescing modes before invoking them. On non-OS disposable storage, test at least lower-write failure and explicit lower-flush failure for touched paths, using existing hooks. | Error visible, dirty data retained, no false success. Explicit authorized recovery/retry followed by independent disk-byte verification. If recovery fails, stop; no reboot/discard as cleanup. |
 | T022 | If changed code touches pins, allocation or cancellation, add bounded deterministic host/native checks or maintained scenarios for those exact paths. Do not expand into every theoretical race. | No double completion, use-after-free, leaked lifetime or overwritten in-flight data in the exercised paths. Unexercised risks remain listed. |
 
+### A06a. Turn the evidence into bounded fixes and pre-C: gates
+
+These are new tasks, not retroactive claims that A06 ran them. Preserve T001-T048
+and existing verdicts. A06 proved its scoped secondary-disk checkpoint; completing
+that checkpoint alone is insufficient evidence for the remaining safety properties.
+Use maintained scenarios and host/native checks at the layer that can control the
+ordering. A host mock is not evidence that the kernel honored the same ordering.
+
+| Task | Work and reason | Exit evidence and position in sequence |
+|---|---|---|
+| T049 | Build a coverage ledger for admission, sparse writes, old/new versions, Strict/explicit flush, capacity, allocation, cancellation, timers and lifecycle. Map each to current source, test, exact evidence and the release it blocks. Inspect the policy precondition failure; its filesystem source remains unproven. | No gap disappears because a suite has a top-level PASS. Before the next VM suite, record the failed boundary state/counters and check supported preparation. Any bounded preparation belongs before the observation window, preserves attempts and fail-fast fault behavior, and cannot silently discard failed attempts or retry until green. |
+| T050 | Decide whether drain behavior needs a change using A02's lower-I/O evidence. Define acceptable drain completion/progress and foreground tail behavior for the alpha workload before comparing. On Q:, compare existing parallelism 1/2/4 with the same seeded dirty distribution, bytes, budget, batch limit and durability; include fitting traffic and cold reads. Use a matched uncached file-only control where meaningful; start with three repetitions per selected condition and keep timing-off scores separate from attribution. | A bounded decision before A09: an evidenced small fix plus regressions, or a documented measured limit acceptable for the declared alpha workload. Report drain time, request sizes, attempted/completed lower I/O, foreground tails, CPU and pending bytes. Unmatched control semantics cannot prove a hardware limit. Extend investigation only for an unresolved discriminating question; do not rewrite scheduling speculatively. Final acceptance is T042-T044. |
+| T051 | Verify capacity/backpressure and actual trigger boundaries. Use a bounded file workload larger than a deliberately small cache budget, Fixed 0/50/100% and Automatic where supported, repeated hot writes, and independent bytes. Check first-dirty age, idle and watermark eligibility through native contracts and observed VM behavior. | Before C: activation, prove bounded reservations, eventual progress, no overwritten acknowledged data and correct bytes after drain. Capacity waits are expected only in the pressure case. A 60-second fitting hot-set test cannot substitute for capacity or exact trigger checks. Record timer tolerance and distinguish eligibility from completion. |
+| T052 | Add deterministic tests for the critical ownership and persistence boundaries: old version draining while new data replaces it, failure in a later sparse segment, retained newest reads and retry; explicit/Strict flush completion ordering against queued later writes. | Before C: activation, show the intended interleaving, visible failure, retained data, successful authorized retry and independent disk bytes. Reuse existing delay/fault hooks where they suffice; any new hook must be bounded, target-guarded and integrated with the maintained runner. Timing-dependent in-flight observations alone do not close this task. |
+| T053 | Use the A07 map to select bounded allocation/pin/cancellation tests for reachable paths under memory pressure or teardown. Inventory existing faults 6/7 and cancellation behavior before adding anything. Repair findings in the owning code. | Before C: activation, close paths necessary for paging/progress/teardown, or enforce a supported restriction that actually prevents them. Check single completion, lifetime/reclamation, retained dirty ownership and finite recovery. Remaining production gaps go to T056 explicitly; no blanket exemption merely because the code was unchanged. |
+| T054 | Bring the essential part of T039 forward: validate registration backup and independently rehearse offline/Safe Mode recovery in the disposable environment, with accessible console and restorable snapshot. | Before A09 activation, preserve evidence that recovery works without the guest CLI/driver. Coordinate disruptive operations with existing owner authorization; missing external recovery access blocks activation, not local implementation. Full servicing qualification still belongs to A10/A14. |
+
+T050 initially uses existing tuning controls. Add missing collection to the supported
+runner, version its measurement contract and preserve existing raw results. Before
+a performance-affecting driver edit, obtain the complete baseline required by the
+tracker; use focused matched checks during iteration. Do not run the full matrix
+merely for this documentation revision or for a read-only design audit. A confirmed
+safety defect preempts performance comparison and must be fixed first.
+
 ### A07. Engineer active C:-disk support
 
 Do not infer C: support from class-filter attachment or the presence of a C:
@@ -224,6 +335,12 @@ all OS-disk risks disappear.
 | T025 | Explicitly support and test hibernation/Fast Startup/dump behavior, or define an enforced alpha prerequisite that prevents the unsupported operation/configuration and makes the limitation visible. | Do not silently disable Windows features or rely only on prose when an unsafe active path remains reachable. If a safe restriction is impractical, implement the path before C: rollout. |
 | T026 | Make saved-profile activation validate disk identity, capabilities, memory budget and previous fault state; avoid guessing PhysicalDrive0. Verify suspend/resume and startup failure leave a usable, clearly reported state. | No saved setting silently activates a different disk; no automatic replay of a fault as a transient drain. Target disappearance/identity change fails clearly. |
 | T027 | Run local native/managed checks and package the candidate through existing build/signing flow. Freeze exact SYS hash and source identity. | No installation on the developer host. VM access/recovery prerequisites must be confirmed before A09. |
+
+T023 must also identify every remaining path where a supported fitting Fast write
+or fully cached read waits on unrelated lower I/O. Record its trigger and whether
+it is an allowed capacity/durability/lifecycle boundary. Repair any exposed contract
+violation before the corresponding release; do not reclassify an implementation
+limitation as a permitted exception. Use T051-T053 for the affected proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
@@ -274,6 +391,47 @@ inside `qcache developer verify` and the same worker infrastructure.
 | T046 | Produce final decision table: verified features, known defects, accepted risks, deferred checks, exact candidate hash/source and tested VM configurations. | No known unresolved normal-operation corruption or boot/recovery failure. Long-drain behavior and install failure handling have explicit resolution/disposition. |
 | T047 | Package one installer, current instructions and support checklist. Explain Fast volatility, VM snapshots, setup prerequisites, C: limitations, disable/drain behavior, and collection of status/logs without secrets. | Test signing/VM security prerequisites are explicit; no broad production-security certification claim. Never tell participants to force reboot a faulted dirty cache as routine recovery. |
 | T048 | Owner approves private participant release. Record each report with build identity, workload, environment, reproduction and evidence. Prioritize reproducible corruption/boot failures over speed; add regressions to maintained tests. | Rollout can pause on a blocker. Finish with the full 15-row optimization overview and alpha task statuses, not only a throughput headline. |
+
+### A13. Define and close the production support contract
+
+Define scope early enough to shape A07 and A14; close qualification after alpha
+feedback. The remaining 15 optimization ideas are not all mandatory rewrites.
+Correctness and the advertised RAM-first contract are mandatory for exposed paths;
+optional speed improvements remain evidence-driven.
+
+| Task | Deliverable | Exit evidence |
+|---|---|---|
+| T055 | Specify supported Windows versions, architectures, controllers, filesystems, sector sizes, disk roles, encryption, multi-disk budgets, power modes and Fast/Strict guarantees. Specify unsupported combinations and their detection/enforcement. | A testable support matrix and explicit production acceptance criteria, including latency/drain usability and recovery expectations, agreed before final qualification. Scope may initially be narrow; no support inferred from filter attachment. |
+| T056 | Close the T049 ledger for supported paths: bounded lower-I/O admission proof, capacity/large requests/quotas, sparse and versioned writes, pin/allocation/cancel lifetime, Strict/control ordering, startup/lifecycle and multi-disk accounting. | Each mandatory row has deterministic tests where needed plus appropriate driver evidence. Include fail/progress/cleanup invariants. Label unsupported 4Kn/TRIM probes honestly; implement range-aware TRIM only if required, but verify the existing handling on configurations that advertise TRIM support. |
+| T057 | Resolve optional feature scope: Deferred/one-hour behavior, power/hibernate/dump modes and any remaining configuration features visible to users. | Qualify the claimed behavior or enforce/label its exclusion; unsupported safety-critical paths cannot remain reachable through CLI, UI or saved-profile restore. Preserve Fast volatility disclosure and explicit administrative persistence guarantees. |
+
+### A14. Qualify security and production servicing
+
+These tasks define work to perform, not claims about current Microsoft distribution
+requirements. At execution, verify current official requirements for the chosen
+Windows support/distribution route; test signing alone is not the production gate.
+
+| Task | Deliverable | Exit evidence |
+|---|---|---|
+| T058 | Review privileged IOCTL access, request validation/overflow, memory handling, service/profile/registry ACLs and diagnostic fault/delay exposure. Make ordinary status access and administrative mutations obey an explicit privilege model. | Negative tests for unauthorized/malformed requests and fixes for findings; unsafe hooks cannot be armed by ordinary users or accidentally carried into normal use. Sensitive diagnostics are redacted. |
+| T059 | Define and implement the applicable production signing/distribution route, artifact provenance, update authenticity and supported platform-security compatibility. | Verify applicable official requirements, complete required signing/qualification and test the actual installation route. Protect signing material; do not solve distribution by instructing general users to weaken system security. |
+| T060 | Extend A10 to interrupted installs/updates, file locks, mixed versions, failed activation, upgrade/downgrade compatibility, uninstall with pending data and independent recovery. | A failure leaves a usable or explicitly recoverable installation with truthful installed/loaded identity. Verify actual rollback contents if rollback is claimed. No automatic dirty-data discard; validate recovery after realistic failures. |
+
+### A15. Qualify a frozen production candidate
+
+| Task | Deliverable | Exit evidence |
+|---|---|---|
+| T061 | Execute the supported A13 environment matrix, including physical hardware if claimed, storage faults, low memory, sustained capacity pressure and declared lifecycle operations. Select relevant native analysis/driver verification tools for the disposable test environments. | Exact candidate and environment identities, byte oracles, bounded resources/progress and resolved crashes/hangs. Deliberately disruptive tests require the appropriate disposable environment and owner coordination; never add them to ordinary C: file verification. |
+| T062 | Extend maintained workload duration and distribution for longer endurance, concurrent workloads, repeated lifecycle/servicing and disk error/recovery tests. Set durations/repetition counts and acceptance thresholds before running. | Complete evidence and memory/error/progress trends across the agreed duration; a 30-minute alpha smoke cannot count as production endurance. Abrupt-loss experiments, if authorized, check declared failure/recovery semantics without promising Fast RAM persistence. |
+| T063 | Freeze and run final performance/usability qualification with the same tools and settings, using T050 findings and supported workload mixes. | No unexplained significant regression; foreground responsiveness, sustained capacity behavior, drain/disable/restart times and UI progress are acceptable. Any fix invalidates affected evidence and triggers proportionate requalification. |
+
+### A16. Release and support the product
+
+| Task | Deliverable | Exit evidence |
+|---|---|---|
+| T064 | Produce a release evidence table, supported configurations, known limitations, version compatibility and user recovery instructions. Add bounded diagnostic/support collection with secrets excluded and truthful pending-data/error reporting. | A support case can identify the running driver, reproduce the issue and collect useful evidence without exposing private data or changing the storage state unexpectedly. |
+| T065 | Exercise staged rollout, upgrade rollback/recovery and an incident procedure with stop criteria for corruption, boot failure, hangs and unexplained persistence failure. | Maintainers can halt distribution and guide tested recovery; collecting feedback is not a substitute for resolving a known safety defect. |
+| T066 | Review A13-A15 acceptance, unresolved defects, release artifacts and ownership of support; obtain the owner's production release decision. | Exact signed artifact/source frozen and release scope published. A12 private-alpha approval does not imply approval for general production distribution. |
 
 ## 6. Command reference and preconditions
 
@@ -379,7 +537,7 @@ Do not call a documentation-only handover a completed optimization step.
 | PowerShell | Review individually in A05; keep build/signing/setup/updater/offline recovery where appropriate. |
 | Historical README/known-issues narrative | Replace with current product facts in A10. Source-history details need not remain in user documentation. |
 | `RAM_FIRST_IMPLEMENTATION_TRACKER.md`, `RAM_FIRST_PERFORMANCE_PLAN.md`, `WRITE_PERFORMANCE_TRAJECTORY.md` | Keep for ongoing implementation/evidence. |
-| `CONCURRENCY_VERIFICATION.md`, `FAST_FLUSH_READ_VERIFICATION.md`, `OBSERVER_FIX_VERIFICATION.md`, `PROGRESSIVE_SELECTION_VERIFICATION.md` | Keep until useful tests/reasoning and open items are transferred, then consolidate. |
+| Historical verification notes under `docs/secondary_docs/` | Keep `CONCURRENCY_VERIFICATION.md`, `FAST_FLUSH_READ_VERIFICATION.md`, `OBSERVER_FIX_VERIFICATION.md` and `PROGRESSIVE_SELECTION_VERIFICATION.md` until useful checks/open items are transferred; then consolidate. Current execution documents remain directly in `docs/`. |
 | Owner's modified research copies and private handoff/session notes | Preserved under ignored `.lab/private-handover-20260920/` with original relative paths; reconcile explicitly, not bulk delete or stage. Tracked performance documents remain at their checked-in versions. |
 | `DEVELOPER_VERIFICATION.md`, developer README, current decision/cleanup records and this plan | Maintain as current engineering material; avoid shipping internal evidence by accident. |
 | Licenses/notices | Keep applicable obligations; update by actual retained provenance, not by assumptions about a new engine. |
@@ -394,15 +552,16 @@ Do not call a documentation-only handover a completed optimization step.
 | REQ-03 | T008-T011, T019-T022, T024-T037, T040, T046-T047 | Explicit barriers, byte/error checks and honest volatility wording. |
 | REQ-04 | T010-T011, T042-T045 | Short trigger policy and measured drain/foreground behavior. |
 | REQ-05 | T004-T011, T019-T022, T042-T045 | Attribution, capacity correctness, foreground latency and drain progress. |
-| REQ-06 | T002, T004-T008 | Explained/fixed exact failure, host contracts and Q1/Q32 completion. |
+| REQ-06 | T002, T004-T008, T050, T063 | Explained/fixed exact failure, actionable lower-I/O decision and measured release drain usability. |
 | REQ-07 | T012-T018, T028-T031, T038-T039 | One build/installer/driver/CLI and maintained scenarios. |
 | REQ-08 | T012-T015, T040-T041 | Obsolete source removed, current docs and build references valid. |
 | REQ-09 | T016-T018, T038-T039 | Script replacement mapping and independent recovery path. |
-| REQ-10 | T001-T003, T019-T037, T044, T046 | Focused correctness, C: lifecycle evidence and explicit gaps. |
+| REQ-10 | T001-T003, T019-T037, T044, T046, T049-T054, T056, T061-T062 | Focused correctness, pre-C: capacity/ordering/lifetime/recovery gates and supported-scope qualification. |
 | REQ-11 | T019, T040, T046 | TRIM deferred, conservative handling retained, no false PASS. |
 | REQ-12 | T038-T041, T046-T048 | Tested servicing failures and understandable current instructions. |
 | REQ-13 | T001-T008, T028-T031, T042-T048 | Frozen identities, immutable evidence, correct metrics and full progress reports. |
 | REQ-14 | T001-T003, T012-T018, T041 | Owner work/evidence preserved and accurate legal notices. |
+| REQ-15 | T055-T066 | Production support contract, safety/security/servicing qualification and controlled release. |
 
 ## 11. Agent completion record template
 
@@ -418,3 +577,4 @@ Use this table in the tracker for each completed A-step; keep raw evidence priva
 | Performance | Matched comparison only; separate timing modes and score/counter windows. |
 | VM end state | Owned processes stopped, hooks disposition, pending bytes/errors, configuration and loaded identity; do not assume cleanup succeeded. |
 | Next | Next dependency-ready task and any owner decision needed. Include full 15-step overview. |
+| Disposition | Finding -> verified fix, enforced restriction or measured accepted behavior; map remaining gaps to task/release gate. Do not leave a known defect as an unowned research note. |

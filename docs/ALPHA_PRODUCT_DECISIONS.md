@@ -1,14 +1,17 @@
 # QueueCache private alpha product decisions
 
-Agreed with the project owner on 2026-09-20. This records product direction and
-accepted risks, not a completed implementation or release certification. The
+Initial decisions: 2026-09-20. Scope clarified in the owner's production-readiness
+planning review on 2026-09-22. This records product direction and accepted risks,
+not a completed implementation or release certification. The
 execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md).
 
 ## Audience and release meaning
 
-- "Production" in the current discussion means a first private alpha for the
-  owner, colleagues and friends to try in recoverable VMs, not general public
-  deployment on valuable physical systems.
+- The end goal is production readiness. The first milestone remains a private
+  alpha for the owner, colleagues and friends in recoverable VMs (A01-A12).
+  Production support, security, servicing, endurance and release qualification
+  follow in A13-A16. Private-alpha completion alone does not authorize general
+  production deployment or establish its reliability.
 - Fast mode is the product default. Fast mode on the disk backing C: is a required
   alpha goal, not excluded in favor of a Strict-only release.
 - This decision does not mean active C:-disk caching is already qualified. The
@@ -37,7 +40,10 @@ execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLE
 
 - Normal default operation must start background persistence after a short,
   configurable interval or appropriate policy trigger, not deliberately retain
-  dirty data for an hour. The exact default interval is still to be selected.
+  dirty data for an hour. A03 implemented Idle with 5,000 ms first-dirty age,
+  250 ms write-idle, 40/80 watermarks, 256 KiB batches and parallelism 1.
+  Saved explicit settings are preserved. The 0.4.57.1 foreground/background check
+  passed; precise trigger/capacity qualification remains separately tracked.
 - Foreground supported writes that fit available admission RAM and cached reads
   have priority over background persistence. Reads requiring disk access are not
   promised RAM-only latency.
@@ -56,8 +62,15 @@ execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLE
 
 - Defer TRIM investigation and range-aware TRIM optimization for now. Do not
   remove conservative correctness handling or imply that TRIM was validated.
-- Investigate the long explicit drain using existing evidence before assuming
-  data corruption, deadlock, slow hardware, or a need to increase timeouts.
+- A02 fixed runner restoration ordering and located most observed drain time in
+  lower-I/O waits. This is not proof that hardware is the unavoidable limit.
+  A06a/T050 compares request shape and existing concurrency before selecting a
+  focused fix or documenting an acceptable operational limit. A11 performs final
+  acceptance after such fixes; no automatic timeout relaxation.
+- Scoped A06 completion does not qualify every pressure, lifetime or ordering
+  case. A06a adds the required capacity/ordering/memory-progress checks and an
+  independent recovery rehearsal before active C: validation. A07/A08 local work
+  can proceed while these gates are prepared.
 - The runner's "restoration" means returning test-modified cache settings to
   their saved values and checking pending bytes/errors afterward. It does not
   mean restoring files, a VM snapshot, or recovering known corrupted data.
@@ -78,6 +91,8 @@ execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLE
   publish credentials, generated artifacts or VM-specific material.
 - Keep applicable licenses and attribution for reused code. Removing obsolete
   code does not by itself remove obligations attached to retained code.
-- This discussion authorizes recording decisions and preparing a cleanup list,
-  not deleting files, changing driver defaults, enabling C: caching, or running
-  disruptive VM operations yet.
+- The original 2026-09-20 decision-recording scope was followed by owner-authorized
+  implementation/cleanup and scoped VM verification. Consult current session
+  authorization and the handover gates before new actions. This planning revision
+  itself neither activates C: caching nor authorizes destructive VM recovery or
+  production distribution.
