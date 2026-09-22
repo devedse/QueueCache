@@ -5,9 +5,9 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The first implementation following this revision advances the executable verification
-contract to plan 14 with the corrected `pressure` suite; its exact-build VM run
-passed on 0.4.64.1.
+The executable verification contract is plan 15. Corrected plan-14 `pressure`
+passed on exact installed 0.4.64.1; plan 15 adds the T050 drain-decision matrix,
+whose exact-build VM execution is pending.
 
 ## 1. Start here
 
@@ -69,7 +69,7 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A04 | TRUE | Removed obsolete engine/build/tools; one current driver. | Native builds, CI and installed-build quick/policy checks passed. Compatibility service/schema names remain deliberately. | Fixes and tests apply to one shipped implementation. |
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
-| A06a | PARTIAL | T049 coverage ledger and plan-14 `pressure` contract implemented with attempt timing, isolated triggers and reservation bounds; T051/T069 are complete. | Exact installed 0.4.64.1 plan-14 run passed all seven trigger/allocation subchecks and restored cleanly. T050 and T052-T054 remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
+| A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-15 T050 `drain-decision` contract implemented; T051/T069 are complete. | Exact installed 0.4.64.1 plan-14 run passed all seven trigger/allocation subchecks. T050's 24-case exact-build comparison and T052-T054 remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
 | A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired and boot/system targets are also rejected by management. | Native Debug/Release and host contracts pass; kernel notification/installed-driver proof pending. T024-T027 and incident T067 remain. | Establishes an enforceable interim boundary while system-disk behavior is engineered. |
 | A08 | FALSE | Guarded C: file-only verification pending. | No new C: suite command exists yet. | Tests the OS disk with durable independent expected results and strict target guards. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
@@ -350,7 +350,8 @@ T023 must also identify every remaining path where a supported fitting Fast writ
 or fully cached read waits on unrelated lower I/O. Record its trigger and whether
 it is an allowed capacity/durability/lifecycle boundary. Repair any exposed contract
 violation before the corresponding release; do not reclassify an implementation
-limitation as a permitted exception. Use T051-T053 for the affected proofs.
+limitation as a permitted exception. T051 is complete; use T052-T053 for the
+remaining ordering/lifetime proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
@@ -462,6 +463,7 @@ commands were used. Check availability once rather than repeatedly failing it.
 | V3 | Elevated test VM: `qcache developer verify Q: --suite quick --output <off-target-results-root>` | Existing non-OS checks remain enabled. |
 | V4 | Elevated test VM: `qcache developer verify Q: --suite policies --output <off-target-results-root>` | Runs sector/admission/oracle scenarios and temporary policies. No pre-existing fault/delay hooks or competing tests. |
 | V4a | Elevated test VM: `qcache developer verify Q: --suite pressure --output <off-target-results-root>` | Plan-14 focused trigger/capacity suite on the clean non-OS disk. No DiskSpd. Temporarily uses a 64 MiB cache and delay hook; restores the saved runtime configuration. Not included in `full`. |
+| V4b | Elevated test VM: `qcache developer verify Q: --suite drain-decision --budget-mib 1024 --repeats 3 --diskspd <verified-diskspd.exe> --output <off-target-results-root>` | Plan-15 focused T050 matrix: 24 seeded drain/control cases for fitting writes and cold reads at parallelism 1/2/4. Keep the same DiskSpd hash; inspect raw XML, telemetry, snapshots and `*-drain.json`. Not included in `full`. |
 | V5 | Elevated test VM: `qcache developer verify Q: --suite write-performance --budget-mib 2048 --repeats 3 --preparation-flush-seconds 600 --diskspd <verified-diskspd.exe> --output <off-target-results-root>` | Full 72-case milestone; do not combine incomplete repetitions. |
 | V6 | Elevated test VM: `qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd <verified-diskspd.exe> --output <off-target-results-root>` | Secondary disposable disk only; this suite uses controlled delay. Required only for relevant touched behavior. |
 | V7 | Elevated test VM: `qcache developer verify-status <exact-run-directory>` | Read status; not a substitute for raw evidence or completion marker. |

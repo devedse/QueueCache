@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 14, "pressure and trigger verification contract version");
+        Check(VerificationPlan.Version == 15, "drain-decision verification contract version");
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {
@@ -90,6 +90,24 @@ internal static class VerificationRunnerTests
         Check(VerificationPlan.Integrity(options with { Suite = "pressure" }).SequenceEqual(
             new IntegrityCase[] { new("pressure-integrity", "pressure") }),
             "pressure remains a focused opt-in integrity suite");
+        var drainDecision = VerificationPlan.DrainDecision(options with { Suite = "drain-decision" });
+        Check(drainDecision.Count == 24 && drainDecision.Select(c => c.Id).Distinct().Count() == 24,
+            "drain decision has unique controls and p1/p2/p4 repetitions");
+        Check(drainDecision.Count(c => !c.PendingDrain) == 6 &&
+            drainDecision.Where(c => c.PendingDrain).Select(c => c.Parallelism).Distinct().Order().SequenceEqual(new[] { 1, 2, 4 }),
+            "drain decision retains matched controls and supported parallelism");
+        Check(drainDecision[8].Workload == "cold-read" && drainDecision[8].Repeat == 2,
+            "drain decision alternates workload order between repetitions");
+        Check(VerificationPlan.DrainDecision(options with { Suite = "quick" }).Count == 0,
+            "other suites do not acquire drain-decision cases");
+        var selectedDrain = VerificationPlan.DrainDecision(options with
+        {
+            Suite = "drain-decision",
+            CaseFilter = "fitting-write-p1"
+        });
+        Check(selectedDrain.Count == 3 && selectedDrain.All(c => c.Workload == "fitting-write" && c.Parallelism == 1),
+            "drain decision filter retains stable matched repetition IDs");
+        Reject(() => VerificationPlan.Validate(options with { Suite = "drain-decision", BudgetMiB = 4097 }));
         VerificationPlan.Validate(new VerificationOptions("Q:", "trim-diagnostic"));
         Check(VerificationPlan.Integrity(options with { Suite = "trim-diagnostic" }).SequenceEqual(
             new IntegrityCase[] { new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false) }),

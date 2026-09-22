@@ -21,6 +21,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private VerificationOptions options = null!;
     private string workDirectory = "";
     private readonly object logGate = new();
+    private readonly Dictionary<(int Repeat, string Workload), ulong> drainSeedOwnedBytes = [];
     private IProgress<string>? progressSink;
     private string progressLabel = "Preflight";
     private void Log(string message)
@@ -129,6 +130,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         fileTarget = null;
+        drainSeedOwnedBytes.Clear();
         options = selected with
         {
             Output = Path.GetFullPath(selected.Output),
@@ -139,16 +141,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" ? VerificationPlan.Performance(options) : [];
+        var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
+        expected.AddRange(drainDecision.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
         Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count} cases, not the complete write matrix.");
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count} cases, not the complete suite matrix.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -156,6 +160,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             Options = options,
             ExpectedCases = expected,
             PerformanceCases = performance,
+            DrainDecisionCases = drainDecision,
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });
@@ -214,7 +219,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;
                 });
-            if (performance.Count > 0)
+            if (performance.Count > 0 || drainDecision.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 await Worker(Job("prepare") with
@@ -226,6 +231,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 {
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => Measure(scenario, deadline.Token));
+                }
+                foreach (var scenario in drainDecision)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureDrainDecision(scenario, deadline.Token));
                 }
             }
         }
@@ -276,6 +286,39 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     CaseIds = g.Select(c => c.Id).ToArray()
                 }).ToArray());
         }
+        if (complete && drainDecision.Count > 0)
+        {
+            static double MedianDrain(IEnumerable<double> values)
+            {
+                var sorted = values.Order().ToArray();
+                return (sorted[(sorted.Length - 1) / 2] + sorted[sorted.Length / 2]) / 2;
+            }
+            double? Metric(DrainDecisionCase test, string name)
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(storage.PathFor(test.Id + "-drain.json")));
+                var property = document.RootElement.GetProperty(name);
+                return property.ValueKind == JsonValueKind.Null ? null : property.GetDouble();
+            }
+            storage.Write("drain-aggregates.json", drainDecision
+                .GroupBy(c => new { c.Workload, c.PendingDrain, c.Parallelism })
+                .Select(group => new
+                {
+                    Configuration = group.Key,
+                    Samples = group.Count(),
+                    IopsMedian = MedianDrain(group.Select(c => storage.Results.Single(r => r.Id == c.Id).Score!.Iops)),
+                    P99MillisecondsMedian = MedianDrain(group.Select(c =>
+                        c.Workload == "fitting-write"
+                            ? storage.Results.Single(r => r.Id == c.Id).Score!.WriteP99Milliseconds!.Value
+                            : storage.Results.Single(r => r.Id == c.Id).Score!.ReadP99Milliseconds!.Value)),
+                    FlushSecondsMedian = group.All(c => Metric(c, "FlushSeconds") is null) ? (double?)null :
+                        MedianDrain(group.Select(c => Metric(c, "FlushSeconds")!.Value)),
+                    PendingBytesAfterMedian = MedianDrain(group.Select(c => Metric(c, "PendingBytesAfter")!.Value)),
+                    LowerWriteAttemptsMedian = MedianDrain(group.Select(c => Metric(c, "LowerWriteAttempts")!.Value)),
+                    LowerWritesCompletedMedian = MedianDrain(group.Select(c => Metric(c, "LowerWritesCompleted")!.Value)),
+                    LowerIoMillisecondsMedian = MedianDrain(group.Select(c => Metric(c, "LowerIoMilliseconds")!.Value)),
+                    CaseIds = group.Select(c => c.Id).ToArray()
+                }).ToArray());
+        }
         storage.Write("status.json", new
         {
             Status = status,
@@ -287,7 +330,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         });
         var report = new StringBuilder($"# QueueCache verification\n\nStatus: **{status}**\n\nCases: {storage.Results.Count}/{expected.Count}. Plan version: {VerificationPlan.Version}.\n\n");
         if (options.CaseFilter is not null)
-            report.AppendLine($"Selected case ID substring: `{options.CaseFilter}`. This is not the complete write matrix.\n");
+            report.AppendLine($"Selected case ID substring: `{options.CaseFilter}`. This is not the complete suite matrix.\n");
         report.AppendLine("PASS means the case's collection/checks succeeded, not that latency met a performance target or that every driver path is verified. No medians are computed from partial runs.\n");
         report.AppendLine("| Case | Status | IOPS | Read p99 ms | Write p99 ms |\n|---|---|---:|---:|---:|");
         foreach (var row in storage.Results)
@@ -472,6 +515,176 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     catch (Exception) { /* original case failure retained */ }
                 }
         }
+    }
+
+    private async Task<DiskSpdScore?> MeasureDrainDecision(DrainDecisionCase scenario, CancellationToken token)
+    {
+        await Control(WriteCacheAction.LabDelay, token);
+        await Control(WriteCacheAction.Flush, token);
+        var cacheEnabled = scenario.PendingDrain || scenario.Workload == "fitting-write";
+        await Worker(Job("configure") with
+        {
+            Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, cacheEnabled)
+            {
+                Options = new CacheOptions(CacheAllocation.Automatic, 100, RetainWrites: false,
+                    Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000,
+                    BatchKiB: 256, Parallelism: scenario.Parallelism)
+            }
+        }, token, 300);
+        await Control(WriteCacheAction.Flush, token);
+        await Control(WriteCacheAction.DropClean, token);
+        await Control(WriteCacheAction.PerformanceTiming, token, 1);
+
+        DrainSeedResult? seed = null;
+        if (scenario.PendingDrain)
+        {
+            var seedPath = await Worker(Job("seed-drain") with
+            {
+                WorkDirectory = workDirectory,
+                BudgetMiB = options.BudgetMiB,
+                Value = checked((ulong)(104729 + scenario.Repeat))
+            }, token, 300);
+            seed = JsonSerializer.Deserialize<DrainSeedResult>(await File.ReadAllTextAsync(seedPath, token)) ??
+                throw new InvalidDataException("Missing deterministic drain seed result.");
+            var matchedKey = (scenario.Repeat, scenario.Workload);
+            if (drainSeedOwnedBytes.TryGetValue(matchedKey, out var expectedOwned) && expectedOwned != seed.OwnedBytes)
+                throw new IOException($"Matched drain conditions did not own the same bytes: expected {expectedOwned}, actual {seed.OwnedBytes}.");
+            drainSeedOwnedBytes[matchedKey] = seed.OwnedBytes;
+        }
+
+        var beforePath = await Worker(Job("snapshot") with
+        {
+            Reply = storage.PathFor(scenario.Id + "-before.json")
+        }, token);
+        using var beforeDocument = JsonDocument.Parse(await File.ReadAllTextAsync(beforePath, token));
+        var before = beforeDocument.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!;
+        var performanceBefore = beforeDocument.RootElement.GetProperty("Performance").Deserialize<CachePerformance>()!;
+        var diagnosticsBefore = beforeDocument.RootElement.GetProperty("Diagnostics").Deserialize<CacheDiagnostics>()!;
+        var stop = storage.PathFor(scenario.Id + ".stop");
+        var ready = storage.PathFor(scenario.Id + ".ready.json");
+        using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var telemetry = Worker(Job("telemetry") with
+        {
+            Reply = storage.PathFor(scenario.Id + "-telemetry.jsonl"),
+            StopFile = stop,
+            ReadyFile = ready,
+            Seconds = options.DurationSeconds + 120
+        }, children.Token, options.DurationSeconds + 130);
+        Task<DateTimeOffset>? flush = null;
+        Task<DiskSpdScore>? workload = null;
+        try
+        {
+            Log("Waiting for telemetry readiness before workload: " + scenario.Id);
+            await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
+            Log("Telemetry ready: " + scenario.Id);
+            var workloadStart = DateTimeOffset.UtcNow;
+            var path = scenario.Workload == "fitting-write" ?
+                Path.Combine(workDirectory, "resident.dat") : Path.Combine(workDirectory, "writer.dat");
+            var arguments = scenario.Workload == "fitting-write"
+                ? new[] { "-b4K", "-r4K", "-o1", "-t1", "-w100", $"-d{options.DurationSeconds}", "-W0", "-Zr" }
+                : new[] { "-b4K", "-r4K", "-o1", "-t1", "-w0", $"-d{options.DurationSeconds}", "-W0" };
+            workload = Disk(scenario.Id + "-workload", path, arguments, children.Token);
+            DateTimeOffset? flushRequested = null;
+            DateTimeOffset? flushCompleted = null;
+            if (scenario.PendingDrain)
+            {
+                await Task.Delay(250, token);
+                flushRequested = DateTimeOffset.UtcNow;
+                flush = FlushAndTimestamp(children.Token);
+            }
+            var score = await workload;
+            var workloadEnd = DateTimeOffset.UtcNow;
+            if (flush is not null)
+                flushCompleted = await flush;
+            storage.Write(scenario.Id + "-interval.json", new
+            {
+                Start = workloadStart,
+                End = workloadEnd,
+                FlushRequested = flushRequested,
+                MaximumSampleGapSeconds = 2
+            });
+            File.WriteAllText(stop, "stop");
+            await telemetry;
+            var lines = File.ReadAllLines(storage.PathFor(scenario.Id + "-telemetry.jsonl"));
+            if (lines.Length < 2)
+                throw new InvalidDataException("Insufficient drain-decision telemetry.");
+            var timestamps = new List<DateTimeOffset>();
+            foreach (var line in lines)
+            {
+                using var sample = JsonDocument.Parse(line);
+                timestamps.Add(sample.RootElement.GetProperty("Utc").GetDateTimeOffset());
+                var state = sample.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!;
+                if (state.Errors != original.State.Errors || state.LastError != 0 || state.Instance != original.State.Instance)
+                    throw new IOException("Driver error or instance change during drain-decision measurement.");
+            }
+            TelemetryCoverage.Validate(timestamps, workloadStart, workloadEnd);
+            var afterPath = await Worker(Job("snapshot") with
+            {
+                Reply = storage.PathFor(scenario.Id + "-after.json")
+            }, token);
+            using var afterDocument = JsonDocument.Parse(await File.ReadAllTextAsync(afterPath, token));
+            var after = afterDocument.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!;
+            var performanceAfter = afterDocument.RootElement.GetProperty("Performance").Deserialize<CachePerformance>()!;
+            var diagnosticsAfter = afterDocument.RootElement.GetProperty("Diagnostics").Deserialize<CacheDiagnostics>()!;
+            var attributionBefore = diagnosticsBefore.Attribution ?? throw new NotSupportedException("Missing lower-I/O attempt counters.");
+            var attributionAfter = diagnosticsAfter.Attribution ?? throw new NotSupportedException("Missing lower-I/O attempt counters.");
+            if (seed is not null && after.DrainedBytes - seed.Before.DrainedBytes < seed.OwnedBytes)
+                throw new IOException("Explicit drain did not persist the complete deterministic dirty set.");
+            string? verification = null;
+            if (seed is not null)
+            {
+                await Control(WriteCacheAction.Disable, token);
+                verification = await Worker(Job("verify-drain") with
+                {
+                    WorkDirectory = workDirectory,
+                    BudgetMiB = options.BudgetMiB,
+                    Value = (ulong)seed.Seed
+                }, token, 300);
+            }
+            storage.Write(scenario.Id + "-drain.json", new
+            {
+                scenario.Workload,
+                scenario.Parallelism,
+                scenario.Repeat,
+                scenario.PendingDrain,
+                Seed = seed,
+                BeforeSnapshot = beforePath,
+                AfterSnapshot = afterPath,
+                PersistedVerification = verification,
+                FlushSeconds = flushRequested is null || flushCompleted is null ? (double?)null :
+                    (flushCompleted.Value - flushRequested.Value).TotalSeconds,
+                PendingBytesAfter = after.DirtyBytes + after.InFlightBytes,
+                DrainedBytes = after.DrainedBytes - before.DrainedBytes,
+                LowerWriteAttempts = attributionAfter.LowerWriteAttempts - attributionBefore.LowerWriteAttempts,
+                LowerWritesCompleted = after.LowerWrites - before.LowerWrites,
+                DrainBatches = performanceAfter.DrainBatches - performanceBefore.DrainBatches,
+                DriverDrainBytes = performanceAfter.DrainBytes - performanceBefore.DrainBytes,
+                LowerIoMilliseconds = performanceAfter.Milliseconds(performanceAfter.LowerIoTicks - performanceBefore.LowerIoTicks),
+                DrainSelectionMilliseconds = performanceAfter.Milliseconds(performanceAfter.DrainSelectionTicks - performanceBefore.DrainSelectionTicks),
+                DrainCopyMilliseconds = performanceAfter.Milliseconds(performanceAfter.DrainCopyTicks - performanceBefore.DrainCopyTicks),
+                DrainRetirementMilliseconds = performanceAfter.Milliseconds(performanceAfter.DrainRetirementTicks - performanceBefore.DrainRetirementTicks),
+                CapacityWaits = performanceAfter.CapacityWaits - performanceBefore.CapacityWaits,
+                Score = score
+            });
+            return score;
+        }
+        finally
+        {
+            File.WriteAllText(stop, "stop");
+            children.Cancel();
+            foreach (var child in new Task?[] { telemetry, workload, flush })
+                if (child is not null)
+                {
+                    try { await child; }
+                    catch (Exception) { /* original case failure retained */ }
+                }
+        }
+    }
+
+    private async Task<DateTimeOffset> FlushAndTimestamp(CancellationToken token)
+    {
+        await Control(WriteCacheAction.Flush, token);
+        return DateTimeOffset.UtcNow;
     }
 
     public async Task<int> RecoverAsync(string directory, CancellationToken token, IProgress<string>? progress = null)

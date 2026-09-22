@@ -8,10 +8,10 @@ evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATI
 | Claim / path | Owning code | Maintained proof / evidence | Current status | Gate |
 |---|---|---|---|---|
 | Fitting full/sector-valid Fast admission avoids lower I/O | `writecache.cpp` `Write`; `sectorcoverage.h` | `policies`: diagnostics-V2 lower-attempt and RAM/disk byte oracles | Passed on 0.4.57.1 for 512-byte sectors, parallelism 1/2/4, retention off/on | Preserve through A13 |
-| Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios` | `policies` 60-second `foreground-background` case | Passed on 0.4.57.1; no capacity pressure or cold misses | T050/T051; A11 |
-| Deferred age, Idle and watermark triggers occur at their contract boundaries | `cachepolicy.h`; `Drainer` | Native truth table; plan-12 `pressure` VM scenario | Native proof exists; maintained VM scenario implemented, VM run pending | T051 before A09 |
-| Automatic and Fixed 50/100 write pools apply backpressure without overwriting data | Capacity loop; `QcWriteLimit` | Plan-12 `pressure` writes 80 MiB through a 64 MiB cache and verifies disk bytes | Implemented, VM run pending | T051 before A09 |
-| Fixed 0 uses the explicit ordered quota fallback | `writecache.cpp` quota barrier | Plan-12 `pressure` checks no capacity waits, quota-barrier increase and final bytes | Implemented, VM run pending | T051 before A09 |
+| Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios`; plan-15 `drain-decision` | `policies` 60-second foreground/background case; seeded parallelism 1/2/4 comparison contract | Fitting case passed on 0.4.57.1; cold-read/drain decision matrix implemented, VM comparison pending | T050; A11 |
+| Deferred age, Idle and watermark triggers occur at their contract boundaries | `cachepolicy.h`; `Drainer` | Native truth table; plan-14 `pressure` VM scenario | Passed on exact installed 0.4.64.1 | Preserve through A13 |
+| Automatic and Fixed 50/100 write pools apply backpressure without overwriting data | Capacity loop; `QcWriteLimit` | Plan-14 `pressure` writes 80 MiB through a 64 MiB cache and verifies disk bytes | Passed on exact installed 0.4.64.1 | Preserve through A13 |
+| Fixed 0 uses the explicit ordered quota fallback | `writecache.cpp` quota barrier | Plan-14 `pressure` checks no write ownership/capacity waits, quota-barrier increase and final bytes | Passed on exact installed 0.4.64.1 | Preserve through A13 |
 | Single request larger than its write quota/capacity | `writecache.cpp` quota fallback | No focused maintained request-boundary test | Open | T056 production-supported scope |
 | Lower-write completion failure retains dirty data and retry persists it | Completion/retry; `FileTests` coalescing mode | A06 run `74640fa5-9964-4068-bbf5-d47d36376a8d` | Passed on 0.4.57.1 | Preserve through A13 |
 | Explicit lower-flush failure is visible and recoverable | Barrier/flush completion; `FileTests` flush-policy mode | A06 run `b8efd1c5-4860-4966-bd8c-cc1ceea9de9f` | Passed on 0.4.57.1 | Preserve through A13 |
@@ -28,14 +28,14 @@ evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATI
 | Native 4Kn behavior | Sector coverage and filesystem I/O | Current sector scenario explicitly rejects non-512 logical sectors | Unqualified | Exclude/enforce or qualify in A13/T056 |
 
 Review follow-ups: T067 records the pre-A01 C: large-image crash and subsequent
-application failures (cause unknown). T068 identifies a source-level race between
-usage notification and Enable, so the current system-path guard is not a proven
-exclusion. T069 identifies coarse timer-completion checks, watermark attribution
-and unsampled reservation gaps in `pressure`; the trigger/capacity rows above are
-partial implementation, not exact-boundary proof. All three tasks are defined in
-the handover and gate their corresponding C: readiness claims.
+application failures (cause unknown). T068's source-level usage-notification/Enable
+race is repaired, but installed-driver paths remain to be proved. T069 identified
+coarse timer-completion checks, watermark attribution and unsampled reservation
+gaps in `pressure`; plan 14 closed that measurement gap on exact installed
+0.4.64.1. T067/T068 remain as defined in the handover and gate their corresponding
+C: readiness claims.
 
-The plan-12 managed Release build and host-safe runner contracts pass. The next
-step is the exact installed-build `pressure` VM run. A VM failure keeps T051 open
-and is repaired in the owning path before C: activation. Allocation/cancellation
-work follows the A07 reachable-path map so it targets actual system-disk risk.
+The plan-15 managed Release build and host-safe runner contracts pass. The next
+T050 step is the exact-build `drain-decision` VM matrix and evidence review; it is
+not yet a performance verdict. Allocation/cancellation work follows the A07
+reachable-path map so it targets actual system-disk risk.

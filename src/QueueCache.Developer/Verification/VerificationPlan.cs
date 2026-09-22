@@ -15,10 +15,17 @@ public sealed record PerformanceCase(
     bool Resident = false,
     bool Timing = true);
 
+public sealed record DrainDecisionCase(
+    string Id,
+    string Workload,
+    int Parallelism,
+    int Repeat,
+    bool PendingDrain);
+
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 14;
+    public const int Version = 15;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
@@ -26,6 +33,7 @@ public static class VerificationPlan
         "quick",
         "policies",
         "pressure",
+        "drain-decision",
         "trim-diagnostic",
         "trim-file",
         "write-performance",
@@ -33,6 +41,28 @@ public static class VerificationPlan
         "performance",
         "full"
     ];
+
+    public static IReadOnlyList<DrainDecisionCase> DrainDecision(VerificationOptions options)
+    {
+        if (options.Suite != "drain-decision")
+            return [];
+        var cases = new List<DrainDecisionCase>();
+        for (var repeat = 1; repeat <= options.Repeats; repeat++)
+        {
+            var workloads = repeat % 2 == 1
+                ? new[] { "fitting-write", "cold-read" }
+                : ["cold-read", "fitting-write"];
+            foreach (var workload in workloads)
+            {
+                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-control", workload, 1, repeat, false));
+                var parallelism = repeat % 2 == 1 ? new[] { 1, 2, 4 } : [4, 2, 1];
+                foreach (var workers in parallelism)
+                    cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-p{workers}", workload, workers, repeat, true));
+            }
+        }
+        return options.CaseFilter is null ? cases :
+            cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+    }
 
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
     {
@@ -230,8 +260,8 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         if (options.CaseFilter is not null &&
-            (options.Suite != "write-performance" || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance or drain-decision and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -245,10 +275,14 @@ public static class VerificationPlan
                 "deadline 0 (unlimited) or 1..1440 minutes.");
         }
 
-        if (options.CaseFilter is not null && Performance(options).Count == 0)
+        if (options.CaseFilter is not null &&
+            (options.Suite == "write-performance" ? Performance(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance"))
+        if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
+            throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
+
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "drain-decision"))
         {
             return;
         }

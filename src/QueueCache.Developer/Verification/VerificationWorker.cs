@@ -212,6 +212,19 @@ public static class VerificationWorker
                 if (pressureChecks.Count == 0)
                     Console.Error.WriteLine("Pressure suite returned no checks.");
                 return pressureChecks.Count > 0 && pressureChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "seed-drain":
+                var seedBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                result = DrainDecisionScenarios.PrepareDirtySet(device,
+                    Path.Combine(job.WorkDirectory!, "drain.dat"), seedBytes,
+                    checked((int)job.Value));
+                break;
+            case "verify-drain":
+                var verifyBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                DrainDecisionScenarios.VerifyDirtySet(
+                    Path.Combine(job.WorkDirectory!, "drain.dat"), verifyBytes,
+                    checked((int)job.Value));
+                result = new { Seed = job.Value, Bytes = verifyBytes, Verified = true };
+                break;
             case "prepare":
                 var directory = Path.GetFullPath(job.WorkDirectory!);
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
@@ -221,7 +234,7 @@ public static class VerificationWorker
                 Directory.CreateDirectory(directory);
                 var block = new byte[1 << 20];
                 Random.Shared.NextBytes(block);
-                foreach (var (name, length) in new[] { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("flush.dat", 1) })
+                foreach (var (name, length) in new[] { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) })
                 {
                     using var file = new FileStream(Path.Combine(directory, name), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
                     for (var i = 0; i < length; i++)
