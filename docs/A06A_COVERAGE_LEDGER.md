@@ -8,7 +8,7 @@ evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATI
 | Claim / path | Owning code | Maintained proof / evidence | Current status | Gate |
 |---|---|---|---|---|
 | Fitting full/sector-valid Fast admission avoids lower I/O | `writecache.cpp` `Write`; `sectorcoverage.h` | `policies`: diagnostics-V2 lower-attempt and RAM/disk byte oracles | Passed on 0.4.57.1 for 512-byte sectors, parallelism 1/2/4, retention off/on | Preserve through A13 |
-| Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios`; plan-15 `drain-decision` | `policies` 60-second foreground/background case; seeded parallelism 1/2/4 comparison contract | Fitting case passed on 0.4.57.1; cold-read/drain decision matrix implemented, VM comparison pending | T050; A11 |
+| Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios`; plan-16 `drain-decision` | `policies` 60-second foreground/background case; seeded parallelism 1/2/4 comparison contract | Fitting case passed on 0.4.57.1; drain decision matrix correction pending exact-build rerun | T050; A11 |
 | Deferred age, Idle and watermark triggers occur at their contract boundaries | `cachepolicy.h`; `Drainer` | Native truth table; plan-14 `pressure` VM scenario | Passed on exact installed 0.4.64.1 | Preserve through A13 |
 | Automatic and Fixed 50/100 write pools apply backpressure without overwriting data | Capacity loop; `QcWriteLimit` | Plan-14 `pressure` writes 80 MiB through a 64 MiB cache and verifies disk bytes | Passed on exact installed 0.4.64.1 | Preserve through A13 |
 | Fixed 0 uses the explicit ordered quota fallback | `writecache.cpp` quota barrier | Plan-14 `pressure` checks no write ownership/capacity waits, quota-barrier increase and final bytes | Passed on exact installed 0.4.64.1 | Preserve through A13 |
@@ -35,7 +35,9 @@ gaps in `pressure`; plan 14 closed that measurement gap on exact installed
 0.4.64.1. T067/T068 remain as defined in the handover and gate their corresponding
 C: readiness claims.
 
-The plan-15 managed Release build and host-safe runner contracts pass. The next
+Plan 15 stopped at case 4/24 on 0.4.66.1 because NTFS metadata ownership varied
+within its documented 64 KiB bound. Restoration passed and the incomplete run is
+retained privately. The next
 T050 step is the exact-build `drain-decision` VM matrix and evidence review; it is
 not yet a performance verdict. Allocation/cancellation work follows the A07
 reachable-path map so it targets actual system-disk risk.

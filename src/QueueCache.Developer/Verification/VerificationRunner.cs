@@ -21,7 +21,6 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private VerificationOptions options = null!;
     private string workDirectory = "";
     private readonly object logGate = new();
-    private readonly Dictionary<(int Repeat, string Workload), ulong> drainSeedOwnedBytes = [];
     private IProgress<string>? progressSink;
     private string progressLabel = "Preflight";
     private void Log(string message)
@@ -130,7 +129,6 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         fileTarget = null;
-        drainSeedOwnedBytes.Clear();
         options = selected with
         {
             Output = Path.GetFullPath(selected.Output),
@@ -546,10 +544,6 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }, token, 300);
             seed = JsonSerializer.Deserialize<DrainSeedResult>(await File.ReadAllTextAsync(seedPath, token)) ??
                 throw new InvalidDataException("Missing deterministic drain seed result.");
-            var matchedKey = (scenario.Repeat, scenario.Workload);
-            if (drainSeedOwnedBytes.TryGetValue(matchedKey, out var expectedOwned) && expectedOwned != seed.OwnedBytes)
-                throw new IOException($"Matched drain conditions did not own the same bytes: expected {expectedOwned}, actual {seed.OwnedBytes}.");
-            drainSeedOwnedBytes[matchedKey] = seed.OwnedBytes;
         }
 
         var beforePath = await Worker(Job("snapshot") with
@@ -648,6 +642,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 scenario.Repeat,
                 scenario.PendingDrain,
                 Seed = seed,
+                SeedPayloadBytes = seed?.Bytes,
+                SeedMetadataBytes = seed is null ? (ulong?)null : seed.OwnedBytes - (ulong)seed.Bytes,
+                SeedLowerReadAttempts = seed is null ? (ulong?)null :
+                    seed.AttributionAfter.LowerReadAttempts - seed.AttributionBefore.LowerReadAttempts,
                 BeforeSnapshot = beforePath,
                 AfterSnapshot = afterPath,
                 PersistedVerification = verification,

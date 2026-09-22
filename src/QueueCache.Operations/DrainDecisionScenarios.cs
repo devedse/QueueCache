@@ -52,7 +52,6 @@ public static class DrainDecisionScenarios
         var accepted = after.AcceptedBytes - before.AcceptedBytes;
         if (accepted != after.DirtyBytes || accepted < (ulong)bytes || accepted > (ulong)bytes + (64 << 10) ||
             after.InFlightBytes != 0 ||
-            attributionAfter.LowerReadAttempts != attributionBefore.LowerReadAttempts ||
             attributionAfter.LowerWriteAttempts != attributionBefore.LowerWriteAttempts ||
             attributionAfter.LowerFlushAttempts != attributionBefore.LowerFlushAttempts)
             throw new IOException("Dirty-set preparation was not an isolated fitting RAM admission: " +

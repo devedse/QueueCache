@@ -16,14 +16,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 15)
+## Suites (plan version 16)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
-| `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and require identical initial owned bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
+| `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
@@ -81,12 +81,16 @@ It recorded ready telemetry and a nonempty control trace, preserved independent
 persisted-byte checks, and restored the original active 2 GiB Fast/Idle profile
 with zero dirty/in-flight bytes and errors.
 
-Plan 15 adds the separate `drain-decision` suite for T050. Each repetition uses
-the same deterministic seed and owned-byte count for its parallelism 1/2/4
+Plan 16 retains the separate `drain-decision` suite for T050. Each repetition uses
+the same deterministic seed and 25%-of-budget payload for its parallelism 1/2/4
 conditions and alternates fitting-write/cold-read order. A Deferred one-hour
 trigger holds a 25%-of-budget file payload, plus at most 64 KiB of recorded
-filesystem metadata, without lower-I/O attempts. The seed worker first establishes
-its own clean baseline so late metadata from the preceding case is excluded; the
+filesystem metadata, without lower-write or lower-flush attempts. NTFS metadata
+ownership can vary between cases; `SeedMetadataBytes` records the exact difference.
+Filesystem activity can issue lower reads during seed preparation; the suite
+records `SeedLowerReadAttempts` without attributing them to payload admission or
+drain speed. The seed worker first establishes its own clean baseline so late
+activity from the preceding case is excluded; the
 measured workload starts before the explicit drain. Controls retain the same
 workload without a pending drain (the cold-read control disables caching). Raw
 DiskSpd XML is preserved for CPU/tool
@@ -97,6 +101,32 @@ is complete and reviewed.
 For a smoke check, `--case-filter` may select a case-ID substring such as
 `fitting-write-p1`; this preserves the full-matrix IDs and is never a complete
 T050 comparison.
+
+The first exact installed 0.4.66.1 run, `QueueCache-Verify-20260922-190037-018dafb510ad40258be18c46a8146526`,
+stopped at case 4/24 because plan 15 incorrectly required identical cache-owned
+bytes across runs. All cases used the same 256 MiB payload, while NTFS metadata
+ownership varied from 4 KiB to 16 KiB. The first three cases were measured,
+restoration passed, and the raw incomplete run is retained privately as
+`drain-plan15-0661-exact-incomplete-4of24`. Plan 16 preserves the 64 KiB metadata
+bound and records the exact amount per case; it does not infer a complete
+performance result from those first three cases.
+
+A split-CLI diagnostic plan-16 run then stopped at case 2/8 because the seed
+worker observed two lower read attempts while updating NTFS metadata. Its lower
+write and flush attempt deltas were zero, and restoration passed. The incomplete
+run is retained privately as `drain-plan16-preliminary-r1-incomplete`. Plan 16
+now records those reads while preserving the zero lower-write/flush seed gate.
+
+A second split-CLI diagnostic run,
+`QueueCache-Verify-20260922-191107-fe5ca551e0174877819bd03f2bbe5f39`,
+completed all 8 single-repetition cases with clean restoration on the installed
+0.4.66.1 driver. The seed payload was 256 MiB in each drain condition, metadata
+was 4-8 KiB, lower-write and lower-flush seed attempts stayed zero, and the
+recorded capacity-wait delta was zero. The raw result is retained privately as
+`drain-plan16-preliminary-r2-completed` (1,336 files). This validates the
+revised collection contract only. It mixed a local plan-16 CLI with the older
+installed driver, has just one repetition, and does not close T050 or establish
+a performance improvement.
 
 ### Small-write investigation
 

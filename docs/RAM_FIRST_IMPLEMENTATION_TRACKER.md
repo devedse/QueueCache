@@ -14,9 +14,11 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 15: plan-14 `pressure`
-passed on the exact installed 0.4.64.1 build, and plan 15 adds the bounded T050
-drain-decision matrix pending VM execution.
+row below. The executable verification contract is plan 16: plan-14 `pressure`
+passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
+stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
+corrects that assumption; a split-CLI, single-repetition diagnostic completed
+8/8 cases with clean restoration. Its exact-build three-repeat VM run is pending.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -26,7 +28,7 @@ drain-decision matrix pending VM execution.
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-15 T050 `drain-decision` contract implemented; T051/T069 are complete. Deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 run passed all seven trigger/allocation checks. T050's 24-case exact-build VM comparison and T052-T054 remain. |
+| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 run passed all seven trigger/allocation checks. Plan-15 T050 stopped at case 4/24 on a metadata oracle; a split-CLI plan-16 smoke run completed 8/8. Exact-build three-repeat comparison and T052-T054 remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 now reserves notifications atomically with routing/Enable, rolls reservations back on rejection/cancellation/lower failure, and management rejects boot/system targets even with zero notifications. | Native Debug/Release and host contracts pass; installed-driver/kernel notification proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
@@ -53,7 +55,7 @@ all needed; completing A08 alone does not repair kernel behavior.
 1. T049: map existing proof and missing safety cases to specific code and releases.
    Preserve the incomplete policy precondition run. The source of its late activity
    is not established; passing a later run does not diagnose it.
-2. T050: run and review the plan-15 `drain-decision` matrix using existing
+2. T050: run and review the plan-16 `drain-decision` matrix using existing
    parallelism/batch controls and matched workloads. About 99.4% lower-I/O wait
    supports investigating request shape/concurrency and the lower stack; it does
    not prove the physical disk is the limiting component. No scheduler rewrite or
