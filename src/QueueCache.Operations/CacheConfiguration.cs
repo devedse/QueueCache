@@ -39,11 +39,14 @@ public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset
 
 internal static class ActivationSafety
 {
-    internal static void ValidateUsagePaths(bool enabled, int pagingPathCount)
+    internal static void ValidateTarget(bool enabled, bool isBoot, bool isSystem, bool isPaging, int usagePathCount)
     {
-        if (pagingPathCount < 0)
+        if (usagePathCount < 0)
             throw new InvalidDataException("Driver reported an invalid paging/hibernation/dump path count.");
-        if (enabled && pagingPathCount != 0)
+        if (enabled && (isBoot || isSystem))
+            throw new NotSupportedException(
+                "Caching cannot be enabled on a boot/system disk until active-system-disk support is qualified.");
+        if (enabled && (isPaging || usagePathCount != 0))
             throw new NotSupportedException(
                 "Caching cannot be enabled on a disk with paging, hibernation or dump paths until active-system-disk support is qualified.");
     }
@@ -64,7 +67,8 @@ public static class ConfigurationManager
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);
         if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the matching read/write-cache driver and restart Windows before applying settings.");
-        ActivationSafety.ValidateUsagePaths(configuration.Enabled, device.GetStatistics().PagingPathCount);
+        ActivationSafety.ValidateTarget(configuration.Enabled, target.IsBoot, target.IsSystem, target.IsPaging,
+            device.GetStatistics().PagingPathCount);
         // Reject an unsupported new policy before disabling/draining the existing cache.
         if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
             throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");

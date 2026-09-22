@@ -109,12 +109,18 @@ var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], 
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");
-ActivationSafety.ValidateUsagePaths(false, 1);
-Reject(() => ActivationSafety.ValidateUsagePaths(true, -1), "invalid usage-path count");
+ActivationSafety.ValidateTarget(false, true, true, true, 1);
+Reject(() => ActivationSafety.ValidateTarget(true, false, false, false, -1), "invalid usage-path count");
 try
 {
-    ActivationSafety.ValidateUsagePaths(true, 1);
+    ActivationSafety.ValidateTarget(true, false, false, false, 1);
     throw new Exception("Active usage path was accepted.");
+}
+catch (NotSupportedException) { }
+try
+{
+    ActivationSafety.ValidateTarget(true, true, false, false, 0);
+    throw new Exception("Boot disk was accepted.");
 }
 catch (NotSupportedException) { }
 profile.Validate();

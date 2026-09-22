@@ -11,7 +11,8 @@ namespace QueueCache.Operations;
 
 /// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.</summary>
 [SupportedOSPlatform("windows")]
-public sealed record DiskTarget(char Letter, int Number, long Bytes, string Instance)
+public sealed record DiskTarget(char Letter, int Number, long Bytes, string Instance,
+    bool IsBoot = false, bool IsSystem = false, bool IsPaging = false)
 {
     public string Root => $"{Letter}:\\";
     public string Device => $"PhysicalDrive{Number}";
@@ -32,7 +33,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         info.ArgumentList.Add("-NoProfile");
         info.ArgumentList.Add("-Command");
         // Only an already validated ASCII letter enters this script. Native volume extents are checked as well.
-        info.ArgumentList.Add($"$ErrorActionPreference='Stop'; $p=@(Get-Partition -DriveLetter {letter}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); [pscustomobject]@{{Letter='{letter}';Number=[int]$d.Number;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID}} | ConvertTo-Json -Compress");
+        info.ArgumentList.Add($"$ErrorActionPreference='Stop'; $p=@(Get-Partition -DriveLetter {letter}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); $paging=@(Get-CimInstance Win32_PageFileUsage | ForEach-Object {{ (Get-Partition -DriveLetter $_.Name.Substring(0,1)).DiskNumber }}); [pscustomobject]@{{Letter='{letter}';Number=[int]$d.Number;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsPaging=[bool]($paging -contains $d.Number)}} | ConvertTo-Json -Compress");
         using var process = Process.Start(info) ?? throw new IOException("Cannot inspect disk.");
         var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(cancellationToken);

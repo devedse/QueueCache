@@ -813,20 +813,24 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     case QcEnable:
         if (c->BlockedPlacement)
             status = STATUS_INVALID_DEVICE_STATE;
-        // Until A07 qualifies these nonpageable lifetime paths, never activate
-        // volatile write caching underneath paging, hibernation or dump files.
-        // The usage notifications themselves remain ordered and may disable an
-        // already-active cache if Windows adds such a path concurrently.
-        else if (QcCachePagingPathCount(c) > 0)
-            status = STATUS_NOT_SUPPORTED;
         else if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096))
             status = STATUS_DEVICE_NOT_READY;
         else if (!NT_SUCCESS(c->State.LastError))
             status = c->State.LastError;
         else
         {
-            c->Enabled = TRUE;
-            ++c->Generation;
+            // Dispatch holds this same lock while it reserves an incoming
+            // paging/hibernation/dump path. Keep it through Enabled transition.
+            KIRQL irql;
+            KeAcquireSpinLock(c->RoutingLock, &irql);
+            if (QcCachePagingPathCount(c) > 0)
+                status = STATUS_NOT_SUPPORTED;
+            else
+            {
+                c->Enabled = TRUE;
+                ++c->Generation;
+            }
+            KeReleaseSpinLock(c->RoutingLock, irql);
         }
         break;
     case QcRetry:
@@ -1453,6 +1457,29 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         }
         return status;
     }
+    if (QcTrackedUsageNotification(stack))
+    {
+        // In-path was reserved under QueueLock before this request entered the
+        // worker. Disable before forwarding so later requests cannot use a cache
+        // underneath a newly accepted paging/hibernation/dump path.
+        auto status = QcCacheBarrier(c, TRUE, QcOrderedBarrier, irp);
+        if (NT_SUCCESS(status))
+        {
+            AcquireCache(c);
+            ClearClean(c);
+            Publish(c);
+            ReleaseCache(c);
+            status = OriginalIo(c, irp);
+        }
+        if (stack->Parameters.UsageNotification.InPath)
+        {
+            if (!NT_SUCCESS(status))
+                QcCacheRecordUsage(c, FALSE);
+        }
+        else if (NT_SUCCESS(status))
+            QcCacheRecordUsage(c, FALSE);
+        return status;
+    }
     if (suspended)
         return STATUS_DEVICE_NOT_READY;
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
@@ -1531,12 +1558,5 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     ReleaseCache(c);
     if (!NT_SUCCESS(status))
         return status;
-    status = OriginalIo(c, irp);
-    if (NT_SUCCESS(status) && stack->MajorFunction == IRP_MJ_PNP &&
-        stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION &&
-        (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
-         stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
-         stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
-        QcCacheRecordUsage(c, stack->Parameters.UsageNotification.InPath);
-    return status;
+    return OriginalIo(c, irp);
 }

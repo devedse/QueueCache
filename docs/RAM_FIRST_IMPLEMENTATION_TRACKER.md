@@ -15,7 +15,7 @@ This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
 row below. Implementation after planning revision 2 advances the executable
-verification contract to plan 12; its new `pressure` VM run is pending.
+verification contract to plan 13; its tightened `pressure` VM run is pending.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -25,8 +25,8 @@ verification contract to plan 12; its new `pressure` VM run is pending.
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054 | PARTIAL | T049 coverage ledger and plan-12 focused `pressure` scenario implemented; drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Managed Release build and host-safe runner contracts pass; exact-build VM `pressure` run pending. Required safety and recovery evidence gates C: activation; A07 design can proceed. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented; source review found a notification/Enable race, so the restriction is not yet proven. | Native/host/CI pass; T068 kernel ordering proof and T067 reported C: crash investigation remain open. No active C: qualification. |
+| A06a / T049-T054, T069 | PARTIAL | T049 coverage ledger and plan-13 `pressure` contract implemented with attempt-vs-completion timing, isolated triggers and slot bounds; drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Native/managed builds and host-safe oracle contracts pass; exact-build VM `pressure` run pending, so T051/T069 remain partial. Required safety and recovery evidence gates C: activation. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 now reserves notifications atomically with routing/Enable, rolls reservations back on rejection/cancellation/lower failure, and management rejects boot/system targets even with zero notifications. | Native Debug/Release and host contracts pass; installed-driver/kernel notification proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
@@ -40,10 +40,11 @@ verification contract to plan 12; its new `pressure` VM run is pending.
 ### Next implementation actions and why this order changed
 
 Review of `34f5dd5` and `437ee42`: both CI runs succeeded, but this is not VM
-verification. Prioritize T068's concrete guard race before relying on that
-restriction. T067 records the owner's earlier large-BMP/Paint/Photos C: crash and
-post-restart application failures; its cause is unknown and it gates C: readiness.
-T069 records gaps in plan-12 trigger/reservation assertions; T051 remains open.
+verification. The T068 source race is repaired locally and plan 13 implements the
+T069 trigger/reservation contract; neither has exact-build VM evidence yet. T067
+records the owner's earlier large-BMP/Paint/Photos C: crash and post-restart
+application failures; its cause is unknown and it gates C: readiness. T051 remains
+open until the strengthened pressure run passes on the installed build.
 Definitions and handoff evidence are in the handover's A07 review-follow-up table.
 This review is source/CI inspection only; it did not reproduce the incident or
 change the driver. A07 engineering, A08 test infrastructure and A09 execution are

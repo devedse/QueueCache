@@ -98,8 +98,6 @@ static NTSTATUS UsageOutCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
 
 static NTSTATUS ForwardUsage(QC_EXTENSION* ext, PIRP irp, BOOLEAN inPath)
 {
-    if (inPath)
-        QcCacheRecordUsage(&ext->Cache, TRUE);
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, inPath ? UsageInCompletion : UsageOutCompletion, ext, TRUE, TRUE, TRUE);
     return IoCallDriver(ext->Lower, irp);
@@ -135,6 +133,17 @@ static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
 #if QCACHE_SERIALIZED_IO
 // Worker foundation: original requests only, NO early acknowledgements or cached data.
 // CSQ owns cancellation while queued; the lower driver owns it after dequeue/forward.
+static constexpr ULONG_PTR UsageReservationMarker = 2;
+
+#if QCACHE_CACHE_DRIVER
+static bool HasUsageReservation(PIRP irp)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    return QcTrackedUsageNotification(stack) && stack->Parameters.UsageNotification.InPath &&
+           irp->Tail.Overlay.DriverContext[2] == reinterpret_cast<PVOID>(UsageReservationMarker);
+}
+#endif
+
 static QC_EXTENSION* QueueOwner(PIO_CSQ csq)
 {
     return CONTAINING_RECORD(csq, QC_EXTENSION, Csq);
@@ -152,7 +161,17 @@ static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert)
     }
     else
     {
-        irp->Tail.Overlay.DriverContext[2] = nullptr; // Last unsuccessful bypass epoch.
+        auto stack = IoGetCurrentIrpStackLocation(irp);
+#if QCACHE_CACHE_DRIVER
+        if (QcTrackedUsageNotification(stack) && stack->Parameters.UsageNotification.InPath)
+        {
+            // QcDispatch reserved this before routing selection. The marker lets
+            // cancellation undo a notification the worker never sees.
+            irp->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(UsageReservationMarker);
+        }
+        else
+#endif
+            irp->Tail.Overlay.DriverContext[2] = nullptr; // Last unsuccessful read-bypass epoch.
         irp->Tail.Overlay.DriverContext[0] = reinterpret_cast<PVOID>(++ext->NextSequence);
         irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(KeQueryPerformanceCounter(nullptr).QuadPart);
         InsertTailList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
@@ -329,6 +348,14 @@ static void QueueRelease(PIO_CSQ csq, KIRQL irql)
 }
 static void QueueCancel(PIO_CSQ csq, PIRP irp)
 {
+#if QCACHE_CACHE_DRIVER
+    auto ext = QueueOwner(csq);
+    if (HasUsageReservation(irp))
+    {
+        QcCacheRecordUsage(&ext->Cache, FALSE);
+        irp->Tail.Overlay.DriverContext[2] = nullptr;
+    }
+#endif
     IoReleaseRemoveLock(&QueueOwner(csq)->RemoveLock, irp);
     Complete(irp, STATUS_CANCELLED);
 }
@@ -515,6 +542,11 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
     if (!NT_SUCCESS(admission))
     {
 #if QCACHE_CACHE_DRIVER
+        if (HasUsageReservation(irp))
+        {
+            QcCacheRecordUsage(&ext->Cache, FALSE);
+            irp->Tail.Overlay.DriverContext[2] = nullptr;
+        }
         if (control)
         {
             KIRQL irql;
@@ -542,6 +574,13 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 #endif
     if (!NT_SUCCESS(status))
     {
+#if QCACHE_CACHE_DRIVER
+        if (HasUsageReservation(irp))
+        {
+            QcCacheRecordUsage(&ext->Cache, FALSE);
+            irp->Tail.Overlay.DriverContext[2] = nullptr;
+        }
+#endif
         IoReleaseRemoveLock(&ext->RemoveLock, irp);
         Complete(irp, status);
     }
@@ -602,29 +641,20 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
         }
 #endif
-        if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION && stack->Parameters.UsageNotification.InPath &&
-            (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
-             stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
-             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
-        {
-            // An active notification must not overtake acknowledged dirty data.
-            // Inactive notification handling stays direct and nonpageable.
-            KIRQL irql;
-            KeAcquireSpinLock(&ext->QueueLock, &irql);
-            const bool routed = ext->Routing != FALSE;
-            KeReleaseSpinLock(&ext->QueueLock, irql);
-            return routed ? QueueRequest(ext, irp) : ForwardUsage(ext, irp, TRUE);
-        }
-        if (stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION && !stack->Parameters.UsageNotification.InPath &&
-            (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
-             stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
-             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile))
+        if (QcTrackedUsageNotification(stack))
         {
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
+            if (stack->Parameters.UsageNotification.InPath)
+                // QcEnable holds this same lock from its count check through the
+                // Enabled transition, so either it rejects or this is ordered next.
+                QcCacheRecordUsage(&ext->Cache, TRUE);
             const bool routed = ext->Routing != FALSE;
+            if (routed && stack->Parameters.UsageNotification.InPath)
+                irp->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(UsageReservationMarker);
             KeReleaseSpinLock(&ext->QueueLock, irql);
-            return routed ? QueueRequest(ext, irp) : ForwardUsage(ext, irp, FALSE);
+            return routed ? QueueRequest(ext, irp)
+                          : ForwardUsage(ext, irp, stack->Parameters.UsageNotification.InPath);
         }
         if (stack->MinorFunction == IRP_MN_START_DEVICE)
         {
@@ -962,6 +992,9 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
 #endif
 #if QCACHE_SERIALIZED_IO
     KeInitializeSpinLock(&ext->QueueLock);
+#if QCACHE_CACHE_DRIVER
+    ext->Cache.RoutingLock = &ext->QueueLock;
+#endif
     KeInitializeEvent(&ext->DirectIdle, NotificationEvent, TRUE);
     InitializeListHead(&ext->Pending);
     ext->ReadSelection.Reset(&ext->Pending);

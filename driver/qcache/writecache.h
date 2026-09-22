@@ -128,6 +128,7 @@ struct QC_CACHE
     PDEVICE_OBJECT Lower;
     KMUTEX Mutex;
     KSPIN_LOCK SnapshotLock;
+    PKSPIN_LOCK RoutingLock; // QueueLock: makes usage reservation and Enable atomic.
     QC_STATE State, Snapshot;
     QC_STATE_V2 ExtendedSnapshot;
     QC_STATE_V3 ReadWriteSnapshot;
@@ -164,6 +165,13 @@ struct QC_CACHE
     volatile LONG Gone, PagingPathCount;
     ULONG DelayMs, InjectFault;
 };
+FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
+{
+    return stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_DEVICE_USAGE_NOTIFICATION &&
+           (stack->Parameters.UsageNotification.Type == DeviceUsageTypePaging ||
+            stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
+            stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile);
+}
 NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT lower);
 void QcCacheDestroy(QC_CACHE* cache);
 void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
