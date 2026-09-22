@@ -27,6 +27,14 @@ evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATI
 | File-level TRIM guard/reuse and range ordering | Filesystem/storage/driver TRIM path | Attached/unfiltered probes both return Win32 326 | Unsupported probe recorded; correctness path unexercised | Enforce support scope or qualify in T056 |
 | Native 4Kn behavior | Sector coverage and filesystem I/O | Current sector scenario explicitly rejects non-512 logical sectors | Unqualified | Exclude/enforce or qualify in A13/T056 |
 
+Review follow-ups: T067 records the pre-A01 C: large-image crash and subsequent
+application failures (cause unknown). T068 identifies a source-level race between
+usage notification and Enable, so the current system-path guard is not a proven
+exclusion. T069 identifies coarse timer-completion checks, watermark attribution
+and unsampled reservation gaps in `pressure`; the trigger/capacity rows above are
+partial implementation, not exact-boundary proof. All three tasks are defined in
+the handover and gate their corresponding C: readiness claims.
+
 The plan-12 managed Release build and host-safe runner contracts pass. The next
 step is the exact installed-build `pressure` VM run. A VM failure keeps T051 open
 and is repaired in the owning path before C: activation. Allocation/cancellation

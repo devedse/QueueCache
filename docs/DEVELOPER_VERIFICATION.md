@@ -56,6 +56,13 @@ The suite restores runtime settings and clears its delay in `finally`. It does n
 cover allocation faults, cancellation, a single request larger than its quota,
 4Kn or TRIM. Those remain in the A06a coverage ledger.
 
+Review limitation (T069): these are coarse progress/byte checks, not exact trigger
+eligibility proof. `DrainedBytes` observes completion, and the quiet windows end
+before the configured trigger times. Watermark sampling may miss a crossing and
+does not isolate age eligibility during a slow workload. Dirty-byte samples do not
+prove total slot/reservation bounds. Keep T051 open until the measurement contract
+and its host/VM proofs address these gaps.
+
 ### Small-write investigation
 
 Plan 9 adds optional `--case-filter` to `write-performance`: a case-sensitive

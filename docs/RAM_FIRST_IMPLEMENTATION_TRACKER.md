@@ -26,7 +26,7 @@ verification contract to plan 12; its new `pressure` VM run is pending.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054 | PARTIAL | T049 coverage ledger and plan-12 focused `pressure` scenario implemented; drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Managed Release build and host-safe runner contracts pass; exact-build VM `pressure` run pending. Required safety and recovery evidence gates C: activation; A07 design can proceed. |
-| A07 / T023-T027 | PARTIAL | T023 system-disk operation map completed. Paging/hibernation/dump usage notifications are counted and ordered; Enable is fail-closed while any such path exists. | Native Debug/Release and host contracts pass; installed-driver verification pending. T024-T027 and active C: qualification remain. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented; source review found a notification/Enable race, so the restriction is not yet proven. | Native/host/CI pass; T068 kernel ordering proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
@@ -38,6 +38,16 @@ verification contract to plan 12; its new `pressure` VM run is pending.
 | A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
 
 ### Next implementation actions and why this order changed
+
+Review of `34f5dd5` and `437ee42`: both CI runs succeeded, but this is not VM
+verification. Prioritize T068's concrete guard race before relying on that
+restriction. T067 records the owner's earlier large-BMP/Paint/Photos C: crash and
+post-restart application failures; its cause is unknown and it gates C: readiness.
+T069 records gaps in plan-12 trigger/reservation assertions; T051 remains open.
+Definitions and handoff evidence are in the handover's A07 review-follow-up table.
+This review is source/CI inspection only; it did not reproduce the incident or
+change the driver. A07 engineering, A08 test infrastructure and A09 execution are
+all needed; completing A08 alone does not repair kernel behavior.
 
 1. T049: map existing proof and missing safety cases to specific code and releases.
    Preserve the incomplete policy precondition run. The source of its late activity

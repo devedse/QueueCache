@@ -71,6 +71,10 @@ Mixed-hit reads currently use an original lower read plus cached-block overlays;
 
 ## Dashboard
 
+Review caveat: the usage-path activation restriction described above has an open
+notification/Enable race (A07/T068). It is not yet a proven safety boundary, and
+active C: use remains unqualified. See the system-disk operation map and handover.
+
 Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 12 adds separate trigger/capacity checks whose exact-build VM run is still pending.
 
 Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.

@@ -5,6 +5,14 @@ disk filter. It records implemented behavior and gaps; it is not a C: support
 claim. Source references name the owning function rather than a historical test
 wrapper.
 
+Review correction: this is an initial map, not a completed synchronization or
+resource-lifetime audit. T068 identifies a race in `437ee42`: dispatch releases
+`QueueLock` after choosing inactive forwarding but before `ForwardUsage` increments
+the usage count. Enable can run in that gap. The table's intended exclusion is
+therefore incomplete and must not be relied on for C: qualification. A zero count
+also does not exclude every boot/system disk. T067 separately records the owner's
+earlier large-image crash; this new race cannot explain an older build's incident.
+
 | Operation / transition | Current path and ordering | Current disposition | Remaining gate |
 |---|---|---|---|
 | Ordinary read/write, cache inactive | `QcDispatch` forwards directly and holds the remove lock through lower completion. | Normal pass-through. | Preserve in A13 compatibility qualification. |
@@ -26,7 +34,7 @@ The previously exported `PagingPathCount` was always zero, so non-OS verificatio
 could not actually enforce its documented pagefile guard. The current implementation
 populates it for paging, hibernation and dump usage notifications, orders a newly
 introduced path behind dirty data, and refuses Enable while the combined count is
-nonzero. This is deliberately fail-closed while A07 is incomplete. Supporting a
+nonzero. This is intended to fail closed, but the T068 race remains open. Supporting a
 pagefile-bearing C: requires an explicit later change with T053/A09 evidence; simply
 removing this guard is not an implementation.
 
