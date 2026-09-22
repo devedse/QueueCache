@@ -112,6 +112,53 @@ internal static class SectorScenarios
             results.Add(new(label + "/disk-oracle", "PASS",
                 $"Exact disk bytes after sparse drains and 128 full/partial overwrites. In-flight state observed: {observedInFlight}."));
         }
+        RunObservedReplacement(target, device, directory, originalErrors, results, token);
+    }
+
+    private static void RunObservedReplacement(DiskTarget target, CacheDevice device, string directory,
+        ulong originalErrors, List<CheckResult> results, CancellationToken token)
+    {
+        const string label = "sectors/observed-inflight-replacement";
+        token.ThrowIfCancellationRequested();
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 1, RetainWrites: false)
+        }, true);
+        using var file = new AlignedFile(Path.Combine(directory, "inflight-replacement.bin"), 4096, true, alignment: 512);
+        var baseline = new byte[4096];
+        new Random(719).NextBytes(baseline);
+        file.Write(0, baseline);
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+        device.Control(WriteCacheAction.LabDelay, value: 2000);
+        var old = new byte[512];
+        var newest = new byte[512];
+        Array.Fill(old, (byte)0x4D);
+        Array.Fill(newest, (byte)0xB6);
+        file.Write(512, old);
+        // A 4 KiB NTFS metadata write can also be in flight here. Only the exact
+        // 512-byte payload interval is useful evidence for this replacement.
+        if (!SpinWait.SpinUntil(() => device.GetWriteCacheState().InFlightBytes == 512, 8000))
+            throw new IOException(label + ": the 512-byte payload did not enter an isolated lower-write interval");
+        var inFlightBefore = device.GetWriteCacheState();
+        file.Write(512, newest);
+        var inFlightAfter = device.GetWriteCacheState();
+        if (inFlightBefore.InFlightBytes != 512 || inFlightAfter.InFlightBytes != 512)
+            throw new IOException(label + ": isolated payload overlap was not observed across replacement");
+        var actual = new byte[512];
+        file.Read(512, actual);
+        if (!newest.AsSpan().SequenceEqual(actual))
+            throw new IOException(label + ": newest acknowledged bytes were not visible in RAM");
+        device.Control(WriteCacheAction.LabDelay, value: 0);
+        device.Control(WriteCacheAction.Disable);
+        file.Read(512, actual);
+        var final = device.GetWriteCacheState();
+        if (!newest.AsSpan().SequenceEqual(actual) || final.DirtyBytes != 0 || final.InFlightBytes != 0 ||
+            final.LastError != 0 || final.Errors != originalErrors)
+            throw new IOException(label + ": newest bytes were not persisted after Disable");
+        results.Add(new(label, "PASS", $"Observed in-flight bytes before/after newer admission " +
+            $"{inFlightBefore.InFlightBytes}/{inFlightAfter.InFlightBytes}; newest RAM and disk bytes matched. " +
+            "This does not prove a fully controlled old/new completion interleaving."));
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]

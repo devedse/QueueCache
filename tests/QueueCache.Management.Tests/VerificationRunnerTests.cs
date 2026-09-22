@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 16, "drain-decision metadata measurement contract version");
+        Check(VerificationPlan.Version == 17, "policy overlap verification contract version");
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {

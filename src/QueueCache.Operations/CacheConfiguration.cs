@@ -61,7 +61,10 @@ public static class ConfigurationManager
     {
         using var gate = ConfigurationGate.Enter();
         configuration.Validate(acceptVolatileFlush);
-        target.CheckExtents();
+        // An inspected volume can be remapped between inventory and Apply (including
+        // saved-profile startup). Recheck its physical extent and PnP identity at
+        // the last boundary before opening the disk for any state change.
+        target.ValidateCurrent();
         using var device = new CacheDevice(target.Device, writable: true);
         var initial = device.GetWriteCacheState();
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);

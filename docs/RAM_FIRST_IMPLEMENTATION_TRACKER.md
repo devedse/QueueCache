@@ -14,11 +14,13 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 16: plan-14 `pressure`
+row below. The executable verification contract is plan 17: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
 completed 24/24 with clean restoration; the tuning decision remains open.
+Plan 17 adds an observed in-flight replacement case to `policies`, pending
+exact-build VM proof. It does not complete deterministic T052 ordering.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -28,8 +30,8 @@ completed 24/24 with clean restoration; the tuning decision remains open.
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 pressure checks passed; installed 0.4.67.1 plan-16 drain comparison completed 24/24. T050 tuning/acceptance decision and T052-T054 remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 now reserves notifications atomically with routing/Enable, rolls reservations back on rejection/cancellation/lower failure, and management rejects boot/system targets even with zero notifications. | Native Debug/Release and host contracts pass; installed-driver/kernel notification proof and T067 reported C: crash investigation remain open. No active C: qualification. |
+| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression, but controlled ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 pressure checks passed; installed 0.4.67.1 plan-16 drain comparison completed 24/24. New overlap case needs exact-build VM proof; T050 tuning and T052-T054 remain. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Host contracts pass; installed-driver/kernel notification proof, restore-path VM proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
@@ -545,6 +547,40 @@ foreground-tail expectations for the declared alpha workload, then perform a
 focused discriminating request-shape/concurrency check only if needed. Any
 performance-affecting driver edit requires the fresh 72-case baseline and
 focused before/after regression. This does not advance C: readiness.
+
+### A06a T052 and A07 T026 source checkpoint: 2026-09-22
+
+Plan 17 adds a bounded `policies` observation of a same-range 512-byte overwrite
+while exactly 512 bytes are reported in flight before and after the new write,
+excluding a 4 KiB metadata write as a false observation.
+It compares the newest RAM read and the disabled-cache disk read with independent
+expected bytes. The existing two-second delay is cleared and the original
+configuration restored by the supported runner. This strengthens a previously
+incidental overlap check but does not identify the exact old-version completion
+after the new admission; T052's forced ordering, later sparse-segment failure,
+Strict/explicit flush cutoff and retry proof remain open. Host-safe tests and
+self-contained CLI publish pass. A split-CLI/installed-0.4.67.1 preliminary
+`policies` run `QueueCache-Verify-20260922-201030-23a0ab480300417a925bb0c0aff32301`
+completed 1/1 and restored cleanly, but its new check accepted 4,096 in-flight
+bytes: this could have been metadata and is not overlap evidence. Its raw 43-file
+run is retained privately as `plan17-preliminary-policies-ambiguous4096`.
+After tightening the oracle to exactly 512 bytes, preliminary run
+`QueueCache-Verify-20260922-201430-a177b8107f4547f0a05d4a1a7ee1f8ee`
+completed 1/1 with 31 policy checks passing. It recorded 512/512 in-flight
+bytes before/after replacement, newest RAM and disabled-cache disk bytes, and
+clean restoration to the original active 2 GiB Fast/Idle profile with zero
+dirty/in-flight bytes and errors. The 43-file raw set is retained privately as
+`plan17-preliminary-policies-exact512`. This is split-CLI evidence, not the
+exact packaged plan-17 build or the fully controlled T052 interleaving.
+
+For A07/T026, `ConfigurationManager.Apply` now calls `DiskTarget.ValidateCurrent`
+instead of checking only the volume extent. This rechecks the PnP identity and
+NTFS mount immediately before opening the physical disk for a configuration
+change, including saved-profile restore. The existing host identity/replacement
+contracts pass. The preliminary policy run exercised Apply on Q: with the new
+managed code, but saved-profile restore and the exact packaged plan-17 build
+remain unverified.
+This does not lift the boot/system/paging restriction or imply C: support.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

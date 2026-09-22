@@ -5,12 +5,14 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 16. Corrected plan-14 `pressure`
+The executable verification contract is plan 17. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
 completed 24/24 with clean restoration. The tuning decision remains open; see
-the tracker for measurements and limitations.
+the tracker for measurements and limitations. Plan 17 adds a partial T052
+overlap observation and an A07/T026 last-boundary identity recheck; exact-build
+VM verification is pending.
 
 ## 1. Start here
 
@@ -72,8 +74,8 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A04 | TRUE | Removed obsolete engine/build/tools; one current driver. | Native builds, CI and installed-build quick/policy checks passed. Compatibility service/schema names remain deliberately. | Fixes and tests apply to one shipped implementation. |
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
-| A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. | Exact installed 0.4.64.1 pressure checks and exact installed 0.4.67.1 drain comparison completed. T050 tuning decision and T052-T054 remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired and boot/system targets are also rejected by management. | Native Debug/Release and host contracts pass; kernel notification/installed-driver proof pending. T024-T027 and incident T067 remain. | Establishes an enforceable interim boundary while system-disk behavior is engineered. |
+| A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. | Exact installed 0.4.64.1 pressure checks and exact installed 0.4.67.1 drain comparison completed. New overlap check needs VM proof; T050 tuning and deterministic T052-T054 remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
+| A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired, boot/system targets are rejected, and Apply now rechecks mounted disk identity immediately before opening it. | Host contracts pass; new identity boundary needs VM proof, kernel notification proof is pending, and T024-T027/incident T067 remain. | Reduces the chance of applying a saved profile to a disk remapped after inventory. |
 | A08 | FALSE | Guarded C: file-only verification pending. | No new C: suite command exists yet. | Tests the OS disk with durable independent expected results and strict target guards. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist. | Install/upgrade failure/uninstall/offline recovery matrix and final docs remain. | Installation and maintenance failures have a tested way out. |

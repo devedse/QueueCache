@@ -136,6 +136,24 @@ limitations and still-open tuning decision are in the execution tracker. Do not
 interpret `MEASURED` or the no-pending-drain/uncached controls as a performance
 acceptance verdict or physical-disk limit.
 
+Plan 17 adds `sectors/observed-inflight-replacement` to the existing `policies`
+suite on 512-byte-sector secondary disks. It uses the bounded 2-second delay,
+requires an exact 512-byte in-flight count before and after a same-range
+replacement (not an unrelated 4 KiB metadata write),
+checks the newest live bytes, then disables caching and checks disk bytes. The
+runner still owns hook reset and runtime restoration. This is a useful observed
+overlap regression, not a controlled completion-order handshake and not full
+T052 proof. The first split-CLI smoke run accepted an unrelated 4 KiB in-flight
+count; its raw evidence is retained privately as
+`plan17-preliminary-policies-ambiguous4096`. The stricter split-CLI run
+`QueueCache-Verify-20260922-201430-a177b8107f4547f0a05d4a1a7ee1f8ee`
+completed with 31/31 policy checks, 512/512 in-flight bytes around replacement,
+newest RAM/disk bytes and clean restoration; raw evidence is retained as
+`plan17-preliminary-policies-exact512`. The exact packaged plan-17 VM run
+remains pending. `ConfigurationManager.Apply`
+also rechecks the selected disk's mounted extent and PnP identity immediately
+before opening it for a state change, including saved-profile restore.
+
 ### Small-write investigation
 
 Plan 9 adds optional `--case-filter` to `write-performance`: a case-sensitive
