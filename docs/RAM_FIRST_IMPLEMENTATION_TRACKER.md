@@ -15,17 +15,18 @@ This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
 row below. Implementation after planning revision 2 advances the executable
-verification contract to plan 14; its corrected `pressure` VM rerun is pending.
+verification contract to plan 14; its corrected `pressure` VM rerun passed on the
+exact installed 0.4.64.1 build.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
 | A01 / T001-T003 | TRUE | Starting work and evidence preserved. | Host checks and VM identity/state checkpoint recorded. |
 | A02 / T004-T008 | TRUE, scoped | Restoration sequencing and V3 drain attribution delivered. | Focused Q1/Q32 cleanup completed on 0.4.51.1. Lower-I/O dominance does not prove a hardware limit; the optimization decision is now T050. |
-| A03 / T009-T011 | TRUE, scoped | Consistent Fast/Idle defaults and saved-profile preservation. | 0.4.57.1 fitting foreground/background case passed. Exact trigger/capacity pressure qualification is T051. |
+| A03 / T009-T011 | TRUE, scoped | Consistent Fast/Idle defaults and saved-profile preservation. | 0.4.57.1 fitting foreground/background case passed. Plan-14 exact trigger/capacity pressure qualification passed on 0.4.64.1 through T051/T069. |
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 coverage ledger and plan-14 `pressure` contract implemented with attempt-vs-completion timing, isolated triggers and slot bounds; drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.63.1 plan-13 run passed six trigger/Automatic/Fixed50/Fixed100 subchecks, then exposed an over-strict Fixed0 read-slot oracle and restored cleanly. Plan-14 exact-build rerun pending, so T051/T069 remain partial. |
+| A06a / T049-T054, T069 | PARTIAL | T049 coverage ledger and plan-14 `pressure` contract implemented with attempt-vs-completion timing, isolated triggers and slot bounds; T051/T069 are complete. Drain decision, deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 run passed all seven trigger and allocation checks with independent persisted-byte oracles and clean restoration. T050 and T052-T054 remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 now reserves notifications atomically with routing/Enable, rolls reservations back on rejection/cancellation/lower failure, and management rejects boot/system targets even with zero notifications. | Native Debug/Release and host contracts pass; installed-driver/kernel notification proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
@@ -39,12 +40,11 @@ verification contract to plan 14; its corrected `pressure` VM rerun is pending.
 
 ### Next implementation actions and why this order changed
 
-Review of `34f5dd5` and `437ee42`: both CI runs succeeded, but this is not VM
-verification. The T068 source race is repaired and plan 14 implements the corrected
-T069 trigger/reservation contract; final exact-build VM evidence remains pending. T067
+Review of `34f5dd5` and `437ee42`: both CI runs succeeded, but this alone is not VM
+verification. The T068 source race is repaired. Plan 14 implements the corrected
+T069 trigger/reservation contract and its exact-build 0.4.64.1 VM run passed. T067
 records the owner's earlier large-BMP/Paint/Photos C: crash and post-restart
-application failures; its cause is unknown and it gates C: readiness. T051 remains
-open until the strengthened pressure run passes on the installed build.
+application failures; its cause is unknown and it gates C: readiness.
 Definitions and handoff evidence are in the handover's A07 review-follow-up table.
 This review is source/CI inspection only; it did not reproduce the incident or
 change the driver. A07 engineering, A08 test infrastructure and A09 execution are
@@ -59,7 +59,7 @@ all needed; completing A08 alone does not repair kernel behavior.
    not prove the physical disk is the limiting component. No scheduler rewrite or
    performance improvement is established by those counters alone.
 3. Use the completed A07/T023 operation map to implement T024-T026. Complete
-   T051-T053 for capacity, timing, deterministic ordering and the reachable
+   T052-T053 for deterministic ordering and the reachable
    allocation/lifetime/cancel paths before active C: caching. The current
    paging/hibernation/dump restriction stays enforced until its replacement is
    qualified; unchanged code is not automatically safe for broader exposure.
@@ -478,6 +478,28 @@ all workloads. T050 makes the lower-I/O optimization decision explicit before th
 final performance stage; A13-A16 retain production safety/security/qualification
 work beyond the private alpha. No new implementation or VM result is claimed by
 this planning update.
+
+### A06a T051/T069 exact pressure qualification: 2026-09-22
+
+Plan-14 run
+`QueueCache-Verify-20260922-130140-5a38d389f7694633bb31d489d7fa816b`
+completed on installed 0.4.64.1 from
+`bd60725121df4572fb4f77936170cefac60dcf0c`. The running and packaged SYS hashes
+both matched
+`1EA460969A068E047D6B11BE9C828ECEED9DB229C08A2F8A9E531E60E2A0819E`.
+Deferred first-dirty age, Idle last-write timing, Balanced high watermark,
+Automatic, Fixed 50%, Fixed 100% and Fixed 0% all passed. Every allocation case
+verified its independent 80 MiB expected image after Disable. Fixed 0 recorded
+zero dirty, in-flight and write-owned payload while permitting 16 read-cache
+slots, with 1,281 ordered quota-barrier/lower-write attempts and no capacity wait.
+
+`FINISHED.txt`, `status.json`, `SUMMARY.md`, `results.json` and `run.log` agree on
+COMPLETED/PASS. Telemetry readiness was true, the control trace was nonempty and
+there was no failure/restoration-failure marker or log error. Restoration returned
+Q: to active 2 GiB Fast/Idle with zero dirty/in-flight bytes and errors. The 43-file
+raw evidence set is retained privately as `pressure-plan14-0641-exact-results`.
+This closes T051/T069, not T050 or the allocation/cancellation/lifecycle and
+recovery work in T052-T054. It makes no C: readiness claim.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

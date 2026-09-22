@@ -61,7 +61,7 @@ bound sampled dirty, in-flight and occupied-slot ownership to the payload/write
 pool, then disable and compare every 64 KiB block. Fixed 0 requires its explicit
 quota barrier, no capacity wait and zero write-payload ownership. Host oracle contracts
 reject early/late triggers and invalid reservation bounds. Exact-build VM execution
-is still required before T051/T069 can close. Allocation faults, cancellation, a
+passed on 0.4.64.1, closing T051/T069. Allocation faults, cancellation, a
 single request larger than its quota, 4Kn and TRIM remain in the A06a ledger.
 
 Plan 14 corrects the Fixed 0% reservation oracle after the first installed plan-13
@@ -70,6 +70,15 @@ forbid independent read-cache slots in the remaining pool. Total occupied slots
 remain bounded by total payload. The failed plan-13 run is preserved as incomplete;
 its trigger and Fixed 50/100/Automatic subchecks passed, but it is not relabelled or
 combined with a later run.
+
+The exact plan-14 run
+`QueueCache-Verify-20260922-130140-5a38d389f7694633bb31d489d7fa816b`
+completed all seven subchecks on installed 0.4.64.1 from commit `bd60725`, with
+loaded SYS SHA-256
+`1EA460969A068E047D6B11BE9C828ECEED9DB229C08A2F8A9E531E60E2A0819E`.
+It recorded ready telemetry and a nonempty control trace, preserved independent
+persisted-byte checks, and restored the original active 2 GiB Fast/Idle profile
+with zero dirty/in-flight bytes and errors.
 
 ### Small-write investigation
 

@@ -6,7 +6,8 @@ controlled milestone: a private recoverable-VM alpha including Fast caching on t
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
 The first implementation following this revision advances the executable verification
-contract to plan 14 with the corrected `pressure` suite; VM rerun is pending.
+contract to plan 14 with the corrected `pressure` suite; its exact-build VM run
+passed on 0.4.64.1.
 
 ## 1. Start here
 
@@ -64,11 +65,11 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 |---|---|---|---|---|
 | A01 | TRUE | Preserved work and established the starting checkpoint. | Host checks and exact prior failures/recoveries recorded. | Future decisions use identifiable code and trustworthy evidence. |
 | A02 | TRUE, scoped | Fixed runner restoration ordering; added V3 drain timing. | Q1/Q32 cleanup regressions completed on 0.4.51.1. About 99.4% of one observed drain was in lower-I/O wait. Throughput cause within that path is still open in T050. | Reliable cleanup and an actionable location for performance investigation. |
-| A03 | TRUE, scoped | Coherent Fast/Idle defaults in native/managed/CLI/UI; saved choices preserved. | 0.4.57.1 policy run passed 30 checks, including 60 seconds of writes/reads during drain. Capacity exhaustion and precise timer-boundary qualification remain in T051. | Useful default behavior with measured foreground responsiveness. |
+| A03 | TRUE, scoped | Coherent Fast/Idle defaults in native/managed/CLI/UI; saved choices preserved. | 0.4.57.1 policy run passed 30 checks, including 60 seconds of writes/reads during drain. Plan-14 capacity and timer-boundary qualification passed on 0.4.64.1 through T051/T069. | Useful default behavior with measured foreground responsiveness. |
 | A04 | TRUE | Removed obsolete engine/build/tools; one current driver. | Native builds, CI and installed-build quick/policy checks passed. Compatibility service/schema names remain deliberately. | Fixes and tests apply to one shipped implementation. |
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
-| A06a | PARTIAL | T049 coverage ledger and plan-14 `pressure` contract implemented with attempt timing, isolated triggers and reservation bounds. | Installed plan-13 run passed six subchecks but found an over-strict Fixed0 read-slot oracle; restoration passed. Plan-14 host proof and exact-build rerun remain, along with T050 and T052-T054. | Prevents known gaps and performance questions from disappearing behind completed labels. |
+| A06a | PARTIAL | T049 coverage ledger and plan-14 `pressure` contract implemented with attempt timing, isolated triggers and reservation bounds; T051/T069 are complete. | Exact installed 0.4.64.1 plan-14 run passed all seven trigger/allocation subchecks and restored cleanly. T050 and T052-T054 remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
 | A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired and boot/system targets are also rejected by management. | Native Debug/Release and host contracts pass; kernel notification/installed-driver proof pending. T024-T027 and incident T067 remain. | Establishes an enforceable interim boundary while system-disk behavior is engineered. |
 | A08 | FALSE | Guarded C: file-only verification pending. | No new C: suite command exists yet. | Tests the OS disk with durable independent expected results and strict target guards. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
@@ -80,13 +81,12 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest verified installed candidate: 0.4.57.1 from
-`a07013f7f474b4b9018254fdb8b4ac4a4b2809bf`, SYS SHA-256
-`A2C4BCB38F57C1D6D6185EC4E74451C8EABD4DF9F262AD965F8D30DE60233935F`.
+Latest verified installed candidate: 0.4.64.1 from
+`bd60725121df4572fb4f77936170cefac60dcf0c`, SYS SHA-256
+`1EA460969A068E047D6B11BE9C828ECEED9DB229C08A2F8A9E531E60E2A0819E`.
 The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
-bytes and no active fault. Two cumulative error events were deliberately injected;
-they are distinct from a current fault or a new unexpected error. Recheck live
-identity/state before another workload. These facts do not establish C: support.
+bytes and zero errors. Recheck live identity/state before another workload. These
+facts do not establish C: support.
 
 ### What A02 proves and how it changes the work
 
@@ -331,7 +331,7 @@ Their numbers extend the task list without renumbering earlier work.
 |---|---|---|
 | T067 / A07, A06a; validation in A08/A09 | Investigate the reported pre-A01 C: incident: cache enabled, Steam game installed, roughly 350 MB BMP edited/saved in Paint, then possibly opened in Photos while draining; memory-related BSOD, followed by QueueCache and Photos failing to launch. Reinstall restored QueueCache; snapshot rollback restored the VM. Exact version, mode, budget, stop code and drain state are unknown. Treat these as observations, not a diagnosed cause. | OPEN. Recover exact build/source/hash, VM RAM/cache budget, policy, pagefile/dump settings and any surviving dump/Event Log before reproduction. Snapshot rollback may have removed evidence; record that honestly. Separate the initial crash from post-crash lost-write damage. Inspect paging/mapped-file reads, MDL/pin/slot lifetime, resource pressure and concurrent drain/overwrite. Reproduce only in the recoverable VM after the existing recovery prerequisites, first using maintained file/pressure scenarios, then a bounded large-image workflow with off-target evidence. Do not waive an unexplained normal-operation BSOD as Fast-mode volatility. Close with a root-cause fix/regression, or an explicit unresolved-incident release restriction; no active-C: readiness claim while unexplained. |
 | T068 / A07, before relying on T025 restrictions | Repair and deterministically test usage-notification/Enable synchronization in `437ee42`. Dispatch read `Routing` under `QueueLock`, unlocked, then incremented the count, allowing concurrent Enable to observe zero. | PARTIAL. Dispatch now reserves an in-path count while holding the same routing lock that Enable holds through its count check and Enabled transition. Queued rejection/cancellation and lower failure roll the reservation back; successful out-path completion decrements it. A compile-time interleaving contract and native builds pass. Management separately rejects boot/system disks even at count zero. Exact installed-driver notification success/failure/cancellation evidence is still required; this is not a diagnosed cause of the older T067 incident. |
-| T069 / A06a, completes T051 measurement contract | Tighten the original plan-12 `pressure` evidence before claiming exact trigger boundaries or bounded reservations. | PARTIAL in plan 14. The installed 0.4.63.1 plan-13 run passed Deferred, Idle, watermark, Automatic, Fixed50 and Fixed100 checks, then correctly remained INCOMPLETE because Fixed0 observed legitimate read-cache slots. Plan 14 now distinguishes zero write ownership from total read/write occupancy while retaining the total-payload bound. Host contracts and an exact-build rerun remain required before T051/T069 close. |
+| T069 / A06a, completes T051 measurement contract | Tighten the original plan-12 `pressure` evidence before claiming exact trigger boundaries or bounded reservations. | COMPLETE in plan 14. The exact installed 0.4.64.1 run `QueueCache-Verify-20260922-130140-5a38d389f7694633bb31d489d7fa816b` passed Deferred, Idle, watermark, Automatic, Fixed50, Fixed100 and Fixed0 with independent persisted-byte checks. Telemetry readiness and control trace were present; restoration returned Q: to active 2 GiB Fast/Idle with zero dirty/in-flight bytes and errors. The earlier plan-13 run remains preserved as incomplete. |
 
 Do not infer C: support from class-filter attachment or the presence of a C:
 card in the UI. The cache operates on a physical disk, including other partitions
