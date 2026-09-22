@@ -1,0 +1,49 @@
+using QueueCache.Operations;
+
+namespace QueueCache.Developer.Verification;
+
+/// <summary>Read-only OS-disk inventory gate. It never enables caching or writes a workload.</summary>
+public static class SystemPreflightGuard
+{
+    public static void ValidateOptions(VerificationOptions options)
+    {
+        if (options.Suite != "system-preflight")
+        {
+            if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm)
+                throw new ArgumentException("System-disk opt-in arguments are only valid for system-preflight.");
+            return;
+        }
+        if (!string.Equals(options.Volume, "C:", StringComparison.OrdinalIgnoreCase) ||
+            !options.RecoverableVm || string.IsNullOrWhiteSpace(options.SystemInstance) ||
+            options.SystemBytes is null or <= 0)
+            throw new ArgumentException("system-preflight requires C:, --recoverable-vm, --system-instance and --system-bytes.");
+        if (options.DiskSpd is not null || options.CaseFilter is not null)
+            throw new ArgumentException("system-preflight does not accept DiskSpd or case filters.");
+    }
+
+    public static void ValidateTargets(DiskTarget target, DiskTarget output,
+        string expectedInstance, long expectedBytes)
+    {
+        if (target.Letter != 'C' || !target.IsBoot || !target.IsSystem ||
+            target.Bytes != expectedBytes ||
+            !string.Equals(target.Instance, expectedInstance, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("C: boot/system disk identity does not match the explicit expected target.");
+        if (output.Number == target.Number ||
+            string.Equals(output.Instance, target.Instance, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("System-disk results must be on a different physical disk.");
+    }
+
+    public static string OutputVolume(string outputDirectory)
+    {
+        var full = Path.GetFullPath(outputDirectory);
+        if (!Directory.Exists(full))
+            throw new IOException("system-preflight output directory must already exist on another physical disk.");
+        var root = Path.GetPathRoot(full);
+        if (root is null || root.Length != 3 || !char.IsAsciiLetter(root[0]) || root[1] != ':' || root[2] != '\\')
+            throw new IOException("system-preflight output must use an explicit local drive letter on another disk.");
+        for (var path = new DirectoryInfo(full); path is not null; path = path.Parent)
+            if ((path.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("System-disk result path cannot traverse a reparse point.");
+        return root[..2];
+    }
+}

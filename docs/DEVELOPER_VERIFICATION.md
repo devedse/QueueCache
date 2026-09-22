@@ -16,11 +16,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 17)
+## Suites (plan version 18)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
+| `system-preflight` | Read-only C: disk-identity and cache-state observation. Requires `--recoverable-vm`, exact `--system-instance`/`--system-bytes`, and an existing `--output` directory on a different physical disk with no reparse-point path. No workload files, cache controls, faults, TRIM or reboot. This does not qualify active C: caching or implement the A08 file oracle. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |

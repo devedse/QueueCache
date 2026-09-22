@@ -11,7 +11,8 @@ namespace QueueCache.Developer.Verification;
 public sealed record WorkerJob(string Operation, string Volume, string Reply, DiskTarget? Expected = null,
     CacheConfiguration? Configuration = null, WriteCacheAction Action = WriteCacheAction.Flush,
     ulong Value = 0, string? Recovery = null, int Seconds = 0, string? StopFile = null,
-    string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null);
+    string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
+    string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -91,6 +92,27 @@ public static class VerificationWorker
         }
         else
             target = await DiskTarget.InspectAsync(job.Volume);
+        if (job.Operation == "system-preflight")
+        {
+            if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
+                throw new IOException("Missing explicit recoverable-VM acknowledgement or expected system-disk identity.");
+            var outputVolume = SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!);
+            var output = await DiskTarget.InspectAsync(outputVolume);
+            target.ValidateCurrent();
+            output.ValidateCurrent();
+            SystemPreflightGuard.ValidateTargets(target, output, job.SystemInstance, job.SystemBytes.Value);
+            using var observation = new CacheDevice(target.Device, writable: false);
+            var state = observation.GetWriteCacheState();
+            if (state.DeviceBytes != (ulong)target.Bytes)
+                throw new IOException("System-disk driver size disagrees with inventory.");
+            RunStorage.AtomicJson(job.Reply, new
+            {
+                Target = target, Output = output, State = state,
+                Statistics = observation.GetStatistics(), Observed = DateTimeOffset.UtcNow,
+                CacheMutation = false, WorkloadMutation = false
+            });
+            return 0;
+        }
         if (job.Operation is "capture-file" or "trim-file")
         {
             var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);

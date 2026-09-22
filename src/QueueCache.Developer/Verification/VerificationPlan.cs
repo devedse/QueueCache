@@ -25,12 +25,13 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 17;
+    public const int Version = 18;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
+        "system-preflight",
         "policies",
         "pressure",
         "drain-decision",
@@ -67,6 +68,7 @@ public static class VerificationPlan
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
     {
         "quick" => [new("file-integrity", "files")],
+        "system-preflight" => [new("system-preflight", "system-preflight")],
         "policies" => [new("policy-integrity", "policies")],
         "pressure" => [new("pressure-integrity", "pressure")],
         "full" => [new("file-integrity", "files"), new("policy-integrity", "policies")],
@@ -259,6 +261,7 @@ public static class VerificationPlan
         {
             throw new ArgumentException("Unknown verification suite.");
         }
+        SystemPreflightGuard.ValidateOptions(options);
         if (options.CaseFilter is not null &&
             (options.Suite is not ("write-performance" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
             throw new ArgumentException("--case-filter requires write-performance or drain-decision and a nonempty case-sensitive ID substring.");

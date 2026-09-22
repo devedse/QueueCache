@@ -129,6 +129,16 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         fileTarget = null;
+        if (selected.Suite == "system-preflight")
+        {
+            var outputVolume = SystemPreflightGuard.OutputVolume(selected.Output);
+            var system = await DiskTarget.InspectAsync(selected.Volume, token);
+            var output = await DiskTarget.InspectAsync(outputVolume, token);
+            system.ValidateCurrent(token);
+            output.ValidateCurrent(token);
+            SystemPreflightGuard.ValidateTargets(system, output, selected.SystemInstance!, selected.SystemBytes!.Value);
+            fileTarget = system;
+        }
         options = selected with
         {
             Output = Path.GetFullPath(selected.Output),
@@ -148,7 +158,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
-        Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
+        if (options.Suite != "system-preflight")
+            Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
+        else
+            Log("Read-only system-disk inventory only; no workload, cache configuration or restoration action.");
         if (options.CaseFilter is not null)
             Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count} cases, not the complete suite matrix.");
         storage.Write("manifest.json", new
@@ -177,7 +190,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         try
         {
             DiskTarget target;
-            if (options.Suite == "trim-file")
+            if (options.Suite == "system-preflight")
+            {
+                target = fileTarget!;
+                storage.Write("restoration.json", new { Required = false, Reason = "Read-only inventory; no cache or workload mutation." });
+            }
+            else if (options.Suite == "trim-file")
             {
                 var identity = await Worker(new("capture-file", options.Volume, storage.PathFor("target.json")), deadline.Token);
                 target = fileTarget = JsonSerializer.Deserialize<DiskTarget>(await File.ReadAllTextAsync(identity, deadline.Token))!;
@@ -192,16 +210,25 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             var leases = LeaseDirectory;
             Directory.CreateDirectory(leases);
             diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            captured = options.Suite != "trim-file";
-            workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
-            storage.Write("workloads.json", new
+            captured = options.Suite is not ("trim-file" or "system-preflight");
+            if (options.Suite != "system-preflight")
             {
-                Directory = workDirectory,
-                Retained = true
-            });
+                workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
+                storage.Write("workloads.json", new { Directory = workDirectory, Retained = true });
+            }
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
+                    if (test.Operation == "system-preflight")
+                    {
+                        await Worker(Job(test.Operation) with
+                        {
+                            SystemInstance = options.SystemInstance,
+                            SystemBytes = options.SystemBytes,
+                            RecoverableVm = options.RecoverableVm
+                        }, deadline.Token);
+                        return null;
+                    }
                     if (test.CacheEnabled is { } enabled)
                     {
                         var configuration = CacheConfiguration.FromState(original.State) with
@@ -376,7 +403,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (caseChecks is { Count: 0 } || caseChecks?.Any(check => check.Result is not ("PASS" or "SKIP")) == true)
                 throw new InvalidDataException("Missing or failed file-only checks.");
             var resultStatus = caseChecks?.Any(check => check.Result == "SKIP") == true ? "SKIP" : score is null ? "PASS" : "MEASURED";
-            var detail = caseChecks is null ? "Case completed; raw evidence retained. Performance thresholds require comparison." :
+            var detail = id == "system-preflight" ? "Expected C: identity and separate output disk verified; read-only cache state recorded. No workload or cache changes." :
+                caseChecks is null ? "Case completed; raw evidence retained. Performance thresholds require comparison." :
                 string.Join("; ", caseChecks.Select(check => $"{check.Name}: {check.Detail}"));
             storage.Add(new(id, resultStatus, detail, started, timer.Elapsed.TotalSeconds, score));
             Log($"Case {id}: {resultStatus} ({timer.Elapsed.TotalSeconds:F1}s). {detail}");

@@ -26,7 +26,29 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 17, "policy overlap verification contract version");
+        Check(VerificationPlan.Version == 18, "system-disk preflight contract version");
+        var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
+            SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
+        VerificationPlan.Validate(preflight);
+        Check(VerificationPlan.Integrity(preflight).SequenceEqual(new IntegrityCase[] { new("system-preflight", "system-preflight") }),
+            "system preflight is separate from mutating suites");
+        Reject(() => VerificationPlan.Validate(preflight with { RecoverableVm = false }));
+        Reject(() => VerificationPlan.Validate(preflight with { SystemInstance = null }));
+        Reject(() => VerificationPlan.Validate(preflight with { SystemBytes = null }));
+        Reject(() => VerificationPlan.Validate(preflight with { Volume = "Q:" }));
+        Reject(() => VerificationPlan.Validate(preflight with { Suite = "quick" }));
+        var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
+        var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
+        SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "SCSI\\TEST", 100L << 30);
+        foreach (var invalid in new[] { resultsTarget with { Number = 0 }, resultsTarget with { Instance = "SCSI\\TEST" } })
+        {
+            try { SystemPreflightGuard.ValidateTargets(systemTarget, invalid, "SCSI\\TEST", 100L << 30); throw new Exception("Same-disk results accepted."); }
+            catch (IOException) { }
+        }
+        try { SystemPreflightGuard.ValidateTargets(systemTarget with { IsBoot = false }, resultsTarget, "SCSI\\TEST", 100L << 30); throw new Exception("Non-boot target accepted."); }
+        catch (IOException) { }
+        try { SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "WRONG", 100L << 30); throw new Exception("Wrong identity accepted."); }
+        catch (IOException) { }
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {

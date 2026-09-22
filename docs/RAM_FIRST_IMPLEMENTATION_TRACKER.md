@@ -14,13 +14,14 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 17: plan-14 `pressure`
+row below. The executable verification contract is plan 18: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
 completed 24/24 with clean restoration; the tuning decision remains open.
 Plan 17 adds an observed in-flight replacement case to `policies`; exact installed
-0.4.69.1 VM proof passed. It does not complete deterministic T052 ordering.
+0.4.69.1 VM proof passed. Plan 18 adds a read-only guarded C: preflight, not a
+file workload or active-system-disk qualification. Neither closes T052 ordering.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -32,9 +33,9 @@ Plan 17 adds an observed in-flight replacement case to `policies`; exact install
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Exact 0.4.69.1 driver was running after reboot, C: stayed disabled/clean, and Q: Apply/policy checks passed. Kernel notification proof, saved-profile restore proof and the T067 C: crash investigation remain open. No active C: qualification. |
-| A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
+| A08 / T028-T031 | PARTIAL | Plan-18 `system-preflight` requires explicit recoverable-VM acknowledgement, exact C: disk identity/size, and a separate physical output disk before read-only inventory. | Split-CLI VM preflight passed on installed 0.4.70.1 with C: disabled; bounded file workload, off-target oracle, read-only post-restart mode and busy-C: persistence semantics remain. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
-| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | A copied-SYSTEM-hive dry run passed; real independent offline recovery, full servicing/failure matrix and final product docs remain. |
+| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
 | A13 / T055-T057 | FALSE | Production support contract and safety gap closure planned. | Support scope can be designed during A07; qualification pending. |
@@ -614,6 +615,34 @@ Evidence is private under `recovery-preflight-20260922`. This is only a dry-run
 and does not prove Safe Mode/offline recovery, bootability, or use of that old
 backup as the final rollback choice. The actual recovery rehearsal remains a
 hard gate before C: activation.
+
+### Plan-18 guarded C: observation and recovery-copy checkpoint: 2026-09-22
+
+The owner confirmed external hypervisor console access and reported a restorable
+snapshot. The VM booted exact installed 0.4.70.1 (`eb22dd4`), with loaded and
+packaged SYS SHA-256
+`263F082BD781ADCFE54A56C5FE2FA6AA13FE2F43307E68A7AB27D2A71294541F`.
+C: remained disabled with zero budget/dirty/in-flight/errors. The installed
+recovery script actually restored an independently saved *copy* of the SYSTEM
+hive from the filter-free historical backup. Audit of that copy showed class
+`UpperFilters=[partmgr]`, empty recorded per-device filters and demand-start
+service; live class filters still contained `qcachelab,partmgr`. This proves the
+script's offline-hive edit path on a copy, not an offline/Safe Mode boot or a
+successful VM restore. The sensitive hive copies were deleted after the audit;
+non-sensitive output remains private as `recovery-copy-0701`.
+
+Plan 18 introduces the read-only `system-preflight` suite with explicit expected
+identity/size, recoverable-VM acknowledgement, and a pre-run separate-physical-
+disk output guard. Existing non-OS suites retain their guards. Host-safe runner
+contracts and managed builds passed. A split managed CLI against installed
+0.4.70.1 completed
+`QueueCache-Verify-20260922-214442-4c1bd67cf2904b7b894048801bfe02c1`
+1/1 on C: with report on Q: disk 1. It observed C: disk 0 as boot/system and
+cache disabled/clean, recorded no cache/workload mutation, and finished with
+`FINISHED.txt`, status, summary, results and log. The split CLI is not the exact
+packaged plan-18 build. Wrong expected identity and same-physical-disk output
+both exited nonzero before a new run directory was created. No C: file workload
+or active caching was attempted.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

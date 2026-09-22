@@ -34,6 +34,8 @@ internal static class VerificationCommands
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
+              system-preflight  Read-only C: identity/state check; no workload or cache changes.
+                                 Requires explicit VM acknowledgement, disk identity and off-disk output.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
@@ -68,7 +70,8 @@ internal static class VerificationCommands
             Output: unique QueueCache-Verify-* subfolder of --output (default: current directory).
             Live timestamped progress is also saved to run.log, including errors and waiting messages.
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
-            Run elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
+            Run ordinary suites elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
+            system-preflight is read-only on C: and requires an existing output directory on a different physical disk.
             """);
         var volume = new Argument<string>("volume");
         var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies/pressure/trim-diagnostic/trim-file do not require DiskSpd." };
@@ -81,14 +84,19 @@ internal static class VerificationCommands
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
         var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance or drain-decision: case-sensitive ID substring. A selected run is not the complete matrix." };
+        var systemInstance = new Option<string?>("--system-instance") { Description = "system-preflight only: exact expected C: physical-disk PnP instance ID." };
+        var systemBytes = new Option<long?>("--system-bytes") { Description = "system-preflight only: exact expected C: physical-disk byte size." };
+        var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "system-preflight only: acknowledge a restorable disposable VM with external console access." };
         command.Arguments.Add(volume);
-        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter })
+        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter,
+            systemInstance, systemBytes, recoverableVm })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
             RequireAdministrator();
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
-            p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter)),
+            p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
+            p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm)),
             new ConsoleProgress(), token);
         });
         return command;
