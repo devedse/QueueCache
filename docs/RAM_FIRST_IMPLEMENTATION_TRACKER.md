@@ -17,8 +17,8 @@ not delivered. Completion of an A-step does not complete every original optimiza
 row below. The executable verification contract is plan 16: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
-corrects that assumption; a split-CLI, single-repetition diagnostic completed
-8/8 cases with clean restoration. Its exact-build three-repeat VM run is pending.
+corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
+completed 24/24 with clean restoration; the tuning decision remains open.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -28,7 +28,7 @@ corrects that assumption; a split-CLI, single-repetition diagnostic completed
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 run passed all seven trigger/allocation checks. Plan-15 T050 stopped at case 4/24 on a metadata oracle; a split-CLI plan-16 smoke run completed 8/8. Exact-build three-repeat comparison and T052-T054 remain. |
+| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Deterministic ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 pressure checks passed; installed 0.4.67.1 plan-16 drain comparison completed 24/24. T050 tuning/acceptance decision and T052-T054 remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 now reserves notifications atomically with routing/Enable, rolls reservations back on rejection/cancellation/lower failure, and management rejects boot/system targets even with zero notifications. | Native Debug/Release and host contracts pass; installed-driver/kernel notification proof and T067 reported C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
@@ -55,11 +55,12 @@ all needed; completing A08 alone does not repair kernel behavior.
 1. T049: map existing proof and missing safety cases to specific code and releases.
    Preserve the incomplete policy precondition run. The source of its late activity
    is not established; passing a later run does not diagnose it.
-2. T050: run and review the plan-16 `drain-decision` matrix using existing
-   parallelism/batch controls and matched workloads. About 99.4% lower-I/O wait
-   supports investigating request shape/concurrency and the lower stack; it does
-   not prove the physical disk is the limiting component. No scheduler rewrite or
-   performance improvement is established by those counters alone.
+2. T050: the plan-16 `drain-decision` matrix is now measured. Four drain workers
+   improved the fitting-write median and drain time over one worker, but one
+   repetition varied sharply and cold-read gain was small. Keep parallelism 1
+   as the shipped default while deciding acceptable alpha progress/tail bounds
+   and whether a focused request-shape/concurrency check warrants a change.
+   About 99.4% lower-I/O wait in A02 did not prove a physical-disk limit.
 3. Use the completed A07/T023 operation map to implement T024-T026. Complete
    T052-T053 for deterministic ordering and the reachable
    allocation/lifetime/cancel paths before active C: caching. The current
@@ -502,6 +503,48 @@ Q: to active 2 GiB Fast/Idle with zero dirty/in-flight bytes and errors. The 43-
 raw evidence set is retained privately as `pressure-plan14-0641-exact-results`.
 This closes T051/T069, not T050 or the allocation/cancellation/lifecycle and
 recovery work in T052-T054. It makes no C: readiness claim.
+
+### A06a T050 exact drain comparison: measured, decision open, 2026-09-22
+
+Plan-16 run
+`QueueCache-Verify-20260922-193654-4921265ec92346c8bc77b0a63a587dbb`
+completed 24/24 on elevated VM Q: with the exact installed 0.4.67.1 package
+from `37911d9` (CI 35773052990). The loaded driver path names SYS SHA-256
+`400748178A1BDD3D3875F57B394FA49A58EBFE81501F698738006DF157686B14`;
+the x64 CDM DiskSpd SHA-256 remained
+`7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+Q: was disk 1, nonboot/non-system, with the pagefile on C:. Each of the 18 drain
+conditions seeded the same 256 MiB payload plus 4-16 KiB recorded metadata;
+seed lower-write/flush attempts and measured capacity waits were zero. Every
+case was MEASURED, with its readiness handshake, interval, telemetry and raw
+DiskSpd XML; all 24 immutable IDs matched the manifest. The completion marker,
+status, summary, results and log agree, with no failure marker or log error.
+Restoration returned the original active 2 GiB Fast/Idle profile with zero
+dirty/in-flight bytes and errors. The 3,920-file raw set (13,955,363 bytes) is
+retained privately as `drain-plan16-0671-exact-completed`.
+
+| Workload | No pending drain, median IOPS | Drain p1, median IOPS | Drain p2, median IOPS | Drain p4, median IOPS |
+|---|---:|---:|---:|---:|
+| Fitting random writes | 24,409 | 1,405 | 4,092 | 9,291 |
+| Cold random reads | 3,179 (uncached control) | 2,328 | 2,385 | 2,495 |
+
+The fitting-write p4 results ranged from 2,162 to 10,409 IOPS across three
+repetitions; p1 ranged from 1,371 to 4,027. Median explicit drain flush time was
+15.0/9.5/6.7 seconds at p1/p2/p4 for fitting writes and 4.5/2.4/2.4 seconds
+for cold reads. Median scored write p99 was 0.076/0.072/0.067 ms at p1/p2/p4;
+cold-read p99 was 0.674/0.792/0.672 ms. These score-window tails are not
+whole-operation drain latency. Parallel lower-I/O tick sums are not wall time.
+The uncached cold-read control is not a matched drain, and the no-pending-drain
+write control does not establish a physical-disk limit.
+
+Decision: do not change the shipped p1 default yet. More workers showed a
+promising fitting-write/flush trade-off but substantial variation, while the
+cold-read result was modest. T050's measurement gate is complete; its alpha
+acceptability/tuning decision remains open. Define bounded drain progress and
+foreground-tail expectations for the declared alpha workload, then perform a
+focused discriminating request-shape/concurrency check only if needed. Any
+performance-affecting driver edit requires the fresh 72-case baseline and
+focused before/after regression. This does not advance C: readiness.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

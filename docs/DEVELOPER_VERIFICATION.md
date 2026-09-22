@@ -128,6 +128,14 @@ revised collection contract only. It mixed a local plan-16 CLI with the older
 installed driver, has just one repetition, and does not close T050 or establish
 a performance improvement.
 
+The exact-build plan-16 run on installed/rebooted 0.4.67.1,
+`QueueCache-Verify-20260922-193654-4921265ec92346c8bc77b0a63a587dbb`,
+completed all 24 cases and restored Q: cleanly. Its raw evidence is retained
+privately as `drain-plan16-0671-exact-completed`. The per-condition measurements,
+limitations and still-open tuning decision are in the execution tracker. Do not
+interpret `MEASURED` or the no-pending-drain/uncached controls as a performance
+acceptance verdict or physical-disk limit.
+
 ### Small-write investigation
 
 Plan 9 adds optional `--case-filter` to `write-performance`: a case-sensitive
