@@ -19,8 +19,8 @@ passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
 completed 24/24 with clean restoration; the tuning decision remains open.
-Plan 17 adds an observed in-flight replacement case to `policies`, pending
-exact-build VM proof. It does not complete deterministic T052 ordering.
+Plan 17 adds an observed in-flight replacement case to `policies`; exact installed
+0.4.69.1 VM proof passed. It does not complete deterministic T052 ordering.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -28,13 +28,13 @@ exact-build VM proof. It does not complete deterministic T052 ordering.
 | A02 / T004-T008 | TRUE, scoped | Restoration sequencing and V3 drain attribution delivered. | Focused Q1/Q32 cleanup completed on 0.4.51.1. Lower-I/O dominance does not prove a hardware limit; the optimization decision is now T050. |
 | A03 / T009-T011 | TRUE, scoped | Consistent Fast/Idle defaults and saved-profile preservation. | 0.4.57.1 fitting foreground/background case passed. Plan-14 exact trigger/capacity pressure qualification passed on 0.4.64.1 through T051/T069. |
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
-| A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks; actual offline recovery rehearsal remains T054/A10. |
+| A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression, but controlled ordering/lifetime checks and early recovery rehearsal remain. | Installed 0.4.64.1 plan-14 pressure checks passed; installed 0.4.67.1 plan-16 drain comparison completed 24/24. New overlap case needs exact-build VM proof; T050 tuning and T052-T054 remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Host contracts pass; installed-driver/kernel notification proof, restore-path VM proof and T067 reported C: crash investigation remain open. No active C: qualification. |
+| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Exact 0.4.69.1 driver was running after reboot, C: stayed disabled/clean, and Q: Apply/policy checks passed. Kernel notification proof, saved-profile restore proof and the T067 C: crash investigation remain open. No active C: qualification. |
 | A08 / T028-T031 | FALSE | Guarded C: file-only workflow pending. | No C: suite or post-restart command available yet. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
-| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. | Full servicing/failure matrix and final product docs pending. Recovery prerequisite moves ahead of A09 through T054. |
+| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | A copied-SYSTEM-hive dry run passed; real independent offline recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
 | A13 / T055-T057 | FALSE | Production support contract and safety gap closure planned. | Support scope can be designed during A07; qualification pending. |
@@ -581,6 +581,39 @@ contracts pass. The preliminary policy run exercised Apply on Q: with the new
 managed code, but saved-profile restore and the exact packaged plan-17 build
 remain unverified.
 This does not lift the boot/system/paging restriction or imply C: support.
+
+### Snapshot-era pre-C: checkpoint: 2026-09-22
+
+The owner reported creating a VM snapshot and installing/rebooting 0.4.69.1.
+The elevated VM reported loaded SYS SHA-256
+`544C3211332317A478FA71426C3CDD22E0E3E579C01BC4CA3B57BA184824ACC9`,
+matching the installed package; CLI source identity was `a20d589`. C: was
+disk 0, boot/system, 100 GiB, with a 512 MiB pagefile, cache disabled,
+zero budget/dirty/in-flight/errors. Q: was non-OS disk 1, active 2 GiB
+Fast/Idle, initially clean. No minidump, `MEMORY.DMP` or System BugCheck
+1001 event survived in this snapshot, so T067's old stop code/root cause
+remain unknown. Snapshot existence was reported by the owner, but hypervisor
+console access and a successful snapshot restore were not independently checked.
+
+Exact installed 0.4.69.1 plan-17 `policies` run
+`QueueCache-Verify-20260922-203515-6e3b41080fe34c4099633c29153fde9b`
+finished `COMPLETED`, 1/1 case and 31/31 policy checks. The overlap check saw
+exactly 512/512 in-flight bytes before/after replacement and matching newest
+RAM and disabled-cache disk bytes. Final restoration returned active 2 GiB Q:
+with zero dirty/in-flight/errors. Raw run evidence is retained privately under
+`plan17-exact-0691`; this does not prove the forced T052 failure/ordering cases.
+
+For T054, the VM's newest registration backup still contains `qcachelab`, so
+it is not an emergency filter-removal choice. An older backup
+`Registration-before-2dd7df3bd16f4eabaaeebae8309810ba.json` has class
+`UpperFilters=[partmgr]`, empty per-device filter lists and a demand-start
+legacy service entry. Against a copied live SYSTEM hive, the candidate recovery
+script's `-WhatIf` exited zero and unloaded its temporary hive; a deliberately
+missing recorded disk key exited one before even the class-filter dry-run action.
+Evidence is private under `recovery-preflight-20260922`. This is only a dry-run
+and does not prove Safe Mode/offline recovery, bootability, or use of that old
+backup as the final rollback choice. The actual recovery rehearsal remains a
+hard gate before C: activation.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

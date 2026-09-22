@@ -44,6 +44,23 @@ try
 
     $classPath = Join-Path $systemRoot 'Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
     if (-not (Test-Path -LiteralPath $classPath)) { throw 'Disk class registry key is missing.' }
+    # Validate every recorded target before changing any registration. A stale or
+    # malformed per-device key must not leave only the class filter restored.
+    $deviceTargets = @(
+        foreach ($device in @($backup.Devices))
+        {
+            if ($device.DriverKey -notmatch '^\{[0-9A-Fa-f-]{36}\}\\[0-9]{4}$' -or $null -eq $device.UpperFilters)
+            {
+                throw 'Backup contains an invalid disk driver key or filter list.'
+            }
+            $devicePath = Join-Path (Join-Path $systemRoot 'Control\Class') $device.DriverKey
+            if (-not (Test-Path -LiteralPath $devicePath))
+            {
+                throw "Recorded disk registry key is absent: $($device.DriverKey)"
+            }
+            [pscustomobject]@{ Path = $devicePath; Filters = [string[]]@($device.UpperFilters | Where-Object { $_ }) }
+        }
+    )
     [string[]]$classFilters = @($backup.ClassUpperFilters | Where-Object { $_ })
     if ($PSCmdlet.ShouldProcess($classPath, "restore disk-class UpperFilters from $backupPath"))
     {
@@ -57,27 +74,17 @@ try
         }
     }
 
-    foreach ($device in @($backup.Devices))
+    foreach ($device in $deviceTargets)
     {
-        if ($device.DriverKey -notmatch '^\{[0-9A-Fa-f-]{36}\}\\[0-9]{4}$' -or $null -eq $device.UpperFilters)
+        if ($PSCmdlet.ShouldProcess($device.Path, 'restore per-device UpperFilters'))
         {
-            throw 'Backup contains an invalid disk driver key or filter list.'
-        }
-        $devicePath = Join-Path (Join-Path $systemRoot 'Control\Class') $device.DriverKey
-        if (-not (Test-Path -LiteralPath $devicePath))
-        {
-            throw "Recorded disk registry key is absent: $($device.DriverKey)"
-        }
-        [string[]]$filters = @($device.UpperFilters | Where-Object { $_ })
-        if ($PSCmdlet.ShouldProcess($devicePath, 'restore per-device UpperFilters'))
-        {
-            if ($filters.Count)
+            if ($device.Filters.Count)
             {
-                New-ItemProperty -LiteralPath $devicePath -Name UpperFilters -PropertyType MultiString -Value $filters -Force | Out-Null
+                New-ItemProperty -LiteralPath $device.Path -Name UpperFilters -PropertyType MultiString -Value $device.Filters -Force | Out-Null
             }
             else
             {
-                Remove-ItemProperty -LiteralPath $devicePath -Name UpperFilters -ErrorAction SilentlyContinue
+                Remove-ItemProperty -LiteralPath $device.Path -Name UpperFilters -ErrorAction SilentlyContinue
             }
         }
     }
@@ -109,7 +116,14 @@ try
             }
         }
     }
-    Write-Output "Registration restored from $backupPath. Reboot normally before loading storage drivers; this script does not reboot."
+    if ($WhatIfPreference)
+    {
+        Write-Output "Dry run only; registration was not restored from $backupPath."
+    }
+    else
+    {
+        Write-Output "Registration restored from $backupPath. Reboot normally before loading storage drivers; this script does not reboot."
+    }
 }
 finally
 {

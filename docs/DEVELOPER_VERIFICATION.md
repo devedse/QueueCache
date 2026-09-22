@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 16)
+## Suites (plan version 17)
 
 | Suite | Scope |
 |---|---|
@@ -149,8 +149,10 @@ count; its raw evidence is retained privately as
 `QueueCache-Verify-20260922-201430-a177b8107f4547f0a05d4a1a7ee1f8ee`
 completed with 31/31 policy checks, 512/512 in-flight bytes around replacement,
 newest RAM/disk bytes and clean restoration; raw evidence is retained as
-`plan17-preliminary-policies-exact512`. The exact packaged plan-17 VM run
-remains pending. `ConfigurationManager.Apply`
+`plan17-preliminary-policies-exact512`. The exact installed 0.4.69.1 run
+`QueueCache-Verify-20260922-203515-6e3b41080fe34c4099633c29153fde9b`
+also passed 31/31 checks and restored cleanly; raw evidence is retained privately
+as `plan17-exact-0691`. `ConfigurationManager.Apply`
 also rechecks the selected disk's mounted extent and PnP identity immediately
 before opening it for a state change, including saved-profile restore.
 
