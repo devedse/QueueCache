@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 13)
+## Suites (plan version 14)
 
 | Suite | Scope |
 |---|---|
@@ -42,7 +42,7 @@ age trigger, 250 ms idle trigger, 40/80 watermarks, 256 KiB batches and parallel
 1. Age starts scheduling; it is not a persistence deadline. Existing saved profiles
 retain their explicit policy and Strict/Fast choice.
 
-Plan 12 introduced the separate `pressure` suite. Plan 13 tightens its measurement
+Plan 12 introduced the separate `pressure` suite. Plan 13 tightened its measurement
 contract. A fitting first write and immediate cached read must issue no lower-I/O
 attempt. The 1,000 ms Deferred case overwrites the same dirty block at 350 and
 700 ms, accepts the first lower-write attempt only in the 850..1,450 ms window
@@ -59,10 +59,17 @@ and later completion. Capacity cases write 80 MiB through a 64 MiB cache using
 Automatic and Fixed 50/100 allocation. They require observed backpressure and
 bound sampled dirty, in-flight and occupied-slot ownership to the payload/write
 pool, then disable and compare every 64 KiB block. Fixed 0 requires its explicit
-quota barrier, no capacity wait and zero payload ownership. Host oracle contracts
+quota barrier, no capacity wait and zero write-payload ownership. Host oracle contracts
 reject early/late triggers and invalid reservation bounds. Exact-build VM execution
 is still required before T051/T069 can close. Allocation faults, cancellation, a
 single request larger than its quota, 4Kn and TRIM remain in the A06a ledger.
+
+Plan 14 corrects the Fixed 0% reservation oracle after the first installed plan-13
+run. Fixed 0% forbids dirty, in-flight and retained-write ownership, but it does not
+forbid independent read-cache slots in the remaining pool. Total occupied slots
+remain bounded by total payload. The failed plan-13 run is preserved as incomplete;
+its trigger and Fixed 50/100/Automatic subchecks passed, but it is not relabelled or
+combined with a later run.
 
 ### Small-write investigation
 

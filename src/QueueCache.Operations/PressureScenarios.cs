@@ -271,8 +271,8 @@ public static class PressureScenarios
             throw new IOException("Observed cache reservations exceeded payload/state bounds.");
         if (cached && peakWriteOwned > writeLimit)
             throw new IOException("Observed dirty/retained-write ownership exceeded the configured write pool.");
-        if (!cached && (peakDirty != 0 || peakInFlight != 0 || peakWriteOwned != 0 || peakOccupiedSlots != 0))
-            throw new IOException("Fixed 0% unexpectedly reserved cache payload.");
+        if (!cached && (peakDirty != 0 || peakInFlight != 0 || peakWriteOwned != 0))
+            throw new IOException("Fixed 0% unexpectedly reserved write-cache payload.");
     }
 
     private static void PrepareFile(string path, int length)

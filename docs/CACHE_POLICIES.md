@@ -76,7 +76,7 @@ in source by one routing-lock protocol, and management now also rejects boot/sys
 targets. Native/host contracts pass, but installed-kernel notification proof and
 the broader active-system-disk work remain open. Active C: use is unqualified.
 
-Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 13 tightens the separate trigger/capacity checks; its exact-build VM run is still pending.
+Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 14 corrects the tightened trigger/capacity checks after an installed plan-13 run exposed an over-strict Fixed0 read-slot assertion; its exact-build rerun is pending.
 
 Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 

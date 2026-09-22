@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 13, "pressure and trigger verification contract version");
+        Check(VerificationPlan.Version == 14, "pressure and trigger verification contract version");
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {
@@ -39,11 +39,12 @@ internal static class VerificationRunnerTests
         }
         QueueCache.Operations.PressureScenarios.ValidateCapacityBounds(true, 8192, 4096, 4096, 2048, 4096, 2);
         QueueCache.Operations.PressureScenarios.ValidateCapacityBounds(false, 8192, 0, 0, 0, 0, 0);
+        QueueCache.Operations.PressureScenarios.ValidateCapacityBounds(false, 8192, 0, 0, 0, 0, 2);
         foreach (var bounds in new[]
         {
             (Cached: true, Payload: 8192UL, Limit: 4096UL, Dirty: 4096UL, InFlight: 0UL, WriteOwned: 4097UL, Slots: 1UL),
             (Cached: true, Payload: 8192UL, Limit: 8192UL, Dirty: 4096UL, InFlight: 4097UL, WriteOwned: 4096UL, Slots: 1UL),
-            (Cached: false, Payload: 4096UL, Limit: 0UL, Dirty: 0UL, InFlight: 0UL, WriteOwned: 0UL, Slots: 1UL)
+            (Cached: false, Payload: 4096UL, Limit: 0UL, Dirty: 0UL, InFlight: 0UL, WriteOwned: 1UL, Slots: 1UL)
         })
         {
             try
