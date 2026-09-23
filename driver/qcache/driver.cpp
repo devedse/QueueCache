@@ -12,6 +12,8 @@
 
 struct QC_EXTENSION
 {
+    PDEVICE_OBJECT Self;
+    PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT Lower;
     IO_REMOVE_LOCK RemoveLock;
     volatile LONG64 ReadBytes;
@@ -72,6 +74,15 @@ NTSTATUS QcStartCompletion(PDEVICE_OBJECT, PIRP, PVOID context)
 }
 
 #if QCACHE_CACHE_DRIVER
+static void UsageStateChanged(QC_EXTENSION* ext)
+{
+    if (QcCachePagingPathCount(&ext->Cache) > 0)
+        ext->Self->Flags &= ~DO_POWER_PAGABLE;
+    else if (!(ext->Self->Flags & DO_POWER_INRUSH))
+        ext->Self->Flags |= DO_POWER_PAGABLE;
+    IoInvalidateDeviceState(ext->Pdo);
+}
+
 static NTSTATUS UsageInCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -83,6 +94,8 @@ static NTSTATUS UsageInCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     QcCacheRecordUsageCompletion(&ext->Cache, type, TRUE, irp->IoStatus.Status);
     if (!NT_SUCCESS(irp->IoStatus.Status))
         QcCacheRecordUsage(&ext->Cache, type, FALSE);
+    else
+        UsageStateChanged(ext);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
 }
@@ -95,7 +108,10 @@ static NTSTATUS UsageOutCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     auto type = IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type;
     QcCacheRecordUsageCompletion(&ext->Cache, type, FALSE, irp->IoStatus.Status);
     if (NT_SUCCESS(irp->IoStatus.Status))
+    {
         QcCacheRecordUsage(&ext->Cache, type, FALSE);
+        UsageStateChanged(ext);
+    }
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
 }
@@ -104,6 +120,24 @@ static NTSTATUS ForwardUsage(QC_EXTENSION* ext, PIRP irp, BOOLEAN inPath)
 {
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, inPath ? UsageInCompletion : UsageOutCompletion, ext, TRUE, TRUE, TRUE);
+    return IoCallDriver(ext->Lower, irp);
+}
+
+static NTSTATUS QueryPnpStateCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto ext = static_cast<QC_EXTENSION*>(context);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    if (NT_SUCCESS(irp->IoStatus.Status) && QcCachePagingPathCount(&ext->Cache) > 0)
+        irp->IoStatus.Information |= PNP_DEVICE_NOT_DISABLEABLE;
+    IoReleaseRemoveLock(&ext->RemoveLock, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+
+static NTSTATUS ForwardQueryPnpState(QC_EXTENSION* ext, PIRP irp)
+{
+    IoCopyCurrentIrpStackLocationToNext(irp);
+    IoSetCompletionRoutine(irp, QueryPnpStateCompletion, ext, TRUE, TRUE, TRUE);
     return IoCallDriver(ext->Lower, irp);
 }
 #endif
@@ -485,6 +519,9 @@ static void RequestWorker(PVOID context)
             KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
 #if QCACHE_CACHE_DRIVER
             auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0));
+            auto stack = IoGetCurrentIrpStackLocation(irp);
+            if (NT_SUCCESS(status) && QcTrackedUsageNotification(stack))
+                UsageStateChanged(ext);
             auto bytes = NT_SUCCESS(status) ? irp->IoStatus.Information : 0;
 #else
             KEVENT completed;
@@ -650,10 +687,18 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         {
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
+            const bool specialFilePath = QcCachePagingPathCount(&ext->Cache) > 0;
             const bool routed = ext->Routing;
             KeReleaseSpinLock(&ext->QueueLock, irql);
+            if (specialFilePath)
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_UNSUCCESSFUL);
+            }
             return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
         }
+        if (stack->MinorFunction == IRP_MN_QUERY_PNP_DEVICE_STATE)
+            return ForwardQueryPnpState(ext, irp);
 #endif
         if (QcTrackedUsageNotification(stack))
         {
@@ -988,6 +1033,8 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
         return status;
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
     RtlZeroMemory(ext, sizeof(*ext));
+    ext->Self = device;
+    ext->Pdo = pdo;
     IoInitializeRemoveLock(&ext->RemoveLock, 'bLCQ', 0, 0);
     status = IoAttachDeviceToDeviceStackSafe(device, pdo, &ext->Lower);
     if (!NT_SUCCESS(status))

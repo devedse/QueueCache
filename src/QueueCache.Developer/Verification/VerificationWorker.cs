@@ -50,6 +50,28 @@ public static class VerificationWorker
     public static bool RequiresSystemImageEvidence(IEnumerable<CaseResult> results) =>
         results.Any(result => result.Id == "system-active-image" && result.Status == "PASS");
     public static bool RequiresClearSystemUsagePaths(string operation) => operation != "system-image-baseline";
+    public static void ValidateSystemUsageDiagnostics(CacheStatistics statistics, CacheDiagnostics diagnostics)
+    {
+        var paths = diagnostics.UsagePaths ??
+            throw new NotSupportedException("System verification requires split usage-path diagnostics.");
+        var activity = diagnostics.UsageActivity ??
+            throw new NotSupportedException("System verification requires usage-notification lifecycle diagnostics.");
+        static ulong Outstanding(CacheUsageActivity value, string name)
+        {
+            if (value.InRequests != value.InSuccesses + value.InFailures ||
+                value.OutRequests != value.OutSuccesses + value.OutFailures)
+                throw new IOException($"{name} usage notification is still pending or its lifecycle counters are inconsistent.");
+            if (value.OutSuccesses > value.InSuccesses)
+                throw new IOException($"{name} usage notification has more successful removals than additions.");
+            return value.InSuccesses - value.OutSuccesses;
+        }
+        var paging = Outstanding(activity.Paging, "Paging");
+        var hibernation = Outstanding(activity.Hibernation, "Hibernation");
+        var dump = Outstanding(activity.Dump, "Dump");
+        if (paging != paths.Paging || hibernation != paths.Hibernation || dump != paths.Dump ||
+            statistics.PagingPathCount < 0 || (ulong)statistics.PagingPathCount != paging + hibernation + dump)
+            throw new IOException("Current system usage paths do not reconcile with completed lifecycle notifications.");
+    }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
@@ -132,6 +154,7 @@ public static class VerificationWorker
                 using var systemDevice = new CacheDevice(target.Device, writable: true);
                 var before = systemDevice.GetWriteCacheState();
                 var statistics = systemDevice.GetStatistics();
+                ValidateSystemUsageDiagnostics(statistics, systemDevice.GetDiagnostics());
                 if (RequiresClearSystemUsagePaths(job.Operation) &&
                     (target.IsPaging || statistics.PagingPathCount != 0))
                     throw new IOException("Active system verification requires C: to have no paging, hibernation or dump usage path.");

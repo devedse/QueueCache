@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 23)
+## Suites (plan version 24)
 
 | Suite | Scope |
 |---|---|
@@ -72,6 +72,13 @@ kernel paths from pending, failed or unbalanced lifecycle traffic. They do not
 identify a file path and are not permission to ignore `UsagePaths`. V4 retains the
 V3 prefix: new controllers accept V1-V4, and a new driver returns V3 when an older
 controller supplies only the V3 output buffer.
+
+Plan 24 makes that lifecycle evidence mandatory for guarded system operations and
+rejects a snapshot whose current counts do not equal completed successful
+additions minus removals. It also brings the filter's PnP behavior in line with
+an active special-file path: the filter reports the device not disableable and
+fails query-stop/query-remove until the final registration leaves. This does not
+permit active caching or prove paging-I/O ordering and forward progress.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

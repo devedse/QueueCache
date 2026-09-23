@@ -129,13 +129,24 @@ paging-type usage paths. The next implementation focus is therefore T024/T053
 paging-path ownership, nonpageable progress and overlap ordering—not weakening
 the runner or repeating the same registry experiment.
 
-Plan 23 is the next driver candidate for that focus. Diagnostics V4 preserves the
+Plan 23 was the diagnostic driver candidate for that focus. Diagnostics V4 preserves the
 V3 current counts and adds, per notification type, in/out requests, successful
 and failed completions, and the last requesting PID. Recording covers direct
 completion, queued worker completion, cancellation and admission rejection. It
 does not enable caching on a paging path or claim the PID names a file; its exit
 check is an exact installed/rebooted lifecycle snapshot that explains whether
 `Paging=2` represents two accepted outstanding paths or a driver imbalance.
+
+That exit check completed on exact installed/rebooted 0.4.78.1. C: reported two
+paging in requests, two successes, no failures or removals, and last requester
+`smss.exe` (PID 556 on that boot). The counter is balanced: Windows has two
+accepted outstanding path registrations even though no pagefile, swapfile or
+hiberfile is visible. Review then found that the filter did not yet veto
+query-stop/query-remove or expose `PNP_DEVICE_NOT_DISABLEABLE` while such a path
+was active. Plan 24 implements those PnP requirements and makes lifecycle
+reconciliation mandatory in guarded system verification. After its install/boot
+proof, the remaining A07 work is the actual paging-I/O forward-progress and
+dirty-overlap ordering design—not another attempt to erase or bypass the count.
 
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos

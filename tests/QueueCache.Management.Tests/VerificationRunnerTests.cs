@@ -26,7 +26,31 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 23, "usage-notification lifecycle contract version");
+        Check(VerificationPlan.Version == 24, "paging-path PnP lifecycle contract version");
+        var usageActivity = new QueueCache.Management.CacheUsageActivities(
+            new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
+        var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        {
+            UsagePaths = new(2, 0, 0), UsageActivity = usageActivity
+        };
+        var usageStatistics = new QueueCache.Management.CacheStatistics(false, 0, 100L << 30, 0, 0, 0, 0, 0,
+            2, 0, 0, 0);
+        VerificationWorker.ValidateSystemUsageDiagnostics(usageStatistics, usageDiagnostics);
+        foreach (var invalid in new[]
+        {
+            usageDiagnostics with { UsageActivity = null },
+            usageDiagnostics with { UsagePaths = new(1, 0, 0) },
+            usageDiagnostics with { UsageActivity = usageActivity with { Paging = usageActivity.Paging with { InSuccesses = 1 } } },
+            usageDiagnostics with { UsageActivity = usageActivity with { Paging = usageActivity.Paging with { OutRequests = 1 } } }
+        })
+        {
+            try
+            {
+                VerificationWorker.ValidateSystemUsageDiagnostics(usageStatistics, invalid);
+                throw new Exception("Incoherent system usage lifecycle accepted.");
+            }
+            catch (Exception e) when (e is IOException or NotSupportedException) { }
+        }
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);

@@ -41,11 +41,17 @@ capture exactly because `Paging=2`; no recovery snapshot or workload was created
 The open defect/qualification question is safe paging-path support and ownership,
 not baseline file integrity.
 
-Plan 23 adds lifecycle counters for that question: per-type in/out requests,
-successes, failures and last requesting PID. This is diagnostic evidence only.
-Until an installed/rebooted snapshot is inspected and paging I/O has a proven
-nonpageable progress and overlap-ordering policy, `Paging=2` continues to block
-active C: caching.
+Installed/rebooted 0.4.78.1 plan-23 evidence resolved the accounting question.
+Session Manager (`smss.exe`, PID 556 on that boot) submitted exactly two paging
+in-path requests; both completed successfully, none failed and no out-path request
+occurred. `Paging=2` is therefore two accepted outstanding Windows/storage-path
+registrations, not a QueueCache decrement leak. A notification can be propagated
+from a related device stack, so the count must not be treated as proof of two
+visible page files. Plan 24 adds the required not-disableable PnP state and rejects
+query-stop/query-remove while any special-file registration remains. Active C:
+caching stays blocked until paging I/O has proven nonpageable progress and
+overlap-ordering behavior. This follows Microsoft's
+[special-file usage-notification contract](https://learn.microsoft.com/windows-hardware/drivers/kernel/irp-mn-device-usage-notification).
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
