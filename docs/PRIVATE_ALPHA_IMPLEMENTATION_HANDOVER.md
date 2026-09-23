@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 19. Corrected plan-14 `pressure`
+The executable verification contract is plan 25. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -18,8 +18,8 @@ check; both passed on the VM with C: caching disabled. Active C: is not qualifie
 
 Immediate priority: investigate T067, the owner's BMP/Paint/Photos BSOD. Follow
 the focused sequence below before resuming general A08 framework expansion or
-T050 performance tuning. This revision changes work order only; the executable
-verification contract remains plan 19 and no implementation or test passes are
+T050 performance tuning. This revision changes work order; the executable
+verification contract has since advanced to plan 25 and no implementation or test passes are
 added by this document update.
 
 ## 1. Start here
@@ -148,6 +148,14 @@ reconciliation mandatory in guarded system verification. After its install/boot
 proof, the remaining A07 work is the actual paging-I/O forward-progress and
 dirty-overlap ordering design—not another attempt to erase or bypass the count.
 
+That plan-24 proof passed on exact installed/rebooted 0.4.79.1. Windows exposes
+the C: disk as started and healthy but not disableable, and the two registrations
+still reconcile. Plan 25 adds Diagnostics V5 paging read/write request and byte
+counters at dispatch, including disabled pass-through. The supported 349 MiB
+baseline now records before/after snapshots and a process-wide delta. The delta
+may include unrelated Windows traffic and is evidence for the next design, not
+permission to enable caching.
+
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
 decoded a large image. It is not proven. Management now preserves the greater of
@@ -197,8 +205,8 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired, boot/system targets are rejected, and Apply now rechecks mounted disk identity immediately before opening it. | Exact installed 0.4.69.1 Q: policy checks exercised Apply; saved-profile restore, kernel notification proof, T024-T027 and incident T067 remain. | Reduces the chance of applying a saved profile to a disk remapped after inventory. |
-| A08 | PARTIAL | Plan-19 guarded owned-file creation and off-disk oracle plus read-only post-restart check are implemented. | Split-CLI VM create/restart checks each passed 1/1 with C: caching disabled. Busy-C: persistence and broader guard/packaged-build proof remain. | Gives a known-good C: byte baseline across a normal reboot before testing the riskier active-cache path. |
+| A07 | PARTIAL | Usage-path activation races and PnP lifecycle requirements are implemented. Plan 25 adds actual paging read/write/byte observation at dispatch without changing routing. | Installed 0.4.79.1 reconciles two accepted paging registrations and reports C: not disableable. Install/run plan 25, then design nonpageable progress and dirty-overlap ordering; saved-profile proof and T067 remain. | Turns an unexplained registration into measured I/O behavior before the cache is allowed to handle it. |
+| A08 | PARTIAL | Guarded owned-file/restart and 349 MiB disabled/active contracts exist. Plan 25 adds immutable paging-I/O snapshots and window deltas to the disabled baseline. | Host contracts pass; exact packaged plan-25 VM evidence is pending. Active C: remains gated. | Gives a safe comparison of what Windows actually sends while proving the large file's bytes. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
@@ -208,11 +216,10 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest recorded installed candidate: 0.4.70.1 from `eb22dd4`, SYS SHA-256
-`263F082BD781ADCFE54A56C5FE2FA6AA13FE2F43307E68A7AB27D2A71294541F`.
-Plan-19 C: file/restart checks used a split managed CLI with caching disabled;
-they are not exact packaged plan-19 verification. See the tracker for each
-earlier release's scoped evidence.
+Latest recorded installed candidate: 0.4.79.1 from `4c4a918`, SYS SHA-256
+`3DB7994E85F9CDE4BD76C8AF7C52C92470667AD389D5BF19B168C1E01FC4AB5F`.
+It proves plan 24, not the newer plan-25 paging-I/O observation candidate. See
+the tracker for each earlier release's scoped evidence.
 The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
 bytes and zero errors. Recheck live identity/state before another workload. These
 facts do not establish C: support.

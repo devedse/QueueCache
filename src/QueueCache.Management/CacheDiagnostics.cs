@@ -11,6 +11,8 @@ public sealed record CacheUsageActivity(ulong InRequests, ulong OutRequests, ulo
     ulong OutSuccesses, ulong InFailures, ulong OutFailures, ulong LastProcessId);
 public sealed record CacheUsageActivities(CacheUsageActivity Paging, CacheUsageActivity Hibernation,
     CacheUsageActivity Dump);
+public sealed record CachePagingIo(ulong ReadRequests, ulong ReadBytes, ulong WriteRequests, ulong WriteBytes,
+    ulong LastMajor, ulong LastFlags, ulong LastOffset, ulong LastLength, ulong LastProcessId);
 
 /// <summary>Lifetime request counters; deferred flushes are not durable flush completions.</summary>
 public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFlushes, ulong WriteThroughWrites,
@@ -21,9 +23,11 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int AttributionWireSize = 216;
     public const int UsageWireSize = 240;
     public const int UsageActivityWireSize = 408;
+    public const int PagingIoWireSize = 480;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
+    public CachePagingIo? PagingIo { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -32,6 +36,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             AttributionWireSize => 2u,
             UsageWireSize => 3u,
             UsageActivityWireSize => 4u,
+            PagingIoWireSize => 5u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -59,7 +64,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[224..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[232..]));
         CacheUsageActivities? usageActivity = null;
-        if (bytes.Length == UsageActivityWireSize)
+        if (bytes.Length >= UsageActivityWireSize)
         {
             static CacheUsageActivity Activity(ReadOnlySpan<byte> source, int index) => new(
                 BinaryPrimitives.ReadUInt64LittleEndian(source[(240 + index * 8)..]),
@@ -71,11 +76,20 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(source[(384 + index * 8)..]));
             usageActivity = new(Activity(bytes, 0), Activity(bytes, 1), Activity(bytes, 2));
         }
+        CachePagingIo? pagingIo = null;
+        if (bytes.Length == PagingIoWireSize)
+        {
+            var paging = new ulong[9];
+            for (var index = 0; index < paging.Length; index++)
+                paging[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(UsageActivityWireSize + index * 8)..]);
+            pagingIo = new(paging[0], paging[1], paging[2], paging[3], paging[4], paging[5], paging[6], paging[7], paging[8]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
             UsagePaths = usagePaths,
-            UsageActivity = usageActivity
+            UsageActivity = usageActivity,
+            PagingIo = pagingIo
         };
     }
 }

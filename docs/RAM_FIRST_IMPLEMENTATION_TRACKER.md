@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 24: plan-14 `pressure`
+row below. The executable verification contract is plan 25: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -33,8 +33,8 @@ requires them to be clear. Its split-CLI baseline and negative active-gate runs
 completed on the VM against exact installed 0.4.75.1. Neither plan closes T052
 ordering or T067. Plan 23 added kernel notification lifecycle evidence without
 weakening the activation gate and exact installed 0.4.78.1 resolved the counter
-question. Plan 24 completes the associated PnP stop/remove and device-state policy;
-it has not yet been installed or run on the VM.
+question. Exact installed 0.4.79.1 proved plan 24's associated PnP stop/remove and
+device-state policy. Plan 25 adds paging-I/O observation without enabling caching.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -45,8 +45,8 @@ it has not yet been installed or run on the VM.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks the mounted disk extent plus PnP identity. Diagnostics report paging, hibernation and dump registrations separately while retaining the combined safety gate; management preserves at least 2 GiB or 25% RAM headroom. Plan-23 Diagnostics V4 adds per-type notification lifecycle counters. **Changed this run:** plan 24 fails query-stop/query-remove and reports the device not disableable while a special-file path is active; guarded system verification now rejects missing, pending or inconsistent lifecycle evidence. | Installed 0.4.78.1 recorded two paging in requests from boot-time `smss.exe`, two successes, no failures and no removals. Thus `Paging=2` is balanced Windows/storage-path state rather than a QueueCache accounting defect. Install/reboot plan 24 and prove the PnP state. Active caching stays blocked. Paging overlap/progress support, saved-profile proof and the original T067 crash root cause remain open. |
-| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-21 added a matching uncached 349 MiB baseline and tightened `system-active-image`: separate flush/read boundaries, mandatory accepted-byte proof, busy-C:-safe post-flush semantics, required post-release evidence, and recovery using the same exclusive system lease/path. **Changed this run:** plan-22 permits only the disabled/pass-through baseline with existing usage registrations; active caching still rejects them. | Plan-22 host contracts pass. Split plan-22 CLI run `QueueCache-Verify-20260923-140039-8c9ee24872d14b6b82639e5590c9bbb7` on exact installed 0.4.75.1 completed 1/1: the 349 MiB write/file flush and every unbuffered oracle byte passed while C: stayed disabled/released/clean. Negative run `QueueCache-Verify-20260923-140550-e8e582d46f5f46658a039d4ce29e0ed9` rejected active capture at `Paging=2` before recovery capture, workload creation or state mutation. Packaged plan-22 proof and active paging-path support remain; this is not a driver fix or BSOD resolution. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks mounted identity. Diagnostics V4 reports per-type notification lifecycle. Plan 24 enforces not-disableable/query-stop/query-remove behavior. **Changed this run:** Diagnostics V5 counts actual `IRP_PAGING_IO` reads/writes and bytes at dispatch, including disabled pass-through, plus last-request breadcrumbs; it does not change routing or enable C:. | Exact installed 0.4.79.1 again reconciled two successful outstanding paging registrations and exposed a started, healthy, non-disableable C: disk node. Plan-25 host/native checks pass; install/reboot and observe a bounded disabled-cache window next. Active caching remains blocked until those observations drive a nonpageable forward-progress and dirty-overlap design. Saved-profile proof and T067 root cause remain open. |
+| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-21 added the matching 349 MiB baseline and strict active evidence. Plan 22 allows only the disabled/pass-through baseline with existing usage registrations. **Changed this run:** plan 25 records immutable before/after Diagnostics V5 snapshots and a process-wide paging-I/O delta in that supported baseline. | Earlier plan-22 baseline passed every byte with C: disabled. Plan-25 host contracts pass; exact installed execution is pending. Counts are windowed evidence and may include concurrent Windows traffic, not workload-only attribution. Active support and T067 remain open. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -122,9 +122,11 @@ qualification; their unresolved requirements have not been waived.
   dedicated dump file registered Q: but still left two combined registrations
   on C:. With all pagefiles absent, crash dumping disabled and hibernation/Fast
   Startup unavailable, C: still reports count 2 while Q: reports 0.
-- Therefore pagefile relocation is not treated as the activation fix. The next
-  build splits that combined diagnostic into paging, hibernation and dump counts.
-  Until its post-reboot result is known, activation remains blocked by design.
+- Therefore pagefile relocation is not treated as the activation fix. Exact
+  installed 0.4.78.1 proved the two counts are successful paging registrations,
+  and exact installed 0.4.79.1 proved the matching not-disableable PnP policy.
+  Plan 25 observes actual paging reads/writes in pass-through before any active
+  caching policy is chosen; activation remains blocked by design.
 - A historical 4 GiB cache on this 8 GiB guest could have left too little memory
   for Windows plus a decoded 350 MiB image. This remains a plausible hypothesis,
   not a diagnosed cause. New management admission preserves at least 2 GiB or
@@ -134,6 +136,12 @@ qualification; their unresolved requirements have not been waived.
   evidence source without clearing the unexplained count. The snapshot/console
   remains recovery protection, but a cached crash must not be triggered until
   the per-type result determines the next safe step.
+
+Plan 25 records real `IRP_PAGING_IO` request/byte counts before routing selection,
+including disabled pass-through. The maintained 349 MiB baseline saves immutable
+before/after diagnostics and their delta. The process-wide window may include
+unrelated Windows traffic; it is a discriminator for nonpageable forward progress
+and dirty-overlap ordering, not workload-only attribution or C: enablement.
 
 The fresh complete 72-case baseline requirement still applies before a
 performance-affecting driver edit; focused comparisons guide iterations. A read-only

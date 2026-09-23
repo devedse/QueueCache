@@ -648,6 +648,11 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     if (!NT_SUCCESS(status))
         return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
+#if QCACHE_CACHE_DRIVER
+    // Record paging traffic before routing selection, including disabled pass-through.
+    // This is observation only and must not alter completion, ordering or admission.
+    QcCacheRecordPagingIo(&ext->Cache, irp);
+#endif
     if (stack->MajorFunction == IRP_MJ_PNP)
     {
         if (stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
@@ -822,10 +827,11 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV4Size ? QcDiagnosticsV4Size :
                 outputLength >= QcDiagnosticsV3Size ? QcDiagnosticsV3Size :
                 outputLength >= QcDiagnosticsV2Size ? QcDiagnosticsV2Size : QcDiagnosticsV1Size;
             diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : returned == QcDiagnosticsV2Size ? 2 :
-                returned == QcDiagnosticsV3Size ? 3 : 4;
+                returned == QcDiagnosticsV3Size ? 3 : returned == QcDiagnosticsV4Size ? 4 : 5;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);

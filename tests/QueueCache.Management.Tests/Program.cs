@@ -232,6 +232,20 @@ Check(activity.UsagePaths == new CacheUsagePaths(2, 3, 4) && activity.UsageActiv
     new CacheUsageActivity(1, 11, 21, 31, 41, 51, 61) && activity.UsageActivity.Dump ==
     new CacheUsageActivity(3, 13, 23, 33, 43, 53, 63),
     "V4 usage lifecycle offsets and V3 prefix");
+Check(activity.PagingIo is null, "V4 paging I/O activity is unavailable, not zero");
+var pagingIoBytes = new byte[CacheDiagnostics.PagingIoWireSize];
+activityBytes.CopyTo(pagingIoBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingIoBytes, 5);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingIoBytes.AsSpan(4), CacheDiagnostics.PagingIoWireSize);
+ulong[] pagingIoValues = [71, 72, 73, 74, 4, 0x43, 77, 78, 79];
+for (var index = 0; index < pagingIoValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(pagingIoBytes.AsSpan(CacheDiagnostics.UsageActivityWireSize + index * 8),
+        pagingIoValues[index]);
+var pagingIo = CacheDiagnostics.Decode(pagingIoBytes);
+Check(pagingIo.UsageActivity == activity.UsageActivity && pagingIo.PagingIo ==
+    new CachePagingIo(71, 72, 73, 74, 4, 0x43, 77, 78, 79),
+    "V5 paging I/O offsets and V4 prefix");
+Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");
 Reject(() => CacheDiagnostics.Decode(attributionBytes.AsSpan(0, 215)), "short attribution");
 attributionBytes[0] = 1;

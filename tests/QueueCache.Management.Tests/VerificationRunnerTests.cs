@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 24, "paging-path PnP lifecycle contract version");
+        Check(VerificationPlan.Version == 25, "paging-I/O observation contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -82,6 +82,30 @@ internal static class VerificationRunnerTests
             VerificationWorker.RequiresClearSystemUsagePaths("system-active-image") &&
             VerificationWorker.RequiresClearSystemUsagePaths("system-restore"),
             "only the disabled pass-through image baseline permits existing system usage paths");
+        var pagingBefore = usageDiagnostics with
+        {
+            PagingIo = new QueueCache.Management.CachePagingIo(10, 1000, 20, 2000, 3, 2, 3000, 4096, 4)
+        };
+        var pagingAfter = usageDiagnostics with
+        {
+            PagingIo = new QueueCache.Management.CachePagingIo(13, 1120, 22, 2256, 4, 2, 4000, 8192, 8)
+        };
+        Check(VerificationWorker.PagingIoDelta(pagingBefore, pagingAfter) ==
+            new QueueCache.Management.CachePagingIo(3, 120, 2, 256, 4, 2, 4000, 8192, 8),
+            "paging I/O window uses lifetime-counter deltas and preserves last-request breadcrumbs");
+        try
+        {
+            VerificationWorker.PagingIoDelta(pagingBefore,
+                pagingAfter with { PagingIo = pagingAfter.PagingIo! with { ReadRequests = 9 } });
+            throw new Exception("Backward paging I/O counters accepted.");
+        }
+        catch (IOException) { }
+        try
+        {
+            VerificationWorker.PagingIoDelta(pagingBefore with { PagingIo = null }, pagingAfter);
+            throw new Exception("Missing paging I/O diagnostics accepted.");
+        }
+        catch (NotSupportedException) { }
         Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
             "active system-image is one bounded case");
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));

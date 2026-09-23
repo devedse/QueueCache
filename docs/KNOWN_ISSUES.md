@@ -53,6 +53,12 @@ caching stays blocked until paging I/O has proven nonpageable progress and
 overlap-ordering behavior. This follows Microsoft's
 [special-file usage-notification contract](https://learn.microsoft.com/windows-hardware/drivers/kernel/irp-mn-device-usage-notification).
 
+Exact installed/rebooted 0.4.79.1 proved that plan-24 PnP state. Plan 25 adds
+pass-through observation of actual paging reads/writes and integrates a windowed
+delta into the maintained 349 MiB disabled-cache baseline. It does not enable C:
+or diagnose the historical crash by itself; its result selects the next bounded
+forward-progress/overlap test instead of guessing at paging behavior.
+
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
 and active-cache 349 MiB deterministic image workloads with required admission

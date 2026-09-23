@@ -98,7 +98,7 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Instance = c->Instance;
     c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    c->Diagnostics.Version = 4;
+    c->Diagnostics.Version = 5;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 3;
@@ -151,7 +151,46 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
         output->UsageOutFailures[index] = InterlockedCompareExchange64(&c->UsageOutFailures[index], 0, 0);
         output->UsageLastProcessId[index] = InterlockedCompareExchange64(&c->UsageLastProcessId[index], 0, 0);
     }
+    output->PagingReadRequests = InterlockedCompareExchange64(&c->PagingReadRequests, 0, 0);
+    output->PagingReadBytes = InterlockedCompareExchange64(&c->PagingReadBytes, 0, 0);
+    output->PagingWriteRequests = InterlockedCompareExchange64(&c->PagingWriteRequests, 0, 0);
+    output->PagingWriteBytes = InterlockedCompareExchange64(&c->PagingWriteBytes, 0, 0);
+    output->PagingLastMajor = InterlockedCompareExchange64(&c->PagingLastMajor, 0, 0);
+    output->PagingLastFlags = InterlockedCompareExchange64(&c->PagingLastFlags, 0, 0);
+    output->PagingLastOffset = InterlockedCompareExchange64(&c->PagingLastOffset, 0, 0);
+    output->PagingLastLength = InterlockedCompareExchange64(&c->PagingLastLength, 0, 0);
+    output->PagingLastProcessId = InterlockedCompareExchange64(&c->PagingLastProcessId, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
+}
+void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
+{
+    if (!(irp->Flags & IRP_PAGING_IO))
+        return;
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    ULONG length;
+    LONGLONG offset;
+    if (stack->MajorFunction == IRP_MJ_READ)
+    {
+        length = stack->Parameters.Read.Length;
+        offset = stack->Parameters.Read.ByteOffset.QuadPart;
+        InterlockedIncrement64(&c->PagingReadRequests);
+        InterlockedAdd64(&c->PagingReadBytes, length);
+    }
+    else if (stack->MajorFunction == IRP_MJ_WRITE)
+    {
+        length = stack->Parameters.Write.Length;
+        offset = stack->Parameters.Write.ByteOffset.QuadPart;
+        InterlockedIncrement64(&c->PagingWriteRequests);
+        InterlockedAdd64(&c->PagingWriteBytes, length);
+    }
+    else
+        return;
+    // These last-request fields are diagnostic breadcrumbs, not an atomic tuple.
+    InterlockedExchange64(&c->PagingLastMajor, stack->MajorFunction);
+    InterlockedExchange64(&c->PagingLastFlags, irp->Flags);
+    InterlockedExchange64(&c->PagingLastOffset, offset);
+    InterlockedExchange64(&c->PagingLastLength, length);
+    InterlockedExchange64(&c->PagingLastProcessId, reinterpret_cast<LONGLONG>(PsGetCurrentProcessId()));
 }
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
 {

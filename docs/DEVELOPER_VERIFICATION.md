@@ -80,6 +80,14 @@ an active special-file path: the filter reports the device not disableable and
 fails query-stop/query-remove until the final registration leaves. This does not
 permit active caching or prove paging-I/O ordering and forward progress.
 
+Plan 25 adds nullable Diagnostics V5 `PagingIo` counters for paging reads/writes
+and bytes plus last-request breadcrumbs. They are recorded before routing choice,
+so disabled pass-through is observable without changing I/O behavior. The
+`system-image-baseline` case requires V5, preserves immutable before/after
+diagnostic files, and reports counter deltas for its workload window. These are
+process-wide device counters: concurrent Windows traffic can contribute, and a
+zero delta is valid evidence. Active C: remains blocked.
+
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run
 `QueueCache-Verify-20260923-140039-8c9ee24872d14b6b82639e5590c9bbb7`

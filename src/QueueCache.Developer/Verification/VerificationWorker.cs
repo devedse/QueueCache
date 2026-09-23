@@ -72,6 +72,23 @@ public static class VerificationWorker
             statistics.PagingPathCount < 0 || (ulong)statistics.PagingPathCount != paging + hibernation + dump)
             throw new IOException("Current system usage paths do not reconcile with completed lifecycle notifications.");
     }
+    public static CachePagingIo PagingIoDelta(CacheDiagnostics before, CacheDiagnostics after)
+    {
+        var first = before.PagingIo ??
+            throw new NotSupportedException("System image verification requires paging-I/O diagnostics.");
+        var last = after.PagingIo ??
+            throw new NotSupportedException("System image verification requires paging-I/O diagnostics.");
+        if (last.ReadRequests < first.ReadRequests || last.ReadBytes < first.ReadBytes ||
+            last.WriteRequests < first.WriteRequests || last.WriteBytes < first.WriteBytes)
+            throw new IOException("Paging-I/O lifetime counters moved backwards during the observation window.");
+        return last with
+        {
+            ReadRequests = last.ReadRequests - first.ReadRequests,
+            ReadBytes = last.ReadBytes - first.ReadBytes,
+            WriteRequests = last.WriteRequests - first.WriteRequests,
+            WriteBytes = last.WriteBytes - first.WriteBytes
+        };
+    }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
@@ -154,7 +171,8 @@ public static class VerificationWorker
                 using var systemDevice = new CacheDevice(target.Device, writable: true);
                 var before = systemDevice.GetWriteCacheState();
                 var statistics = systemDevice.GetStatistics();
-                ValidateSystemUsageDiagnostics(statistics, systemDevice.GetDiagnostics());
+                var diagnosticsBefore = systemDevice.GetDiagnostics();
+                ValidateSystemUsageDiagnostics(statistics, diagnosticsBefore);
                 if (RequiresClearSystemUsagePaths(job.Operation) &&
                     (target.IsPaging || statistics.PagingPathCount != 0))
                     throw new IOException("Active system verification requires C: to have no paging, hibernation or dump usage path.");
@@ -219,6 +237,7 @@ public static class VerificationWorker
                         throw new IOException("Missing uncached system-image workload or oracle path.");
                     if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
                         throw new IOException("Uncached system-image baseline requires C: disabled, released and clean.");
+                    RunStorage.AtomicJson(job.Reply + ".before-diagnostics.json", diagnosticsBefore);
                     var baselineChecks = new List<CheckResult>();
                     baselineChecks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
                     var afterWrite = systemDevice.GetWriteCacheState();
@@ -227,6 +246,13 @@ public static class VerificationWorker
                         afterWrite.Errors != before.Errors || afterWrite.Faulted || afterWrite.LastError != 0)
                         throw new IOException("C: cache state changed during the uncached image baseline.");
                     baselineChecks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
+                    var diagnosticsAfter = systemDevice.GetDiagnostics();
+                    RunStorage.AtomicJson(job.Reply + ".after-diagnostics.json", diagnosticsAfter);
+                    var pagingIo = PagingIoDelta(diagnosticsBefore, diagnosticsAfter);
+                    baselineChecks.Add(new("system-image/paging-io-window", "PASS",
+                        $"Process-wide paging I/O observed during this window: reads={pagingIo.ReadRequests} " +
+                        $"({pagingIo.ReadBytes} bytes), writes={pagingIo.WriteRequests} ({pagingIo.WriteBytes} bytes). " +
+                        "Concurrent Windows activity may contribute to these counts."));
                     RunStorage.AtomicJson(job.Reply, baselineChecks);
                     ReportFailures(baselineChecks, Console.Error);
                     return baselineChecks.All(check => check.Result == "PASS") ? 0 : 1;
