@@ -47,34 +47,53 @@ both passed on the VM with C: caching disabled. Neither closes T052 ordering.
 
 ### Next implementation actions and why this order changed
 
-Review of `34f5dd5` and `437ee42`: both CI runs succeeded, but this alone is not VM
-verification. The T068 source race is repaired. Plan 14 implements the corrected
-T069 trigger/reservation contract and its exact-build 0.4.64.1 VM run passed. T067
-records the owner's earlier large-BMP/Paint/Photos C: crash and post-restart
-application failures; its cause is unknown and it gates C: readiness.
-Definitions and handoff evidence are in the handover's A07 review-follow-up table.
-This review is source/CI inspection only; it did not reproduce the incident or
-change the driver. A07 engineering, A08 test infrastructure and A09 execution are
-all needed; completing A08 alone does not repair kernel behavior.
+Planning revision 3, 2026-09-23: the owner prioritizes reproducing and fixing the
+reported large-BMP/Paint/Photos BSOD. Recent iterations mostly advanced the
+verification framework. The uncached C: baseline is useful and complete for its
+scope, but has not reproduced or diagnosed T067. The detailed immediate sequence
+in the [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#immediate-execution-sequence-investigate-the-c-bsod)
+now governs execution. Existing A/T IDs and release gates remain; no status is
+promoted by this documentation-only change, and executable plan 19 is unchanged.
 
-1. T049: map existing proof and missing safety cases to specific code and releases.
-   Preserve the incomplete policy precondition run. The source of its late activity
-   is not established; passing a later run does not diagnose it.
-2. T050: the plan-16 `drain-decision` matrix is now measured. Four drain workers
-   improved the fitting-write median and drain time over one worker, but one
-   repetition varied sharply and cold-read gain was small. Keep parallelism 1
-   as the shipped default while deciding acceptable alpha progress/tail bounds
-   and whether a focused request-shape/concurrency check warrants a change.
-   About 99.4% lower-I/O wait in A02 did not prove a physical-disk limit.
-3. Use the completed A07/T023 operation map to implement T024-T026. Complete
-   T052-T053 for deterministic ordering and the reachable
-   allocation/lifetime/cancel paths before active C: caching. The current
-   paging/hibernation/dump restriction stays enforced until its replacement is
-   qualified; unchanged code is not automatically safe for broader exposure.
-4. Build A08 from that contract. Rehearse T054 independent recovery before A09
-   activation. Finish the remaining A10 servicing matrix on the resulting candidate.
-5. Run A11 after necessary fixes, then A12. Define A13 support scope and A14
-   security requirements early; close production qualification in A13-A16.
+1. **Capture and recovery readiness (T067/T032/T054).** Check dump/pagefile/free
+   space and retrieval after failed boot; record exact loaded build/symbols,
+   guest RAM, cache settings and application versions. Reuse the owner's
+   snapshot/console confirmation and finish the concrete independent recovery
+   prerequisite. No historical dump/Event 1001 survived the inspected snapshot;
+   do not wait for unavailable old evidence before investigating current code.
+2. **Focused driver investigation (T067/T023/T052/T053/T068).** Trace memory and
+   buffer ownership, paging/mapped-file I/O, overlapping drain/overwrite,
+   cancellation and activation ordering. Record code locations, confirmed
+   defects versus hypotheses, and focused tests. Fix concrete findings; use Q:
+   for controlled fault/order checks where possible. Framework repairs alone
+   do not diagnose the historical BSOD.
+3. **Finite active-C: blocker list (T024-T027/T030-T031/T054).** Identify and
+   implement the exact safe activation, reachable-path, memory-budget,
+   error/persistence and recovery requirements for the proposed reproduction.
+   Each blocker needs an owning code path and an exit check. Required ordering,
+   lifetime and notification proof remains; do not strip restrictions or demand
+   completion of every A06a/A08/A10/production task before the experiment.
+4. **Staged reproduction (T067/T029/T033-T035).** Perform the recorded roughly
+   350 MB BMP/Paint/save/Photos workflow with caching off, then with active C:
+   caching after the preceding prerequisites. Record actual image size, memory
+   headroom, settings and timestamps; compare opening promptly after save with
+   opening after explicit drain. The existing 64 MiB file check is not this
+   large-image baseline. Preserve independent deterministic byte checks and
+   distinguish them from application-generated image bytes.
+5. **Evidence to fix (T067/T035-T037).** Preserve dumps/logs/symbols before
+   reinstall or rollback; diagnose the initial crash separately from later
+   lost-write damage. Repair and retest the triggering path. A non-reproduction
+   records its conditions and next discriminating test; it does not close T067.
+   Unknown historical cause blocks readiness, not controlled investigation.
+
+Defer T050 tuning (keep shipped parallelism 1), general A08 framework expansion,
+unrelated cleanup and broad qualification while this investigation is active.
+Add verification code only for a named reproduction/capture/regression need in
+the existing runner. Reuse completed evidence unless a relevant change requires
+retesting. At each handoff, show the remaining concrete activation blockers and
+the full A01-A16 table with changed-this-run marks and plain-language benefits.
+After investigation/fixes, resume remaining alpha tasks and A13-A16 production
+qualification; their unresolved requirements have not been waived.
 
 The fresh complete 72-case baseline requirement still applies before a
 performance-affecting driver edit; focused comparisons guide iterations. A read-only
@@ -136,7 +155,7 @@ use illustrative observed slow/healthy numbers rather than guaranteed causal gai
 
 ## Historical optimization order (2026-09-19)
 
-The current release sequence above and handover revision 2 supersede this ordering.
+The current release sequence above and handover revision 3 supersede this ordering.
 Preserve the rationale and evidence requirements below. Do not restart completed
 attribution/default work or require every speculative optimization before alpha.
 

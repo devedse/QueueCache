@@ -1,6 +1,6 @@
 # QueueCache private alpha implementation handover
 
-Revised: 2026-09-23, planning revision 2. Audience: the executing agent and project
+Revised: 2026-09-23, planning revision 3. Audience: the executing agent and project
 owner. End goal: a production-ready QueueCache product. A01-A12 deliver the first
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
@@ -16,13 +16,19 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
+Immediate priority: investigate T067, the owner's BMP/Paint/Photos BSOD. Follow
+the focused sequence below before resuming general A08 framework expansion or
+T050 performance tuning. This revision changes work order only; the executable
+verification contract remains plan 19 and no implementation or test passes are
+added by this document update.
+
 ## 1. Start here
 
 | Order | Action | Result required before proceeding |
 |---|---|---|
 | 1 | Read root `AGENTS.md`, this document, `docs/ALPHA_PRODUCT_DECISIONS.md`, and `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md`. | Understand accepted volatility, preserved correctness requirements, and current evidence. |
 | 2 | Inspect Git status/diffs and current HEAD. Do not reset the worktree. | Identify prior uncommitted restoration work, decision documents, and unrelated owner changes. |
-| 3 | Read the current status in section 3 and the tracker; resume A06a/T049-T050 and A07 design. | A01-A06 already have scoped completion evidence. Recheck live state when needed; do not repeat completed work just because this document contains its original instructions. |
+| 3 | Read the current status and execute the T067 investigation sequence below. | Reuse existing evidence; produce crash-capture readiness, a focused code review and the concrete prerequisites for controlled active-C: reproduction. A01-A06's scoped passes do not require restarting those tasks. |
 | 4 | Follow the revised dependencies in section 5, one small tested change at a time. | Close pre-C: safety and recovery gates before activation; retain separate implementation and verification status. |
 
 This document defines the release sequence and a dated status summary. The
@@ -33,6 +39,49 @@ The decision and cleanup documents define product direction and inventory;
 this handover defines the execution sequence. It authorizes no Git history rewrite or automatic
 destructive VM recovery. Observe current owner authorization before deployment,
 reboot, driver removal or destructive fault experiments.
+
+### Immediate execution sequence: investigate the C: BSOD
+
+The recent work mainly improved verification infrastructure. It produced a
+useful uncached C: baseline, but did not reproduce or diagnose the reported
+crash. The next implementation run must advance that investigation directly.
+Use existing task IDs; the following phases split T067 into concrete work rather
+than creating another general framework milestone.
+
+| Order / tasks | Concrete work | Deliverable before moving on |
+|---|---|---|
+| 1 / T067, T032, T054 | Verify current dump type/location, pagefile or dedicated dump requirements, free disk space, and how to retrieve evidence if the guest cannot boot. Record loaded driver hash/source, matching symbols, Windows/controller details, RAM, cache budget/policy and relevant application versions. Reuse the owner's snapshot/console confirmation; establish the remaining recovery rehearsal. | A usable capture/retrieval procedure and exact remaining recovery blockers. Distinguish configured capture from capture actually exercised. The old snapshot has no surviving dump/Event 1001; do not repeatedly search it without new evidence or wait indefinitely for unavailable old settings. |
+| 2 / T067, T023, T052-T053, T068 | Review the incident-relevant driver paths: paging/mapped-file I/O, allocation failure, buffer/MDL/pin lifetime during outstanding I/O, old/new data during drain and overwrite, cancellation/teardown, and usage-notification/activation ordering. Tie each concern to owning code and an observable failure. Repair concrete defects and run focused regressions, using Q: where possible. | A short findings table: code location, failure mechanism or hypothesis, supporting evidence, fix/check and unresolved gap. Separate confirmed defects from possible causes of the historical BSOD. Avoid a whole-driver rewrite or an unbounded audit. |
+| 3 / T024-T027, T030-T031, T054 | Enumerate the exact blockers to one bounded active-C: reproduction: enforced boot/system/paging restrictions, safe handling of the paths that remain reachable, recovery, conservative memory budget, and truthful error/persistence checks. Implement and verify those specific prerequisites. | A finite blocker list, each with code owner and a concrete exit check. Preserve required T052/T053/T068 safety proof and actual independent recovery. Do not make all A06a/A08/A10 or production qualification prerequisites; do not remove a guard merely to start the test. |
+| 4 / T067, T029, T033-T035 | Run a bounded large-BMP baseline with caching off, then the same recorded workflow with active C: caching once phase 3 permits it. Use roughly the reported 350 MB image where guest headroom permits; record the actual dimensions/bytes. Exercise create/open in Paint, edit/save, then open in Photos promptly after save; also compare opening after an explicit completed drain. Record operations/timestamps, memory and dirty/in-flight/error state without synthetic faults on C:. | Separate immutable records for uncached and cached attempts, exact configuration and actual active routing. Preserve the original image/expected data separately; use deterministic byte checks for the maintained file scenario and a recorded application workflow for Paint/Photos. An application save need not preserve the original file hash. Do not claim a cached attempt from an uncached pass. |
+| 5 / T067, T035-T037 | On a crash, preserve the dump, symbols, logs and latest test state before reinstall/rollback; analyze the stop code/stack and owning lifetime/order path. On a byte mismatch or hang, preserve equivalent evidence and investigate that failure. Fix the responsible code and repeat the triggering case plus affected regressions. | Root-cause evidence and fix/regression when reproduced. If not reproduced, report the exact attempted conditions and remaining hypothesis; choose the next bounded discriminating test. Successful attempts do not close the historical incident or establish production readiness. |
+
+The original crash and damage after reboot are separate questions. Loss of
+pending Fast writes could explain later damage, but cannot establish why the
+initial BSOD occurred. Missing historical evidence may prevent proving that a
+newly found defect caused that exact old incident; record that distinction.
+Start with the current identified candidate. Testing an older build is a separate
+comparison decision based on recovered identity and recovery readiness.
+
+Snapshot and hypervisor access are already authorized/reported in this session.
+Use those facts without repeatedly requesting the same confirmation. Actual
+destructive rollback, driver removal or crash injection still follows existing
+authorization and evidence-preservation rules. Unknown historical root cause
+blocks a readiness claim, not a controlled investigation designed to find it.
+
+Limit new verification code to a named capture, reproduction, error-reporting or
+regression need from these phases. Reuse `qcache developer verify`; do not add a
+parallel runner. Do not expand or repeat the completed uncached 64 MiB baseline
+unless a relevant change warrants it. The large-BMP baseline is different and
+has not been done. Defer generic A08 polish, T050 tuning, broad benchmarks,
+unrelated cleanup and full production qualification. Preserve required targeted
+tests and the existing baseline requirement if a fix affects performance.
+
+At each implementation handoff, report what moved the crash investigation
+forward, confirmed defects versus hypotheses, the remaining activation blockers,
+and the next concrete test. Include the A01-A16 table with this run's changes
+and plain-language application benefits. Test-framework repairs must be labelled
+as such; do not credit them as driver fixes or BSOD resolution.
 
 ## 2. Product requirements and decisions
 
@@ -61,7 +110,7 @@ Do not delete it incidentally or pretend its soak has passed.
 
 ## 3. Evidence checkpoint, not assumptions
 
-### Current status, 2026-09-22
+### Current status, 2026-09-23
 
 TRUE means this step's stated scope is complete; PARTIAL means some deliverables
 exist but its exit gate is open; FALSE means the step is not delivered. It does not
@@ -88,9 +137,11 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest verified installed candidate: 0.4.64.1 from
-`bd60725121df4572fb4f77936170cefac60dcf0c`, SYS SHA-256
-`1EA460969A068E047D6B11BE9C828ECEED9DB229C08A2F8A9E531E60E2A0819E`.
+Latest recorded installed candidate: 0.4.70.1 from `eb22dd4`, SYS SHA-256
+`263F082BD781ADCFE54A56C5FE2FA6AA13FE2F43307E68A7AB27D2A71294541F`.
+Plan-19 C: file/restart checks used a split managed CLI with caching disabled;
+they are not exact packaged plan-19 verification. See the tracker for each
+earlier release's scoped evidence.
 The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
 bytes and zero errors. Recheck live identity/state before another workload. These
 facts do not establish C: support.
@@ -118,6 +169,9 @@ before deciding on batching or scheduling edits. Make an evidenced fix when need
 or record the measured operational limit and its product consequence. A11 remains
 the final acceptance run, not the first opportunity to fix an identified problem.
 Any newly reproduced corruption, ordering, hang or recovery defect takes priority.
+Revision 3 pauses further T050 tuning while the immediate T067 investigation
+proceeds. Its completed measurements remain available and its final decision
+remains an open alpha task.
 
 ### Historical starting checkpoint, 2026-09-20
 
@@ -242,6 +296,10 @@ usability requirement. Avoid reopening completed research without new evidence.
 | A15 | A13, A14; frozen candidate | Environment and endurance qualification | REQ-03,05,10,13,15 | Declared matrix and longer stress/lifecycle checks complete; failures resolved and affected checks rerun. |
 | A16 | A12 feedback, A13-A15 | Production release and support | REQ-12,13,15 | Owner accepts release evidence, support procedure and staged rollout/rollback readiness. |
 
+Planning revision 3 gives the immediate T067 sequence precedence over general
+task-number order. Whole-step completion and production release gates remain;
+only prerequisites relevant to safe controlled reproduction block that experiment.
+Record any deferred subtask explicitly, with its original release gate intact.
 Dependency order is not a requirement to serialize all research. Begin A07's code
 mapping while designing A06a checks; use the resulting system-disk contract to
 finish A08. Rehearse external recovery before the first A09 activation. A13 support
@@ -362,15 +420,17 @@ remaining ordering/lifetime proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
-This workflow does not exist yet. Any new suite name/flag is to be implemented
-and documented, not a command the next agent may assume currently works. Keep it
-inside `qcache developer verify` and the same worker infrastructure.
+Plan-19 `system-preflight`, `system-files` and `system-post-restart` exist;
+their C: baseline used caching disabled. Finish only the extensions needed for
+the immediate T067 investigation first. New behavior must be implemented and
+documented inside `qcache developer verify` and the same worker infrastructure.
 
 | Task | Do this, in order | Pass condition / stop rule |
 |---|---|---|
 | T028 | Add a typed system-volume file-only scenario with explicit opt-in and recorded expected physical identity/size/volume. Require off-target output storage and a recoverable-VM acknowledgement. Create only a unique test directory and bounded files. | Current non-OS suites retain their guards. No raw writes, formatting, TRIM probes, synthetic faults, broad registry changes or automatic reboot in the C: scenario. |
 | T029 | Reuse deterministic file creation/read/overwrite/oracle helpers without inheriting unsafe advanced modes. Store independently computed expected seed/range hashes off the target before the operation being tested. Support a separate read-only post-restart verification phase. | Byte oracle survives a guest restart; expected values are not reconstructed from potentially wrong returned data. Checks are limited to owned test files. |
 | T030 | Define clean-state semantics for a continuously busy OS disk. Verify explicit persistence at a controlled boundary and recorded saved settings, not perpetual global DirtyBytes==0 after re-enable. Keep ordinary secondary-disk restoration checks unchanged. | Host tests model writes before/after the boundary, exact errors and configuration checks. A busy C: is not a manufactured cleanup failure or an excuse to ignore real persistence errors. |
+| T031 | Test identity mismatch, omitted opt-in, OS target passed to raw/fault mode, output on same target, missing observer, timeout, child-process ownership and interrupted post-restart verification. | All unsafe/ambiguous requests fail before mutation. No unknown process termination or weakened ready/coverage checks. |
 
 T029 now has plan-19 implementation and a completed split-CLI VM baseline:
 64 MiB owned-file create/overwrite and independently recorded Q: oracle,
@@ -380,7 +440,6 @@ the corrected 1/1 create and 1/1 restart runs are separate complete evidence
 in the tracker. T030 and active-C: validation remain open. Do not label this
 baseline as proof of a dirty restart, an administrative persistence boundary,
 or resolution of the reported BSOD.
-| T031 | Test identity mismatch, omitted opt-in, OS target passed to raw/fault mode, output on same target, missing observer, timeout, child-process ownership and interrupted post-restart verification. | All unsafe/ambiguous requests fail before mutation. No unknown process termination or weakened ready/coverage checks. |
 
 ### A09. Validate C: Fast in a disposable VM
 
