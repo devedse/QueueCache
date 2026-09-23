@@ -49,6 +49,7 @@ public static class VerificationWorker
     }
     public static bool RequiresSystemImageEvidence(IEnumerable<CaseResult> results) =>
         results.Any(result => result.Id == "system-active-image" && result.Status == "PASS");
+    public static bool RequiresClearSystemUsagePaths(string operation) => operation != "system-image-baseline";
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
@@ -131,7 +132,8 @@ public static class VerificationWorker
                 using var systemDevice = new CacheDevice(target.Device, writable: true);
                 var before = systemDevice.GetWriteCacheState();
                 var statistics = systemDevice.GetStatistics();
-                if (target.IsPaging || statistics.PagingPathCount != 0)
+                if (RequiresClearSystemUsagePaths(job.Operation) &&
+                    (target.IsPaging || statistics.PagingPathCount != 0))
                     throw new IOException("Active system verification requires C: to have no paging, hibernation or dump usage path.");
                 if (before.DeviceBytes != (ulong)target.Bytes || before.Faulted || before.Errors != 0 || before.LastError != 0)
                     throw new IOException("System-disk driver identity/state is not clean enough for active verification.");

@@ -99,7 +99,7 @@ legacy combined count remains authoritative. Install/reboot that candidate, read
 the three C:/Q: values, and then decide the smallest support or enforced-prerequisite
 change. This is now the next T023/T025/T068 exit check.
 
-Plan 21 supersedes the first active reproduction contract before it has run on the
+Plan 22 is the current reproduction contract. Plan 21 superseded the first active reproduction contract before it ran on the
 VM. `system-active-image` exclusively leases C:, captures a disabled/released
 baseline, permits only an internal runtime 256..512 MiB Fast configuration, writes
 a deterministic 349 MiB 32-bit BMP under its unique owned directory, commits its
@@ -111,7 +111,9 @@ unchanged routed, error-free state rather than a perpetual global zero-dirty
 snapshot. A passed case cannot restore successfully without the final oracle/image
 evidence, and manual recovery uses the same exclusive system-disk lease and
 restoration operation. The separate `system-image-baseline` runs the identical
-image I/O with caching disabled. The public Apply path still rejects boot/system
+image I/O with caching disabled and pass-through; plan 22 permits that control case
+to record existing system usage paths without treating them as an active-cache
+hazard. The active case still rejects every such registration. The public Apply path still rejects boot/system
 disks. This advances
 the controlled experiment; it is not a QueueCache crash fix and cannot resolve
 T067 without VM evidence.
@@ -459,7 +461,7 @@ remaining ordering/lifetime proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
-Plan-21 `system-preflight`, `system-files`, `system-post-restart`, the uncached
+Plan-22 `system-preflight`, `system-files`, `system-post-restart`, the uncached
 `system-image-baseline` and the guarded `system-active-image` case exist;
 their C: baseline used caching disabled. Finish only the extensions needed for
 the immediate T067 investigation first. New behavior must be implemented and
@@ -481,7 +483,7 @@ in the tracker. T030 and active-C: validation remain open. Do not label this
 baseline as proof of a dirty restart, an administrative persistence boundary,
 or resolution of the reported BSOD.
 
-Plan 21 adds the corrected baseline/active-image implementation described in the
+Plan 22 adds the corrected baseline/active-image implementation described in the
 checkpoint above. Host tests pass, but the installed VM has not run it because the current
 combined usage-path count remains nonzero. That rejection is a required safety
 result, not an incomplete runner workaround.

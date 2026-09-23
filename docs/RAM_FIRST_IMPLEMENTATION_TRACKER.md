@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 21: plan-14 `pressure`
+row below. The executable verification contract is plan 22: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -27,8 +27,10 @@ both passed on the VM with C: caching disabled. Plan 20 added the first narrowly
 guarded active-C: workload. Review found that its success contract could miss
 cache admission, treat normal live-OS dirty bytes as a flush failure, and allow
 final image evidence to be absent. Plan 21 corrects those gaps and adds the
-matching uncached 349 MiB baseline. It is host-tested but has not run on the VM.
-Neither plan closes T052 ordering or T067.
+matching uncached 349 MiB baseline. Plan 22 permits that disabled/pass-through
+baseline to run while recording existing system usage paths; only active caching
+requires them to be clear. It is host-tested but has not run on the VM. Neither
+plan closes T052 ordering or T067.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -39,8 +41,8 @@ Neither plan closes T052 ordering or T067.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks the mounted disk extent plus PnP identity. The candidate now reports paging, hibernation and dump registrations separately while retaining the combined safety gate; management preserves at least 2 GiB or 25% RAM headroom. | The installed 0.4.70.1 VM still reports two C: usage registrations even with no pagefile, dump disabled and hibernation unavailable. The per-type diagnostic requires the next installed build. Kernel notification proof, saved-profile restore proof and T067 root cause remain open; no guard has been bypassed. |
-| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. **Changed this run:** plan-21 adds a matching uncached 349 MiB baseline and tightens `system-active-image`: separate flush/read boundaries, mandatory accepted-byte proof, busy-C:-safe post-flush semantics, required post-release evidence, and recovery using the same exclusive system lease/path. | Host contracts and managed tests pass. VM baseline/active execution still waits for an installed build and a clean understood usage-path result. This is safer reproduction infrastructure, not a driver fix or BSOD resolution. T030 VM proof, negative active-path proof and packaged-build verification remain. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks the mounted disk extent plus PnP identity. Diagnostics report paging, hibernation and dump registrations separately while retaining the combined safety gate; management preserves at least 2 GiB or 25% RAM headroom. | **Changed this run:** exact installed 0.4.75.1 explained the first boot's `Paging=4`, `Dump=1` as a live C: pagefile and dump configuration. After removing both and rebooting, C: reports `Paging=2`, `Hibernation=0`, `Dump=0` with no pagefile/swapfile/hiberfile. The remaining paging references require driver/Windows path investigation; active caching stays blocked. Kernel notification proof, saved-profile restore proof and T067 root cause remain open. |
+| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-21 added a matching uncached 349 MiB baseline and tightened `system-active-image`: separate flush/read boundaries, mandatory accepted-byte proof, busy-C:-safe post-flush semantics, required post-release evidence, and recovery using the same exclusive system lease/path. **Changed this run:** plan-22 permits only the disabled/pass-through baseline with existing usage registrations; active caching still rejects them. | Plan-22 host contracts and managed tests pass. Exact packaged VM baseline remains; the active run is correctly blocked by two paging references. This is safer reproduction infrastructure, not a driver fix or BSOD resolution. T030 VM proof, negative active-path proof and packaged-build verification remain. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |

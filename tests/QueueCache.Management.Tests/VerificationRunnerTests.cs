@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 21, "active system-image evidence contract version");
+        Check(VerificationPlan.Version == 22, "system-image baseline usage-path contract version");
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);
@@ -54,6 +54,10 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(imageBaseline);
         Check(VerificationPlan.Integrity(imageBaseline).SequenceEqual(new IntegrityCase[] { new("system-image-baseline", "system-image-baseline") }),
             "uncached system-image baseline is a separate bounded case");
+        Check(!VerificationWorker.RequiresClearSystemUsagePaths("system-image-baseline") &&
+            VerificationWorker.RequiresClearSystemUsagePaths("system-active-image") &&
+            VerificationWorker.RequiresClearSystemUsagePaths("system-restore"),
+            "only the disabled pass-through image baseline permits existing system usage paths");
         Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
             "active system-image is one bounded case");
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));

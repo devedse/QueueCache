@@ -24,12 +24,15 @@ still open. The class filter starts inactive and forwards I/O until a task is
 explicitly configured. That pass-through design is not a substitute for the A07–A09
 lifecycle campaign.
 
-The current test VM still reports two protected C: usage registrations after all
-pagefiles were removed, crash dumping was disabled, and hibernation/Fast Startup
-was confirmed unavailable. Active C: verification therefore remains blocked.
-Diagnostics V3 splits paging, hibernation and dump counts so the next installed
-build can identify them; the combined count remains authoritative. Do not bypass
-this guard merely because `Win32_PageFileUsage` is empty.
+Exact installed 0.4.75.1 identified the protected C: registrations by type. With
+a live C: pagefile and kernel dump configured it reported `Paging=4`, `Dump=1`.
+After both were removed and the VM rebooted it reported `Paging=2`,
+`Hibernation=0`, `Dump=0`, while WMI and the filesystem showed no pagefile,
+swapfile or hiberfile. Active C: verification therefore remains blocked until
+the remaining paging-type kernel paths are explained or supported. The combined
+count remains authoritative; do not bypass it merely because
+`Win32_PageFileUsage` is empty. Plan 22 allows only the disabled/pass-through
+image baseline in this state.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
