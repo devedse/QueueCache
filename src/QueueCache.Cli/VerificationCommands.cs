@@ -40,6 +40,8 @@ internal static class VerificationCommands
                                  Writes the independent byte oracle off-target before the file.
               system-post-restart Read-only owned-file check using a prior --oracle on another disk.
                                  Never replays system-files writes or reboots automatically.
+              system-image-baseline Guarded uncached 349 MiB BMP byte workload on C:.
+                                 Leaves C: disabled/released and records a matching pre-active baseline.
               system-active-image Guarded 349 MiB BMP byte workload with a 256..512 MiB runtime-only C: cache.
                                  Requires C: to have no paging/hibernation/dump usage path and restores it disabled.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.

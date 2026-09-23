@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 20, "active system-image contract version");
+        Check(VerificationPlan.Version == 21, "active system-image evidence contract version");
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);
@@ -49,12 +49,48 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(systemFiles with { OraclePath = "Q:\\prior\\oracle.json" }));
         Reject(() => VerificationPlan.Validate(postRestart with { RecoverableVm = false }));
         var activeImage = preflight with { Suite = "system-active-image", BudgetMiB = 512 };
+        var imageBaseline = preflight with { Suite = "system-image-baseline" };
         VerificationPlan.Validate(activeImage);
+        VerificationPlan.Validate(imageBaseline);
+        Check(VerificationPlan.Integrity(imageBaseline).SequenceEqual(new IntegrityCase[] { new("system-image-baseline", "system-image-baseline") }),
+            "uncached system-image baseline is a separate bounded case");
         Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
             "active system-image is one bounded case");
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));
+        QueueCache.Management.WriteCacheState ActiveState(ulong accepted, uint flags = 1 | 256 | 512, ulong instance = 7, ulong errors = 0) =>
+            new(flags, 0, 100UL << 30, 512UL << 20, 512UL << 20, 0, 0, 500UL << 20, 0,
+                accepted, 0, 0, 0, errors, 0, 0) { Instance = instance };
+        var enabledImageState = ActiveState(1000);
+        VerificationWorker.ValidateActiveImageRouting(enabledImageState,
+            ActiveState(1000 + (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes),
+            (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes);
+        foreach (var invalid in new[]
+        {
+            ActiveState(1000 + (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes, flags: 0),
+            ActiveState(1000 + (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes - 1),
+            ActiveState(1000 + (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes, instance: 8),
+            ActiveState(1000 + (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes, errors: 1)
+        })
+        {
+            try
+            {
+                VerificationWorker.ValidateActiveImageRouting(enabledImageState, invalid,
+                    (ulong)QueueCache.Operations.SystemImageScenarios.FileBytes);
+                throw new Exception("Invalid active image routing evidence accepted.");
+            }
+            catch (IOException) { }
+        }
+        var passedImage = new CaseResult("system-active-image", "PASS", "", DateTimeOffset.UtcNow, 1);
+        Check(VerificationWorker.RequiresSystemImageEvidence([passedImage]),
+            "passed active image requires post-release byte evidence");
+        Check(!VerificationWorker.RequiresSystemImageEvidence([passedImage with { Status = "FAIL" }]),
+            "failed active image permits restoration without nonexistent image evidence");
         var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
         var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
+        Check(VerificationRunner.IsSystemRecoveryTarget(systemTarget),
+            "C boot/system recovery selects guarded system restoration");
+        Check(!VerificationRunner.IsSystemRecoveryTarget(resultsTarget),
+            "ordinary disk recovery retains generic restoration");
         SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "SCSI\\TEST", 100L << 30);
         foreach (var invalid in new[] { resultsTarget with { Number = 0 }, resultsTarget with { Instance = "SCSI\\TEST" } })
         {

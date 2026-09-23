@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 20: plan-14 `pressure`
+row below. The executable verification contract is plan 21: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -23,10 +23,12 @@ Plan 17 adds an observed in-flight replacement case to `policies`; exact install
 0.4.69.1 VM proof passed. Plan 18 adds a read-only guarded C: preflight, not a
 file workload or active-system-disk qualification. Plan 19 adds bounded owned-file
 creation with an off-disk oracle and a separate read-only post-restart check;
-both passed on the VM with C: caching disabled. Plan 20 adds the first narrowly
-guarded active-C: workload: a deterministic 349 MiB BMP, 256..512 MiB runtime-only
-Fast cache, off-target oracle and independent restoration. It is host-tested but
-has not run on the VM. Neither plan closes T052 ordering or T067.
+both passed on the VM with C: caching disabled. Plan 20 added the first narrowly
+guarded active-C: workload. Review found that its success contract could miss
+cache admission, treat normal live-OS dirty bytes as a flush failure, and allow
+final image evidence to be absent. Plan 21 corrects those gaps and adds the
+matching uncached 349 MiB baseline. It is host-tested but has not run on the VM.
+Neither plan closes T052 ordering or T067.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -38,7 +40,7 @@ has not run on the VM. Neither plan closes T052 ordering or T067.
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks the mounted disk extent plus PnP identity. The candidate now reports paging, hibernation and dump registrations separately while retaining the combined safety gate; management preserves at least 2 GiB or 25% RAM headroom. | The installed 0.4.70.1 VM still reports two C: usage registrations even with no pagefile, dump disabled and hibernation unavailable. The per-type diagnostic requires the next installed build. Kernel notification proof, saved-profile restore proof and T067 root cause remain open; no guard has been bypassed. |
-| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-20 `system-active-image` adds a single guarded 349 MiB BMP case with an off-target oracle, 256..512 MiB runtime-only Fast budget, exact identity rechecks, exclusive lease, explicit flush and separate restoration deadline. | Host contracts and managed tests pass. VM execution is blocked truthfully by the unexplained C: usage registrations and awaits the diagnostic build. This is reproduction infrastructure, not a driver fix or BSOD resolution. T030 busy-C: semantics, negative/active-path VM proof and packaged-build verification remain. |
+| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. **Changed this run:** plan-21 adds a matching uncached 349 MiB baseline and tightens `system-active-image`: separate flush/read boundaries, mandatory accepted-byte proof, busy-C:-safe post-flush semantics, required post-release evidence, and recovery using the same exclusive system lease/path. | Host contracts and managed tests pass. VM baseline/active execution still waits for an installed build and a clean understood usage-path result. This is safer reproduction infrastructure, not a driver fix or BSOD resolution. T030 VM proof, negative active-path proof and packaged-build verification remain. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -52,11 +54,11 @@ has not run on the VM. Neither plan closes T052 ordering or T067.
 
 Planning revision 3, 2026-09-23: the owner prioritizes reproducing and fixing the
 reported large-BMP/Paint/Photos BSOD. Recent iterations mostly advanced the
-verification framework. The uncached C: baseline is useful and complete for its
-scope, but has not reproduced or diagnosed T067. The detailed immediate sequence
+verification framework. The earlier 64 MiB uncached C: file baseline is useful
+and complete for its scope, but has not reproduced or diagnosed T067. The detailed immediate sequence
 in the [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#immediate-execution-sequence-investigate-the-c-bsod)
-now governs execution. Existing A/T IDs and release gates remain; no status is
-promoted by this documentation-only change, and executable plan 19 is unchanged.
+now governs execution. Existing A/T IDs and release gates remain. Plan 21 advances
+only the A08 reproduction contract; it does not promote A08 or resolve T067.
 
 1. **Capture and recovery readiness (T067/T032/T054).** Check dump/pagefile/free
    space and retrieval after failed boot; record exact loaded build/symbols,
@@ -83,8 +85,8 @@ promoted by this documentation-only change, and executable plan 19 is unchanged.
    caching after the preceding prerequisites. Record actual image size, memory
    headroom, settings and timestamps; compare opening promptly after save with
    opening after explicit drain. The existing 64 MiB file check is not this
-   large-image baseline. Plan 20 now supplies the deterministic 349 MiB active
-   case, but it must reject C: until the usage-path result is understood. Preserve
+   large-image baseline. Plan 21 now supplies matching uncached and active 349 MiB
+   cases, but both must reject C: until the usage-path result is understood. Preserve
    independent deterministic byte checks and
    distinguish them from application-generated image bytes.
 5. **Evidence to fix (T067/T035-T037).** Preserve dumps/logs/symbols before

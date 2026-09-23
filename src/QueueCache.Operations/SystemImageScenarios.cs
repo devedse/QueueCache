@@ -14,6 +14,7 @@ public sealed record SystemImageOracle(int SchemaVersion, DiskTarget Target, str
 public static class SystemImageScenarios
 {
     public const int FileMiB = 349;
+    public const long FileBytes = (long)FileMiB << 20;
     public const int Width = 9216;
     public const int Height = 9927;
     private const int BlockBytes = 1 << 20;
@@ -68,7 +69,7 @@ public static class SystemImageScenarios
         var oracle = JsonSerializer.Deserialize<SystemImageOracle>(File.ReadAllText(path)) ??
             throw new InvalidDataException("Missing system-image oracle.");
         if (oracle.SchemaVersion != 1 || oracle.Target is null || oracle.FilePath is null ||
-            oracle.ExpectedSha256 is null || oracle.Bytes != (long)FileMiB << 20 ||
+            oracle.ExpectedSha256 is null || oracle.Bytes != FileBytes ||
             oracle.Width != Width || oracle.Height != Height || oracle.ExpectedSha256.Length != 64 ||
             !oracle.ExpectedSha256.All(Uri.IsHexDigit))
             throw new InvalidDataException("Invalid system-image oracle schema or bounds.");
@@ -87,7 +88,7 @@ public static class SystemImageScenarios
             throw new IOException("System volume has insufficient free space and 2 GiB headroom.");
 
         var seed = RandomNumberGenerator.GetInt32(1, int.MaxValue);
-        var oracle = new SystemImageOracle(1, target, file, (long)FileMiB << 20, Width, Height,
+        var oracle = new SystemImageOracle(1, target, file, FileBytes, Width, Height,
             seed, ExpectedHash(seed), DateTimeOffset.UtcNow);
         using (var output = new FileStream(oraclePath, FileMode.CreateNew, FileAccess.Write, FileShare.None,
                    4096, FileOptions.WriteThrough))
@@ -109,9 +110,8 @@ public static class SystemImageScenarios
             }
             data.Flush();
         }
-        Verify(target, oracle);
-        return [new("system-image/create/live-bytes", "PASS",
-            "349 MiB deterministic 32-bit BMP matched its independently computed off-target oracle after the application file flush.")];
+        return [new("system-image/write-flushed", "PASS",
+            "The deterministic 349 MiB 32-bit BMP was written and its application file flush completed; byte verification is a separate boundary.")];
     }
 
     public static IReadOnlyList<CheckResult> Verify(DiskTarget target, SystemImageOracle oracle)

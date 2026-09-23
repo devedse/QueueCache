@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 20)
+## Suites (plan version 21)
 
 | Suite | Scope |
 |---|---|
@@ -24,7 +24,8 @@ different disk so telemetry writes do not contaminate the workload.
 | `system-preflight` | Read-only C: disk-identity and cache-state observation. Requires `--recoverable-vm`, exact `--system-instance`/`--system-bytes`, and an existing `--output` directory on a different physical disk with no reparse-point path. No workload files, cache controls, faults, TRIM or reboot. |
 | `system-files` | Guarded 64 MiB owned-file creation on C:, two same-range overwrites, immediate reads, file flush, and live unbuffered comparison. The independently computed seed/SHA oracle is committed to the off-target result directory before the C: workload write. No cache controls, faults, raw I/O, TRIM or reboot. This is a baseline byte check, not an active-cache persistence verdict. |
 | `system-post-restart` | Separate read-only unbuffered comparison of the owned C: file against `--oracle` from a prior `system-files` run on another physical disk. The operator performs any approved normal reboot separately. No workload write or cache configuration. It cannot be called a dirty-cache restart when caching was off. |
-| `system-active-image` | Guarded active-C: reproduction step for a recoverable VM: a runtime-only 256..512 MiB Fast/Idle cache, deterministic 349 MiB 32-bit BMP in a unique owned directory, off-target oracle written first, immediate and post-administrative-flush full-byte checks, then disable/release restoration under its own deadline. It rejects any paging/hibernation/dump usage registration and never creates a saved C: profile. This is a bounded I/O analogue; it does not launch Paint or Photos or by itself resolve the historical BSOD. |
+| `system-image-baseline` | Matching uncached 349 MiB BMP I/O baseline on C:. It requires the cache to remain disabled/released, records the post-file-flush driver state, and compares every byte with the off-target oracle. It does not change cache configuration and is still an automated I/O analogue rather than Paint/Photos. |
+| `system-active-image` | Guarded active-C: reproduction step for a recoverable VM: a runtime-only 256..512 MiB Fast/Idle cache, deterministic 349 MiB 32-bit BMP in a unique owned directory, off-target oracle written first, then distinct application-flush, immediate-read, administrative-flush and post-release full-byte boundaries. It must prove that the cache stayed routed and accepted at least the complete image; it does not require global dirty bytes to remain zero on a live OS volume. Restoration uses the same exclusive system-disk lease and requires the final image evidence after a successful active case. It rejects any paging/hibernation/dump usage registration and never creates a saved C: profile. This is a bounded I/O analogue; it does not launch Paint or Photos or by itself resolve the historical BSOD. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
@@ -44,6 +45,7 @@ qcache developer verify C: --suite system-files --recoverable-vm --system-instan
 # Only after an operator-approved normal reboot; use the completed create run's oracle:
 qcache developer verify C: --suite system-post-restart --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --oracle Q:\QueueCache-System-File-Results\QueueCache-Verify-<create-run-id>\oracle.json --output Q:\QueueCache-System-File-Results
 # Only after C: reports no paging/hibernation/dump usage path and external recovery is ready:
+qcache developer verify C: --suite system-image-baseline --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-System-Image-Results
 qcache developer verify C: --suite system-active-image --budget-mib 512 --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-System-Image-Results
 ```
 
@@ -52,9 +54,11 @@ an interrupted run is not completed evidence. The file is intentionally
 retained for the second phase. These suites do not enable caching or relax
 existing non-OS suite guards. Both phases have only been VM-tested through a
 split managed CLI on installed 0.4.70.1 with C: disabled; exact packaged
-plan-19 and active-cache proof remain pending. The plan-20 active-image suite is
-host-tested only; it must continue to reject the current VM until the unexplained
-C: usage registrations are identified by the new per-type diagnostics.
+plan-19 packaged proof and active-cache proof remain pending. Plan 21 supersedes
+the original plan-20 active-image contract before VM use: it adds the matching
+uncached image baseline, proves active-cache admission, separates byte checks from
+the application flush, tolerates unrelated live C: dirty bytes after an administrative
+flush, and makes post-release evidence mandatory after a passed active case.
 
 Plan 20 also extends `qcache diagnostics <device>` JSON with nullable
 `UsagePaths` (`Paging`, `Hibernation`, `Dump`). New controllers remain compatible

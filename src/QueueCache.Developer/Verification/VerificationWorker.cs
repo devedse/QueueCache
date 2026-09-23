@@ -13,7 +13,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     ulong Value = 0, string? Recovery = null, int Seconds = 0, string? StopFile = null,
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
-    string? OraclePath = null);
+    string? OraclePath = null, bool RequireImageEvidence = false);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -35,6 +35,20 @@ public static class VerificationWorker
         foreach (var check in checks.Where(c => c.Result != "PASS"))
             error.WriteLine($"{check.Result}: {check.Name}: {check.Detail}");
     }
+    public static void ValidateActiveImageRouting(WriteCacheState enabled, WriteCacheState observed,
+        ulong requiredAcceptedBytes)
+    {
+        if (!observed.Enabled || observed.Faulted || observed.Suspended || observed.Removed ||
+            observed.LastError != 0 || observed.BudgetBytes == 0 || observed.ReservedBytes == 0 ||
+            observed.PayloadCapacity == 0 || observed.Instance != enabled.Instance ||
+            observed.Errors != enabled.Errors || observed.SupportsReadWrite && !observed.RoutingConfirmed)
+            throw new IOException("The C: cache did not remain enabled, routed and error-free throughout the image write.");
+        if (observed.AcceptedBytes < enabled.AcceptedBytes ||
+            observed.AcceptedBytes - enabled.AcceptedBytes < requiredAcceptedBytes)
+            throw new IOException("The C: cache did not report accepting the complete image write.");
+    }
+    public static bool RequiresSystemImageEvidence(IEnumerable<CaseResult> results) =>
+        results.Any(result => result.Id == "system-active-image" && result.Status == "PASS");
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
@@ -94,7 +108,7 @@ public static class VerificationWorker
         else
             target = await DiskTarget.InspectAsync(job.Volume);
         if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or
-            "system-capture" or "system-active-image" or "system-restore")
+            "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore")
         {
             if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
                 throw new IOException("Missing explicit recoverable-VM acknowledgement or expected system-disk identity.");
@@ -103,9 +117,9 @@ public static class VerificationWorker
             target.ValidateCurrent();
             output.ValidateCurrent();
             SystemPreflightGuard.ValidateTargets(target, output, job.SystemInstance, job.SystemBytes.Value);
-            if (job.Operation is "system-capture" or "system-active-image" or "system-restore")
+            if (job.Operation is "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore")
             {
-                if (job.Operation == "system-active-image")
+                if (job.Operation is "system-image-baseline" or "system-active-image")
                 {
                     if (string.IsNullOrWhiteSpace(job.OraclePath))
                         throw new IOException("Missing off-target system-image oracle path.");
@@ -155,6 +169,9 @@ public static class VerificationWorker
                     var mismatches = RestorationMismatches(original, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
+                    if (job.RequireImageEvidence &&
+                        (string.IsNullOrWhiteSpace(job.OraclePath) || !File.Exists(job.OraclePath)))
+                        throw new IOException("Required post-release system-image oracle is missing.");
                     if (!string.IsNullOrWhiteSpace(job.OraclePath) && File.Exists(job.OraclePath))
                     {
                         var oracle = SystemImageScenarios.ReadOracle(job.OraclePath);
@@ -164,10 +181,30 @@ public static class VerificationWorker
                                 "The active operation failed before creating its owned image; restoration itself completed.") };
                         RunStorage.AtomicJson(job.Reply + ".post-release-checks.json", postReleaseChecks);
                         ReportFailures(postReleaseChecks, Console.Error);
+                        if (job.RequireImageEvidence && postReleaseChecks.Any(check => check.Result != "PASS"))
+                            throw new IOException("Required system-image bytes were unavailable after cache disable/release restoration.");
                         if (postReleaseChecks.Any(check => check.Result is not ("PASS" or "SKIP")))
                             throw new IOException("System-image bytes failed after cache disable/release restoration.");
                     }
                     return 0;
+                }
+                if (job.Operation == "system-image-baseline")
+                {
+                    if (string.IsNullOrWhiteSpace(job.WorkDirectory) || string.IsNullOrWhiteSpace(job.OraclePath))
+                        throw new IOException("Missing uncached system-image workload or oracle path.");
+                    if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
+                        throw new IOException("Uncached system-image baseline requires C: disabled, released and clean.");
+                    var baselineChecks = new List<CheckResult>();
+                    baselineChecks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
+                    var afterWrite = systemDevice.GetWriteCacheState();
+                    RunStorage.AtomicJson(job.Reply + ".after-application-flush.json", afterWrite);
+                    if (afterWrite.Enabled || afterWrite.BudgetBytes != 0 || afterWrite.Instance != before.Instance ||
+                        afterWrite.Errors != before.Errors || afterWrite.Faulted || afterWrite.LastError != 0)
+                        throw new IOException("C: cache state changed during the uncached image baseline.");
+                    baselineChecks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
+                    RunStorage.AtomicJson(job.Reply, baselineChecks);
+                    ReportFailures(baselineChecks, Console.Error);
+                    return baselineChecks.All(check => check.Result == "PASS") ? 0 : 1;
                 }
                 if (string.IsNullOrWhiteSpace(job.WorkDirectory) || string.IsNullOrWhiteSpace(job.OraclePath) ||
                     job.Configuration is null)
@@ -180,12 +217,16 @@ public static class VerificationWorker
                 checks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
                 var afterApplicationFlush = systemDevice.GetWriteCacheState();
                 RunStorage.AtomicJson(job.Reply + ".after-application-flush.json", afterApplicationFlush);
+                ValidateActiveImageRouting(active, afterApplicationFlush, (ulong)SystemImageScenarios.FileBytes);
+                checks.Add(new("system-image/cache-accepted-bytes", "PASS",
+                    $"The active C: cache accepted at least the complete image ({afterApplicationFlush.AcceptedBytes - active.AcceptedBytes} bytes observed)."));
+                checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 systemDevice.Control(WriteCacheAction.Flush);
                 var afterAdministrativeFlush = systemDevice.GetWriteCacheState();
                 RunStorage.AtomicJson(job.Reply + ".after-administrative-flush.json", afterAdministrativeFlush);
-                if (afterAdministrativeFlush.DirtyBytes != 0 || afterAdministrativeFlush.InFlightBytes != 0 ||
-                    afterAdministrativeFlush.Faulted || afterAdministrativeFlush.Errors != before.Errors)
-                    throw new IOException("Active system-image administrative persistence boundary was not clean.");
+                ValidateActiveImageRouting(active, afterAdministrativeFlush, (ulong)SystemImageScenarios.FileBytes);
+                checks.Add(new("system-image/administrative-flush", "PASS",
+                    "The administrative flush returned while the cache remained routed and error-free; unrelated live C: writes may already be dirty again."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);

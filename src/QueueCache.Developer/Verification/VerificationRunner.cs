@@ -62,6 +62,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
 
     private static string ErrorDetail(string error) => error.Length > 4096 ? error[..4096] + " [truncated; see raw stderr]" : error.Trim();
     private string LeaseDirectory => leaseDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QueueCache", "Verification");
+    private static bool IsSystemSuite(string suite) => suite is
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image";
+    public static bool IsSystemRecoveryTarget(DiskTarget target) =>
+        target.Letter == 'C' && target.IsBoot && target.IsSystem;
+    private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + target.Device;
 
     private async Task<string> Worker(WorkerJob job, CancellationToken token, int timeoutSeconds = 120)
     {
@@ -129,7 +134,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         fileTarget = null;
-        if (selected.Suite is "system-preflight" or "system-files" or "system-post-restart" or "system-active-image")
+        if (IsSystemSuite(selected.Suite))
         {
             var outputVolume = SystemPreflightGuard.OutputVolume(selected.Output);
             var system = await DiskTarget.InspectAsync(selected.Volume, token);
@@ -171,10 +176,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
-        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-active-image"))
+        if (!IsSystemSuite(options.Suite))
             Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         else
             Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast cache with independent restoration." :
+                options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
@@ -208,14 +214,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         try
         {
             DiskTarget target;
-            if (options.Suite is "system-preflight" or "system-files" or "system-post-restart" or "system-active-image")
+            if (IsSystemSuite(options.Suite))
             {
                 target = fileTarget!;
                 // Own the system disk before taking the recovery snapshot so no
                 // competing guarded run can change the state between capture and use.
                 // Semaphore release is not thread-affine: async continuations may
                 // resume on a different thread after an owned worker completes.
-                systemLease = new Semaphore(1, 1, "Global\\QueueCache-SystemVerify-" + target.Device);
+                systemLease = new Semaphore(1, 1, SystemLeaseName(target));
                 ownsSystemLease = systemLease.WaitOne(0);
                 if (!ownsSystemLease)
                     throw new IOException("Another guarded system-disk verification owns this physical disk.");
@@ -245,14 +251,14 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
                 target = original.Target;
             }
-            if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-active-image"))
+            if (!IsSystemSuite(options.Suite))
             {
                 var leases = LeaseDirectory;
                 Directory.CreateDirectory(leases);
                 diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
-            captured = options.Suite is not ("trim-file" or "system-preflight" or "system-files" or "system-post-restart" or "system-active-image");
-            if (options.Suite is "system-files" or "system-active-image")
+            captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
+            if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, Oracle = storage.PathFor("oracle.json") });
@@ -265,22 +271,22 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
-                    if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-active-image")
+                    if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-image-baseline" or "system-active-image")
                     {
                         var systemReply = await Worker(Job(test.Operation) with
                         {
                             SystemInstance = options.SystemInstance,
                             SystemBytes = options.SystemBytes,
                             RecoverableVm = options.RecoverableVm,
-                            WorkDirectory = test.Operation is "system-file-create" or "system-active-image" ? workDirectory : null,
-                            OraclePath = test.Operation is "system-file-create" or "system-active-image" ? storage.PathFor("oracle.json") : options.OraclePath,
+                            WorkDirectory = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? workDirectory : null,
+                            OraclePath = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? storage.PathFor("oracle.json") : options.OraclePath,
                             Configuration = test.Operation == "system-active-image"
                                 ? new CacheConfiguration(options.BudgetMiB, CachePreset.Fast)
                                 {
                                     Options = new(Drain: DrainAlgorithm.Idle, RetainWrites: false, PromoteOnRead: false)
                                 }
                                 : null
-                        }, deadline.Token, test.Operation == "system-active-image" ? 900 : test.Operation == "system-file-create" ? 300 : 120);
+                        }, deadline.Token, test.Operation is "system-image-baseline" or "system-active-image" ? 900 : test.Operation == "system-file-create" ? 300 : 120);
                         if (test.Operation != "system-preflight")
                             caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(systemReply, deadline.Token))
                                 ?? throw new InvalidDataException("Missing system-file checks.");
@@ -359,7 +365,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         SystemInstance = options.SystemInstance,
                         SystemBytes = options.SystemBytes,
                         RecoverableVm = options.RecoverableVm,
-                        OraclePath = storage.PathFor("oracle.json")
+                        OraclePath = storage.PathFor("oracle.json"),
+                        RequireImageEvidence = VerificationWorker.RequiresSystemImageEvidence(storage.Results)
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("SYSTEM RESTORATION ERROR: " + restorationFailure); }
@@ -798,28 +805,65 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         OwnedProcess.EnsureStopped(path);
         var snapshotPath = Path.Combine(path, "recovery.json");
         original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(snapshotPath, token))!;
-        var leases = LeaseDirectory;
-        Directory.CreateDirectory(leases);
-        using var diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        options = new($"{original.Target.Letter}:", Output: path);
+        var systemRecovery = IsSystemRecoveryTarget(original.Target);
+        FileStream? diskLease = null;
+        Semaphore? systemLease = null;
+        var ownsSystemLease = false;
+        if (systemRecovery)
+        {
+            systemLease = new Semaphore(1, 1, SystemLeaseName(original.Target));
+            ownsSystemLease = systemLease.WaitOne(0);
+            if (!ownsSystemLease)
+            {
+                systemLease.Dispose();
+                throw new IOException("Another guarded system-disk verification owns this physical disk.");
+            }
+        }
+        else
+        {
+            var leases = LeaseDirectory;
+            Directory.CreateDirectory(leases);
+            diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        options = systemRecovery
+            ? new($"{original.Target.Letter}:", "system-active-image", path,
+                SystemInstance: original.Target.Instance, SystemBytes: original.Target.Bytes, RecoverableVm: true)
+            : new($"{original.Target.Letter}:", Output: path);
+        fileTarget = systemRecovery ? original.Target : null;
         storage = new RunStorage(path);
         progressSink = progress;
         progressLabel = "Recovery";
         Log("Recovery run directory: " + storage.DirectoryPath);
         try
         {
-            await Worker(Job("restore") with
+            var operation = systemRecovery ? "system-restore" : "restore";
+            var resultsPath = Path.Combine(path, "results.json");
+            var priorResults = File.Exists(resultsPath)
+                ? JsonSerializer.Deserialize<CaseResult[]>(await File.ReadAllTextAsync(resultsPath, token)) ?? []
+                : [];
+            await Worker(Job(operation) with
             {
-                Recovery = snapshotPath
+                Recovery = snapshotPath,
+                SystemInstance = systemRecovery ? original.Target.Instance : null,
+                SystemBytes = systemRecovery ? original.Target.Bytes : null,
+                RecoverableVm = systemRecovery,
+                OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
+                RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults)
             }, token, 300);
+            storage.Write("recovery-result.json", new
+            {
+                Status = "RESTORED",
+                At = DateTimeOffset.UtcNow
+            });
+            Log("RESTORED: " + storage.PathFor("recovery-result.json"));
+            return 0;
         }
         catch (Exception ex) { Log("RESTORATION ERROR: " + ex); throw; }
-        storage.Write("recovery-result.json", new
+        finally
         {
-            Status = "RESTORED",
-            At = DateTimeOffset.UtcNow
-        });
-        Log("RESTORED: " + storage.PathFor("recovery-result.json"));
-        return 0;
+            diskLease?.Dispose();
+            if (ownsSystemLease) systemLease!.Release();
+            systemLease?.Dispose();
+        }
     }
 }

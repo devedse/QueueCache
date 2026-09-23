@@ -32,8 +32,9 @@ build can identify them; the combined count remains authoritative. Do not bypass
 this guard merely because `Win32_PageFileUsage` is empty.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
-in the restored snapshot and is unresolved. Plan 20 supplies a conservative
-349 MiB deterministic image workload, not a root-cause fix. A 4 GiB cache on the
+in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
+and active-cache 349 MiB deterministic image workloads with required admission
+and post-release evidence, not a root-cause fix. A 4 GiB cache on the
 8 GiB guest is only a memory-pressure hypothesis; new admission retains at least
 2 GiB or 25% physical-memory headroom and the first active test is capped at
 512 MiB.

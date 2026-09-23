@@ -99,13 +99,20 @@ legacy combined count remains authoritative. Install/reboot that candidate, read
 the three C:/Q: values, and then decide the smallest support or enforced-prerequisite
 change. This is now the next T023/T025/T068 exit check.
 
-Plan 20 implements the first active reproduction case but has not yet run on the
+Plan 21 supersedes the first active reproduction contract before it has run on the
 VM. `system-active-image` exclusively leases C:, captures a disabled/released
 baseline, permits only an internal runtime 256..512 MiB Fast configuration, writes
 a deterministic 349 MiB 32-bit BMP under its unique owned directory, commits its
-oracle to the other disk first, verifies every byte after application and explicit
-administrative flushes, then disables/releases and restores under a separate
-deadline. The public Apply path still rejects boot/system disks. This advances
+oracle to the other disk first, proves that the active cache accepted at least the
+complete image, and verifies every byte at separate application-flush,
+administrative-flush and post-release boundaries. Because Windows can write to C:
+immediately after a flush returns, the boundary requires a returned flush plus
+unchanged routed, error-free state rather than a perpetual global zero-dirty
+snapshot. A passed case cannot restore successfully without the final oracle/image
+evidence, and manual recovery uses the same exclusive system-disk lease and
+restoration operation. The separate `system-image-baseline` runs the identical
+image I/O with caching disabled. The public Apply path still rejects boot/system
+disks. This advances
 the controlled experiment; it is not a QueueCache crash fix and cannot resolve
 T067 without VM evidence.
 
@@ -452,8 +459,8 @@ remaining ordering/lifetime proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
-Plan-20 `system-preflight`, `system-files`, `system-post-restart` and the guarded
-`system-active-image` case exist;
+Plan-21 `system-preflight`, `system-files`, `system-post-restart`, the uncached
+`system-image-baseline` and the guarded `system-active-image` case exist;
 their C: baseline used caching disabled. Finish only the extensions needed for
 the immediate T067 investigation first. New behavior must be implemented and
 documented inside `qcache developer verify` and the same worker infrastructure.
@@ -474,8 +481,8 @@ in the tracker. T030 and active-C: validation remain open. Do not label this
 baseline as proof of a dirty restart, an administrative persistence boundary,
 or resolution of the reported BSOD.
 
-Plan 20 adds the bounded active-image implementation described in the checkpoint
-above. Host tests pass, but the installed VM has not run it because the current
+Plan 21 adds the corrected baseline/active-image implementation described in the
+checkpoint above. Host tests pass, but the installed VM has not run it because the current
 combined usage-path count remains nonzero. That rejection is a required safety
 result, not an incomplete runner workaround.
 

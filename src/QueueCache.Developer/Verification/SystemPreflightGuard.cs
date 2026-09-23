@@ -7,7 +7,7 @@ public static class SystemPreflightGuard
 {
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-active-image"))
+        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image"))
         {
             if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm || options.OraclePath is not null)
                 throw new ArgumentException("System-disk opt-in arguments are only valid for guarded system suites.");
