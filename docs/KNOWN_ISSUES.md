@@ -34,6 +34,13 @@ count remains authoritative; do not bypass it merely because
 `Win32_PageFileUsage` is empty. Plan 22 allows only the disabled/pass-through
 image baseline in this state.
 
+That baseline has now passed with the split plan-22 CLI on installed 0.4.75.1:
+the deterministic 349 MiB image matched its off-target oracle and C: remained
+disabled/released/clean. A paired active request failed during pre-mutation
+capture exactly because `Paging=2`; no recovery snapshot or workload was created.
+The open defect/qualification question is safe paging-path support and ownership,
+not baseline file integrity.
+
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
 and active-cache 349 MiB deterministic image workloads with required admission

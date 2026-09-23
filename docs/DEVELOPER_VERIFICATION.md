@@ -64,6 +64,18 @@ Plan 22 corrects the baseline gate: existing system usage registrations do not
 block the disabled/pass-through control case, but remain a hard stop for active
 caching and restoration.
 
+The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
+installed 0.4.75.1 driver. Run
+`QueueCache-Verify-20260923-140039-8c9ee24872d14b6b82639e5590c9bbb7`
+completed 1/1: the 349 MiB application file flush returned and every byte matched
+the off-target oracle through unbuffered reads; C: remained disabled, released
+and error-free. The paired active request
+`QueueCache-Verify-20260923-140550-e8e582d46f5f46658a039d4ce29e0ed9`
+ended INCOMPLETE by design during `system-capture` because C: still reported two
+paging usage paths. It created no recovery snapshot, image/oracle or enabled-state
+evidence and did not change C:. This is positive safety-gate evidence, not an
+active-cache failure or a passed active case. Exact packaged plan-22 proof remains.
+
 Plan 20 also extends `qcache diagnostics <device>` JSON with nullable
 `UsagePaths` (`Paging`, `Hibernation`, `Dump`). New controllers remain compatible
 with V1/V2 drivers, and new drivers return V2 to older controllers. The existing

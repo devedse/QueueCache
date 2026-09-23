@@ -118,6 +118,17 @@ disks. This advances
 the controlled experiment; it is not a QueueCache crash fix and cannot resolve
 T067 without VM evidence.
 
+Exact VM evidence now exists for the split plan-22 CLI on installed 0.4.75.1.
+The disabled/pass-through 349 MiB baseline run
+`QueueCache-Verify-20260923-140039-8c9ee24872d14b6b82639e5590c9bbb7`
+completed 1/1 with full-byte oracle agreement and unchanged clean C: state. The
+paired active request
+`QueueCache-Verify-20260923-140550-e8e582d46f5f46658a039d4ce29e0ed9`
+was rejected before capture or mutation because the kernel still reports two
+paging-type usage paths. The next implementation focus is therefore T024/T053
+paging-path ownership, nonpageable progress and overlap ordering—not weakening
+the runner or repeating the same registry experiment.
+
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
 decoded a large image. It is not proven. Management now preserves the greater of
@@ -484,9 +495,10 @@ baseline as proof of a dirty restart, an administrative persistence boundary,
 or resolution of the reported BSOD.
 
 Plan 22 adds the corrected baseline/active-image implementation described in the
-checkpoint above. Host tests pass, but the installed VM has not run it because the current
-combined usage-path count remains nonzero. That rejection is a required safety
-result, not an incomplete runner workaround.
+checkpoint above. Host tests and the split-CLI disabled baseline pass. The active
+request was rejected before mutation because the current combined usage-path
+count remains nonzero. That rejection is a required safety result, not an
+incomplete runner workaround. Exact packaged plan-22 proof remains open.
 
 ### A09. Validate C: Fast in a disposable VM
 
