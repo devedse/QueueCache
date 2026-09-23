@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 29, "paging-bypass system-image contract version");
+        Check(VerificationPlan.Version == 30, "post-restart paging-transition contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -198,6 +198,20 @@ internal static class VerificationRunnerTests
         catch (IOException) { }
         try { SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "WRONG", 100L << 30); throw new Exception("Wrong identity accepted."); }
         catch (IOException) { }
+        SystemPreflightGuard.ValidateRecordedTarget(systemTarget with { IsPaging = false }, systemTarget with { IsPaging = true });
+        foreach (var changed in new[]
+        {
+            systemTarget with { Letter = 'D' },
+            systemTarget with { Number = 2 },
+            systemTarget with { Bytes = 99L << 30 },
+            systemTarget with { Instance = "SCSI\\OTHER" },
+            systemTarget with { IsBoot = false },
+            systemTarget with { IsSystem = false }
+        })
+        {
+            try { SystemPreflightGuard.ValidateRecordedTarget(systemTarget, changed); throw new Exception("Changed post-restart disk identity accepted."); }
+            catch (IOException) { }
+        }
         var ownedDirectory = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
         QueueCache.Operations.SystemFileScenarios.ValidateOwnedPath(systemTarget, ownedDirectory, ownedDirectory + "\\payload.bin");
         foreach (var badPath in new[] { "C:\\Windows\\payload.bin", ownedDirectory + "\\other.bin", "Q:\\QueueCache-System-0123456789abcdef0123456789abcdef\\payload.bin" })

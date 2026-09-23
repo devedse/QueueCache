@@ -37,6 +37,20 @@ public static class SystemPreflightGuard
             throw new IOException("System-disk results must be on a different physical disk.");
     }
 
+    public static void ValidateRecordedTarget(DiskTarget recorded, DiskTarget current)
+    {
+        // A pagefile may be added or removed between the create and post-restart
+        // phases. That changes IsPaging, not the physical disk identity. Keep every
+        // stable identity and system-role field exact.
+        if (recorded.Letter != current.Letter ||
+            recorded.Number != current.Number ||
+            recorded.Bytes != current.Bytes ||
+            !string.Equals(recorded.Instance, current.Instance, StringComparison.OrdinalIgnoreCase) ||
+            recorded.IsBoot != current.IsBoot ||
+            recorded.IsSystem != current.IsSystem)
+            throw new IOException("Post-restart oracle target identity changed.");
+    }
+
     public static string OutputVolume(string outputDirectory)
     {
         var full = Path.GetFullPath(outputDirectory);

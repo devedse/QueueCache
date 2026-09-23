@@ -158,8 +158,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 var oracleDisk = await DiskTarget.InspectAsync(oracleVolume, token);
                 oracleDisk.ValidateCurrent(token);
                 SystemPreflightGuard.ValidateTargets(system, oracleDisk, selected.SystemInstance!, selected.SystemBytes!.Value);
-                if (SystemFileScenarios.ReadOracle(oraclePath).Target != system)
-                    throw new IOException("Post-restart oracle target identity changed.");
+                SystemPreflightGuard.ValidateRecordedTarget(
+                    SystemFileScenarios.ReadOracle(oraclePath).Target, system);
             }
             fileTarget = system;
         }

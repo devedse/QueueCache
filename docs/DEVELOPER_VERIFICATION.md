@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 24)
+## Suites (plan version 30)
 
 | Suite | Scope |
 |---|---|
@@ -112,6 +112,9 @@ Strict cases separate immutable workload/oracle artifacts and requires paging da
 to bypass RAM admission/read service: reserve and serviced-miss counters must stay
 zero, as must new mapping failures and capacity waits. It otherwise uses normal public
 Apply and covers both Fast and Strict; the old action remains only as an ABI alias.
+Plan 30 permits the oracle's paging-role flag to change across the deliberate
+pagefile/restart phase, while still requiring the same drive letter, physical disk
+number, byte size, PnP instance, boot role and system role.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

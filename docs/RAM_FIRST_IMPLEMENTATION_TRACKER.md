@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 29: plan-14 `pressure`
+row below. The executable verification contract is plan 30: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -44,6 +44,8 @@ requires paging data to bypass RAM admission/read service. Exact
 initially reused Fast's owned path, and a saved Fast profile with a configured C:
 pagefile was followed after reboot by repeatable qcache/CoreCLR and unrelated Edge
 process corruption. Both failures and clean restoration evidence were preserved.
+Plan 30 keeps the post-restart physical identity check exact while allowing the
+expected paging-role transition caused by adding or removing a pagefile.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
