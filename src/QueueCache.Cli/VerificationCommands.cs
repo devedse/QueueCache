@@ -42,8 +42,8 @@ internal static class VerificationCommands
                                  Never replays system-files writes or reboots automatically.
               system-image-baseline Guarded uncached 349 MiB BMP byte workload on C:.
                                  Leaves C: disabled/released and records a matching pre-active baseline.
-              system-active-image Guarded 349 MiB BMP byte workload with a 256..512 MiB runtime-only C: cache.
-                                 Requires C: to have no paging/hibernation/dump usage path and restores it disabled.
+              system-active-image Guarded Fast and Strict 349 MiB BMP byte workloads using normal C: activation.
+                                 Accepts reconciled system usage paths and restores C: disabled/released.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.

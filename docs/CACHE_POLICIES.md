@@ -67,15 +67,14 @@ The old shared 4 GiB ceiling is replaced by a shared limit of 75% of physical RA
 
 The driver advertises a versioned state/policy contract while retaining its old ABI. A new-driver **Active** state requires enabled routing, allocated payload, and no fault, suspension, removal or barrier. Settings are read back and compared after Apply. Instance/revision identify the live cache, not a saved profile; unavailable samples must not be displayed as live. A status sample confirms driver state at that instant, not filesystem correctness, physical durability, or a throughput guarantee.
 
-Mixed-hit reads currently use an original lower read plus cached-block overlays; fully cached reads avoid disk. Unsupported media-changing controls conservatively invalidate clean data after draining. Paging/hibernation/dump paths are counted and ordered. The current public activation path still rejects their registration, while plan 26 contains the first paging-capable guarded path. This is a temporary implementation split: C: is a normal product target, public Apply and saved-profile startup must converge on the paging-capable path, and hibernation/Fast Startup/dump behavior must be implemented and tested rather than exposed as a permanent user-facing exclusion. SSD/L2 caching is not planned.
+Mixed-hit reads currently use an original lower read plus cached-block overlays; fully cached reads avoid disk. Unsupported media-changing controls conservatively invalidate clean data after draining. Paging/hibernation/dump paths are counted and ordered. Plan 27 uses the paging-capable policy for normal Enable, public Apply and saved-profile startup. A new registration establishes reserved capacity without disabling the cache; device-power down drains and successful D0 resumes prior active state. Exact installed lifecycle qualification is still tracked separately. SSD/L2 caching is not planned.
 
 ## Dashboard
 
 Review caveat: the usage-path notification/Enable race found in A07/T068 is repaired
-in source by one routing-lock protocol. The current management boot/system rejection
-is scheduled for removal after the plan-26 active run; it is not the product design.
-Native/host contracts pass, but installed active-path, restart and lifecycle proof
-remain open.
+by one routing-lock protocol. Exact 0.4.82.1 active Fast passed; plan 27 removes the
+management rejection and uses normal activation. Native/host contracts pass, but
+exact installed Fast/Strict, restart and lifecycle proof remain open.
 
 Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 14 corrects the tightened trigger/capacity checks after an installed plan-13 run exposed an over-strict Fixed0 read-slot assertion; its exact-build rerun is pending.
 

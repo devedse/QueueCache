@@ -142,8 +142,6 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             system.ValidateCurrent(token);
             output.ValidateCurrent(token);
             SystemPreflightGuard.ValidateTargets(system, output, selected.SystemInstance!, selected.SystemBytes!.Value);
-            if (selected.Suite == "system-active-image" && system.IsPaging)
-                throw new IOException("system-active-image requires the live pagefile to be off C: before creating a run.");
             if (selected.Suite == "system-post-restart")
             {
                 var oraclePath = Path.GetFullPath(selected.OraclePath!);
@@ -281,7 +279,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                             WorkDirectory = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? workDirectory : null,
                             OraclePath = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? storage.PathFor("oracle.json") : options.OraclePath,
                             Configuration = test.Operation == "system-active-image"
-                                ? new CacheConfiguration(options.BudgetMiB, CachePreset.Fast)
+                                ? new CacheConfiguration(options.BudgetMiB,
+                                    test.Id.EndsWith("-strict", StringComparison.Ordinal)
+                                        ? CachePreset.Strict : CachePreset.Fast)
                                 {
                                     Options = new(Drain: DrainAlgorithm.Idle, RetainWrites: false, PromoteOnRead: false)
                                 }

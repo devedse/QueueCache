@@ -25,7 +25,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 26;
+    public const int Version = 27;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
@@ -76,7 +76,11 @@ public static class VerificationPlan
         "system-files" => [new("system-file-create", "system-file-create")],
         "system-post-restart" => [new("system-file-verify", "system-file-verify")],
         "system-image-baseline" => [new("system-image-baseline", "system-image-baseline")],
-        "system-active-image" => [new("system-active-image", "system-active-image")],
+        "system-active-image" =>
+        [
+            new("system-active-image-fast", "system-active-image"),
+            new("system-active-image-strict", "system-active-image")
+        ],
         "policies" => [new("policy-integrity", "policies")],
         "pressure" => [new("pressure-integrity", "pressure")],
         "full" => [new("file-integrity", "files"), new("policy-integrity", "policies")],

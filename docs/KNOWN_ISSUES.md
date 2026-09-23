@@ -67,9 +67,11 @@ disabled. Plan 26 is the first guarded active candidate: paging writes receive a
 reserved admission region, paging MDLs request high-priority mapping, and safe
 non-overlapping paging-read misses can progress past an unrelated capacity wait.
 Diagnostics V6 makes any mapping failure or paging capacity wait fail the active
-case. Normal C: configuration and saved-profile startup are the immediate follow-up
-after that experiment: their current blocks must be removed, not retained as the
-released behavior.
+case. Exact 0.4.82.1 passed that active case with complete bytes and clean
+restoration. Plan 27 removes normal C: and saved-profile activation blocks, keeps
+new usage registrations active after establishing reserve, restores active state
+after device-power resume, and tests normal Fast plus Strict. Exact packaged VM
+evidence for these newer paths is pending.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached

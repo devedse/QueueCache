@@ -28,7 +28,12 @@ constexpr bool PolicyChecks()
         QcPagingReserveSlots(32768) != 16384 || QcPagingReserveSlots(65536) != 16384 ||
         QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 500 ||
-        QcAdmissionWriteLimit(1000, true, true) != 1000)
+        QcAdmissionWriteLimit(1000, true, true) != 1000 ||
+        !QcResumeAfterPower(true, true, true, false) ||
+        QcResumeAfterPower(false, true, true, false) ||
+        QcResumeAfterPower(true, false, true, false) ||
+        QcResumeAfterPower(true, true, false, false) ||
+        QcResumeAfterPower(true, true, true, true))
         return false;
     o.Drain = QcBalanced;
     if (QcShouldDrain(o, 10, 100, 0, 0, false, pressure))

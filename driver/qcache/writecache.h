@@ -126,7 +126,7 @@ enum : ULONG
     QcRelease,
     QcDropClean,
     QcPerformanceTiming,
-    QcEnablePaging // Guarded recoverable-VM verification only; normal Enable remains restricted.
+    QcEnablePaging // Deprecated compatibility alias for QcEnable.
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {
@@ -182,7 +182,7 @@ struct QC_CACHE
     ULONG* Buckets;
     PUCHAR DrainBuffer;
     ULONG Capacity, Head, Tail, FreeHead, Count, SectorBytes, DrainCapacity;
-    BOOLEAN Enabled, Barrier, Suspended, Stop;
+    BOOLEAN Enabled, Barrier, Suspended, Stop, ResumeEnabled;
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.

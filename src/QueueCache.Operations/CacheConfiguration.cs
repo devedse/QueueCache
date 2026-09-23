@@ -39,17 +39,10 @@ public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset
 
 internal static class ActivationSafety
 {
-    internal static void ValidateTarget(bool enabled, bool isBoot, bool isSystem, bool isPaging, int usagePathCount,
-        bool allowRecoverableSystemVerification = false)
+    internal static void ValidateTarget(int usagePathCount)
     {
         if (usagePathCount < 0)
             throw new InvalidDataException("Driver reported an invalid paging/hibernation/dump path count.");
-        if (enabled && (isBoot || isSystem) && !allowRecoverableSystemVerification)
-            throw new NotSupportedException(
-                "Caching cannot be enabled on a boot/system disk until active-system-disk support is qualified.");
-        if (enabled && (isPaging || (usagePathCount != 0 && !allowRecoverableSystemVerification)))
-            throw new NotSupportedException(
-                "Caching cannot be enabled on a disk with paging, hibernation or dump paths until active-system-disk support is qualified.");
     }
 }
 
@@ -59,21 +52,10 @@ public static class ConfigurationManager
 {
     public static WriteCacheState Apply(DiskTarget target, CacheConfiguration configuration,
         bool acceptVolatileFlush, IProgress<string>? progress = null)
-        => ApplyCore(target, configuration, acceptVolatileFlush, false, progress);
-
-    internal static WriteCacheState ApplyForRecoverableSystemVerification(DiskTarget target,
-        CacheConfiguration configuration, bool acceptVolatileFlush, IProgress<string>? progress = null)
-    {
-        if (target.Letter != 'C' || !target.IsBoot || !target.IsSystem || target.IsPaging ||
-            !configuration.Enabled || configuration.Preset != CachePreset.Fast ||
-            configuration.BudgetMiB is < 256 or > 512)
-            throw new NotSupportedException(
-                "Recoverable system verification requires non-paging C:, boot/system identity, Fast mode and a 256..512 MiB runtime budget.");
-        return ApplyCore(target, configuration, acceptVolatileFlush, true, progress);
-    }
+        => ApplyCore(target, configuration, acceptVolatileFlush, progress);
 
     private static WriteCacheState ApplyCore(DiskTarget target, CacheConfiguration configuration,
-        bool acceptVolatileFlush, bool allowRecoverableSystemVerification, IProgress<string>? progress)
+        bool acceptVolatileFlush, IProgress<string>? progress)
     {
         using var gate = ConfigurationGate.Enter();
         configuration.Validate(acceptVolatileFlush);
@@ -86,8 +68,7 @@ public static class ConfigurationManager
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);
         if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the matching read/write-cache driver and restart Windows before applying settings.");
-        ActivationSafety.ValidateTarget(configuration.Enabled, target.IsBoot, target.IsSystem, target.IsPaging,
-            device.GetStatistics().PagingPathCount, allowRecoverableSystemVerification);
+        ActivationSafety.ValidateTarget(device.GetStatistics().PagingPathCount);
         // Reject an unsupported new policy before disabling/draining the existing cache.
         if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
             throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");
@@ -107,7 +88,7 @@ public static class ConfigurationManager
             device.Control(WriteCacheAction.Configure, budget);
         device.SetOptions(configuration.Options);
         if (configuration.Enabled)
-            device.Control(allowRecoverableSystemVerification ? WriteCacheAction.EnablePaging : WriteCacheAction.Enable);
+            device.Control(WriteCacheAction.Enable);
         // A background barrier can start immediately after Enable completes.
         // Wait on snapshots, not by replaying Disable/Configure/Enable.
         var result = WaitForHealthyState(device.GetWriteCacheState, state, progress);

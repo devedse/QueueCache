@@ -25,7 +25,7 @@ different disk so telemetry writes do not contaminate the workload.
 | `system-files` | Guarded 64 MiB owned-file creation on C:, two same-range overwrites, immediate reads, file flush, and live unbuffered comparison. The independently computed seed/SHA oracle is committed to the off-target result directory before the C: workload write. No cache controls, faults, raw I/O, TRIM or reboot. This is a baseline byte check, not an active-cache persistence verdict. |
 | `system-post-restart` | Separate read-only unbuffered comparison of the owned C: file against `--oracle` from a prior `system-files` run on another physical disk. The operator performs any approved normal reboot separately. No workload write or cache configuration. It cannot be called a dirty-cache restart when caching was off. |
 | `system-image-baseline` | Matching uncached 349 MiB BMP I/O baseline on C:. It requires the cache to remain disabled/released, records the post-file-flush driver state, and compares every byte with the off-target oracle. Existing paging/hibernation/dump registrations are permitted because this case remains pass-through and performs no cache control. Plan 26's active case separately accepts reconciled paging-only registrations. It is still an automated I/O analogue rather than Paint/Photos. |
-| `system-active-image` | Guarded active-C: reproduction step for a recoverable VM: a runtime-only 256..512 MiB Fast/Idle cache, deterministic 349 MiB 32-bit BMP in a unique owned directory, off-target oracle written first, then distinct application-flush, immediate-read, administrative-flush and post-release full-byte boundaries. It must prove that the cache stayed routed and accepted at least the complete image; it does not require global dirty bytes to remain zero on a live OS volume. Restoration uses the same exclusive system-disk lease and requires the final image evidence after a successful active case. Plan 26 accepts reconciled paging-only registrations and rejects hibernation/dump registrations for this first bounded experiment; it never creates a saved C: profile. This is a bounded I/O analogue; it does not launch Paint or Photos or by itself resolve the historical BSOD. |
+| `system-active-image` | Two guarded active-C: cases for a recoverable VM: normal public Apply with Fast/Idle, then Strict/Idle, each using a runtime-only 256..512 MiB cache and deterministic 349 MiB BMP in a unique owned directory. The off-target oracle is written first, followed by application-flush, immediate-read, administrative-flush, full-byte and clean runtime-release boundaries. Reconciled paging/hibernation/dump registrations are accepted. Restoration retains the exclusive system-disk lease and final image evidence. It never creates a saved profile and does not itself launch Paint or Photos. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
@@ -95,7 +95,7 @@ passed the disabled 365,953,024-byte baseline and observed 983 paging reads
 window. This proves that a per-request whole-cache drain/disable policy would not
 be a usable active design.
 
-Plan 26 adds the guarded active candidate. Up to 64 MiB of the write quota is
+Plan 26 added the guarded active candidate. Up to 64 MiB of the write quota is
 reserved from ordinary admission for paging writes; paging MDLs use high-priority
 mapping; and non-overlapping paging-read misses may reach the lower disk while an
 ordinary write waits for capacity. Diagnostics V6 reports the reserve, maximum
@@ -104,7 +104,11 @@ misses. `system-capture`, `system-active-image` and `system-restore` permit only
 the reconciled paging-only registration state in a recoverable VM. The active case
 rejects any new mapping failure or capacity wait and requires the maximum paging
 write to fit the reserve at both application and administrative flush boundaries.
-The dedicated enable action is not used by public Apply or saved-profile restore.
+Exact 0.4.82.1 run
+`QueueCache-Verify-20260923-185145-55506c69732847a9a8863d3cacd181c0`
+passed 1/1: 366,888,960 accepted bytes, two complete oracle matches, zero paging
+mapping failures/capacity waits and clean restoration. Plan 27 uses normal public
+Apply and covers both Fast and Strict; the old action remains only as an ABI alias.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

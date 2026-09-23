@@ -31,16 +31,16 @@ execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLE
 The intended end state is one activation path for data and system disks. The
 remaining work is implementation and evidence, not a permanent C: exclusion:
 
-1. Run 0.4.81.1's guarded active-image case to validate paging admission,
+1. COMPLETE: exact 0.4.82.1 guarded active-image validated paging admission,
    nonpageable progress, byte correctness and restoration on the snapshot-backed VM.
-2. Make normal kernel Enable use the paging-capable policy. Remove the separate
-   verifier-only `EnablePaging` action once callers and compatibility permit.
-3. Remove boot/system/paging rejection from public Apply. Keep identity, memory,
+2. IMPLEMENTED in plan 27: normal kernel Enable uses the paging-capable policy;
+   action 12 remains only as an identical compatibility alias.
+3. IMPLEMENTED in plan 27: remove boot/system/paging rejection from public Apply. Keep identity, memory,
    configuration and driver-state validation because those apply to every disk.
-4. Treat new paging registrations without disabling an otherwise healthy active
+4. IMPLEMENTED in plan 27: treat new system-path registrations without disabling an otherwise healthy active
    cache. Implement ordered hibernation, Fast Startup and crash-dump behavior; do
    not turn those Windows features into a permanent activation ban.
-5. Make desktop, CLI and saved-profile restore use the same normal path. A C: card
+5. IMPLEMENTED in plan 27: desktop, CLI and saved-profile restore use the same normal path. A C: card
    may state factual disk roles, but must not carry an unsupported-feature warning.
 6. Prove normal UI/CLI activation, Fast and Strict behavior, saved-profile reboot,
    shutdown/restart, paging pressure, hibernation/Fast Startup and configured dump

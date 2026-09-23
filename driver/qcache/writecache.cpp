@@ -933,7 +933,6 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     case QcEnable:
     case QcEnablePaging:
     {
-        const bool pagingVerification = command.Action == QcEnablePaging;
         if (command.Value || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else if (c->BlockedPlacement)
@@ -948,20 +947,11 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             // paging/hibernation/dump path. Keep it through Enabled transition.
             KIRQL irql;
             KeAcquireSpinLock(c->RoutingLock, &irql);
-            const auto paging = InterlockedCompareExchange(&c->PagingUsageCount, 0, 0);
-            const auto hibernation = InterlockedCompareExchange(&c->HibernationUsageCount, 0, 0);
-            const auto dump = InterlockedCompareExchange(&c->DumpUsageCount, 0, 0);
-            if (!pagingVerification && QcCachePagingPathCount(c) > 0)
-                status = STATUS_NOT_SUPPORTED;
-            else if (pagingVerification &&
-                     (!c->UnsafeDefer || c->State.BudgetBytes < (256ULL << 20) || paging <= 0 ||
-                      hibernation != 0 || dump != 0 || QcCachePagingPathCount(c) != paging))
-                status = STATUS_NOT_SUPPORTED;
-            else
-            {
-                c->Enabled = TRUE;
-                ++c->Generation;
-            }
+            // System and data disks share one activation policy. Usage-path
+            // registration is ordered by this routing lock and admission keeps
+            // reserve for paging traffic; it is not a reason to reject Enable.
+            c->Enabled = TRUE;
+            ++c->Generation;
             KeReleaseSpinLock(c->RoutingLock, irql);
         }
         break;
@@ -1009,6 +999,36 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     ReleaseCache(c);
     if (NT_SUCCESS(status) && command.Action == QcRetry)
         status = QcCacheBarrier(c, FALSE, QcControlBarrier, irp, command.Action);
+    return status;
+}
+static NTSTATUS PrepareUsagePath(QC_CACHE* c, PIRP irp)
+{
+    AcquireCache(c);
+    const auto ordinaryLimit = QcAdmissionWriteLimit(
+        WriteLimit(c), QcCachePagingPathCount(c) > 0, false);
+    while (c->Enabled && c->DirtySlots > ordinaryLimit &&
+           NT_SUCCESS(c->State.LastError) && !c->Gone && !irp->Cancel)
+    {
+        // A newly registered paging path must have its reserved admission before
+        // the lower stack accepts the notification. Drain only the excess over
+        // the ordinary limit; keep routing and all unrelated clean data active.
+        c->WriterWaiting = TRUE;
+        c->Performance.Phase = QcCapacityPhase;
+        Publish(c);
+        KeClearEvent(&c->Changed);
+        WakeDrainers(c);
+        ReleaseCache(c);
+        LARGE_INTEGER interval;
+        interval.QuadPart = -1000000;
+        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+        AcquireCache(c);
+    }
+    c->WriterWaiting = FALSE;
+    c->Performance.Phase = QcRequestPhase;
+    Publish(c);
+    auto status = irp->Cancel ? STATUS_CANCELLED :
+        c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
+    ReleaseCache(c);
     return status;
 }
 static PUCHAR Map(PIRP irp)
@@ -1605,6 +1625,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         if (stack->Parameters.Power.State.DeviceState != PowerDeviceD0)
         {
             AcquireCache(c);
+            const bool resumeEnabled = c->Enabled != FALSE;
             ++c->Diagnostics.PowerBarriers;
             Publish(c);
             ReleaseCache(c);
@@ -1612,6 +1633,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             if (!NT_SUCCESS(status))
                 return status;
             AcquireCache(c);
+            c->ResumeEnabled = resumeEnabled;
             c->Suspended = TRUE;
             Publish(c);
             ReleaseCache(c);
@@ -1621,6 +1643,11 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         {
             AcquireCache(c);
             c->Suspended = FALSE;
+            if (QcResumeAfterPower(c->ResumeEnabled != FALSE, c->Capacity != 0,
+                                   NT_SUCCESS(c->State.LastError), c->Gone != FALSE))
+                c->Enabled = TRUE;
+            c->ResumeEnabled = FALSE;
+            ++c->Generation;
             Publish(c);
             ReleaseCache(c);
         }
@@ -1629,17 +1656,12 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (QcTrackedUsageNotification(stack))
     {
         // In-path was reserved under QueueLock before this request entered the
-        // worker. Disable before forwarding so later requests cannot use a cache
-        // underneath a newly accepted paging/hibernation/dump path.
-        auto status = QcCacheBarrier(c, TRUE, QcOrderedBarrier, irp);
+        // worker. Preserve active routing. If ordinary dirty data predates the
+        // first registration, drain only enough to establish its paging reserve.
+        auto status = stack->Parameters.UsageNotification.InPath
+            ? PrepareUsagePath(c, irp) : STATUS_SUCCESS;
         if (NT_SUCCESS(status))
-        {
-            AcquireCache(c);
-            ClearClean(c);
-            Publish(c);
-            ReleaseCache(c);
             status = OriginalIo(c, irp);
-        }
         if (stack->Parameters.UsageNotification.InPath)
         {
             if (!NT_SUCCESS(status))

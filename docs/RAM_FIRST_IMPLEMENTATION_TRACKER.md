@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 26: plan-14 `pressure`
+row below. The executable verification contract is plan 27: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -36,9 +36,9 @@ weakening the activation gate and exact installed 0.4.78.1 resolved the counter
 question. Exact installed 0.4.79.1 proved plan 24's associated PnP stop/remove and
 device-state policy. Plan 25 measured paging I/O safely with caching disabled.
 Plan 26 adds the bounded paging forward-progress safeguards and guarded enablement
-needed for the first active experiment. Product direction now requires C: to use
-the normal UI/CLI/saved-profile path without an unsupported-feature warning; the
-current public activation block is temporary work to remove after that experiment.
+needed for the first active experiment. That exact 0.4.82.1 experiment passed.
+Plan 27 removes the product activation split and runs both Fast and Strict through
+normal Apply; exact packaged installation and lifecycle proof remain pending.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -49,9 +49,9 @@ current public activation block is temporary work to remove after that experimen
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068, T070-T074 | PARTIAL | Notification/PnP safeguards and paging observation are implemented. Plan 26 reserves up to 64 MiB for paging writes, uses high-priority paging mapping, services safe non-overlapping paging reads during capacity waits and exposes progress in Diagnostics V6. **Changed this run:** C: is explicitly a normal product target; the separate verifier action and public boot/system/paging rejection are temporary migration code, not intended product safeguards. | Install exact 0.4.81.1 and pass the guarded active run first. Then make normal Enable/public Apply/saved restore use the same paging-capable policy, keep active routing across new paging registrations, implement hibernation/Fast Startup/dump behavior, and prove these paths. No generic C: unsupported warning is planned. T067 root cause remains open. |
-| A08 / T028-T031 | PARTIAL | Guarded owned-file/restart and 349 MiB disabled/active contracts exist. **Changed this run:** exact plan-25 disabled baseline passed, and plan 26 permits paging-only capture/active/restoration while enforcing Diagnostics V6 forward-progress gates at application and administrative flush boundaries. | Run `QueueCache-Verify-20260923-172845-86c7a49e6f1445178f9ca455390a8ae9` completed 1/1 on exact 0.4.80.1: all 365,953,024 bytes matched; its 13.5-second window observed 983 paging reads/29,969,408 bytes and 427 paging writes/5,344,256 bytes with C: disabled and clean. Exact active plan-26 execution remains pending and is still a controlled experiment, not production qualification. |
-| A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
+| A07 / T023-T027, T067-T068, T070-T074 | PARTIAL | Paging reserve, high-priority mapping, safe paging-read service and Diagnostics V6 are implemented. **Changed this run:** normal Enable/public Apply now accept system usage paths; the old action is only an ABI alias. New registrations keep routing active and establish reserve without a whole-cache drain. Device-power resume restores a previously active cache. | Exact 0.4.82.1 plan-26 active Fast run passed all bytes with zero paging map/capacity failures. Plan-27 native/host checks pass; install its packaged build and prove normal Fast/Strict, registration, resume and saved startup. T067 historical root cause remains open. |
+| A08 / T028-T031 | PARTIAL | Guarded identity, owned-file, restart and 349 MiB contracts exist. **Changed this run:** exact plan-26 active Fast completed 1/1, and plan 27 runs separate Fast and Strict cases through public Apply, releasing C: cleanly between them. | Active run `QueueCache-Verify-20260923-185145-55506c69732847a9a8863d3cacd181c0` accepted 366,888,960 bytes, matched the oracle twice, used a 64 MiB paging reserve with zero failures/waits, and restored cleanly. Exact plan-27 two-case execution is pending. |
+| A09 / T032-T037, T073-T074 | PARTIAL | **Changed this run:** desktop/CLI share unrestricted public Apply; saved profiles use it after identity validation; power resume restores prior active routing. | Packaged VM proof is pending for ordinary activation, saved-profile reboot, configured pagefile, sleep/hibernate/Fast Startup and dump registration. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
@@ -155,14 +155,22 @@ paging writes (5,344,256 bytes). Paging is therefore normal bidirectional traffi
 on this C: path; a whole-cache barrier or disable on every paging request is not a
 viable design.
 
-Plan 26 implements the next bounded active candidate. Ordinary writes cannot
+Plan 26 implemented the first bounded active candidate. Ordinary writes cannot
 consume a paging reserve of up to 64 MiB; paging MDLs request high-priority system
 mapping; and a non-overlapping paging-read miss can use the lower device while the
 sole foreground owner is capacity-blocked. A distinct enable action is accepted
-only for the recoverable verifier with Fast mode, 256..512 MiB RAM, paging-only
-registrations and no configured C: page file. Normal Enable/public Apply remain
-restricted. Diagnostics V6 and the active case require zero mapping failures and
-capacity waits and verify that the observed maximum paging write fits the reserve.
+only for the recoverable verifier in that build. Exact 0.4.82.1 then passed the
+active 349 MiB workload with a 512 MiB Fast cache: all bytes matched twice,
+366,888,960 bytes were accepted, the 64 MiB reserve covered observed paging, and
+there were zero mapping failures or paging capacity waits. Restoration succeeded.
+
+Plan 27 promotes that mechanism into the product. Normal Enable and public Apply
+accept boot/system/paging targets. The legacy action value remains only as an ABI-
+compatible alias. A new usage registration stays ordered, drains only dirty excess
+needed to establish its reserve, and does not disable or discard the cache. Device
+power-down drains and remembers active state; successful D0 resume restores it.
+The maintained active suite now runs Fast and Strict separately through public
+Apply and releases C: cleanly between cases.
 
 ### Normal C: activation convergence (decision 2026-09-23)
 
@@ -170,11 +178,11 @@ This is required product work, not an optional relaxation of testing standards:
 
 | Task | Required change | Exit evidence |
 |---|---|---|
-| T070 / A07 | After the exact 0.4.81.1 guarded run passes, make ordinary kernel Enable select the paging-capable policy and retire the verifier-only activation split. | Normal Enable succeeds with reconciled paging paths and preserves the same reserve, ordering and Diagnostics V6 checks. |
-| T071 / A07 | Remove boot/system/paging rejection from public Apply while retaining disk identity, available-memory, policy, live-driver and error-state validation. | CLI and desktop activate C: through the ordinary management call; no hidden override or C:-specific warning. |
-| T072 / A07-A09 | Do not disable a healthy active cache merely because a paging path registers. Define and implement ordered paging, hibernation/Fast Startup and crash-dump behavior. | Focused lifecycle tests show correct registration races, I/O progress, ordering and state across each reachable Windows path. |
-| T073 / A09 | Enable saved C: profiles through the same identity-bound startup restore used by other disks. | A saved profile activates the intended physical system disk after reboot, reports failures truthfully and passes independent byte checks. |
-| T074 / A08-A09 | Keep guarded system-test identity, off-target evidence, lease and recovery controls, but test the public path as well as the lower-level candidate. | Active deterministic image, normal UI/CLI activation, Fast/Strict, paging pressure, restart, hibernation/Fast Startup and dump configuration have recorded results. |
+| T070 / A07 | Make ordinary kernel Enable select the paging-capable policy and retire the verifier-only activation split. | IMPLEMENTED in plan 27; legacy action 12 is an identical compatibility alias. Exact installed normal-Enable proof pending. |
+| T071 / A07 | Remove boot/system/paging rejection from public Apply while retaining disk identity, available-memory, policy, live-driver and error-state validation. | IMPLEMENTED; CLI and desktop share public Apply and the attach message has no C:-unsupported warning. Exact installed UI/CLI proof pending. |
+| T072 / A07-A09 | Do not disable a healthy active cache merely because a system usage path registers. Define ordered paging, hibernation/Fast Startup and crash-dump behavior. | IMPLEMENTED path: reserve establishment preserves routing; power down drains; D0 resumes prior activation; crash-dump registration no longer disables. Exact installed registration/power evidence pending. |
+| T073 / A09 | Enable saved C: profiles through the same identity-bound startup restore used by other disks. | IMPLEMENTED through unrestricted public Apply; exact saved-profile reboot and byte evidence pending. |
+| T074 / A08-A09 | Keep system-test identity, off-target evidence, lease and recovery controls, but test the public path as well as the lower-level candidate. | IMPLEMENTED plan-27 contract with Fast/Strict public Apply and per-case release; exact installed execution and remaining lifecycle runs pending. |
 
 Disk-role labels may remain factual inventory information. They must not disable
 the C: controls or imply that the user accepts an unknown correctness defect.

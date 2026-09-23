@@ -60,6 +60,10 @@ constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool pagingPath, bool pa
 {
     return pagingPath && !pagingIo ? writeLimit - QcPagingReserveSlots(writeLimit) : writeLimit;
 }
+constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool healthy, bool gone)
+{
+    return wasEnabled && hasCapacity && healthy && !gone;
+}
 // Protect resident read demand up to half the payload, borrowing unused space.
 // A large atomic request may reduce protection so it can eventually be admitted.
 constexpr ULONG QcProtectedReadSlots(ULONG capacity, ULONG residentReads, ULONG requestSlots)

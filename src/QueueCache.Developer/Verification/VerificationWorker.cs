@@ -48,8 +48,9 @@ public static class VerificationWorker
             throw new IOException("The C: cache did not report accepting the complete image write.");
     }
     public static bool RequiresSystemImageEvidence(IEnumerable<CaseResult> results) =>
-        results.Any(result => result.Id == "system-active-image" && result.Status == "PASS");
-    public static bool AllowsGuardedPagingPaths(string operation) =>
+        results.Any(result => result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) &&
+                              result.Status == "PASS");
+    public static bool AllowsSystemUsagePaths(string operation) =>
         operation is "system-capture" or "system-active-image" or "system-restore";
     public static void ValidateSystemUsageDiagnostics(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
@@ -90,14 +91,12 @@ public static class VerificationWorker
             WriteBytes = last.WriteBytes - first.WriteBytes
         };
     }
-    public static void ValidateGuardedPagingPaths(CacheStatistics statistics, CacheDiagnostics diagnostics)
+    public static void ValidateActiveSystemPaths(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
         ValidateSystemUsageDiagnostics(statistics, diagnostics);
-        var paths = diagnostics.UsagePaths!;
-        if (paths.Paging == 0 || paths.Hibernation != 0 || paths.Dump != 0 ||
-            diagnostics.PagingIo is null || diagnostics.PagingProgress is null)
+        if (diagnostics.PagingIo is null || diagnostics.PagingProgress is null)
             throw new NotSupportedException(
-                "Guarded active C: verification requires paging-only paths and Diagnostics V6.");
+                "Active C: verification requires Diagnostics V6 paging progress data.");
     }
     public static CachePagingProgress ValidatePagingProgressWindow(CacheDiagnostics before, CacheDiagnostics after)
     {
@@ -204,10 +203,8 @@ public static class VerificationWorker
                 var statistics = systemDevice.GetStatistics();
                 var diagnosticsBefore = systemDevice.GetDiagnostics();
                 ValidateSystemUsageDiagnostics(statistics, diagnosticsBefore);
-                if (target.IsPaging)
-                    throw new IOException("Guarded active system verification requires no configured page file on C:.");
-                if (AllowsGuardedPagingPaths(job.Operation))
-                    ValidateGuardedPagingPaths(statistics, diagnosticsBefore);
+                if (AllowsSystemUsagePaths(job.Operation))
+                    ValidateActiveSystemPaths(statistics, diagnosticsBefore);
                 else if (job.Operation != "system-image-baseline" && statistics.PagingPathCount != 0)
                     throw new IOException("This system operation does not support a paging, hibernation or dump usage path.");
                 if (before.DeviceBytes != (ulong)target.Bytes || before.Faulted || before.Errors != 0 || before.LastError != 0)
@@ -296,7 +293,7 @@ public static class VerificationWorker
                     throw new IOException("Missing active system-image workload, oracle or configuration.");
                 if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
                     throw new IOException("Active system-image workload must start from the captured disabled/released state.");
-                var active = ConfigurationManager.ApplyForRecoverableSystemVerification(target, job.Configuration, true);
+                var active = ConfigurationManager.Apply(target, job.Configuration, true);
                 RunStorage.AtomicJson(job.Reply + ".enabled.json", active);
                 var diagnosticsEnabled = systemDevice.GetDiagnostics();
                 RunStorage.AtomicJson(job.Reply + ".enabled-diagnostics.json", diagnosticsEnabled);
@@ -326,6 +323,15 @@ public static class VerificationWorker
                 checks.Add(new("system-image/administrative-flush", "PASS",
                     "The administrative flush returned while the cache remained routed and error-free; unrelated live C: writes may already be dirty again."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
+                systemDevice.Control(WriteCacheAction.Disable);
+                systemDevice.Control(WriteCacheAction.Release);
+                var released = systemDevice.GetWriteCacheState();
+                RunStorage.AtomicJson(job.Reply + ".released.json", released);
+                if (released.Enabled || released.BudgetBytes != 0 || released.DirtyBytes != 0 ||
+                    released.InFlightBytes != 0 || released.Faulted || released.LastError != 0)
+                    throw new IOException("Active system-image case did not return C: to a disabled/released state.");
+                checks.Add(new("system-image/runtime-release", "PASS",
+                    "The normal product path disabled, drained and released the C: runtime cache cleanly."));
                 RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);
                 return checks.All(check => check.Result == "PASS") ? 0 : 1;

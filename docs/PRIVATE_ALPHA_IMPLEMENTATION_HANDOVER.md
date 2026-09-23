@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 26. Corrected plan-14 `pressure`
+The executable verification contract is plan 27. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -18,9 +18,10 @@ check; both passed on the VM with C: caching disabled. Active C: is not qualifie
 
 Immediate priority: investigate T067, the owner's BMP/Paint/Photos BSOD. Follow
 the focused sequence below before resuming general A08 framework expansion or
-T050 performance tuning. The executable verification contract is now plan 26:
-its guarded paging-progress implementation and host/native checks are complete,
-but its exact packaged active-C: VM run is still pending.
+T050 performance tuning. Exact 0.4.82.1 plan-26 active Fast passed with full bytes,
+zero paging mapping/capacity failures and clean restoration. Plan 27 promotes that
+policy into normal Enable/public Apply and adds separate Fast/Strict cases; exact
+installation of this newer implementation is pending.
 
 ## 1. Start here
 
@@ -166,7 +167,9 @@ request design and instead adds reserved paging-write admission, high-priority
 MDL mapping, and safe paging-read miss service while an ordinary write is blocked.
 Only the guarded verifier can request this experimental paging enablement; it
 requires paging-only registrations, Fast mode and a 256..512 MiB budget. Normal
-Enable/public Apply stay restricted.
+Enable/public Apply stay restricted in plan 26. Exact 0.4.82.1 then passed that
+experiment. Plan 27 removes those restrictions, accepts all reconciled system-path
+types, uses public Apply, and adds separate Fast/Strict cases.
 
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
@@ -217,9 +220,9 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | Usage/PnP safeguards and paging observation exist. Plan 26 adds a paging write reserve, high-priority paging MDL mapping, safe paging-read miss service during capacity waits, and a verifier-only paging enable action. **Changed this run:** T070-T074 require convergence into normal Enable, public Apply, desktop/CLI and saved startup without a C:-unsupported warning. | Exact 0.4.80.1 proves bidirectional paging traffic with C: disabled. Install 0.4.81.1 and require zero paging map/capacity failures plus clean bytes/restoration, then remove the temporary public activation blocks and prove the normal path. | Makes C: a normal product target while retaining backend correctness evidence. |
-| A08 | PARTIAL | Guarded byte/restart and 349 MiB disabled/active contracts exist. Plan 26 admits paging-only active capture/workload/restoration and enforces Diagnostics V6 progress gates. | Plan-25 disabled run passed 365,953,024 bytes and measured 983 paging reads plus 427 writes. Exact active plan-26 run is pending. | Converts the safe baseline into a bounded active experiment with automatic stop conditions. |
-| A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
+| A07 | PARTIAL | Plan 26 paging reserve/mapping/read progress exists. **Changed this run:** plan 27 normal Enable/public Apply accept system paths; new registrations keep routing active and establish reserve; D0 resumes prior active state. | Exact 0.4.82.1 active Fast passed. New native/host checks pass; exact packaged normal-path, registration and power proof pending. | Makes C: use the same backend product path as other disks. |
+| A08 | PARTIAL | Guarded byte/restart and 349 MiB contracts exist. **Changed this run:** plan 27 runs normal Fast and Strict cases and releases cleanly between them. | Plan-26 active run accepted 366,888,960 bytes, matched twice, reported zero paging failures/waits and restored cleanly. Exact plan-27 two-case run pending. | Proves normal product activation with strong byte and progress evidence. |
+| A09 | PARTIAL | **Changed this run:** public UI/CLI and identity-bound saved startup accept C:; power resume restores prior active state. | Exact normal activation, saved-profile reboot, configured pagefile and sleep/hibernate/Fast Startup/dump evidence pending. | Demonstrates ordinary system use rather than only a special experiment. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
 | A12 | FALSE | Private-alpha freeze and participant release pending. | Owner reviews candidate and limitations after preceding gates. | Controlled real-user feedback with an identifiable recoverable build. |
@@ -228,11 +231,10 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest packaged candidate is 0.4.81.1 from `9dfc8bf`; it is not yet installed.
-Latest recorded installed candidate: 0.4.80.1 from `588c725`, SYS SHA-256
-`B931ABCCE65DF0F3246BC2F2C0526A0234B345BCC9C4F978B54CC2BCC84287AC`.
-It proves plan 25's disabled paging-I/O observation. Plan 26 is the newer guarded
-active candidate and is not yet installed. See
+Latest recorded installed candidate is 0.4.82.1 from `611c9e4`, SYS SHA-256
+`01D2140535A5AEE1C7B2F39DCC1A24EE3D2A2D4C7D5A81DE7953B63659B012C3`.
+It proves plan 26's guarded active Fast path. Plan 27's normal product-path source
+is newer and not yet packaged/installed. See
 the tracker for each earlier release's scoped evidence.
 The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
 bytes and zero errors. Recheck live identity/state before another workload. These

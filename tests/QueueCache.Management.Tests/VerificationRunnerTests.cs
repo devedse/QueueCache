@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 26, "guarded paging forward-progress contract version");
+        Check(VerificationPlan.Version == 27, "normal system activation contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -78,11 +78,11 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(imageBaseline);
         Check(VerificationPlan.Integrity(imageBaseline).SequenceEqual(new IntegrityCase[] { new("system-image-baseline", "system-image-baseline") }),
             "uncached system-image baseline is a separate bounded case");
-        Check(VerificationWorker.AllowsGuardedPagingPaths("system-capture") &&
-            VerificationWorker.AllowsGuardedPagingPaths("system-active-image") &&
-            VerificationWorker.AllowsGuardedPagingPaths("system-restore") &&
-            !VerificationWorker.AllowsGuardedPagingPaths("system-image-baseline"),
-            "only guarded active capture/workload/restoration permit paging paths");
+        Check(VerificationWorker.AllowsSystemUsagePaths("system-capture") &&
+            VerificationWorker.AllowsSystemUsagePaths("system-active-image") &&
+            VerificationWorker.AllowsSystemUsagePaths("system-restore") &&
+            !VerificationWorker.AllowsSystemUsagePaths("system-image-baseline"),
+            "active capture/workload/restoration accept reconciled system usage paths");
         var pagingBefore = usageDiagnostics with
         {
             PagingIo = new QueueCache.Management.CachePagingIo(10, 1000, 20, 2000, 3, 2, 3000, 4096, 4)
@@ -111,7 +111,16 @@ internal static class VerificationRunnerTests
         {
             PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 64UL << 20, 1UL << 20, 2UL << 20)
         };
-        VerificationWorker.ValidateGuardedPagingPaths(usageStatistics, guardedPaging);
+        VerificationWorker.ValidateActiveSystemPaths(usageStatistics, guardedPaging);
+        var allSystemActivity = new QueueCache.Management.CacheUsageActivities(
+            usageActivity.Paging, new(1, 0, 1, 0, 0, 0, 600), new(1, 0, 1, 0, 0, 0, 601));
+        VerificationWorker.ValidateActiveSystemPaths(
+            usageStatistics with { PagingPathCount = 4 },
+            guardedPaging with
+            {
+                UsagePaths = new(2, 1, 1),
+                UsageActivity = allSystemActivity
+            });
         var progressAfter = guardedPaging with
         {
             PagingProgress = guardedPaging.PagingProgress! with { ServicedReadMisses = 12 }
@@ -134,8 +143,11 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
-        Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
-            "active system-image is one bounded case");
+        Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[]
+        {
+            new("system-active-image-fast", "system-active-image"),
+            new("system-active-image-strict", "system-active-image")
+        }), "active system-image covers normal Fast and Strict product paths");
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));
         QueueCache.Management.WriteCacheState ActiveState(ulong accepted, uint flags = 1 | 256 | 512, ulong instance = 7, ulong errors = 0) =>
             new(flags, 0, 100UL << 30, 512UL << 20, 512UL << 20, 0, 0, 500UL << 20, 0,
@@ -160,7 +172,7 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
-        var passedImage = new CaseResult("system-active-image", "PASS", "", DateTimeOffset.UtcNow, 1);
+        var passedImage = new CaseResult("system-active-image-fast", "PASS", "", DateTimeOffset.UtcNow, 1);
         Check(VerificationWorker.RequiresSystemImageEvidence([passedImage]),
             "passed active image requires post-release byte evidence");
         Check(!VerificationWorker.RequiresSystemImageEvidence([passedImage with { Status = "FAIL" }]),

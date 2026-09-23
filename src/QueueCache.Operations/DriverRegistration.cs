@@ -47,6 +47,6 @@ public static class DriverRegistration
         Remove:
             DeviceFilters.Change(target.Instance, snapshot.DriverKey, false);
         }
-        return $"{selected.Display}: filter {(attach ? "registered" : "unregistered")}. Reboot required. Caching is not automatically enabled. Boot/paging support remains unvalidated.";
+        return $"{selected.Display}: filter {(attach ? "registered" : "unregistered")}. Reboot required. Caching is not automatically enabled.";
     }
 }
