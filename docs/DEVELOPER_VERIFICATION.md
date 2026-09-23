@@ -16,12 +16,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 18)
+## Suites (plan version 19)
 
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
-| `system-preflight` | Read-only C: disk-identity and cache-state observation. Requires `--recoverable-vm`, exact `--system-instance`/`--system-bytes`, and an existing `--output` directory on a different physical disk with no reparse-point path. No workload files, cache controls, faults, TRIM or reboot. This does not qualify active C: caching or implement the A08 file oracle. |
+| `system-preflight` | Read-only C: disk-identity and cache-state observation. Requires `--recoverable-vm`, exact `--system-instance`/`--system-bytes`, and an existing `--output` directory on a different physical disk with no reparse-point path. No workload files, cache controls, faults, TRIM or reboot. |
+| `system-files` | Guarded 64 MiB owned-file creation on C:, two same-range overwrites, immediate reads, file flush, and live unbuffered comparison. The independently computed seed/SHA oracle is committed to the off-target result directory before the C: workload write. No cache controls, faults, raw I/O, TRIM or reboot. This is a baseline byte check, not an active-cache persistence verdict. |
+| `system-post-restart` | Separate read-only unbuffered comparison of the owned C: file against `--oracle` from a prior `system-files` run on another physical disk. The operator performs any approved normal reboot separately. No workload write or cache configuration. It cannot be called a dirty-cache restart when caching was off. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
@@ -31,6 +33,23 @@ different disk so telemetry writes do not contaminate the workload.
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
+
+For the guarded system phases, use an elevated, restorable test VM; obtain the
+exact C: physical disk PnP ID and size from inventory, and choose an existing
+result directory on a separate physical disk. These are separate invocations:
+
+```powershell
+qcache developer verify C: --suite system-files --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-System-File-Results
+# Only after an operator-approved normal reboot; use the completed create run's oracle:
+qcache developer verify C: --suite system-post-restart --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --oracle Q:\QueueCache-System-File-Results\QueueCache-Verify-<create-run-id>\oracle.json --output Q:\QueueCache-System-File-Results
+```
+
+The create run's `FINISHED.txt`/status/results/log and oracle must be retained;
+an interrupted run is not completed evidence. The file is intentionally
+retained for the second phase. These suites do not enable caching or relax
+existing non-OS suite guards. Both phases have only been VM-tested through a
+split managed CLI on installed 0.4.70.1 with C: disabled; exact packaged
+plan-19 and active-cache proof remain pending.
 
 Plan 11 adds the maintained foreground/background case to `policies` and `full`.
 It uses an 8 MiB hot set under a 64 MiB Fast/Idle cache for 60 seconds. The first

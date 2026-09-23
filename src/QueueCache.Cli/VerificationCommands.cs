@@ -36,6 +36,10 @@ internal static class VerificationCommands
               quick              File-integrity checks; default. No DiskSpd needed.
               system-preflight  Read-only C: identity/state check; no workload or cache changes.
                                  Requires explicit VM acknowledgement, disk identity and off-disk output.
+              system-files      Bounded 64 MiB owned-file write/overwrite check on C:.
+                                 Writes the independent byte oracle off-target before the file.
+              system-post-restart Read-only owned-file check using a prior --oracle on another disk.
+                                 Never replays system-files writes or reboots automatically.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
@@ -71,10 +75,11 @@ internal static class VerificationCommands
             Live timestamped progress is also saved to run.log, including errors and waiting messages.
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
             Run ordinary suites elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
-            system-preflight is read-only on C: and requires an existing output directory on a different physical disk.
+            System suites require an existing output directory on a different physical disk and explicit VM/disk identity.
+            system-files reports live unbuffered bytes; it does not alone prove persistence under an active Fast cache.
             """);
         var volume = new Argument<string>("volume");
-        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. quick/policies/pressure/trim-diagnostic/trim-file do not require DiskSpd." };
+        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. System suites require explicit guarded options." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };
         var disk = new Option<string?>("--diskspd") { Description = "Executable path: Microsoft amd64\\diskspd.exe or CrystalDiskMark CdmResource\\DiskSpd\\DiskSpd64.exe. Quote paths with spaces." };
@@ -84,19 +89,20 @@ internal static class VerificationCommands
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
         var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance or drain-decision: case-sensitive ID substring. A selected run is not the complete matrix." };
-        var systemInstance = new Option<string?>("--system-instance") { Description = "system-preflight only: exact expected C: physical-disk PnP instance ID." };
-        var systemBytes = new Option<long?>("--system-bytes") { Description = "system-preflight only: exact expected C: physical-disk byte size." };
-        var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "system-preflight only: acknowledge a restorable disposable VM with external console access." };
+        var systemInstance = new Option<string?>("--system-instance") { Description = "System suites: exact expected C: physical-disk PnP instance ID." };
+        var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
+        var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
+        var oracle = new Option<string?>("--oracle") { Description = "system-post-restart only: prior system-files oracle.json on a separate physical disk." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter,
-            systemInstance, systemBytes, recoverableVm })
+            systemInstance, systemBytes, recoverableVm, oracle })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
             RequireAdministrator();
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
-            p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm)),
+            p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle)),
             new ConsoleProgress(), token);
         });
         return command;

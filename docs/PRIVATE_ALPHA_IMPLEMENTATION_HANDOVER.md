@@ -1,11 +1,11 @@
 # QueueCache private alpha implementation handover
 
-Revised: 2026-09-22, planning revision 2. Audience: the executing agent and project
+Revised: 2026-09-23, planning revision 2. Audience: the executing agent and project
 owner. End goal: a production-ready QueueCache product. A01-A12 deliver the first
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 18. Corrected plan-14 `pressure`
+The executable verification contract is plan 19. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -13,7 +13,8 @@ completed 24/24 with clean restoration. The tuning decision remains open; see
 the tracker for measurements and limitations. Plan 17 adds a partial T052
 overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 0.4.69.1 policy verification passed. Plan 18 adds guarded read-only C:
-preflight, not active C: caching or the A08 file workflow.
+preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
+check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
 ## 1. Start here
 
@@ -77,7 +78,7 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
 | A07 | PARTIAL | T023 operation map and interim usage-path exclusion implemented; T068's activation race is repaired, boot/system targets are rejected, and Apply now rechecks mounted disk identity immediately before opening it. | Exact installed 0.4.69.1 Q: policy checks exercised Apply; saved-profile restore, kernel notification proof, T024-T027 and incident T067 remain. | Reduces the chance of applying a saved profile to a disk remapped after inventory. |
-| A08 | PARTIAL | Plan-18 `system-preflight` is a guarded, read-only C: identity/state observation with off-disk output. | Split-CLI VM preflight passed with C: disabled. The bounded file-only workload, oracle, post-restart verification and busy-disk persistence checks do not exist yet. | Starts C: observation without relaxing the non-OS workload guards. |
+| A08 | PARTIAL | Plan-19 guarded owned-file creation and off-disk oracle plus read-only post-restart check are implemented. | Split-CLI VM create/restart checks each passed 1/1 with C: caching disabled. Busy-C: persistence and broader guard/packaged-build proof remain. | Gives a known-good C: byte baseline across a normal reboot before testing the riskier active-cache path. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
@@ -370,6 +371,15 @@ inside `qcache developer verify` and the same worker infrastructure.
 | T028 | Add a typed system-volume file-only scenario with explicit opt-in and recorded expected physical identity/size/volume. Require off-target output storage and a recoverable-VM acknowledgement. Create only a unique test directory and bounded files. | Current non-OS suites retain their guards. No raw writes, formatting, TRIM probes, synthetic faults, broad registry changes or automatic reboot in the C: scenario. |
 | T029 | Reuse deterministic file creation/read/overwrite/oracle helpers without inheriting unsafe advanced modes. Store independently computed expected seed/range hashes off the target before the operation being tested. Support a separate read-only post-restart verification phase. | Byte oracle survives a guest restart; expected values are not reconstructed from potentially wrong returned data. Checks are limited to owned test files. |
 | T030 | Define clean-state semantics for a continuously busy OS disk. Verify explicit persistence at a controlled boundary and recorded saved settings, not perpetual global DirtyBytes==0 after re-enable. Keep ordinary secondary-disk restoration checks unchanged. | Host tests model writes before/after the boundary, exact errors and configuration checks. A busy C: is not a manufactured cleanup failure or an excuse to ignore real persistence errors. |
+
+T029 now has plan-19 implementation and a completed split-CLI VM baseline:
+64 MiB owned-file create/overwrite and independently recorded Q: oracle,
+followed by read-only verification after a normal reboot. C: caching was off
+throughout. The first attempt was incomplete because of a runner lease bug;
+the corrected 1/1 create and 1/1 restart runs are separate complete evidence
+in the tracker. T030 and active-C: validation remain open. Do not label this
+baseline as proof of a dirty restart, an administrative persistence boundary,
+or resolution of the reported BSOD.
 | T031 | Test identity mismatch, omitted opt-in, OS target passed to raw/fault mode, output on same target, missing observer, timeout, child-process ownership and interrupted post-restart verification. | All unsafe/ambiguous requests fail before mutation. No unknown process termination or weakened ready/coverage checks. |
 
 ### A09. Validate C: Fast in a disposable VM
@@ -474,8 +484,9 @@ commands were used. Check availability once rather than repeatedly failing it.
 | V6 | Elevated test VM: `qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd <verified-diskspd.exe> --output <off-target-results-root>` | Secondary disposable disk only; this suite uses controlled delay. Required only for relevant touched behavior. |
 | V7 | Elevated test VM: `qcache developer verify-status <exact-run-directory>` | Read status; not a substitute for raw evidence or completion marker. |
 | V8 | Elevated test VM: `qcache developer verify-recover <exact-failed-run-directory>` | First inspect failure/fault/trace, verify disk identity and all owned processes exited. Recovery has its own verdict and must not relabel the original run. Stop if recovery fails. |
-| C0 | Elevated recoverable VM: `qcache developer verify C: --suite system-preflight --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-disk-size> --output <existing-directory-on-other-physical-disk>` | Plan-18 read-only inventory/state check only. Requires expected identity and off-target output; no C: file writes or cache activation. Split-CLI VM proof exists; exact packaged plan-18 proof pending. |
-| C1 | Not available yet: A08 C:-safe file suite and read-only post-restart mode | Implement and test first. Never run V1-V6 against C: by stripping guards. |
+| C0 | Elevated recoverable VM: `qcache developer verify C: --suite system-preflight --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-disk-size> --output <existing-directory-on-other-physical-disk>` | Plan-18 read-only inventory/state check. Requires expected identity and off-target output; no C: file writes or cache activation. Split-CLI VM proof exists. |
+| C1 | Same guards/output, `--suite system-files` | Plan-19 bounded 64 MiB owned-file create/overwrite and off-target oracle; split-CLI VM proof passed with C: disabled. It does not activate the cache. Never run V1-V6 against C: by stripping guards. |
+| C2 | After a separately approved normal restart, same guards/output, `--suite system-post-restart --oracle <prior-run-on-other-disk>\oracle.json` | Plan-19 read-only byte check passed with C: disabled. It is not a dirty-cache restart or active-C: persistence verdict. |
 
 The previously used CDM DiskSpd binary hash is
 `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.

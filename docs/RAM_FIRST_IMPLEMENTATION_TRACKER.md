@@ -1,11 +1,11 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-22. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-23. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-## Current release execution status: 2026-09-22
+## Current release execution status: 2026-09-23
 
 The end goal is production readiness. A01-A12 are the private VM alpha milestone;
 A13-A16 cover production qualification and release. The detailed task definitions,
@@ -14,14 +14,16 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 18: plan-14 `pressure`
+row below. The executable verification contract is plan 19: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
 completed 24/24 with clean restoration; the tuning decision remains open.
 Plan 17 adds an observed in-flight replacement case to `policies`; exact installed
 0.4.69.1 VM proof passed. Plan 18 adds a read-only guarded C: preflight, not a
-file workload or active-system-disk qualification. Neither closes T052 ordering.
+file workload or active-system-disk qualification. Plan 19 adds bounded owned-file
+creation with an off-disk oracle and a separate read-only post-restart check;
+both passed on the VM with C: caching disabled. Neither closes T052 ordering.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -33,7 +35,7 @@ file workload or active-system-disk qualification. Neither closes T052 ordering.
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
 | A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Exact 0.4.69.1 driver was running after reboot, C: stayed disabled/clean, and Q: Apply/policy checks passed. Kernel notification proof, saved-profile restore proof and the T067 C: crash investigation remain open. No active C: qualification. |
-| A08 / T028-T031 | PARTIAL | Plan-18 `system-preflight` requires explicit recoverable-VM acknowledgement, exact C: disk identity/size, and a separate physical output disk before read-only inventory. | Split-CLI VM preflight passed on installed 0.4.70.1 with C: disabled; bounded file workload, off-target oracle, read-only post-restart mode and busy-C: persistence semantics remain. |
+| A08 / T028-T031 | PARTIAL | Plan-19 guarded `system-files` creates a bounded owned C: file and commits its independent oracle on Q: first; `system-post-restart` verifies it without writing the workload. Both retain exact identity and off-target guards. | Split-CLI VM create and normal-restart verification each passed 1/1 on installed 0.4.70.1 with C: disabled. This is a baseline file/reboot check, not active-cache persistence. T030 busy-C: persistence semantics, broader negative/active-path proof and packaged-build verification remain. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -643,6 +645,45 @@ cache disabled/clean, recorded no cache/workload mutation, and finished with
 packaged plan-18 build. Wrong expected identity and same-physical-disk output
 both exited nonzero before a new run directory was created. No C: file workload
 or active caching was attempted.
+
+### Plan-19 bounded C: file and normal-restart checkpoint: 2026-09-23
+
+The existing runner now has separate `system-files` and `system-post-restart`
+phases. Both require recoverable-VM acknowledgement, exact physical-disk PnP
+identity and size, and output/oracle storage on a different physical disk. The
+first phase writes only a new 64 MiB owned file on C:, with a 1 MiB range
+overwritten twice, and commits an independently calculated seed/SHA oracle to Q:
+before writing the file. It flushes file buffers and checks live bytes. The
+second phase only reads and verifies that file against the Q: oracle after a
+normal restart. Neither phase configures the cache, arms fault/delay hooks,
+issues TRIM/raw I/O, or performs a restart. The user-authorized normal VM
+restart was a separate controlled action after the first phase completed and
+C:/Q: showed no dirty/in-flight bytes or errors.
+
+Host-safe management/runner contracts passed. The first split-CLI create
+attempt, `QueueCache-Verify-20260922-235924-8aaade11c1b949c38cfaf5abc17fd3ac`,
+produced passing worker bytes but did **not** write `FINISHED.txt` because its
+thread-affine named mutex was released on a different async continuation. It
+is preserved as incomplete, not combined with subsequent results. The runner
+now uses a non-thread-affine named semaphore. With that correction, exact VM
+run `QueueCache-Verify-20260923-000122-e2d2ba7372f94c5abce9fbb14f79f8b3`
+finished `COMPLETED`, 1/1 PASS, with no restoration failure. The off-disk oracle
+records SHA-256 `0AF2FE22628983E75B088BF638C70E06E2146B4A099C2B362341CA83AE52EE438`.
+After the normal restart, run
+`QueueCache-Verify-20260923-000703-3e41770fd12e45d6b165a5505ca6bdab`
+finished `COMPLETED`, 1/1 PASS; every 64 MiB byte matched through unbuffered
+reads. Its before/after C: snapshots show cache disabled, zero budget/dirty/
+in-flight/errors and no lower writes; Q: returned enabled and clean after its
+saved-profile startup delay. `FINISHED.txt`, status, summary, results, run log
+and worker evidence were inspected for the completed runs. All raw output stays
+private on the VM's Q: disk.
+
+The split managed CLI ran against installed 0.4.70.1, not an exact packaged
+plan-19 release. The result proves a safe, repeatable *uncached* C: baseline and
+post-normal-restart byte check. It does not prove explicit persistence with a
+busy cached OS volume, dirty restart survival, boot path safety, or the cause
+of the earlier BMP/Photos crash. C: remains disabled; A08 stays partial and
+A09 remains blocked by the A06a/A07/A10 recovery and safety gates.
 
 | # | A02 completion overview | Current disposition |
 |---|---|---|

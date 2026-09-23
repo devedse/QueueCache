@@ -12,7 +12,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     CacheConfiguration? Configuration = null, WriteCacheAction Action = WriteCacheAction.Flush,
     ulong Value = 0, string? Recovery = null, int Seconds = 0, string? StopFile = null,
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
-    string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false);
+    string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
+    string? OraclePath = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -92,7 +93,7 @@ public static class VerificationWorker
         }
         else
             target = await DiskTarget.InspectAsync(job.Volume);
-        if (job.Operation == "system-preflight")
+        if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify")
         {
             if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
                 throw new IOException("Missing explicit recoverable-VM acknowledgement or expected system-disk identity.");
@@ -101,6 +102,31 @@ public static class VerificationWorker
             target.ValidateCurrent();
             output.ValidateCurrent();
             SystemPreflightGuard.ValidateTargets(target, output, job.SystemInstance, job.SystemBytes.Value);
+            if (job.Operation != "system-preflight")
+            {
+                if (string.IsNullOrWhiteSpace(job.OraclePath))
+                    throw new IOException("Missing off-target system-file oracle path.");
+                var oracleOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(Path.GetFullPath(job.OraclePath))!));
+                oracleOutput.ValidateCurrent();
+                SystemPreflightGuard.ValidateTargets(target, oracleOutput, job.SystemInstance, job.SystemBytes.Value);
+                using var beforeObservation = new CacheDevice(target.Device, writable: false);
+                var before = beforeObservation.GetWriteCacheState();
+                if (before.DeviceBytes != (ulong)target.Bytes)
+                    throw new IOException("System-disk driver size disagrees with inventory.");
+                if (before.Faulted || before.Errors != 0 || before.LastError != 0)
+                    throw new IOException("System-disk cache reports a fault; do not start a file workload or treat a byte read as recovery.");
+                RunStorage.AtomicJson(job.Reply + ".before.json", before);
+                IReadOnlyList<CheckResult> checks = job.Operation == "system-file-create"
+                    ? SystemFileScenarios.Create(target, job.WorkDirectory!, job.OraclePath)
+                    : SystemFileScenarios.Verify(target, SystemFileScenarios.ReadOracle(job.OraclePath));
+                RunStorage.AtomicJson(job.Reply, checks);
+                var after = beforeObservation.GetWriteCacheState();
+                RunStorage.AtomicJson(job.Reply + ".after.json", after);
+                if (after.Faulted || after.Errors != before.Errors || after.LastError != before.LastError)
+                    throw new IOException("System-disk cache reported a new error during the file check.");
+                ReportFailures(checks, Console.Error);
+                return checks.Count > 0 && checks.All(check => check.Result == "PASS") ? 0 : 1;
+            }
             using var observation = new CacheDevice(target.Device, writable: false);
             var state = observation.GetWriteCacheState();
             if (state.DeviceBytes != (ulong)target.Bytes)

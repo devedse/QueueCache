@@ -129,7 +129,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         fileTarget = null;
-        if (selected.Suite == "system-preflight")
+        if (selected.Suite is "system-preflight" or "system-files" or "system-post-restart")
         {
             var outputVolume = SystemPreflightGuard.OutputVolume(selected.Output);
             var system = await DiskTarget.InspectAsync(selected.Volume, token);
@@ -137,12 +137,23 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             system.ValidateCurrent(token);
             output.ValidateCurrent(token);
             SystemPreflightGuard.ValidateTargets(system, output, selected.SystemInstance!, selected.SystemBytes!.Value);
+            if (selected.Suite == "system-post-restart")
+            {
+                var oraclePath = Path.GetFullPath(selected.OraclePath!);
+                var oracleVolume = SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(oraclePath)!);
+                var oracleDisk = await DiskTarget.InspectAsync(oracleVolume, token);
+                oracleDisk.ValidateCurrent(token);
+                SystemPreflightGuard.ValidateTargets(system, oracleDisk, selected.SystemInstance!, selected.SystemBytes!.Value);
+                if (SystemFileScenarios.ReadOracle(oraclePath).Target != system)
+                    throw new IOException("Post-restart oracle target identity changed.");
+            }
             fileTarget = system;
         }
         options = selected with
         {
             Output = Path.GetFullPath(selected.Output),
-            DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd)
+            DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd),
+            OraclePath = selected.OraclePath is null ? null : Path.GetFullPath(selected.OraclePath)
         };
         storage = new RunStorage(options.Output);
         progressSink = progress;
@@ -158,10 +169,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
         Log($"Suite {options.Suite}; target {options.Volume}; overall limit: {(options.DeadlineMinutes == 0 ? "unlimited" : options.DeadlineMinutes + " minutes")}. Per-operation timeouts remain enabled.");
-        if (options.Suite != "system-preflight")
+        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart"))
             Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         else
-            Log("Read-only system-disk inventory only; no workload, cache configuration or restoration action.");
+            Log(options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
+                "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
             Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count} cases, not the complete suite matrix.");
         storage.Write("manifest.json", new
@@ -187,13 +199,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         string? failure = null, restorationFailure = null;
         var captured = false;
         FileStream? diskLease = null;
+        Semaphore? systemLease = null;
+        var ownsSystemLease = false;
         try
         {
             DiskTarget target;
-            if (options.Suite == "system-preflight")
+            if (options.Suite is "system-preflight" or "system-files" or "system-post-restart")
             {
                 target = fileTarget!;
-                storage.Write("restoration.json", new { Required = false, Reason = "Read-only inventory; no cache or workload mutation." });
+                storage.Write("restoration.json", new { Required = false, Reason = "System suite does not change cache configuration or hooks." });
             }
             else if (options.Suite == "trim-file")
             {
@@ -207,11 +221,28 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
                 target = original.Target;
             }
-            var leases = LeaseDirectory;
-            Directory.CreateDirectory(leases);
-            diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            captured = options.Suite is not ("trim-file" or "system-preflight");
-            if (options.Suite != "system-preflight")
+            if (options.Suite is "system-preflight" or "system-files" or "system-post-restart")
+            {
+                // Semaphore release is not thread-affine: async continuations may
+                // resume on a different thread after an owned worker completes.
+                systemLease = new Semaphore(1, 1, "Global\\QueueCache-SystemVerify-" + target.Device);
+                ownsSystemLease = systemLease.WaitOne(0);
+                if (!ownsSystemLease)
+                    throw new IOException("Another guarded system-disk verification owns this physical disk.");
+            }
+            else
+            {
+                var leases = LeaseDirectory;
+                Directory.CreateDirectory(leases);
+                diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            captured = options.Suite is not ("trim-file" or "system-preflight" or "system-files" or "system-post-restart");
+            if (options.Suite == "system-files")
+            {
+                workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
+                storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, Oracle = storage.PathFor("oracle.json") });
+            }
+            else if (options.Suite is not ("system-preflight" or "system-post-restart"))
             {
                 workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = true });
@@ -219,14 +250,19 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
-                    if (test.Operation == "system-preflight")
+                    if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify")
                     {
-                        await Worker(Job(test.Operation) with
+                        var systemReply = await Worker(Job(test.Operation) with
                         {
                             SystemInstance = options.SystemInstance,
                             SystemBytes = options.SystemBytes,
-                            RecoverableVm = options.RecoverableVm
-                        }, deadline.Token);
+                            RecoverableVm = options.RecoverableVm,
+                            WorkDirectory = test.Operation == "system-file-create" ? workDirectory : null,
+                            OraclePath = test.Operation == "system-file-create" ? storage.PathFor("oracle.json") : options.OraclePath
+                        }, deadline.Token, test.Operation == "system-file-create" ? 300 : 120);
+                        if (test.Operation != "system-preflight")
+                            caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(systemReply, deadline.Token))
+                                ?? throw new InvalidDataException("Missing system-file checks.");
                         return null;
                     }
                     if (test.CacheEnabled is { } enabled)
@@ -289,6 +325,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
             }
             diskLease?.Dispose();
+            if (ownsSystemLease) systemLease!.Release();
+            systemLease?.Dispose();
         }
         var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: options.Suite == "trim-file");
         var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :

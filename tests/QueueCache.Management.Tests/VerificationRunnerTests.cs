@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 18, "system-disk preflight contract version");
+        Check(VerificationPlan.Version == 19, "system-file oracle contract version");
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);
@@ -37,6 +37,17 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(preflight with { SystemBytes = null }));
         Reject(() => VerificationPlan.Validate(preflight with { Volume = "Q:" }));
         Reject(() => VerificationPlan.Validate(preflight with { Suite = "quick" }));
+        var systemFiles = preflight with { Suite = "system-files" };
+        var postRestart = preflight with { Suite = "system-post-restart", OraclePath = "Q:\\prior\\oracle.json" };
+        VerificationPlan.Validate(systemFiles);
+        VerificationPlan.Validate(postRestart);
+        Check(VerificationPlan.Integrity(systemFiles).SequenceEqual(new IntegrityCase[] { new("system-file-create", "system-file-create") }),
+            "system-file creation is one bounded case");
+        Check(VerificationPlan.Integrity(postRestart).SequenceEqual(new IntegrityCase[] { new("system-file-verify", "system-file-verify") }),
+            "post-restart verification never repeats creation");
+        Reject(() => VerificationPlan.Validate(postRestart with { OraclePath = null }));
+        Reject(() => VerificationPlan.Validate(systemFiles with { OraclePath = "Q:\\prior\\oracle.json" }));
+        Reject(() => VerificationPlan.Validate(postRestart with { RecoverableVm = false }));
         var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
         var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
         SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "SCSI\\TEST", 100L << 30);
@@ -49,6 +60,17 @@ internal static class VerificationRunnerTests
         catch (IOException) { }
         try { SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "WRONG", 100L << 30); throw new Exception("Wrong identity accepted."); }
         catch (IOException) { }
+        var ownedDirectory = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
+        QueueCache.Operations.SystemFileScenarios.ValidateOwnedPath(systemTarget, ownedDirectory, ownedDirectory + "\\payload.bin");
+        foreach (var badPath in new[] { "C:\\Windows\\payload.bin", ownedDirectory + "\\other.bin", "Q:\\QueueCache-System-0123456789abcdef0123456789abcdef\\payload.bin" })
+        {
+            try { QueueCache.Operations.SystemFileScenarios.ValidateOwnedPath(systemTarget, Path.GetDirectoryName(badPath)!, badPath); throw new Exception("Unowned file path accepted."); }
+            catch (IOException) { }
+        }
+        var expectedHash = QueueCache.Operations.SystemFileScenarios.ExpectedHash(104729);
+        Check(expectedHash.Length == 64 && expectedHash.All(Uri.IsHexDigit) &&
+            expectedHash != QueueCache.Operations.SystemFileScenarios.ExpectedHash(104759),
+            "expected SHA is deterministic input-derived, not copied from file reads");
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {

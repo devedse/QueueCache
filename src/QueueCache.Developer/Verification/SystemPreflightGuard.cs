@@ -7,18 +7,20 @@ public static class SystemPreflightGuard
 {
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite != "system-preflight")
+        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart"))
         {
-            if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm)
-                throw new ArgumentException("System-disk opt-in arguments are only valid for system-preflight.");
+            if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm || options.OraclePath is not null)
+                throw new ArgumentException("System-disk opt-in arguments are only valid for guarded system suites.");
             return;
         }
         if (!string.Equals(options.Volume, "C:", StringComparison.OrdinalIgnoreCase) ||
             !options.RecoverableVm || string.IsNullOrWhiteSpace(options.SystemInstance) ||
             options.SystemBytes is null or <= 0)
-            throw new ArgumentException("system-preflight requires C:, --recoverable-vm, --system-instance and --system-bytes.");
+            throw new ArgumentException("System suites require C:, --recoverable-vm, --system-instance and --system-bytes.");
         if (options.DiskSpd is not null || options.CaseFilter is not null)
-            throw new ArgumentException("system-preflight does not accept DiskSpd or case filters.");
+            throw new ArgumentException("System suites do not accept DiskSpd or case filters.");
+        if ((options.Suite == "system-post-restart") != (options.OraclePath is not null))
+            throw new ArgumentException("--oracle is required only for system-post-restart.");
     }
 
     public static void ValidateTargets(DiskTarget target, DiskTarget output,

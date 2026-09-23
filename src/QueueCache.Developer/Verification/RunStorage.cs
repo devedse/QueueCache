@@ -5,7 +5,8 @@ namespace QueueCache.Developer.Verification;
 public sealed record VerificationOptions(string Volume, string Suite = "quick", string Output = ".",
     string? DiskSpd = null, int BudgetMiB = 1024, int Repeats = 3, int DurationSeconds = 10,
     int DeadlineMinutes = 0, int PreparationFlushSeconds = 180, string? CaseFilter = null,
-    string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false);
+    string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
+    string? OraclePath = null);
 public sealed record CaseResult(string Id, string Status, string Detail, DateTimeOffset Started,
     double Seconds, DiskSpdScore? Score = null);
 
