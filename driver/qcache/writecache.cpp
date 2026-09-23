@@ -163,10 +163,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingMapFailures = InterlockedCompareExchange64(&c->PagingMapFailures, 0, 0);
     output->PagingCapacityWaits = InterlockedCompareExchange64(&c->PagingCapacityWaits, 0, 0);
     output->PagingServicedReadMisses = InterlockedCompareExchange64(&c->PagingServicedReadMisses, 0, 0);
-    auto pagingWriteLimit = QcWriteLimit(c->ReadWriteSnapshot.Options,
-        static_cast<ULONG>(c->ReadWriteSnapshot.Base.Base.PayloadCapacity / Chunk));
-    output->PagingReservedBytes = QcCachePagingPathCount(c) > 0
-        ? static_cast<ULONGLONG>(QcPagingReserveSlots(pagingWriteLimit)) * Chunk : 0;
+    output->PagingReservedBytes = 0; // Paging data is ordered but never admitted to RAM.
     output->PagingMaxReadLength = InterlockedCompareExchange64(&c->PagingMaxReadLength, 0, 0);
     output->PagingMaxWriteLength = InterlockedCompareExchange64(&c->PagingMaxWriteLength, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
@@ -1004,31 +1001,26 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
 static NTSTATUS PrepareUsagePath(QC_CACHE* c, PIRP irp)
 {
     AcquireCache(c);
-    const auto ordinaryLimit = QcAdmissionWriteLimit(
-        WriteLimit(c), QcCachePagingPathCount(c) > 0, false);
-    while (c->Enabled && c->DirtySlots > ordinaryLimit &&
-           NT_SUCCESS(c->State.LastError) && !c->Gone && !irp->Cancel)
-    {
-        // A newly registered paging path must have its reserved admission before
-        // the lower stack accepts the notification. Drain only the excess over
-        // the ordinary limit; keep routing and all unrelated clean data active.
-        c->WriterWaiting = TRUE;
-        c->Performance.Phase = QcCapacityPhase;
-        Publish(c);
-        KeClearEvent(&c->Changed);
-        WakeDrainers(c);
-        ReleaseCache(c);
-        LARGE_INTEGER interval;
-        interval.QuadPart = -1000000;
-        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
-        AcquireCache(c);
-    }
-    c->WriterWaiting = FALSE;
-    c->Performance.Phase = QcRequestPhase;
-    Publish(c);
-    auto status = irp->Cancel ? STATUS_CANCELLED :
-        c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
+    const bool active = c->Enabled != FALSE;
+    auto status = irp->Cancel ? STATUS_CANCELLED : c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
     ReleaseCache(c);
+    if (NT_SUCCESS(status) && active)
+    {
+        // Windows may turn a normal file into paging/hibernation/dump backing at
+        // runtime. Establish a lower-media boundary once at registration, without
+        // disabling routing. The subsequent data IRPs bypass RAM caching: caching
+        // swapped-out memory in nonpaged RAM is circular and can starve the very
+        // memory needed to complete a page-in. Clean raw blocks are also discarded
+        // so no pre-registration view can satisfy a system-file read.
+        status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
+        if (NT_SUCCESS(status))
+        {
+            AcquireCache(c);
+            ClearClean(c);
+            Publish(c);
+            ReleaseCache(c);
+        }
+    }
     return status;
 }
 static PUCHAR Map(PIRP irp)
@@ -1046,9 +1038,9 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     auto offset = stack->Parameters.Write.ByteOffset;
     const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
     AcquireCache(c);
-    if (!NT_SUCCESS(c->State.LastError))
+    if (c->Gone || c->Suspended || irp->Cancel)
     {
-        auto error = c->State.LastError;
+        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Suspended ? STATUS_DEVICE_NOT_READY : STATUS_CANCELLED;
         ReleaseCache(c);
         return error;
     }
@@ -1059,6 +1051,27 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         irp->IoStatus.Information = 0;
         return STATUS_SUCCESS;
+    }
+    if (!QcShouldCacheDataIo(pagingIo))
+    {
+        // A cache fault in ordinary file data must not prevent independent
+        // pagefile I/O from reaching the lower device and destabilize Windows.
+        ReleaseCache(c);
+        auto status = OriginalIo(c, irp);
+        if (NT_SUCCESS(status))
+        {
+            AcquireCache(c);
+            InvalidateCleanRange(c, offset.QuadPart, length);
+            Publish(c);
+            ReleaseCache(c);
+        }
+        return status;
+    }
+    if (!NT_SUCCESS(c->State.LastError))
+    {
+        auto error = c->State.LastError;
+        ReleaseCache(c);
+        return error;
     }
     const auto firstBlock = offset.QuadPart / Chunk * Chunk;
     const auto end = offset.QuadPart + length;
@@ -1288,13 +1301,27 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         ReleaseCache(c);
         return error;
     }
+    if (length == 0)
+    {
+        ReleaseCache(c);
+        irp->IoStatus.Information = 0;
+        return STATUS_SUCCESS;
+    }
+    if (!QcShouldCacheDataIo((irp->Flags & IRP_PAGING_IO) != 0))
+    {
+        // Do not retain pagefile reads or serve them from the ordinary file-data
+        // cache. They stay ordered by the foreground worker and complete from the
+        // lower stack without recursively consuming cache capacity.
+        ReleaseCache(c);
+        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, false);
+    }
     if (!NT_SUCCESS(c->State.LastError))
     {
         auto error = c->State.LastError;
         ReleaseCache(c);
         return error;
     }
-    if (!c->Enabled || length == 0)
+    if (!c->Enabled)
     {
         ReleaseCache(c);
         return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp);
@@ -1435,19 +1462,6 @@ bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* st
         return false;
     *status = Read(c, irp, true);
     return *status != STATUS_NOT_FOUND;
-}
-bool QcCacheServicePagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)
-{
-    auto stack = IoGetCurrentIrpStackLocation(irp);
-    auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
-    auto length = stack->Parameters.Read.Length;
-    if (stack->MajorFunction != IRP_MJ_READ || !(irp->Flags & IRP_PAGING_IO) || offset < 0 ||
-        offset > deviceBytes || !length || length > static_cast<ULONGLONG>(deviceBytes - offset) ||
-        (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes)))
-        return false;
-    InterlockedIncrement64(&c->PagingServicedReadMisses);
-    *status = Read(c, irp, false, false);
-    return true;
 }
 // Only optimized, bounded, full-cache-block TRIM ranges are handled here. Any
 // unfamiliar flags/parameters/alignment use the existing ordered drain/pass-through.

@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 28. Corrected plan-14 `pressure`
+The executable verification contract is plan 29. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -220,9 +220,9 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | Plan 26 paging reserve/mapping/read progress exists. **Changed this run:** plan 27 normal Enable/public Apply accept system paths; new registrations keep routing active and establish reserve; D0 resumes prior active state. | Exact 0.4.82.1 active Fast passed. New native/host checks pass; exact packaged normal-path, registration and power proof pending. | Makes C: use the same backend product path as other disks. |
-| A08 | PARTIAL | Guarded byte/restart and 349 MiB contracts exist. **Changed this run:** plan 27 runs normal Fast and Strict cases and releases cleanly between them. | Plan-26 active run accepted 366,888,960 bytes, matched twice, reported zero paging failures/waits and restored cleanly. Exact plan-27 two-case run pending. | Proves normal product activation with strong byte and progress evidence. |
-| A09 | PARTIAL | **Changed this run:** public UI/CLI and identity-bound saved startup accept C:; power resume restores prior active state. | Exact normal activation, saved-profile reboot, configured pagefile and sleep/hibernate/Fast Startup/dump evidence pending. | Demonstrates ordinary system use rather than only a special experiment. |
+| A07 | PARTIAL | Normal Enable/public Apply accept system paths. **Changed this run:** after the exact 0.4.83.1 pagefile failure, paging data stays ordered but bypasses RAM caching and new usage registration takes one persistence boundary without disabling routing. | Exact 0.4.83.1 normal Fast passed; the correction needs packaged pagefile/restart proof. Hibernation/Fast Startup are unavailable on this VM. | Makes C: use the product path without using scarce RAM to cache swapped-out RAM. |
+| A08 | PARTIAL | Guarded byte/restart and 349 MiB contracts exist. **Changed this run:** Plan 28 gives Fast and Strict separate immutable image/oracle paths. | 0.4.83.1 Fast passed with 368,731,648 accepted bytes; Strict was safely stopped by the shared-path guard before the fix. Fixed two-case execution remains. | Proves normal activation without allowing one case to reuse another's evidence. |
+| A09 | PARTIAL | Public UI/CLI and identity-bound saved startup accept C:. **Changed this run:** saved Fast plus a 4 GiB C: pagefile reproduced process corruption after reboot; evidence was preserved and the VM restored stable. | Paging-bypass retest, saved-profile bytes and available power transitions remain. Dump configuration alone did not produce a dump registration. | Turns a vague historical concern into a concrete pagefile regression and fix gate. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
 | A12 | FALSE | Private-alpha freeze and participant release pending. | Owner reviews candidate and limitations after preceding gates. | Controlled real-user feedback with an identifiable recoverable build. |
@@ -231,14 +231,15 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest recorded installed candidate is 0.4.82.1 from `611c9e4`, SYS SHA-256
-`01D2140535A5AEE1C7B2F39DCC1A24EE3D2A2D4C7D5A81DE7953B63659B012C3`.
-It proves plan 26's guarded active Fast path. Plan 27's normal product-path source
-is newer and not yet packaged/installed. See
+Latest recorded installed candidate is 0.4.83.1 from `05d18b0`, SYS SHA-256
+`754C4894E7BD5688EF493AF923C5B84923A86EDCD7DD41636736B0833142AFB8`.
+It proved the normal Fast active case, then failed the configured-pagefile saved-
+startup exercise with repeatable process corruption. It is not a C: release
+candidate. The paging-bypass correction is newer and not yet installed. See
 the tracker for each earlier release's scoped evidence.
-The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
-bytes and zero errors. Recheck live identity/state before another workload. These
-facts do not establish C: support.
+The recorded VM end state is C: disabled/released, no saved QueueCache profile,
+and the test pagefile/dump changes reverted; Windows created its usual temporary
+512 MiB pagefile. Recheck live identity/state before another workload.
 
 ### What A02 proves and how it changes the work
 

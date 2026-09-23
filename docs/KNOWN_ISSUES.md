@@ -73,6 +73,15 @@ new usage registrations active after establishing reserve, restores active state
 after device-power resume, and tests normal Fast plus Strict. Exact packaged VM
 evidence for these newer paths is pending.
 
+Exact 0.4.83.1 is not a C: pagefile candidate. A saved Fast profile with a fixed
+4 GiB C: pagefile booted, after which qcache/CoreCLR repeatedly faulted with stack
+overflow/access violations and an unrelated Edge updater also access-violated.
+WER evidence is retained on the VM's Q: evidence disk. Removing the saved profile,
+reverting the pagefile/dump settings and rebooting restored stable pass-through.
+The candidate fix keeps paging I/O ordered but bypasses RAM caching and takes a
+one-time persistence/invalidation boundary on new system-file registration. It is
+not qualified until the same installed pagefile/restart test passes.
+
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
 and active-cache 349 MiB deterministic image workloads with required admission

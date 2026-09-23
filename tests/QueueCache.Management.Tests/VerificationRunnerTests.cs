@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 28, "per-mode system-image artifact contract version");
+        Check(VerificationPlan.Version == 29, "paging-bypass system-image contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -109,7 +109,7 @@ internal static class VerificationRunnerTests
         catch (NotSupportedException) { }
         var guardedPaging = pagingAfter with
         {
-            PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 64UL << 20, 1UL << 20, 2UL << 20)
+            PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 0, 1UL << 20, 2UL << 20)
         };
         VerificationWorker.ValidateActiveSystemPaths(usageStatistics, guardedPaging);
         var allSystemActivity = new QueueCache.Management.CacheUsageActivities(
@@ -121,19 +121,16 @@ internal static class VerificationRunnerTests
                 UsagePaths = new(2, 1, 1),
                 UsageActivity = allSystemActivity
             });
-        var progressAfter = guardedPaging with
-        {
-            PagingProgress = guardedPaging.PagingProgress! with { ServicedReadMisses = 12 }
-        };
+        var progressAfter = guardedPaging;
         Check(VerificationWorker.ValidatePagingProgressWindow(guardedPaging, progressAfter) ==
-            new QueueCache.Management.CachePagingProgress(0, 0, 3, 64UL << 20, 1UL << 20, 2UL << 20),
-            "active paging window preserves reserve with no mapping/capacity failures");
+            new QueueCache.Management.CachePagingProgress(0, 0, 0, 0, 1UL << 20, 2UL << 20),
+            "active paging window bypasses RAM admission and read service");
         foreach (var invalid in new[]
         {
             progressAfter with { PagingProgress = progressAfter.PagingProgress! with { MapFailures = 6 } },
             progressAfter with { PagingProgress = progressAfter.PagingProgress! with { CapacityWaits = 8 } },
-            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ReservedBytes = 0 } },
-            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { MaxWriteLength = 65UL << 20 } }
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ReservedBytes = 1 } },
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ServicedReadMisses = 10 } }
         })
         {
             try

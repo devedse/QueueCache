@@ -113,10 +113,10 @@ public static class VerificationWorker
             CapacityWaits = last.CapacityWaits - first.CapacityWaits,
             ServicedReadMisses = last.ServicedReadMisses - first.ServicedReadMisses
         };
-        if (delta.MapFailures != 0 || delta.CapacityWaits != 0 || last.ReservedBytes == 0 ||
-            last.MaxWriteLength > last.ReservedBytes)
+        if (delta.MapFailures != 0 || delta.CapacityWaits != 0 || delta.ServicedReadMisses != 0 ||
+            last.ReservedBytes != 0)
             throw new IOException(
-                "Paging I/O did not retain its mapping/capacity forward-progress reserve during the active window.");
+                "Paging I/O entered RAM admission/read service instead of the ordered lower-device bypass.");
         return delta;
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
@@ -309,8 +309,8 @@ public static class VerificationWorker
                 checks.Add(new("system-image/cache-accepted-bytes", "PASS",
                     $"The active C: cache accepted at least the complete image ({afterApplicationFlush.AcceptedBytes - active.AcceptedBytes} bytes observed)."));
                 checks.Add(new("system-image/paging-forward-progress", "PASS",
-                    $"Paging I/O used a {pagingProgress.ReservedBytes}-byte admission reserve with zero mapping failures " +
-                    $"and zero capacity waits; serviced paging-read misses={pagingProgress.ServicedReadMisses}."));
+                    $"Paging I/O bypassed RAM admission with zero mapping failures, capacity waits and serviced " +
+                    $"paging-read misses; max observed read/write lengths were {pagingProgress.MaxReadLength}/{pagingProgress.MaxWriteLength} bytes."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 systemDevice.Control(WriteCacheAction.Flush);
                 var afterAdministrativeFlush = systemDevice.GetWriteCacheState();

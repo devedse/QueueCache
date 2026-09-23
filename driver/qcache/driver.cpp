@@ -469,17 +469,6 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
                 Increment(&ext->Cache.Performance.ServiceReadCompletions);
             completed = true;
         }
-        else if ((read->Flags & IRP_PAGING_IO) &&
-                 QcCacheServicePagingRead(&ext->Cache, read,
-                     InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &status))
-        {
-            auto bytes = NT_SUCCESS(status) ? read->IoStatus.Information : 0;
-            IoReleaseRemoveLock(&ext->RemoveLock, read);
-            Complete(read, status, bytes);
-            if (diagnostics)
-                Increment(&ext->Cache.Performance.ServiceReadCompletions);
-            completed = true;
-        }
         else
         {
             if (diagnostics)

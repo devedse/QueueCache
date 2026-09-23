@@ -48,17 +48,18 @@ constexpr ULONG QcWriteLimit(const QC_OPTIONS& o, ULONG capacity)
     return o.Allocation == QcAutomatic ? capacity
                                        : static_cast<ULONG>(static_cast<ULONGLONG>(capacity) * o.WritePercent / 100);
 }
-// A paging-path cache keeps up to 64 MiB (and at most half its write quota)
-// outside ordinary-write admission. One serialized paging write can consume the
-// reserve without first waiting for a lower write that might itself need paging.
-constexpr ULONG QcPagingReserveSlots(ULONG writeLimit)
+constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool, bool)
 {
-    constexpr ULONG MaxReserveSlots = (64UL * 1024 * 1024) / 4096;
-    return writeLimit / 2 < MaxReserveSlots ? writeLimit / 2 : MaxReserveSlots;
+    // Paging data bypasses this cache, so ordinary fitting writes may use the
+    // complete configured write quota without waiting for an unused reserve.
+    return writeLimit;
 }
-constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool pagingPath, bool pagingIo)
+// The cache accelerates ordinary file data. Paging-file traffic is already RAM
+// eviction/reload; retaining it in nonpaged RAM is circular and can prevent the
+// memory manager from making forward progress. Keep it ordered but uncached.
+constexpr bool QcShouldCacheDataIo(bool pagingIo)
 {
-    return pagingPath && !pagingIo ? writeLimit - QcPagingReserveSlots(writeLimit) : writeLimit;
+    return !pagingIo;
 }
 constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool healthy, bool gone)
 {

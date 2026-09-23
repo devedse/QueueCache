@@ -107,8 +107,10 @@ write to fit the reserve at both application and administrative flush boundaries
 Exact 0.4.82.1 run
 `QueueCache-Verify-20260923-185145-55506c69732847a9a8863d3cacd181c0`
 passed 1/1: 366,888,960 accepted bytes, two complete oracle matches, zero paging
-mapping failures/capacity waits and clean restoration. Plan 28 gives the Fast and
-Strict cases separate immutable workload/oracle artifacts; it otherwise uses normal public
+mapping failures/capacity waits and clean restoration. Plan 29 gives the Fast and
+Strict cases separate immutable workload/oracle artifacts and requires paging data
+to bypass RAM admission/read service: reserve and serviced-miss counters must stay
+zero, as must new mapping failures and capacity waits. It otherwise uses normal public
 Apply and covers both Fast and Strict; the old action remains only as an ABI alias.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
