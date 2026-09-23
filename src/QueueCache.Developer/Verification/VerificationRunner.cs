@@ -123,6 +123,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         return job.Reply;
     }
     private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original.Target);
+
+    public static (string WorkDirectory, string OracleFile) SystemImageArtifacts(string workDirectory, string caseId)
+    {
+        if (string.IsNullOrWhiteSpace(workDirectory) ||
+            !caseId.StartsWith("system-active-image-", StringComparison.Ordinal) ||
+            Path.GetFileName(caseId) != caseId)
+            throw new ArgumentException("Expected a system-active-image case ID and workload root.");
+        return (workDirectory + "-" + caseId, caseId + ".oracle.json");
+    }
     private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0) =>
         Worker(Job("control") with
         {
@@ -177,7 +186,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         if (!IsSystemSuite(options.Suite))
             Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         else
-            Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast cache with independent restoration." :
+            Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast and Strict cases with independent restoration." :
                 options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
@@ -259,7 +268,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
-                storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, Oracle = storage.PathFor("oracle.json") });
+                if (options.Suite == "system-active-image")
+                    storage.Write("workloads.json", new
+                    {
+                        Retained = true,
+                        Cases = integrity.Select(test =>
+                        {
+                            var artifacts = SystemImageArtifacts(workDirectory, test.Id);
+                            return new { test.Id, Directory = artifacts.WorkDirectory, Oracle = storage.PathFor(artifacts.OracleFile) };
+                        }).ToArray()
+                    });
+                else
+                    storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, Oracle = storage.PathFor("oracle.json") });
             }
             else if (options.Suite is not ("system-preflight" or "system-post-restart"))
             {
@@ -271,13 +291,18 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 {
                     if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-image-baseline" or "system-active-image")
                     {
+                        var imageArtifacts = test.Operation == "system-active-image"
+                            ? SystemImageArtifacts(workDirectory!, test.Id)
+                            : default;
                         var systemReply = await Worker(Job(test.Operation) with
                         {
                             SystemInstance = options.SystemInstance,
                             SystemBytes = options.SystemBytes,
                             RecoverableVm = options.RecoverableVm,
-                            WorkDirectory = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? workDirectory : null,
-                            OraclePath = test.Operation is "system-file-create" or "system-image-baseline" or "system-active-image" ? storage.PathFor("oracle.json") : options.OraclePath,
+                            WorkDirectory = test.Operation == "system-active-image" ? imageArtifacts.WorkDirectory :
+                                test.Operation is "system-file-create" or "system-image-baseline" ? workDirectory : null,
+                            OraclePath = test.Operation == "system-active-image" ? storage.PathFor(imageArtifacts.OracleFile) :
+                                test.Operation is "system-file-create" or "system-image-baseline" ? storage.PathFor("oracle.json") : options.OraclePath,
                             Configuration = test.Operation == "system-active-image"
                                 ? new CacheConfiguration(options.BudgetMiB,
                                     test.Id.EndsWith("-strict", StringComparison.Ordinal)
@@ -358,6 +383,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    var lastPassedImage = storage.Results.LastOrDefault(result =>
+                        result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) && result.Status == "PASS");
+                    var restorationOracle = lastPassedImage is null
+                        ? storage.PathFor("oracle.json")
+                        : storage.PathFor(SystemImageArtifacts(workDirectory!, lastPassedImage.Id).OracleFile);
                     await Worker(Job("system-restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
@@ -365,7 +395,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         SystemInstance = options.SystemInstance,
                         SystemBytes = options.SystemBytes,
                         RecoverableVm = options.RecoverableVm,
-                        OraclePath = storage.PathFor("oracle.json"),
+                        OraclePath = restorationOracle,
                         RequireImageEvidence = VerificationWorker.RequiresSystemImageEvidence(storage.Results)
                     }, CancellationToken.None, 300);
                 }

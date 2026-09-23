@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 27, "normal system activation contract version");
+        Check(VerificationPlan.Version == 28, "per-mode system-image artifact contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -148,6 +148,14 @@ internal static class VerificationRunnerTests
             new("system-active-image-fast", "system-active-image"),
             new("system-active-image-strict", "system-active-image")
         }), "active system-image covers normal Fast and Strict product paths");
+        var fastArtifacts = VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "system-active-image-fast");
+        var strictArtifacts = VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "system-active-image-strict");
+        Check(fastArtifacts.WorkDirectory != strictArtifacts.WorkDirectory &&
+              fastArtifacts.OracleFile != strictArtifacts.OracleFile &&
+              Path.GetFileName(fastArtifacts.OracleFile) == fastArtifacts.OracleFile &&
+              Path.GetFileName(strictArtifacts.OracleFile) == strictArtifacts.OracleFile,
+            "active Fast and Strict cases retain separate workload and oracle evidence");
+        Reject(() => VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "../bad"));
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));
         QueueCache.Management.WriteCacheState ActiveState(ulong accepted, uint flags = 1 | 256 | 512, ulong instance = 7, ulong errors = 0) =>
             new(flags, 0, 100UL << 30, 512UL << 20, 512UL << 20, 0, 0, 500UL << 20, 0,
