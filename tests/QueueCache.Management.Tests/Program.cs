@@ -217,6 +217,22 @@ BinaryPrimitives.WriteUInt64LittleEndian(usageBytes.AsSpan(224), 3);
 BinaryPrimitives.WriteUInt64LittleEndian(usageBytes.AsSpan(232), 4);
 Check(CacheDiagnostics.Decode(usageBytes).UsagePaths == new CacheUsagePaths(2, 3, 4),
     "V3 paging/hibernation/dump usage-path offsets");
+Check(CacheDiagnostics.Decode(usageBytes).UsageActivity is null,
+    "V3 usage lifecycle is unavailable, not zero");
+var activityBytes = new byte[CacheDiagnostics.UsageActivityWireSize];
+usageBytes.CopyTo(activityBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(activityBytes, 4);
+BinaryPrimitives.WriteUInt32LittleEndian(activityBytes.AsSpan(4), CacheDiagnostics.UsageActivityWireSize);
+for (var group = 0; group < 7; group++)
+for (var type = 0; type < 3; type++)
+    BinaryPrimitives.WriteUInt64LittleEndian(activityBytes.AsSpan(240 + group * 24 + type * 8),
+        (ulong)(group * 10 + type + 1));
+var activity = CacheDiagnostics.Decode(activityBytes);
+Check(activity.UsagePaths == new CacheUsagePaths(2, 3, 4) && activity.UsageActivity?.Paging ==
+    new CacheUsageActivity(1, 11, 21, 31, 41, 51, 61) && activity.UsageActivity.Dump ==
+    new CacheUsageActivity(3, 13, 23, 33, 43, 53, 63),
+    "V4 usage lifecycle offsets and V3 prefix");
+Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");
 Reject(() => CacheDiagnostics.Decode(attributionBytes.AsSpan(0, 215)), "short attribution");
 attributionBytes[0] = 1;
 Reject(() => CacheDiagnostics.Decode(attributionBytes), "V1 cannot claim V2 length");

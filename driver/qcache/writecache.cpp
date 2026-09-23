@@ -98,7 +98,7 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Instance = c->Instance;
     c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    c->Diagnostics.Version = 3;
+    c->Diagnostics.Version = 4;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 3;
@@ -141,6 +141,16 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingUsagePaths = InterlockedCompareExchange(&c->PagingUsageCount, 0, 0);
     output->HibernationUsagePaths = InterlockedCompareExchange(&c->HibernationUsageCount, 0, 0);
     output->DumpUsagePaths = InterlockedCompareExchange(&c->DumpUsageCount, 0, 0);
+    for (ULONG index = 0; index < 3; ++index)
+    {
+        output->UsageInRequests[index] = InterlockedCompareExchange64(&c->UsageInRequests[index], 0, 0);
+        output->UsageOutRequests[index] = InterlockedCompareExchange64(&c->UsageOutRequests[index], 0, 0);
+        output->UsageInSuccesses[index] = InterlockedCompareExchange64(&c->UsageInSuccesses[index], 0, 0);
+        output->UsageOutSuccesses[index] = InterlockedCompareExchange64(&c->UsageOutSuccesses[index], 0, 0);
+        output->UsageInFailures[index] = InterlockedCompareExchange64(&c->UsageInFailures[index], 0, 0);
+        output->UsageOutFailures[index] = InterlockedCompareExchange64(&c->UsageOutFailures[index], 0, 0);
+        output->UsageLastProcessId[index] = InterlockedCompareExchange64(&c->UsageLastProcessId[index], 0, 0);
+    }
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
@@ -192,6 +202,35 @@ static volatile LONG* QcUsageCounter(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_
     case DeviceUsageTypeDumpFile: return &cache->DumpUsageCount;
     default: return nullptr;
     }
+}
+static ULONG QcUsageIndex(DEVICE_USAGE_NOTIFICATION_TYPE type)
+{
+    switch (type)
+    {
+    case DeviceUsageTypePaging: return 0;
+    case DeviceUsageTypeHibernation: return 1;
+    case DeviceUsageTypeDumpFile: return 2;
+    default: return MAXULONG;
+    }
+}
+void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
+                               ULONGLONG processId)
+{
+    auto index = QcUsageIndex(type);
+    if (index == MAXULONG)
+        return;
+    InterlockedIncrement64(inPath ? &cache->UsageInRequests[index] : &cache->UsageOutRequests[index]);
+    InterlockedExchange64(&cache->UsageLastProcessId[index], processId);
+}
+void QcCacheRecordUsageCompletion(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
+                                  NTSTATUS status)
+{
+    auto index = QcUsageIndex(type);
+    if (index == MAXULONG)
+        return;
+    auto successes = inPath ? &cache->UsageInSuccesses[index] : &cache->UsageOutSuccesses[index];
+    auto failures = inPath ? &cache->UsageInFailures[index] : &cache->UsageOutFailures[index];
+    InterlockedIncrement64(NT_SUCCESS(status) ? successes : failures);
 }
 static void QcAdjustUsageCounter(volatile LONG* counter, BOOLEAN inPath)
 {
@@ -1405,7 +1444,17 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     bool suspended = c->Suspended != FALSE;
     ReleaseCache(c);
     if (c->Gone)
-        return STATUS_DEVICE_NOT_CONNECTED;
+    {
+        const auto status = STATUS_DEVICE_NOT_CONNECTED;
+        if (QcTrackedUsageNotification(stack))
+        {
+            if (stack->Parameters.UsageNotification.InPath)
+                QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
+            QcCacheRecordUsageCompletion(c, stack->Parameters.UsageNotification.Type,
+                stack->Parameters.UsageNotification.InPath, status);
+        }
+        return status;
+    }
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
         stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_OPTIONS_V1)
     {
@@ -1498,6 +1547,8 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         }
         else if (NT_SUCCESS(status))
             QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
+        QcCacheRecordUsageCompletion(c, stack->Parameters.UsageNotification.Type,
+            stack->Parameters.UsageNotification.InPath, status);
         return status;
     }
     if (suspended)

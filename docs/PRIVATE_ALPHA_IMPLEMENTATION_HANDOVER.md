@@ -129,6 +129,14 @@ paging-type usage paths. The next implementation focus is therefore T024/T053
 paging-path ownership, nonpageable progress and overlap ordering—not weakening
 the runner or repeating the same registry experiment.
 
+Plan 23 is the next driver candidate for that focus. Diagnostics V4 preserves the
+V3 current counts and adds, per notification type, in/out requests, successful
+and failed completions, and the last requesting PID. Recording covers direct
+completion, queued worker completion, cancellation and admission rejection. It
+does not enable caching on a paging path or claim the PID names a file; its exit
+check is an exact installed/rebooted lifecycle snapshot that explains whether
+`Paging=2` represents two accepted outstanding paths or a driver imbalance.
+
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
 decoded a large image. It is not proven. Management now preserves the greater of

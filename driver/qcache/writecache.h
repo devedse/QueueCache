@@ -52,13 +52,25 @@ struct QC_DIAGNOSTICS
     ULONGLONG BarrierReasons[9];
     ULONGLONG LastReason, LastMajor, LastCode, LastOffset, LastLength;
     ULONGLONG PagingUsagePaths, HibernationUsagePaths, DumpUsagePaths;
+    ULONGLONG UsageInRequests[3], UsageOutRequests[3];
+    ULONGLONG UsageInSuccesses[3], UsageOutSuccesses[3];
+    ULONGLONG UsageInFailures[3], UsageOutFailures[3];
+    ULONGLONG UsageLastProcessId[3];
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
-static_assert(sizeof(QC_DIAGNOSTICS) == 240);
+static constexpr ULONG QcDiagnosticsV3Size = 240;
+static_assert(sizeof(QC_DIAGNOSTICS) == 408);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingUsagePaths) == QcDiagnosticsV2Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageInRequests) == QcDiagnosticsV3Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageOutRequests) == 264);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageInSuccesses) == 288);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageOutSuccesses) == 312);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageInFailures) == 336);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageOutFailures) == 360);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageLastProcessId) == 384);
 enum QC_BARRIER_REASON : ULONG
 {
     QcControlBarrier = 1, QcStrictWriteBarrier, QcDisabledWriteBarrier, QcQuotaWriteBarrier,
@@ -167,6 +179,10 @@ struct QC_CACHE
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
     volatile LONG Gone, PagingPathCount;
     volatile LONG PagingUsageCount, HibernationUsageCount, DumpUsageCount;
+    volatile LONG64 UsageInRequests[3], UsageOutRequests[3];
+    volatile LONG64 UsageInSuccesses[3], UsageOutSuccesses[3];
+    volatile LONG64 UsageInFailures[3], UsageOutFailures[3];
+    volatile LONG64 UsageLastProcessId[3];
     ULONG DelayMs, InjectFault;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
@@ -184,6 +200,10 @@ void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
 void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major);
 void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath);
+void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
+                               ULONGLONG processId);
+void QcCacheRecordUsageCompletion(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
+                                  NTSTATUS status);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);

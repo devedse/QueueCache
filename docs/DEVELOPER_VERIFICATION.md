@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 22)
+## Suites (plan version 23)
 
 | Suite | Scope |
 |---|---|
@@ -63,6 +63,15 @@ flush, and makes post-release evidence mandatory after a passed active case.
 Plan 22 corrects the baseline gate: existing system usage registrations do not
 block the disabled/pass-through control case, but remain a hard stop for active
 caching and restoration.
+
+Plan 23 extends diagnostics without changing that gate. `UsageActivity` reports,
+for paging, hibernation and dump notifications separately, lifetime in/out
+requests, successful completions, failed completions and the process ID that
+submitted the last notification. These counters distinguish accepted outstanding
+kernel paths from pending, failed or unbalanced lifecycle traffic. They do not
+identify a file path and are not permission to ignore `UsagePaths`. V4 retains the
+V3 prefix: new controllers accept V1-V4, and a new driver returns V3 when an older
+controller supplies only the V3 output buffer.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

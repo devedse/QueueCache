@@ -41,6 +41,12 @@ capture exactly because `Paging=2`; no recovery snapshot or workload was created
 The open defect/qualification question is safe paging-path support and ownership,
 not baseline file integrity.
 
+Plan 23 adds lifecycle counters for that question: per-type in/out requests,
+successes, failures and last requesting PID. This is diagnostic evidence only.
+Until an installed/rebooted snapshot is inspected and paging I/O has a proven
+nonpageable progress and overlap-ordering policy, `Paging=2` continues to block
+active C: caching.
+
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
 and active-cache 349 MiB deterministic image workloads with required admission

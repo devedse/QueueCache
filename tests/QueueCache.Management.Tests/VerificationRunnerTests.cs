@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 22, "system-image baseline usage-path contract version");
+        Check(VerificationPlan.Version == 23, "usage-notification lifecycle contract version");
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);
