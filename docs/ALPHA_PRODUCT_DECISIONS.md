@@ -14,10 +14,41 @@ execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLE
   production deployment or establish its reliability.
 - Fast mode is the product default. Fast mode on the disk backing C: is a required
   alpha goal, not excluded in favor of a Strict-only release.
-- This decision does not mean active C:-disk caching is already qualified. The
-  concrete implementation and minimum VM checks belong in the final alpha plan.
+- C: is a normal product target. The released UI and CLI must not hide it, label it
+  unsupported, require a developer-only activation action, or present a generic
+  "this might not work on C:" warning. Fast still requires the same clear volatile-
+  data acknowledgement on every disk; Strict remains the durability choice.
+- Current C:-disk restrictions are temporary implementation gates, not product
+  policy. Remove them after the already-packaged guarded path passes its first
+  active VM run, then prove the same path through normal Apply, saved-profile
+  startup and restart. Correctness checks belong in the backend and verification,
+  not in warnings that shift responsibility to the user.
 - Test signing and an explicitly documented VM setup are acceptable alpha scope;
   broad production distribution/signing requirements are a later milestone.
+
+## C: activation decision (2026-09-23)
+
+The intended end state is one activation path for data and system disks. The
+remaining work is implementation and evidence, not a permanent C: exclusion:
+
+1. Run 0.4.81.1's guarded active-image case to validate paging admission,
+   nonpageable progress, byte correctness and restoration on the snapshot-backed VM.
+2. Make normal kernel Enable use the paging-capable policy. Remove the separate
+   verifier-only `EnablePaging` action once callers and compatibility permit.
+3. Remove boot/system/paging rejection from public Apply. Keep identity, memory,
+   configuration and driver-state validation because those apply to every disk.
+4. Treat new paging registrations without disabling an otherwise healthy active
+   cache. Implement ordered hibernation, Fast Startup and crash-dump behavior; do
+   not turn those Windows features into a permanent activation ban.
+5. Make desktop, CLI and saved-profile restore use the same normal path. A C: card
+   may state factual disk roles, but must not carry an unsupported-feature warning.
+6. Prove normal UI/CLI activation, Fast and Strict behavior, saved-profile reboot,
+   shutdown/restart, paging pressure, hibernation/Fast Startup and configured dump
+   handling before declaring the corresponding alpha gates complete.
+
+The developer system suites retain exact identity, separate-output-disk, exclusive-
+lease, recovery and byte-oracle checks. Those protect the experiment from targeting
+the wrong disk; they are not product activation restrictions.
 
 ## Accepted volatility and correctness requirements
 

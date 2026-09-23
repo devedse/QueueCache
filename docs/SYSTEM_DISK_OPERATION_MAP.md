@@ -1,9 +1,10 @@
 # Active system-disk operation map
 
 Updated: 2026-09-23. This is the A07/T023 map of paths that can reach the current
-disk filter. It records implemented behavior and gaps; it is not a C: support
-claim. Source references name the owning function rather than a historical test
-wrapper.
+disk filter. It records implemented behavior and gaps. C: is a normal product
+target; current activation blocks are temporary migration state, not intended
+release policy. Source references name the owning function rather than a historical
+test wrapper.
 
 Review correction: this is an initial map, not a completed resource-lifetime or
 system-disk audit. T068's source race is repaired: dispatch reserves an incoming
@@ -18,7 +19,7 @@ race cannot explain an older build's incident.
 |---|---|---|---|
 | Ordinary read/write, cache inactive | `QcDispatch` forwards directly and holds the remove lock through lower completion. Diagnostics V5 observes `IRP_PAGING_IO` reads/writes before this routing choice. | Plan 25 passed the disabled 349 MiB workload byte-for-byte on exact 0.4.80.1 while measuring bidirectional paging. | Preserve this pass-through behavior in A13 compatibility qualification. |
 | Ordinary read/write, cache active | `QcDispatch` queues to the cancel-safe foreground worker; `QcCacheProcess` calls `Read`/`Write`. Fitting Fast writes complete from preallocated RAM. On a paging path, plan 26 keeps up to 64 MiB of write quota outside ordinary admission. Paging writes can use it; crossing the ordinary limit wakes draining as a documented capacity boundary. | Qualified on the secondary disk. Guarded active-C: candidate exists only in the verifier. | Exact plan-26 active bytes, paging progress and restoration; then A09/T052/T053. |
-| Paging, hibernation or dump path registration | Usage notification counts and PnP behavior remain as plan 24. Normal `QcEnable` still rejects every special-file path. Plan 26 adds a distinct verifier-only enable action requiring paging counts only, no hibernation/dump path, Fast mode and at least 256 MiB configured RAM. New registrations remain ordered and disable the active cache. | Exact 0.4.80.1 reconciles `Paging=2` and plan 25 measured routine bidirectional paging. Public/saved-profile C: activation remains excluded. | Install plan 26 and run the guarded active workload; do not generalize its result to public support. |
+| Paging, hibernation or dump path registration | Usage notification counts and PnP behavior remain as plan 24. Plan 26's paging-capable policy is reached through a distinct verifier action; normal Enable still rejects special-file paths and new registrations disable an active cache. | Exact 0.4.80.1 reconciles `Paging=2` and measured routine bidirectional paging. The current public/saved-profile exclusion is temporary, not desired behavior. | Run exact 0.4.81.1 guarded active workload, then converge normal Enable/public Apply and keep healthy routing across paging registration. Implement hibernation/Fast Startup/dump under T025/T072. |
 | Paging read/write data | All code and cache memory are nonpageable. Paging MDLs use high-priority mapping. Paging writes have reserved admission. If the foreground owner is capacity-blocked, the existing dependency selector may issue a later paging-read miss only after proving it does not overlap the active or any older write; recursive read servicing is disabled for that lower request. | Implemented plan-26 candidate with Diagnostics V6 stop conditions. This preserves serialized overlap ordering while breaking an unrelated capacity-wait dependency. | Exact active VM exercise, low-memory/fault/cancellation proof and T067 disposition. |
 | Queued cancellation | `IO_CSQ` owns queued requests; cancellation releases the request remove lock. A dequeued capacity-waiting request also checks `irp->Cancel`. | Implementation exists; raw disposable-disk cancellation evidence is not in the supported runner. | T053 chooses reachable paging/teardown cases and adds maintained proof. |
 | Application/OS flush | Strict calls `QcCacheBarrier` and a lower flush. Explicit administrative flush always does so. Fast may acknowledge an application flush in RAM but never hides an existing cache error. | Secondary-disk Strict/Fast and lower-flush recovery evidence exists. | T052 forces queued-later-write cutoff ordering; A09 normal restart proof. |
@@ -30,14 +31,14 @@ race cannot explain an older build's incident.
 | Direct/buffered data | The filter copies the lower device's direct/buffered flags. Cache buffers are nonpaged; data mapping uses the request MDL when present. All dispatch/cache code is nonpageable. | Necessary foundation, not memory-pressure qualification. | T053 allocation/pin/progress and A09 bounded memory-pressure exercise. |
 | Saved-profile startup | Installer task runs `qcache policy restore` as SYSTEM after a 30-second startup delay. Restore validates schema, volume, PnP identity, disk size, policy and volatile-flush acknowledgement. Apply now rechecks the mounted extent and PnP identity immediately before opening the disk; the driver starts inactive. | Prevents guessing a disk and narrows a remap window between inventory and activation. Host checks and a split-CLI Q: Apply smoke pass; saved-profile restore and exact-build VM proof are pending. | T026 capability/role/fault-state policy and suspend/startup failure evidence. |
 
-## Immediate safety decision
+## Activation migration decision
 
 The previously exported `PagingPathCount` was always zero, so non-OS verification
 could not actually enforce its documented pagefile guard. The current implementation
 populates it for paging, hibernation and dump usage notifications, atomically
-reserves newly introduced paths against Enable, orders an active path behind dirty
-data and refuses Enable while the combined count is nonzero. Management also
-rejects every boot/system target while active-system-disk support is unqualified.
+reserves newly introduced paths against Enable, and orders an active path behind
+dirty data. The current normal Enable and management rejections were useful while
+the paging policy was absent, but are now scheduled for removal under T070-T074.
 On exact installed 0.4.75.1, a configured C: pagefile and dump produced split
 counts `Paging=4`, `Hibernation=0`, `Dump=1`. Removing both and rebooting changed
 them to `Paging=2`, `Hibernation=0`, `Dump=0`; WMI and the filesystem report no
@@ -47,8 +48,8 @@ explained. An ordinary Q: pagefile previously failed to activate and the attempt
 Q: dump logged volmgr Event 46, so neither is valid recovery evidence.
 
 Installed-kernel interleaving evidence remains open. Supporting a pagefile-bearing
-C: requires an explicit later change with T053/A09 evidence; simply removing these
-guards is not an implementation.
+C: requires the paging-capable path plus T053/A09 evidence. The end state is normal
+activation, not a permanent guard or warning.
 
 Crash/power-loss survival is still not promised by Fast mode. Surprise removal after
 the lower device is gone cannot persist volatile data. The product must keep that

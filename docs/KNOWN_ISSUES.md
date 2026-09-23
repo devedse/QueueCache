@@ -13,8 +13,10 @@ data and damage the filesystem. Strict mode and explicit administrative flushes
 preserve their lower-I/O boundary, but neither makes an experimental driver a
 production storage product.
 
-Only isolated VMs and clean secondary disks are currently supported for testing.
-Production signing, unattended recovery and certification are not implemented.
+Testing is currently confined to the snapshot-backed VM and clean secondary-disk
+workloads while active C: validation begins. C: is nevertheless a normal product
+target, not a planned unsupported feature. Production signing, unattended recovery
+and certification are not implemented.
 
 ## Lifecycle scope remains incomplete
 
@@ -65,8 +67,9 @@ disabled. Plan 26 is the first guarded active candidate: paging writes receive a
 reserved admission region, paging MDLs request high-priority mapping, and safe
 non-overlapping paging-read misses can progress past an unrelated capacity wait.
 Diagnostics V6 makes any mapping failure or paging capacity wait fail the active
-case. Normal C: configuration and saved-profile startup remain blocked pending
-that experiment and the remaining recovery/incident gates.
+case. Normal C: configuration and saved-profile startup are the immediate follow-up
+after that experiment: their current blocks must be removed, not retained as the
+released behavior.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
