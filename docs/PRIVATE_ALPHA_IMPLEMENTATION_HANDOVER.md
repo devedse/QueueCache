@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 25. Corrected plan-14 `pressure`
+The executable verification contract is plan 26. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -18,9 +18,9 @@ check; both passed on the VM with C: caching disabled. Active C: is not qualifie
 
 Immediate priority: investigate T067, the owner's BMP/Paint/Photos BSOD. Follow
 the focused sequence below before resuming general A08 framework expansion or
-T050 performance tuning. This revision changes work order; the executable
-verification contract has since advanced to plan 25 and no implementation or test passes are
-added by this document update.
+T050 performance tuning. The executable verification contract is now plan 26:
+its guarded paging-progress implementation and host/native checks are complete,
+but its exact packaged active-C: VM run is still pending.
 
 ## 1. Start here
 
@@ -156,6 +156,16 @@ baseline now records before/after snapshots and a process-wide delta. The delta
 may include unrelated Windows traffic and is evidence for the next design, not
 permission to enable caching.
 
+Plan 25 then completed on exact installed 0.4.80.1. Run
+`QueueCache-Verify-20260923-172845-86c7a49e6f1445178f9ca455390a8ae9`
+passed all 365,953,024 bytes with C: disabled and observed 983 paging reads plus
+427 paging writes in 13.5 seconds. Plan 26 therefore rejects a barrier-per-paging-
+request design and instead adds reserved paging-write admission, high-priority
+MDL mapping, and safe paging-read miss service while an ordinary write is blocked.
+Only the guarded verifier can request this experimental paging enablement; it
+requires paging-only registrations, Fast mode and a 256..512 MiB budget. Normal
+Enable/public Apply stay restricted.
+
 Memory pressure remains a plausible historical contributor because the old
 reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
 decoded a large image. It is not proven. Management now preserves the greater of
@@ -205,8 +215,8 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | Usage-path activation races and PnP lifecycle requirements are implemented. Plan 25 adds actual paging read/write/byte observation at dispatch without changing routing. | Installed 0.4.79.1 reconciles two accepted paging registrations and reports C: not disableable. Install/run plan 25, then design nonpageable progress and dirty-overlap ordering; saved-profile proof and T067 remain. | Turns an unexplained registration into measured I/O behavior before the cache is allowed to handle it. |
-| A08 | PARTIAL | Guarded owned-file/restart and 349 MiB disabled/active contracts exist. Plan 25 adds immutable paging-I/O snapshots and window deltas to the disabled baseline. | Host contracts pass; exact packaged plan-25 VM evidence is pending. Active C: remains gated. | Gives a safe comparison of what Windows actually sends while proving the large file's bytes. |
+| A07 | PARTIAL | Usage/PnP safeguards and paging observation exist. Plan 26 adds a paging write reserve, high-priority paging MDL mapping, safe paging-read miss service during capacity waits, and a verifier-only paging enable action. | Exact 0.4.80.1 proves bidirectional paging traffic with C: disabled. Install plan 26 and require zero paging map/capacity failures plus clean bytes/restoration. Normal product C: activation remains blocked. | Gives critical Windows I/O reserved resources and progress without exposing unfinished C: support to normal users. |
+| A08 | PARTIAL | Guarded byte/restart and 349 MiB disabled/active contracts exist. Plan 26 admits paging-only active capture/workload/restoration and enforces Diagnostics V6 progress gates. | Plan-25 disabled run passed 365,953,024 bytes and measured 983 paging reads plus 427 writes. Exact active plan-26 run is pending. | Converts the safe baseline into a bounded active experiment with automatic stop conditions. |
 | A09 | FALSE | Disposable-VM C: validation pending. | Requires A06a safety disposition, A07/A08 and rehearsed recovery. | Demonstrates actual system usability and bytes across normal restart. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
@@ -216,9 +226,10 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A15 | FALSE | Production environment/endurance qualification pending. | Frozen candidate tested against A13 support matrix and longer workloads. | Tests reliability beyond a single short VM session. |
 | A16 | FALSE | Production release and support gates pending. | Staged rollout, diagnostics, rollback and release decision required. | Makes failures diagnosable and releases supportable. |
 
-Latest recorded installed candidate: 0.4.79.1 from `4c4a918`, SYS SHA-256
-`3DB7994E85F9CDE4BD76C8AF7C52C92470667AD389D5BF19B168C1E01FC4AB5F`.
-It proves plan 24, not the newer plan-25 paging-I/O observation candidate. See
+Latest recorded installed candidate: 0.4.80.1 from `588c725`, SYS SHA-256
+`B931ABCCE65DF0F3246BC2F2C0526A0234B345BCC9C4F978B54CC2BCC84287AC`.
+It proves plan 25's disabled paging-I/O observation. Plan 26 is the newer guarded
+active candidate and is not yet installed. See
 the tracker for each earlier release's scoped evidence.
 The recorded VM end state was active 2 GiB Fast/Idle on Q:, zero dirty/in-flight
 bytes and zero errors. Recheck live identity/state before another workload. These

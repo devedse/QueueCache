@@ -59,6 +59,15 @@ delta into the maintained 349 MiB disabled-cache baseline. It does not enable C:
 or diagnose the historical crash by itself; its result selects the next bounded
 forward-progress/overlap test instead of guessing at paging behavior.
 
+Exact 0.4.80.1 plan-25 evidence observed 983 paging reads and 427 paging writes
+during the safe 13.5-second large-image window, with every byte correct and C:
+disabled. Plan 26 is the first guarded active candidate: paging writes receive a
+reserved admission region, paging MDLs request high-priority mapping, and safe
+non-overlapping paging-read misses can progress past an unrelated capacity wait.
+Diagnostics V6 makes any mapping failure or paging capacity wait fail the active
+case. Normal C: configuration and saved-profile startup remain blocked pending
+that experiment and the remaining recovery/incident gates.
+
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
 and active-cache 349 MiB deterministic image workloads with required admission

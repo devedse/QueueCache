@@ -88,6 +88,24 @@ diagnostic files, and reports counter deltas for its workload window. These are
 process-wide device counters: concurrent Windows traffic can contribute, and a
 zero delta is valid evidence. Active C: remains blocked.
 
+Exact installed 0.4.80.1 run
+`QueueCache-Verify-20260923-172845-86c7a49e6f1445178f9ca455390a8ae9`
+passed the disabled 365,953,024-byte baseline and observed 983 paging reads
+(29,969,408 bytes) plus 427 paging writes (5,344,256 bytes) in its 13.5-second
+window. This proves that a per-request whole-cache drain/disable policy would not
+be a usable active design.
+
+Plan 26 adds the guarded active candidate. Up to 64 MiB of the write quota is
+reserved from ordinary admission for paging writes; paging MDLs use high-priority
+mapping; and non-overlapping paging-read misses may reach the lower disk while an
+ordinary write waits for capacity. Diagnostics V6 reports the reserve, maximum
+paging request lengths, mapping failures, paging capacity waits and serviced read
+misses. `system-capture`, `system-active-image` and `system-restore` permit only
+the reconciled paging-only registration state in a recoverable VM. The active case
+rejects any new mapping failure or capacity wait and requires the maximum paging
+write to fit the reserve at both application and administrative flush boundaries.
+The dedicated enable action is not used by public Apply or saved-profile restore.
+
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run
 `QueueCache-Verify-20260923-140039-8c9ee24872d14b6b82639e5590c9bbb7`

@@ -47,7 +47,7 @@ internal static class ActivationSafety
         if (enabled && (isBoot || isSystem) && !allowRecoverableSystemVerification)
             throw new NotSupportedException(
                 "Caching cannot be enabled on a boot/system disk until active-system-disk support is qualified.");
-        if (enabled && (isPaging || usagePathCount != 0))
+        if (enabled && (isPaging || (usagePathCount != 0 && !allowRecoverableSystemVerification)))
             throw new NotSupportedException(
                 "Caching cannot be enabled on a disk with paging, hibernation or dump paths until active-system-disk support is qualified.");
     }
@@ -107,7 +107,7 @@ public static class ConfigurationManager
             device.Control(WriteCacheAction.Configure, budget);
         device.SetOptions(configuration.Options);
         if (configuration.Enabled)
-            device.Control(WriteCacheAction.Enable);
+            device.Control(allowRecoverableSystemVerification ? WriteCacheAction.EnablePaging : WriteCacheAction.Enable);
         // A background barrier can start immediately after Enable completes.
         // Wait on snapshots, not by replaying Disable/Configure/Enable.
         var result = WaitForHealthyState(device.GetWriteCacheState, state, progress);

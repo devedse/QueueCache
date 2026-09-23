@@ -49,7 +49,8 @@ public static class VerificationWorker
     }
     public static bool RequiresSystemImageEvidence(IEnumerable<CaseResult> results) =>
         results.Any(result => result.Id == "system-active-image" && result.Status == "PASS");
-    public static bool RequiresClearSystemUsagePaths(string operation) => operation != "system-image-baseline";
+    public static bool AllowsGuardedPagingPaths(string operation) =>
+        operation is "system-capture" or "system-active-image" or "system-restore";
     public static void ValidateSystemUsageDiagnostics(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
         var paths = diagnostics.UsagePaths ??
@@ -88,6 +89,36 @@ public static class VerificationWorker
             WriteRequests = last.WriteRequests - first.WriteRequests,
             WriteBytes = last.WriteBytes - first.WriteBytes
         };
+    }
+    public static void ValidateGuardedPagingPaths(CacheStatistics statistics, CacheDiagnostics diagnostics)
+    {
+        ValidateSystemUsageDiagnostics(statistics, diagnostics);
+        var paths = diagnostics.UsagePaths!;
+        if (paths.Paging == 0 || paths.Hibernation != 0 || paths.Dump != 0 ||
+            diagnostics.PagingIo is null || diagnostics.PagingProgress is null)
+            throw new NotSupportedException(
+                "Guarded active C: verification requires paging-only paths and Diagnostics V6.");
+    }
+    public static CachePagingProgress ValidatePagingProgressWindow(CacheDiagnostics before, CacheDiagnostics after)
+    {
+        var first = before.PagingProgress ??
+            throw new NotSupportedException("Active system verification requires paging progress diagnostics.");
+        var last = after.PagingProgress ??
+            throw new NotSupportedException("Active system verification requires paging progress diagnostics.");
+        if (last.MapFailures < first.MapFailures || last.CapacityWaits < first.CapacityWaits ||
+            last.ServicedReadMisses < first.ServicedReadMisses)
+            throw new IOException("Paging progress counters moved backwards during the active window.");
+        var delta = last with
+        {
+            MapFailures = last.MapFailures - first.MapFailures,
+            CapacityWaits = last.CapacityWaits - first.CapacityWaits,
+            ServicedReadMisses = last.ServicedReadMisses - first.ServicedReadMisses
+        };
+        if (delta.MapFailures != 0 || delta.CapacityWaits != 0 || last.ReservedBytes == 0 ||
+            last.MaxWriteLength > last.ReservedBytes)
+            throw new IOException(
+                "Paging I/O did not retain its mapping/capacity forward-progress reserve during the active window.");
+        return delta;
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
     public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
@@ -173,9 +204,12 @@ public static class VerificationWorker
                 var statistics = systemDevice.GetStatistics();
                 var diagnosticsBefore = systemDevice.GetDiagnostics();
                 ValidateSystemUsageDiagnostics(statistics, diagnosticsBefore);
-                if (RequiresClearSystemUsagePaths(job.Operation) &&
-                    (target.IsPaging || statistics.PagingPathCount != 0))
-                    throw new IOException("Active system verification requires C: to have no paging, hibernation or dump usage path.");
+                if (target.IsPaging)
+                    throw new IOException("Guarded active system verification requires no configured page file on C:.");
+                if (AllowsGuardedPagingPaths(job.Operation))
+                    ValidateGuardedPagingPaths(statistics, diagnosticsBefore);
+                else if (job.Operation != "system-image-baseline" && statistics.PagingPathCount != 0)
+                    throw new IOException("This system operation does not support a paging, hibernation or dump usage path.");
                 if (before.DeviceBytes != (ulong)target.Bytes || before.Faulted || before.Errors != 0 || before.LastError != 0)
                     throw new IOException("System-disk driver identity/state is not clean enough for active verification.");
                 if (job.Operation == "system-capture")
@@ -264,18 +298,31 @@ public static class VerificationWorker
                     throw new IOException("Active system-image workload must start from the captured disabled/released state.");
                 var active = ConfigurationManager.ApplyForRecoverableSystemVerification(target, job.Configuration, true);
                 RunStorage.AtomicJson(job.Reply + ".enabled.json", active);
+                var diagnosticsEnabled = systemDevice.GetDiagnostics();
+                RunStorage.AtomicJson(job.Reply + ".enabled-diagnostics.json", diagnosticsEnabled);
                 var checks = new List<CheckResult>();
                 checks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
                 var afterApplicationFlush = systemDevice.GetWriteCacheState();
                 RunStorage.AtomicJson(job.Reply + ".after-application-flush.json", afterApplicationFlush);
                 ValidateActiveImageRouting(active, afterApplicationFlush, (ulong)SystemImageScenarios.FileBytes);
+                var diagnosticsAfterApplicationFlush = systemDevice.GetDiagnostics();
+                RunStorage.AtomicJson(job.Reply + ".after-application-flush-diagnostics.json",
+                    diagnosticsAfterApplicationFlush);
+                var pagingProgress = ValidatePagingProgressWindow(diagnosticsEnabled, diagnosticsAfterApplicationFlush);
                 checks.Add(new("system-image/cache-accepted-bytes", "PASS",
                     $"The active C: cache accepted at least the complete image ({afterApplicationFlush.AcceptedBytes - active.AcceptedBytes} bytes observed)."));
+                checks.Add(new("system-image/paging-forward-progress", "PASS",
+                    $"Paging I/O used a {pagingProgress.ReservedBytes}-byte admission reserve with zero mapping failures " +
+                    $"and zero capacity waits; serviced paging-read misses={pagingProgress.ServicedReadMisses}."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 systemDevice.Control(WriteCacheAction.Flush);
                 var afterAdministrativeFlush = systemDevice.GetWriteCacheState();
                 RunStorage.AtomicJson(job.Reply + ".after-administrative-flush.json", afterAdministrativeFlush);
                 ValidateActiveImageRouting(active, afterAdministrativeFlush, (ulong)SystemImageScenarios.FileBytes);
+                var diagnosticsAfterAdministrativeFlush = systemDevice.GetDiagnostics();
+                RunStorage.AtomicJson(job.Reply + ".after-administrative-flush-diagnostics.json",
+                    diagnosticsAfterAdministrativeFlush);
+                ValidatePagingProgressWindow(diagnosticsEnabled, diagnosticsAfterAdministrativeFlush);
                 checks.Add(new("system-image/administrative-flush", "PASS",
                     "The administrative flush returned while the cache remained routed and error-free; unrelated live C: writes may already be dirty again."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));

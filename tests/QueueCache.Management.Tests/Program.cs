@@ -126,10 +126,11 @@ try
 }
 catch (NotSupportedException) { }
 ActivationSafety.ValidateTarget(true, true, true, false, 0, allowRecoverableSystemVerification: true);
+ActivationSafety.ValidateTarget(true, true, true, false, 1, allowRecoverableSystemVerification: true);
 try
 {
-    ActivationSafety.ValidateTarget(true, true, true, false, 1, allowRecoverableSystemVerification: true);
-    throw new Exception("Active usage path was accepted for recoverable system verification.");
+    ActivationSafety.ValidateTarget(true, true, true, true, 1, allowRecoverableSystemVerification: true);
+    throw new Exception("Configured C: page file was accepted for recoverable system verification.");
 }
 catch (NotSupportedException) { }
 profile.Validate();
@@ -143,6 +144,7 @@ Check(s.Enabled && s.LastError == unchecked((int)0xC000009A), "flags and signed 
 Check(s.DeviceBytes == 200L << 30 && s.WrittenBytes == 9L << 30, "64-bit byte counters");
 Check(s.QueueMemoryBytes == 3L << 30 && s.MaxQueueBytes == 4L << 30, "cache budgets above 2 GiB");
 Check(s.PagingPathCount == 2, "paging/hibernation/dump path count");
+Check((uint)WriteCacheAction.EnablePaging == 12, "guarded paging enable control ABI");
 Reject(() => CacheStatistics.Decode(data.AsSpan(0, 183)), "short response");
 data[0] = 0;
 Reject(() => CacheStatistics.Decode(data), "incompatible version");
@@ -245,6 +247,20 @@ var pagingIo = CacheDiagnostics.Decode(pagingIoBytes);
 Check(pagingIo.UsageActivity == activity.UsageActivity && pagingIo.PagingIo ==
     new CachePagingIo(71, 72, 73, 74, 4, 0x43, 77, 78, 79),
     "V5 paging I/O offsets and V4 prefix");
+Check(pagingIo.PagingProgress is null, "V5 paging progress is unavailable, not zero");
+var pagingProgressBytes = new byte[CacheDiagnostics.PagingProgressWireSize];
+pagingIoBytes.CopyTo(pagingProgressBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingProgressBytes, 6);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingProgressBytes.AsSpan(4), CacheDiagnostics.PagingProgressWireSize);
+ulong[] pagingProgressValues = [81, 82, 83, 84, 85, 86];
+for (var index = 0; index < pagingProgressValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(pagingProgressBytes.AsSpan(CacheDiagnostics.PagingIoWireSize + index * 8),
+        pagingProgressValues[index]);
+var pagingProgress = CacheDiagnostics.Decode(pagingProgressBytes);
+Check(pagingProgress.PagingIo == pagingIo.PagingIo && pagingProgress.PagingProgress ==
+    new CachePagingProgress(81, 82, 83, 84, 85, 86),
+    "V6 paging progress offsets and V5 prefix");
+Reject(() => CacheDiagnostics.Decode(pagingProgressBytes.AsSpan(0, 527)), "short paging progress diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");
 Reject(() => CacheDiagnostics.Decode(attributionBytes.AsSpan(0, 215)), "short attribution");

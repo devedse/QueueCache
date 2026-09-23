@@ -48,6 +48,18 @@ constexpr ULONG QcWriteLimit(const QC_OPTIONS& o, ULONG capacity)
     return o.Allocation == QcAutomatic ? capacity
                                        : static_cast<ULONG>(static_cast<ULONGLONG>(capacity) * o.WritePercent / 100);
 }
+// A paging-path cache keeps up to 64 MiB (and at most half its write quota)
+// outside ordinary-write admission. One serialized paging write can consume the
+// reserve without first waiting for a lower write that might itself need paging.
+constexpr ULONG QcPagingReserveSlots(ULONG writeLimit)
+{
+    constexpr ULONG MaxReserveSlots = (64UL * 1024 * 1024) / 4096;
+    return writeLimit / 2 < MaxReserveSlots ? writeLimit / 2 : MaxReserveSlots;
+}
+constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool pagingPath, bool pagingIo)
+{
+    return pagingPath && !pagingIo ? writeLimit - QcPagingReserveSlots(writeLimit) : writeLimit;
+}
 // Protect resident read demand up to half the payload, borrowing unused space.
 // A large atomic request may reduce protection so it can eventually be admitted.
 constexpr ULONG QcProtectedReadSlots(ULONG capacity, ULONG residentReads, ULONG requestSlots)

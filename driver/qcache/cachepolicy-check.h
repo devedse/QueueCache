@@ -24,6 +24,12 @@ constexpr bool PolicyChecks()
     o.WritePercent = 100;
     if (QcWriteLimit(o, 1000) != 1000)
         return false;
+    if (QcPagingReserveSlots(1000) != 500 ||
+        QcPagingReserveSlots(32768) != 16384 || QcPagingReserveSlots(65536) != 16384 ||
+        QcAdmissionWriteLimit(1000, false, false) != 1000 ||
+        QcAdmissionWriteLimit(1000, true, false) != 500 ||
+        QcAdmissionWriteLimit(1000, true, true) != 1000)
+        return false;
     o.Drain = QcBalanced;
     if (QcShouldDrain(o, 10, 100, 0, 0, false, pressure))
         return false;

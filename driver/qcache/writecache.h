@@ -58,12 +58,15 @@ struct QC_DIAGNOSTICS
     ULONGLONG UsageLastProcessId[3];
     ULONGLONG PagingReadRequests, PagingReadBytes, PagingWriteRequests, PagingWriteBytes;
     ULONGLONG PagingLastMajor, PagingLastFlags, PagingLastOffset, PagingLastLength, PagingLastProcessId;
+    ULONGLONG PagingMapFailures, PagingCapacityWaits, PagingServicedReadMisses;
+    ULONGLONG PagingReservedBytes, PagingMaxReadLength, PagingMaxWriteLength;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
 static constexpr ULONG QcDiagnosticsV3Size = 240;
 static constexpr ULONG QcDiagnosticsV4Size = 408;
-static_assert(sizeof(QC_DIAGNOSTICS) == 480);
+static constexpr ULONG QcDiagnosticsV5Size = 480;
+static_assert(sizeof(QC_DIAGNOSTICS) == 528);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingUsagePaths) == QcDiagnosticsV2Size);
@@ -75,6 +78,7 @@ static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageInFailures) == 336);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageOutFailures) == 360);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageLastProcessId) == 384);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadRequests) == QcDiagnosticsV4Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingMapFailures) == QcDiagnosticsV5Size);
 enum QC_BARRIER_REASON : ULONG
 {
     QcControlBarrier = 1, QcStrictWriteBarrier, QcDisabledWriteBarrier, QcQuotaWriteBarrier,
@@ -121,7 +125,8 @@ enum : ULONG
     QcFlushPolicy,
     QcRelease,
     QcDropClean,
-    QcPerformanceTiming
+    QcPerformanceTiming,
+    QcEnablePaging // Guarded recoverable-VM verification only; normal Enable remains restricted.
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {
@@ -189,6 +194,8 @@ struct QC_CACHE
     volatile LONG64 UsageLastProcessId[3];
     volatile LONG64 PagingReadRequests, PagingReadBytes, PagingWriteRequests, PagingWriteBytes;
     volatile LONG64 PagingLastMajor, PagingLastFlags, PagingLastOffset, PagingLastLength, PagingLastProcessId;
+    volatile LONG64 PagingMapFailures, PagingCapacityWaits, PagingServicedReadMisses;
+    volatile LONG64 PagingMaxReadLength, PagingMaxWriteLength;
     ULONG DelayMs, InjectFault;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
@@ -214,6 +221,7 @@ void QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
+bool QcCacheServicePagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
 NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable, QC_BARRIER_REASON reason,
                        PIRP request = nullptr, ULONG code = 0);

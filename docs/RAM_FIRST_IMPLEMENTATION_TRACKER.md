@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 25: plan-14 `pressure`
+row below. The executable verification contract is plan 26: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -34,7 +34,9 @@ completed on the VM against exact installed 0.4.75.1. Neither plan closes T052
 ordering or T067. Plan 23 added kernel notification lifecycle evidence without
 weakening the activation gate and exact installed 0.4.78.1 resolved the counter
 question. Exact installed 0.4.79.1 proved plan 24's associated PnP stop/remove and
-device-state policy. Plan 25 adds paging-I/O observation without enabling caching.
+device-state policy. Plan 25 measured paging I/O safely with caching disabled.
+Plan 26 adds the bounded paging forward-progress safeguards and guarded enablement
+needed for the first active experiment; ordinary product activation remains blocked.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -45,8 +47,8 @@ device-state policy. Plan 25 adds paging-I/O observation without enabling cachin
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks mounted identity. Diagnostics V4 reports per-type notification lifecycle. Plan 24 enforces not-disableable/query-stop/query-remove behavior. **Changed this run:** Diagnostics V5 counts actual `IRP_PAGING_IO` reads/writes and bytes at dispatch, including disabled pass-through, plus last-request breadcrumbs; it does not change routing or enable C:. | Exact installed 0.4.79.1 again reconciled two successful outstanding paging registrations and exposed a started, healthy, non-disableable C: disk node. Plan-25 host/native checks pass; install/reboot and observe a bounded disabled-cache window next. Active caching remains blocked until those observations drive a nonpageable forward-progress and dirty-overlap design. Saved-profile proof and T067 root cause remain open. |
-| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-21 added the matching 349 MiB baseline and strict active evidence. Plan 22 allows only the disabled/pass-through baseline with existing usage registrations. **Changed this run:** plan 25 records immutable before/after Diagnostics V5 snapshots and a process-wide paging-I/O delta in that supported baseline. | Earlier plan-22 baseline passed every byte with C: disabled. Plan-25 host contracts pass; exact installed execution is pending. Counts are windowed evidence and may include concurrent Windows traffic, not workload-only attribution. Active support and T067 remain open. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Notification/PnP safeguards and paging observation are implemented. **Changed this run:** plan 26 reserves up to 64 MiB of the write quota from ordinary admission for paging writes, uses high-priority paging MDL mapping, and services safe non-overlapping paging-read misses while an ordinary write waits. A distinct kernel action permits only the recoverable verifier to enable Fast mode with paging-only registrations and a 256..512 MiB budget; normal Enable and public Apply still reject C:. Diagnostics V6 exposes reserve size, maximum request lengths, mapping failures, capacity waits and serviced misses. | Installed 0.4.80.1 plan-25 run proved paging is real bidirectional traffic. Plan-26 management, runner, desktop and Release/Debug native checks pass locally; exact packaged installation is pending. The first active run must show zero paging mapping failures/capacity waits, a reserve at least as large as the maximum paging write, exact bytes and clean restoration. Saved-profile support and T067 root cause remain open. |
+| A08 / T028-T031 | PARTIAL | Guarded owned-file/restart and 349 MiB disabled/active contracts exist. **Changed this run:** exact plan-25 disabled baseline passed, and plan 26 permits paging-only capture/active/restoration while enforcing Diagnostics V6 forward-progress gates at application and administrative flush boundaries. | Run `QueueCache-Verify-20260923-172845-86c7a49e6f1445178f9ca455390a8ae9` completed 1/1 on exact 0.4.80.1: all 365,953,024 bytes matched; its 13.5-second window observed 983 paging reads/29,969,408 bytes and 427 paging writes/5,344,256 bytes with C: disabled and clean. Exact active plan-26 execution remains pending and is still a controlled experiment, not production qualification. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -142,6 +144,23 @@ including disabled pass-through. The maintained 349 MiB baseline saves immutable
 before/after diagnostics and their delta. The process-wide window may include
 unrelated Windows traffic; it is a discriminator for nonpageable forward progress
 and dirty-overlap ordering, not workload-only attribution or C: enablement.
+
+That discriminator completed on exact installed 0.4.80.1 in run
+`QueueCache-Verify-20260923-172845-86c7a49e6f1445178f9ca455390a8ae9`.
+The case passed all 365,953,024 deterministic bytes with caching disabled. During
+the 13.5-second window the device saw 983 paging reads (29,969,408 bytes) and 427
+paging writes (5,344,256 bytes). Paging is therefore normal bidirectional traffic
+on this C: path; a whole-cache barrier or disable on every paging request is not a
+viable design.
+
+Plan 26 implements the next bounded active candidate. Ordinary writes cannot
+consume a paging reserve of up to 64 MiB; paging MDLs request high-priority system
+mapping; and a non-overlapping paging-read miss can use the lower device while the
+sole foreground owner is capacity-blocked. A distinct enable action is accepted
+only for the recoverable verifier with Fast mode, 256..512 MiB RAM, paging-only
+registrations and no configured C: page file. Normal Enable/public Apply remain
+restricted. Diagnostics V6 and the active case require zero mapping failures and
+capacity waits and verify that the observed maximum paging write fits the reserve.
 
 The fresh complete 72-case baseline requirement still applies before a
 performance-affecting driver edit; focused comparisons guide iterations. A read-only

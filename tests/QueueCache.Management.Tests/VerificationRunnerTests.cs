@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 25, "paging-I/O observation contract version");
+        Check(VerificationPlan.Version == 26, "guarded paging forward-progress contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -78,10 +78,11 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(imageBaseline);
         Check(VerificationPlan.Integrity(imageBaseline).SequenceEqual(new IntegrityCase[] { new("system-image-baseline", "system-image-baseline") }),
             "uncached system-image baseline is a separate bounded case");
-        Check(!VerificationWorker.RequiresClearSystemUsagePaths("system-image-baseline") &&
-            VerificationWorker.RequiresClearSystemUsagePaths("system-active-image") &&
-            VerificationWorker.RequiresClearSystemUsagePaths("system-restore"),
-            "only the disabled pass-through image baseline permits existing system usage paths");
+        Check(VerificationWorker.AllowsGuardedPagingPaths("system-capture") &&
+            VerificationWorker.AllowsGuardedPagingPaths("system-active-image") &&
+            VerificationWorker.AllowsGuardedPagingPaths("system-restore") &&
+            !VerificationWorker.AllowsGuardedPagingPaths("system-image-baseline"),
+            "only guarded active capture/workload/restoration permit paging paths");
         var pagingBefore = usageDiagnostics with
         {
             PagingIo = new QueueCache.Management.CachePagingIo(10, 1000, 20, 2000, 3, 2, 3000, 4096, 4)
@@ -106,6 +107,33 @@ internal static class VerificationRunnerTests
             throw new Exception("Missing paging I/O diagnostics accepted.");
         }
         catch (NotSupportedException) { }
+        var guardedPaging = pagingAfter with
+        {
+            PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 64UL << 20, 1UL << 20, 2UL << 20)
+        };
+        VerificationWorker.ValidateGuardedPagingPaths(usageStatistics, guardedPaging);
+        var progressAfter = guardedPaging with
+        {
+            PagingProgress = guardedPaging.PagingProgress! with { ServicedReadMisses = 12 }
+        };
+        Check(VerificationWorker.ValidatePagingProgressWindow(guardedPaging, progressAfter) ==
+            new QueueCache.Management.CachePagingProgress(0, 0, 3, 64UL << 20, 1UL << 20, 2UL << 20),
+            "active paging window preserves reserve with no mapping/capacity failures");
+        foreach (var invalid in new[]
+        {
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { MapFailures = 6 } },
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { CapacityWaits = 8 } },
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ReservedBytes = 0 } },
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { MaxWriteLength = 65UL << 20 } }
+        })
+        {
+            try
+            {
+                VerificationWorker.ValidatePagingProgressWindow(guardedPaging, invalid);
+                throw new Exception("Unsafe paging progress window accepted.");
+            }
+            catch (IOException) { }
+        }
         Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
             "active system-image is one bounded case");
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));

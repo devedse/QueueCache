@@ -169,5 +169,6 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
 }
 public enum WriteCacheAction : uint
 {
-    Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean, PerformanceTiming
+    Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean,
+    PerformanceTiming, EnablePaging
 }
