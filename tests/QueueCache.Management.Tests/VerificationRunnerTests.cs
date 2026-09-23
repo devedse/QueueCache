@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 19, "system-file oracle contract version");
+        Check(VerificationPlan.Version == 20, "active system-image contract version");
         var preflight = new VerificationOptions("C:", "system-preflight", "Q:\\results",
             SystemInstance: "SCSI\\TEST", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(preflight);
@@ -48,6 +48,11 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(postRestart with { OraclePath = null }));
         Reject(() => VerificationPlan.Validate(systemFiles with { OraclePath = "Q:\\prior\\oracle.json" }));
         Reject(() => VerificationPlan.Validate(postRestart with { RecoverableVm = false }));
+        var activeImage = preflight with { Suite = "system-active-image", BudgetMiB = 512 };
+        VerificationPlan.Validate(activeImage);
+        Check(VerificationPlan.Integrity(activeImage).SequenceEqual(new IntegrityCase[] { new("system-active-image", "system-active-image") }),
+            "active system-image is one bounded case");
+        Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));
         var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
         var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
         SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "SCSI\\TEST", 100L << 30);
@@ -71,6 +76,10 @@ internal static class VerificationRunnerTests
         Check(expectedHash.Length == 64 && expectedHash.All(Uri.IsHexDigit) &&
             expectedHash != QueueCache.Operations.SystemFileScenarios.ExpectedHash(104759),
             "expected SHA is deterministic input-derived, not copied from file reads");
+        var expectedImageHash = QueueCache.Operations.SystemImageScenarios.ExpectedHash(104729);
+        Check(expectedImageHash.Length == 64 && expectedImageHash.All(Uri.IsHexDigit) &&
+            expectedImageHash != QueueCache.Operations.SystemImageScenarios.ExpectedHash(104759),
+            "large BMP SHA is deterministic input-derived, not copied from file reads");
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {

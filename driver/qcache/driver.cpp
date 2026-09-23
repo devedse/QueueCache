@@ -80,7 +80,8 @@ static NTSTATUS UsageInCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     // In-path is recorded before forwarding so cache activation cannot race a
     // pending usage notification. Roll it back only if the lower stack rejects it.
     if (!NT_SUCCESS(irp->IoStatus.Status))
-        QcCacheRecordUsage(&ext->Cache, FALSE);
+        QcCacheRecordUsage(&ext->Cache,
+            IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type, FALSE);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
 }
@@ -91,7 +92,8 @@ static NTSTATUS UsageOutCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     if (irp->PendingReturned)
         IoMarkIrpPending(irp);
     if (NT_SUCCESS(irp->IoStatus.Status))
-        QcCacheRecordUsage(&ext->Cache, FALSE);
+        QcCacheRecordUsage(&ext->Cache,
+            IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type, FALSE);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     return STATUS_CONTINUE_COMPLETION;
 }
@@ -352,7 +354,8 @@ static void QueueCancel(PIO_CSQ csq, PIRP irp)
     auto ext = QueueOwner(csq);
     if (HasUsageReservation(irp))
     {
-        QcCacheRecordUsage(&ext->Cache, FALSE);
+        QcCacheRecordUsage(&ext->Cache,
+            IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type, FALSE);
         irp->Tail.Overlay.DriverContext[2] = nullptr;
     }
 #endif
@@ -544,7 +547,8 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 #if QCACHE_CACHE_DRIVER
         if (HasUsageReservation(irp))
         {
-            QcCacheRecordUsage(&ext->Cache, FALSE);
+            QcCacheRecordUsage(&ext->Cache,
+                IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type, FALSE);
             irp->Tail.Overlay.DriverContext[2] = nullptr;
         }
         if (control)
@@ -577,7 +581,8 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 #if QCACHE_CACHE_DRIVER
         if (HasUsageReservation(irp))
         {
-            QcCacheRecordUsage(&ext->Cache, FALSE);
+            QcCacheRecordUsage(&ext->Cache,
+                IoGetCurrentIrpStackLocation(irp)->Parameters.UsageNotification.Type, FALSE);
             irp->Tail.Overlay.DriverContext[2] = nullptr;
         }
 #endif
@@ -648,7 +653,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             if (stack->Parameters.UsageNotification.InPath)
                 // QcEnable holds this same lock from its count check through the
                 // Enabled transition, so either it rejects or this is ordered next.
-                QcCacheRecordUsage(&ext->Cache, TRUE);
+                QcCacheRecordUsage(&ext->Cache, stack->Parameters.UsageNotification.Type, TRUE);
             const bool routed = ext->Routing != FALSE;
             if (routed && stack->Parameters.UsageNotification.InPath)
                 irp->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(UsageReservationMarker);
@@ -759,8 +764,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             }
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
-            auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) : QcDiagnosticsV1Size;
-            diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : 2;
+            auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV2Size ? QcDiagnosticsV2Size : QcDiagnosticsV1Size;
+            diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : returned == QcDiagnosticsV2Size ? 2 : 3;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);

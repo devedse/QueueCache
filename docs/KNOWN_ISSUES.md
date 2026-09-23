@@ -24,6 +24,20 @@ still open. The class filter starts inactive and forwards I/O until a task is
 explicitly configured. That pass-through design is not a substitute for the A07–A09
 lifecycle campaign.
 
+The current test VM still reports two protected C: usage registrations after all
+pagefiles were removed, crash dumping was disabled, and hibernation/Fast Startup
+was confirmed unavailable. Active C: verification therefore remains blocked.
+Diagnostics V3 splits paging, hibernation and dump counts so the next installed
+build can identify them; the combined count remains authoritative. Do not bypass
+this guard merely because `Win32_PageFileUsage` is empty.
+
+The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
+in the restored snapshot and is unresolved. Plan 20 supplies a conservative
+349 MiB deterministic image workload, not a root-cause fix. A 4 GiB cache on the
+8 GiB guest is only a memory-pressure hypothesis; new admission retains at least
+2 GiB or 25% physical-memory headroom and the first active test is capped at
+512 MiB.
+
 Do not use automatic reboot, driver deletion or dirty-data discard as failure
 recovery. Preserve the VM snapshot and recorded installation backup outside the
 guest. A faulted cache must be inspected and explicitly recovered.

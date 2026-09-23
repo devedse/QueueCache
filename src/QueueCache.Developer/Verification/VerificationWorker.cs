@@ -93,7 +93,8 @@ public static class VerificationWorker
         }
         else
             target = await DiskTarget.InspectAsync(job.Volume);
-        if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify")
+        if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or
+            "system-capture" or "system-active-image" or "system-restore")
         {
             if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
                 throw new IOException("Missing explicit recoverable-VM acknowledgement or expected system-disk identity.");
@@ -102,6 +103,94 @@ public static class VerificationWorker
             target.ValidateCurrent();
             output.ValidateCurrent();
             SystemPreflightGuard.ValidateTargets(target, output, job.SystemInstance, job.SystemBytes.Value);
+            if (job.Operation is "system-capture" or "system-active-image" or "system-restore")
+            {
+                if (job.Operation == "system-active-image")
+                {
+                    if (string.IsNullOrWhiteSpace(job.OraclePath))
+                        throw new IOException("Missing off-target system-image oracle path.");
+                    var oracleOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(
+                        Path.GetDirectoryName(Path.GetFullPath(job.OraclePath))!));
+                    oracleOutput.ValidateCurrent();
+                    SystemPreflightGuard.ValidateTargets(target, oracleOutput, job.SystemInstance, job.SystemBytes.Value);
+                }
+                using var systemDevice = new CacheDevice(target.Device, writable: true);
+                var before = systemDevice.GetWriteCacheState();
+                var statistics = systemDevice.GetStatistics();
+                if (target.IsPaging || statistics.PagingPathCount != 0)
+                    throw new IOException("Active system verification requires C: to have no paging, hibernation or dump usage path.");
+                if (before.DeviceBytes != (ulong)target.Bytes || before.Faulted || before.Errors != 0 || before.LastError != 0)
+                    throw new IOException("System-disk driver identity/state is not clean enough for active verification.");
+                if (job.Operation == "system-capture")
+                {
+                    if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
+                        throw new IOException("Active system verification must start with C: disabled, released and clean.");
+                    if (SavedConfigurations.List().Any(profile =>
+                            profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase)))
+                        throw new IOException("Remove the saved C: profile before active system verification.");
+                    RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
+                        systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName));
+                    return 0;
+                }
+                if (job.Operation == "system-restore")
+                {
+                    var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!)) ??
+                        throw new InvalidDataException("Missing system recovery snapshot.");
+                    if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName ||
+                        original.Target != target || original.State.Enabled || original.State.BudgetBytes != 0)
+                        throw new IOException("System recovery identity or disabled/released baseline changed.");
+                    FlushForRestoration(() =>
+                    {
+                        using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                        volume.Flush();
+                    }, () => systemDevice.Control(WriteCacheAction.Flush), () => systemDevice.Control(WriteCacheAction.Disable),
+                        systemDevice.GetWriteCacheState,
+                        (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot));
+                    systemDevice.Control(WriteCacheAction.Release);
+                    systemDevice.Control(WriteCacheAction.FlushPolicy, value: original.State.UnsafeDefer ? 1UL : 0UL);
+                    if (original.State.Options is not null)
+                        systemDevice.SetOptions(original.State.Options);
+                    var restored = systemDevice.GetWriteCacheState();
+                    RunStorage.AtomicJson(job.Reply, restored);
+                    var mismatches = RestorationMismatches(original, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
+                    if (mismatches.Count != 0)
+                        throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
+                    if (!string.IsNullOrWhiteSpace(job.OraclePath) && File.Exists(job.OraclePath))
+                    {
+                        var oracle = SystemImageScenarios.ReadOracle(job.OraclePath);
+                        var postReleaseChecks = File.Exists(oracle.FilePath)
+                            ? SystemImageScenarios.Verify(target, oracle)
+                            : new[] { new CheckResult("system-image/post-release-bytes", "SKIP",
+                                "The active operation failed before creating its owned image; restoration itself completed.") };
+                        RunStorage.AtomicJson(job.Reply + ".post-release-checks.json", postReleaseChecks);
+                        ReportFailures(postReleaseChecks, Console.Error);
+                        if (postReleaseChecks.Any(check => check.Result is not ("PASS" or "SKIP")))
+                            throw new IOException("System-image bytes failed after cache disable/release restoration.");
+                    }
+                    return 0;
+                }
+                if (string.IsNullOrWhiteSpace(job.WorkDirectory) || string.IsNullOrWhiteSpace(job.OraclePath) ||
+                    job.Configuration is null)
+                    throw new IOException("Missing active system-image workload, oracle or configuration.");
+                if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
+                    throw new IOException("Active system-image workload must start from the captured disabled/released state.");
+                var active = ConfigurationManager.ApplyForRecoverableSystemVerification(target, job.Configuration, true);
+                RunStorage.AtomicJson(job.Reply + ".enabled.json", active);
+                var checks = new List<CheckResult>();
+                checks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
+                var afterApplicationFlush = systemDevice.GetWriteCacheState();
+                RunStorage.AtomicJson(job.Reply + ".after-application-flush.json", afterApplicationFlush);
+                systemDevice.Control(WriteCacheAction.Flush);
+                var afterAdministrativeFlush = systemDevice.GetWriteCacheState();
+                RunStorage.AtomicJson(job.Reply + ".after-administrative-flush.json", afterAdministrativeFlush);
+                if (afterAdministrativeFlush.DirtyBytes != 0 || afterAdministrativeFlush.InFlightBytes != 0 ||
+                    afterAdministrativeFlush.Faulted || afterAdministrativeFlush.Errors != before.Errors)
+                    throw new IOException("Active system-image administrative persistence boundary was not clean.");
+                checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
+                RunStorage.AtomicJson(job.Reply, checks);
+                ReportFailures(checks, Console.Error);
+                return checks.All(check => check.Result == "PASS") ? 0 : 1;
+            }
             if (job.Operation != "system-preflight")
             {
                 if (string.IsNullOrWhiteSpace(job.OraclePath))

@@ -7,7 +7,7 @@ public static class SystemPreflightGuard
 {
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart"))
+        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-active-image"))
         {
             if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm || options.OraclePath is not null)
                 throw new ArgumentException("System-disk opt-in arguments are only valid for guarded system suites.");
@@ -21,6 +21,8 @@ public static class SystemPreflightGuard
             throw new ArgumentException("System suites do not accept DiskSpd or case filters.");
         if ((options.Suite == "system-post-restart") != (options.OraclePath is not null))
             throw new ArgumentException("--oracle is required only for system-post-restart.");
+        if (options.Suite == "system-active-image" && options.BudgetMiB is < 256 or > 512)
+            throw new ArgumentException("system-active-image requires a conservative --budget-mib between 256 and 512.");
     }
 
     public static void ValidateTargets(DiskTarget target, DiskTarget output,

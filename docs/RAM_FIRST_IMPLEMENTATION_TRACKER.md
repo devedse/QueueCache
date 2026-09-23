@@ -14,7 +14,7 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 19: plan-14 `pressure`
+row below. The executable verification contract is plan 20: plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -23,7 +23,10 @@ Plan 17 adds an observed in-flight replacement case to `policies`; exact install
 0.4.69.1 VM proof passed. Plan 18 adds a read-only guarded C: preflight, not a
 file workload or active-system-disk qualification. Plan 19 adds bounded owned-file
 creation with an off-disk oracle and a separate read-only post-restart check;
-both passed on the VM with C: caching disabled. Neither closes T052 ordering.
+both passed on the VM with C: caching disabled. Plan 20 adds the first narrowly
+guarded active-C: workload: a deterministic 349 MiB BMP, 256..512 MiB runtime-only
+Fast cache, off-target oracle and independent restoration. It is host-tested but
+has not run on the VM. Neither plan closes T052 ordering or T067.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -34,8 +37,8 @@ both passed on the VM with C: caching disabled. Neither closes T052 ordering.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply now rechecks the mounted disk extent plus PnP identity immediately before opening it, including saved-profile startup. | Exact 0.4.69.1 driver was running after reboot, C: stayed disabled/clean, and Q: Apply/policy checks passed. Kernel notification proof, saved-profile restore proof and the T067 C: crash investigation remain open. No active C: qualification. |
-| A08 / T028-T031 | PARTIAL | Plan-19 guarded `system-files` creates a bounded owned C: file and commits its independent oracle on Q: first; `system-post-restart` verifies it without writing the workload. Both retain exact identity and off-target guards. | Split-CLI VM create and normal-restart verification each passed 1/1 on installed 0.4.70.1 with C: disabled. This is a baseline file/reboot check, not active-cache persistence. T030 busy-C: persistence semantics, broader negative/active-path proof and packaged-build verification remain. |
+| A07 / T023-T027, T067-T068 | PARTIAL | Initial operation map and usage-path restriction implemented. T068 reserves notifications atomically with routing/Enable. Management rejects boot/system targets, and Apply rechecks the mounted disk extent plus PnP identity. The candidate now reports paging, hibernation and dump registrations separately while retaining the combined safety gate; management preserves at least 2 GiB or 25% RAM headroom. | The installed 0.4.70.1 VM still reports two C: usage registrations even with no pagefile, dump disabled and hibernation unavailable. The per-type diagnostic requires the next installed build. Kernel notification proof, saved-profile restore proof and T067 root cause remain open; no guard has been bypassed. |
+| A08 / T028-T031 | PARTIAL | Plan-19 disabled-cache file/restart baselines remain. Plan-20 `system-active-image` adds a single guarded 349 MiB BMP case with an off-target oracle, 256..512 MiB runtime-only Fast budget, exact identity rechecks, exclusive lease, explicit flush and separate restoration deadline. | Host contracts and managed tests pass. VM execution is blocked truthfully by the unexplained C: usage registrations and awaits the diagnostic build. This is reproduction infrastructure, not a driver fix or BSOD resolution. T030 busy-C: semantics, negative/active-path VM proof and packaged-build verification remain. |
 | A09 / T032-T037 | FALSE | Disposable-VM C: validation pending. | Requires A07/A08 and A06a safety/recovery gates. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -65,7 +68,9 @@ promoted by this documentation-only change, and executable plan 19 is unchanged.
    buffer ownership, paging/mapped-file I/O, overlapping drain/overwrite,
    cancellation and activation ordering. Record code locations, confirmed
    defects versus hypotheses, and focused tests. Fix concrete findings; use Q:
-   for controlled fault/order checks where possible. Framework repairs alone
+   for controlled fault/order checks where possible. The current candidate adds
+   per-type usage-path telemetry because the combined count cannot explain two
+   persistent C: registrations. Framework repairs alone
    do not diagnose the historical BSOD.
 3. **Finite active-C: blocker list (T024-T027/T030-T031/T054).** Identify and
    implement the exact safe activation, reachable-path, memory-budget,
@@ -78,7 +83,9 @@ promoted by this documentation-only change, and executable plan 19 is unchanged.
    caching after the preceding prerequisites. Record actual image size, memory
    headroom, settings and timestamps; compare opening promptly after save with
    opening after explicit drain. The existing 64 MiB file check is not this
-   large-image baseline. Preserve independent deterministic byte checks and
+   large-image baseline. Plan 20 now supplies the deterministic 349 MiB active
+   case, but it must reject C: until the usage-path result is understood. Preserve
+   independent deterministic byte checks and
    distinguish them from application-generated image bytes.
 5. **Evidence to fix (T067/T035-T037).** Preserve dumps/logs/symbols before
    reinstall or rollback; diagnose the initial crash separately from later
@@ -94,6 +101,31 @@ retesting. At each handoff, show the remaining concrete activation blockers and
 the full A01-A16 table with changed-this-run marks and plain-language benefits.
 After investigation/fixes, resume remaining alpha tasks and A13-A16 production
 qualification; their unresolved requirements have not been waived.
+
+### Focused T067 progress: 2026-09-23
+
+- The inspected snapshot contains no historical minidump, `MEMORY.DMP` or BugCheck
+  event, so the old crash cannot be diagnosed from surviving evidence.
+- The current VM has 8 GiB RAM, a 100 GiB C: disk and separate 200 GiB Q: disk.
+  Installed 0.4.70.1 reports C: disabled and clean. Paint is 11.2605.81.0 and
+  Photos is 2026.11080.24002.0.
+- Three ordinary Q: pagefile attempts (10 GiB, 8 GiB and 4 GiB) all fell back to
+  a temporary 7.75 GiB C: pagefile without a useful Windows error event. A Q:
+  dedicated dump file registered Q: but still left two combined registrations
+  on C:. With all pagefiles absent, crash dumping disabled and hibernation/Fast
+  Startup unavailable, C: still reports count 2 while Q: reports 0.
+- Therefore pagefile relocation is not treated as the activation fix. The next
+  build splits that combined diagnostic into paging, hibernation and dump counts.
+  Until its post-reboot result is known, activation remains blocked by design.
+- A historical 4 GiB cache on this 8 GiB guest could have left too little memory
+  for Windows plus a decoded 350 MiB image. This remains a plausible hypothesis,
+  not a diagnosed cause. New management admission preserves at least 2 GiB or
+  25% of physical RAM, and the reproduction is capped at 512 MiB.
+- Crash capture and active C: currently conflict: Windows' dump configuration
+  keeps C: in the protected usage path, while disabling dumps removes that
+  evidence source without clearing the unexplained count. The snapshot/console
+  remains recovery protection, but a cached crash must not be triggered until
+  the per-type result determines the next safe step.
 
 The fresh complete 72-case baseline requirement still applies before a
 performance-affecting driver edit; focused comparisons guide iterations. A read-only

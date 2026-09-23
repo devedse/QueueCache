@@ -6,6 +6,7 @@ public sealed record CacheAttribution(ulong LowerReadAttempts, ulong LowerWriteA
     ulong ControlBarriers, ulong StrictWriteBarriers, ulong DisabledWriteBarriers, ulong QuotaWriteBarriers,
     ulong ApplicationBarriers, ulong ShutdownBarriers, ulong PowerBarriers, ulong OrderedBarriers, ulong RemoveBarriers,
     ulong LastReason, ulong LastMajor, ulong LastCode, ulong LastOffset, ulong LastLength);
+public sealed record CacheUsagePaths(ulong Paging, ulong Hibernation, ulong Dump);
 
 /// <summary>Lifetime request counters; deferred flushes are not durable flush completions.</summary>
 public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFlushes, ulong WriteThroughWrites,
@@ -14,11 +15,13 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
 {
     public const int WireSize = 80;
     public const int AttributionWireSize = 216;
+    public const int UsageWireSize = 240;
     public CacheAttribution? Attribution { get; init; }
+    public CacheUsagePaths? UsagePaths { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
-        if (bytes.Length is not (WireSize or AttributionWireSize) ||
-            BinaryPrimitives.ReadUInt32LittleEndian(bytes) != (bytes.Length == WireSize ? 1u : 2u) ||
+        var expectedVersion = bytes.Length switch { WireSize => 1u, AttributionWireSize => 2u, UsageWireSize => 3u, _ => 0u };
+        if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
             BinaryPrimitives.ReadUInt32LittleEndian(bytes[4..]) != bytes.Length)
             throw new InvalidDataException("Unsupported diagnostics version/size.");
         var values = new ulong[9];
@@ -27,7 +30,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
         if (values[1] > values[0] || values[3] > values[2])
             throw new InvalidDataException("Inconsistent deferred request counters.");
         CacheAttribution? attribution = null;
-        if (bytes.Length == AttributionWireSize)
+        if (bytes.Length >= AttributionWireSize)
         {
             var extra = new ulong[17];
             for (var index = 0; index < extra.Length; index++)
@@ -37,9 +40,15 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             attribution = new(extra[0], extra[1], extra[2], extra[3], extra[4], extra[5], extra[6],
                 extra[7], extra[8], extra[9], extra[10], extra[11], extra[12], extra[13], extra[14], extra[15], extra[16]);
         }
+        CacheUsagePaths? usagePaths = null;
+        if (bytes.Length == UsageWireSize)
+            usagePaths = new(BinaryPrimitives.ReadUInt64LittleEndian(bytes[216..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[224..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[232..]));
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
-            Attribution = attribution
+            Attribution = attribution,
+            UsagePaths = usagePaths
         };
     }
 }

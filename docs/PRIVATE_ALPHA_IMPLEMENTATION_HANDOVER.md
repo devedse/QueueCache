@@ -83,6 +83,38 @@ and the next concrete test. Include the A01-A16 table with this run's changes
 and plain-language application benefits. Test-framework repairs must be labelled
 as such; do not credit them as driver fixes or BSOD resolution.
 
+### Current T067 execution checkpoint: 2026-09-23
+
+Phases 1-3 have produced a concrete blocker rather than an active-C: pass.
+The 8 GiB VM has no surviving historical dump or BugCheck event. Ordinary Q:
+pagefile configurations at 10 GiB, 8 GiB and 4 GiB all caused Windows to create
+a temporary 7.75 GiB pagefile on C: instead. A dedicated dump file on Q: registered
+there, but also left two combined usage registrations on C:. Removing all
+pagefiles, disabling crash dumping, and confirming that firmware makes hibernation
+and Fast Startup unavailable still left C: at combined count 2. Do not bypass it.
+
+The next driver/controller candidate extends diagnostics without weakening the
+gate: it reports paging, hibernation and dump registrations separately while the
+legacy combined count remains authoritative. Install/reboot that candidate, read
+the three C:/Q: values, and then decide the smallest support or enforced-prerequisite
+change. This is now the next T023/T025/T068 exit check.
+
+Plan 20 implements the first active reproduction case but has not yet run on the
+VM. `system-active-image` exclusively leases C:, captures a disabled/released
+baseline, permits only an internal runtime 256..512 MiB Fast configuration, writes
+a deterministic 349 MiB 32-bit BMP under its unique owned directory, commits its
+oracle to the other disk first, verifies every byte after application and explicit
+administrative flushes, then disables/releases and restores under a separate
+deadline. The public Apply path still rejects boot/system disks. This advances
+the controlled experiment; it is not a QueueCache crash fix and cannot resolve
+T067 without VM evidence.
+
+Memory pressure remains a plausible historical contributor because the old
+reported setup may have used a 4 GiB cache on an 8 GiB guest while Paint/Photos
+decoded a large image. It is not proven. Management now preserves the greater of
+2 GiB or 25% of physical RAM for Windows/applications, and the active experiment
+uses at most 512 MiB. No performance-affecting driver policy changed.
+
 ## 2. Product requirements and decisions
 
 | ID | Requirement / decision | Implementation interpretation |
@@ -420,7 +452,8 @@ remaining ordering/lifetime proofs.
 
 ### A08. Add a separately guarded C:-safe verification workflow
 
-Plan-19 `system-preflight`, `system-files` and `system-post-restart` exist;
+Plan-20 `system-preflight`, `system-files`, `system-post-restart` and the guarded
+`system-active-image` case exist;
 their C: baseline used caching disabled. Finish only the extensions needed for
 the immediate T067 investigation first. New behavior must be implemented and
 documented inside `qcache developer verify` and the same worker infrastructure.
@@ -440,6 +473,11 @@ the corrected 1/1 create and 1/1 restart runs are separate complete evidence
 in the tracker. T030 and active-C: validation remain open. Do not label this
 baseline as proof of a dirty restart, an administrative persistence boundary,
 or resolution of the reported BSOD.
+
+Plan 20 adds the bounded active-image implementation described in the checkpoint
+above. Host tests pass, but the installed VM has not run it because the current
+combined usage-path count remains nonzero. That rejection is a required safety
+result, not an incomplete runner workaround.
 
 ### A09. Validate C: Fast in a disposable VM
 

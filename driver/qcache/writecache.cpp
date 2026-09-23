@@ -98,7 +98,7 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Instance = c->Instance;
     c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    c->Diagnostics.Version = 2;
+    c->Diagnostics.Version = 3;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 3;
@@ -138,6 +138,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LowerReadAttempts = InterlockedCompareExchange64(&c->LowerReadAttempts, 0, 0);
     output->LowerWriteAttempts = InterlockedCompareExchange64(&c->LowerWriteAttempts, 0, 0);
     output->LowerFlushAttempts = InterlockedCompareExchange64(&c->LowerFlushAttempts, 0, 0);
+    output->PagingUsagePaths = InterlockedCompareExchange(&c->PagingUsageCount, 0, 0);
+    output->HibernationUsagePaths = InterlockedCompareExchange(&c->HibernationUsageCount, 0, 0);
+    output->DumpUsagePaths = InterlockedCompareExchange(&c->DumpUsageCount, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
@@ -180,21 +183,38 @@ void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major)
     else if (major == IRP_MJ_FLUSH_BUFFERS)
         InterlockedIncrement64(&cache->LowerFlushAttempts);
 }
-void QcCacheRecordUsage(QC_CACHE* cache, BOOLEAN inPath)
+static volatile LONG* QcUsageCounter(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type)
 {
+    switch (type)
+    {
+    case DeviceUsageTypePaging: return &cache->PagingUsageCount;
+    case DeviceUsageTypeHibernation: return &cache->HibernationUsageCount;
+    case DeviceUsageTypeDumpFile: return &cache->DumpUsageCount;
+    default: return nullptr;
+    }
+}
+static void QcAdjustUsageCounter(volatile LONG* counter, BOOLEAN inPath)
+{
+    if (!counter)
+        return;
     if (inPath)
     {
-        InterlockedIncrement(&cache->PagingPathCount);
+        InterlockedIncrement(counter);
         return;
     }
-    auto current = InterlockedCompareExchange(&cache->PagingPathCount, 0, 0);
+    auto current = InterlockedCompareExchange(counter, 0, 0);
     while (current > 0)
     {
-        auto observed = InterlockedCompareExchange(&cache->PagingPathCount, current - 1, current);
+        auto observed = InterlockedCompareExchange(counter, current - 1, current);
         if (observed == current)
             return;
         current = observed;
     }
+}
+void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath)
+{
+    QcAdjustUsageCounter(&cache->PagingPathCount, inPath);
+    QcAdjustUsageCounter(QcUsageCounter(cache, type), inPath);
 }
 LONG QcCachePagingPathCount(QC_CACHE* cache)
 {
@@ -1474,10 +1494,10 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         if (stack->Parameters.UsageNotification.InPath)
         {
             if (!NT_SUCCESS(status))
-                QcCacheRecordUsage(c, FALSE);
+                QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
         }
         else if (NT_SUCCESS(status))
-            QcCacheRecordUsage(c, FALSE);
+            QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
         return status;
     }
     if (suspended)

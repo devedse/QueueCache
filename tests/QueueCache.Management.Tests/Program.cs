@@ -97,6 +97,8 @@ Reject(() => new CacheConfiguration(0).Validate(true), "zero configuration budge
 new CacheConfiguration(8192).Validate(true);
 Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configuration budget");
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
+Check(MemoryBudget.RequiredSystemHeadroom(8UL << 30) == 2UL << 30, "8 GiB host keeps 2 GiB application/OS headroom");
+Check(MemoryBudget.RequiredSystemHeadroom(32UL << 30) == 8UL << 30, "larger host keeps 25% application/OS headroom");
 var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
 var existingProfile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30,
     new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) }, false);
@@ -121,6 +123,13 @@ try
 {
     ActivationSafety.ValidateTarget(true, true, false, false, 0);
     throw new Exception("Boot disk was accepted.");
+}
+catch (NotSupportedException) { }
+ActivationSafety.ValidateTarget(true, true, true, false, 0, allowRecoverableSystemVerification: true);
+try
+{
+    ActivationSafety.ValidateTarget(true, true, true, false, 1, allowRecoverableSystemVerification: true);
+    throw new Exception("Active usage path was accepted for recoverable system verification.");
 }
 catch (NotSupportedException) { }
 profile.Validate();
@@ -199,6 +208,15 @@ for (var index = 0; index < attributionValues.Length; index++)
     BinaryPrimitives.WriteUInt64LittleEndian(attributionBytes.AsSpan(CacheDiagnostics.WireSize + index * 8), attributionValues[index]);
 Check(CacheDiagnostics.Decode(attributionBytes).Attribution ==
     new CacheAttribution(11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 4, 4, 0, 512, 1536), "V2 attribution offsets");
+var usageBytes = new byte[CacheDiagnostics.UsageWireSize];
+attributionBytes.CopyTo(usageBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(usageBytes, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(usageBytes.AsSpan(4), CacheDiagnostics.UsageWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(usageBytes.AsSpan(216), 2);
+BinaryPrimitives.WriteUInt64LittleEndian(usageBytes.AsSpan(224), 3);
+BinaryPrimitives.WriteUInt64LittleEndian(usageBytes.AsSpan(232), 4);
+Check(CacheDiagnostics.Decode(usageBytes).UsagePaths == new CacheUsagePaths(2, 3, 4),
+    "V3 paging/hibernation/dump usage-path offsets");
 Reject(() => CacheDiagnostics.Decode(attributionBytes.AsSpan(0, 215)), "short attribution");
 attributionBytes[0] = 1;
 Reject(() => CacheDiagnostics.Decode(attributionBytes), "V1 cannot claim V2 length");

@@ -39,11 +39,12 @@ public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset
 
 internal static class ActivationSafety
 {
-    internal static void ValidateTarget(bool enabled, bool isBoot, bool isSystem, bool isPaging, int usagePathCount)
+    internal static void ValidateTarget(bool enabled, bool isBoot, bool isSystem, bool isPaging, int usagePathCount,
+        bool allowRecoverableSystemVerification = false)
     {
         if (usagePathCount < 0)
             throw new InvalidDataException("Driver reported an invalid paging/hibernation/dump path count.");
-        if (enabled && (isBoot || isSystem))
+        if (enabled && (isBoot || isSystem) && !allowRecoverableSystemVerification)
             throw new NotSupportedException(
                 "Caching cannot be enabled on a boot/system disk until active-system-disk support is qualified.");
         if (enabled && (isPaging || usagePathCount != 0))
@@ -58,6 +59,21 @@ public static class ConfigurationManager
 {
     public static WriteCacheState Apply(DiskTarget target, CacheConfiguration configuration,
         bool acceptVolatileFlush, IProgress<string>? progress = null)
+        => ApplyCore(target, configuration, acceptVolatileFlush, false, progress);
+
+    internal static WriteCacheState ApplyForRecoverableSystemVerification(DiskTarget target,
+        CacheConfiguration configuration, bool acceptVolatileFlush, IProgress<string>? progress = null)
+    {
+        if (target.Letter != 'C' || !target.IsBoot || !target.IsSystem || target.IsPaging ||
+            !configuration.Enabled || configuration.Preset != CachePreset.Fast ||
+            configuration.BudgetMiB is < 256 or > 512)
+            throw new NotSupportedException(
+                "Recoverable system verification requires non-paging C:, boot/system identity, Fast mode and a 256..512 MiB runtime budget.");
+        return ApplyCore(target, configuration, acceptVolatileFlush, true, progress);
+    }
+
+    private static WriteCacheState ApplyCore(DiskTarget target, CacheConfiguration configuration,
+        bool acceptVolatileFlush, bool allowRecoverableSystemVerification, IProgress<string>? progress)
     {
         using var gate = ConfigurationGate.Enter();
         configuration.Validate(acceptVolatileFlush);
@@ -71,7 +87,7 @@ public static class ConfigurationManager
         if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the matching read/write-cache driver and restart Windows before applying settings.");
         ActivationSafety.ValidateTarget(configuration.Enabled, target.IsBoot, target.IsSystem, target.IsPaging,
-            device.GetStatistics().PagingPathCount);
+            device.GetStatistics().PagingPathCount, allowRecoverableSystemVerification);
         // Reject an unsupported new policy before disabling/draining the existing cache.
         if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
             throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");

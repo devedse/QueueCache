@@ -51,11 +51,14 @@ struct QC_DIAGNOSTICS
     ULONGLONG LowerReadAttempts, LowerWriteAttempts, LowerFlushAttempts;
     ULONGLONG BarrierReasons[9];
     ULONGLONG LastReason, LastMajor, LastCode, LastOffset, LastLength;
+    ULONGLONG PagingUsagePaths, HibernationUsagePaths, DumpUsagePaths;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
-static_assert(sizeof(QC_DIAGNOSTICS) == 216);
+static constexpr ULONG QcDiagnosticsV2Size = 216;
+static_assert(sizeof(QC_DIAGNOSTICS) == 240);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingUsagePaths) == QcDiagnosticsV2Size);
 enum QC_BARRIER_REASON : ULONG
 {
     QcControlBarrier = 1, QcStrictWriteBarrier, QcDisabledWriteBarrier, QcQuotaWriteBarrier,
@@ -163,6 +166,7 @@ struct QC_CACHE
     BOOLEAN TrimPaused;
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
     volatile LONG Gone, PagingPathCount;
+    volatile LONG PagingUsageCount, HibernationUsageCount, DumpUsageCount;
     ULONG DelayMs, InjectFault;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
@@ -179,7 +183,7 @@ void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
 void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major);
-void QcCacheRecordUsage(QC_CACHE* cache, BOOLEAN inPath);
+void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
