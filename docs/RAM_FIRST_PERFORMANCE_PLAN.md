@@ -4,7 +4,7 @@ Historical design audit, 2026-09-17. Current implementation/evidence status live
 [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 Release dependencies are defined in
 [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md),
-revised 2026-09-22. Its A06a turns the lower-I/O attribution into an explicit
+revised 2026-09-24 (planning revision 5; T082-T086). Its A06a turns the lower-I/O attribution into an explicit
 optimization decision and adds pre-C: safety gates; A13-A16 extend the private-alpha
 milestone toward production. The historical descriptions below are not statements
 about current source or deployment.

@@ -5,12 +5,16 @@ to current code, maintained evidence and release gates. It does not turn a missi
 check into a failure or a scoped PASS into general qualification. Detailed run
 evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
+Revision-5 disposition: [source review and instructions](IMPLEMENTATION_REVIEW_20260924.md).
+T082-T086 complete the existing gates; the following installed evidence supersedes
+older source-only descriptions. Counters are device-wide across processes.
+
 | Claim / path | Owning code | Maintained proof / evidence | Current status | Gate |
 |---|---|---|---|---|
-| Paging-marked reads observe newest cached sectors | `cachepolicy.h`; `writecache.cpp::Read` | Plan-32 source pins/overlays resident sectors; native build passes, no installed mixed-path proof | Source candidate T075; kernel proof open | T079 before next active-C: experiment |
-| Paging-marked writes cannot be overwritten by an older drain | `writecache.cpp::Write`, drainer; `cacheblocks.inl::InvalidateCleanRange` | Plan-32 source drains overlapping versions and fences the direct lower write; native build passes | Source candidate T076; forced old/new/fault order open | T079 before next active-C: experiment |
-| Paging progresses during capacity/lower waits with bounded resources | Request service, cache waits and lower completion | Plan-32 source cooperatively services independent queued page-ins; Diagnostics V7 counts routed outcomes | Source candidate T077; forced dependency open | T079 before next active-C: experiment |
-| System worker identity and every mode's released-cache bytes are checked | `SystemFileScenarios`, `SystemImageScenarios`, verification worker/runner | Plan-32 source shares stable target comparison and checks both Fast/Strict after per-case and final release; host tests pass | Source candidate T078; installed proof open | A08/T079 |
+| Paging-marked reads observe newest cached sectors | `cachepolicy.h`; `writecache.cpp::Read` | Loaded 0.4.92.1 focused mapped/unbuffered and C: byte checks passed | Installed candidate; forced partial/error paths open | T083/A07 |
+| Paging-marked writes cannot be overwritten by an older drain | `writecache.cpp::Write`, drainer; `cacheblocks.inl::InvalidateCleanRange` | CI-built plan-37 selected-write overlap and active/released bytes passed | Actual lower-submitted ordering and fault/cancel gates open | T083/A07-A08 |
+| Paging progresses during capacity/lower waits with bounded resources | Request service, cache waits and lower completion | V7 shows cooperative completions, but top-level cold miss disables service and nested page-in blocks same worker | Implementation/proof gap R1, not just missing stress | T082/A07 |
+| System worker identity and every mode's released-cache bytes are checked | `SystemFileScenarios`, `SystemImageScenarios`, verification worker/runner | Exact 0.4.92.1 Fast/Strict per-case/final released image oracles passed | Implemented and scoped proof; restart role transition remains | A08/T081 |
 | Fitting full/sector-valid Fast admission avoids lower I/O | `writecache.cpp` `Write`; `sectorcoverage.h` | `policies`: diagnostics-V2 lower-attempt and RAM/disk byte oracles | Passed on 0.4.57.1 for 512-byte sectors, parallelism 1/2/4, retention off/on | Preserve through A13 |
 | Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios`; plan-16 `drain-decision` | `policies` 60-second foreground/background case; seeded parallelism 1/2/4 comparison contract | Fitting case passed on 0.4.57.1; exact installed 0.4.67.1 comparison completed 24/24, with tuning decision still open | T050; A11 |
 | Deferred age, Idle and watermark triggers occur at their contract boundaries | `cachepolicy.h`; `Drainer` | Native truth table; plan-14 `pressure` VM scenario | Passed on exact installed 0.4.64.1 | Preserve through A13 |

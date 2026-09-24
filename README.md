@@ -7,14 +7,17 @@ production or valuable data.
 
 > Fast mode can acknowledge writes and application flushes while data exists only
 > in volatile RAM. A crash, power loss, device failure or driver defect can lose
-> data or corrupt a filesystem. Use an isolated VM and a clean non-OS disk. Keep
-> boot, paging, hibernation and crash-dump storage out of current testing unless a
-> specific lifecycle plan explicitly calls for them.
+> data or corrupt a filesystem. Development testing uses recoverable VMs.
+> C: is available through normal cache configuration; its focused application
+> and lifecycle checks follow the implementation plan. Synthetic delay/fault
+> experiments use the separate disposable non-OS disk.
 
 Current execution status lives in the
 [private-alpha handover](docs/PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md) and
 [RAM-first tracker](docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md). Confirmed gaps are
 listed in [known issues](docs/KNOWN_ISSUES.md).
+The [2026-09-24 implementation review](docs/IMPLEMENTATION_REVIEW_20260924.md)
+defines the remaining paging-progress, application-admission and evidence work.
 
 ## Product model
 

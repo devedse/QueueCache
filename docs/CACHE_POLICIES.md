@@ -1,5 +1,14 @@
 # RAM cache policies
 
+Current implementation boundary (2026-09-24): Fast RAM admission applies to
+eligible non-paging writes. `IRP_PAGING_IO` also covers ordinary file-cache/mapped
+traffic: those writes currently take coherent ordered lower I/O, and their read
+misses are not newly retained. Resident sectors still participate in coherent
+reads. Therefore these policies do not establish that every Paint save or game
+read benefits from QueueCache RAM. T082-T085 in the
+[implementation review](IMPLEMENTATION_REVIEW_20260924.md) own progress and
+application-admission completion; normal C: activation remains available.
+
 QueueCache uses one block index: dirty writes, retained clean writes and clean reads never need separate copies of the same current block. An older in-flight write can temporarily coexist with its newer replacement. Reads select the newest version; the older version must finish before its replacement can be written to disk.
 
 ## Allocation and retention
@@ -63,7 +72,7 @@ Use `--discard-drained` or `--no-promotion` to disable those retention behaviour
 
 ## Memory and confirmed state
 
-The old shared 4 GiB ceiling is replaced by a shared limit of 75% of physical RAM, capped at 128 GiB. Management also checks currently available physical memory before increasing a budget, leaving 1 GiB headroom. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Memory is preallocated nonpaged RAM; it does not shrink automatically under later Windows memory pressure.
+The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include all active disk budgets in experiment planning. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Memory is preallocated nonpaged RAM; it does not shrink automatically under later Windows memory pressure.
 
 The driver advertises a versioned state/policy contract while retaining its old ABI. A new-driver **Active** state requires enabled routing, allocated payload, and no fault, suspension, removal or barrier. Settings are read back and compared after Apply. Instance/revision identify the live cache, not a saved profile; unavailable samples must not be displayed as live. A status sample confirms driver state at that instant, not filesystem correctness, physical durability, or a throughput guarantee.
 
@@ -79,7 +88,7 @@ pagefile plus dump registration. Dynamic registration while already active,
 sleep/hibernate/Fast Startup, low-memory/fault/cancellation and broader lifecycle
 proof remain open.
 
-Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 14 corrects the tightened trigger/capacity checks after an installed plan-13 run exposed an over-strict Fixed0 read-slot assertion; its exact-build rerun is pending.
+Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery. CI-built plan-37 policies passed against loaded 0.4.92.1. Plan-14 trigger/capacity checks passed on 0.4.64.1. These remain scoped results; T083/T084 require stronger ordering and owned-request admission attribution.
 
 Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 

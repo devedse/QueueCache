@@ -4,6 +4,15 @@ This file describes the current QueueCache implementation. Removed historical
 engine defects remain available in Git history and must not be reported as current
 bugs without a reproduction on the current driver.
 
+Current review (2026-09-24): loaded 0.4.92.1 has focused Q: coherence/policy and
+bounded C: Fast/Strict byte passes. The owner also reports successful Paint saves
+and Photos opens with caching off and on. T082-T086 in the
+[implementation review](IMPLEMENTATION_REVIEW_20260924.md) track remaining
+synchronous paging-progress waits, range-drain interference, insufficient
+submission/admission attribution, normal application caching behavior and
+capture/restart/pressure evidence. The historical BSOD remains undiagnosed.
+The older version checkpoints below describe their original scope.
+
 ## Experimental trust and durability
 
 The driver and installer are test-signed development artifacts. Fast mode is
@@ -86,9 +95,9 @@ persistence/invalidation boundary on new system-file registration. Exact install
 qcache/CoreCLR, Edge or other application faults. The startup task restored C:
 active, a separate 64 MiB post-restart oracle matched every byte, dump registration
 coexisted with the cache, and paging diagnostics remained at zero reserve, mapping
-failures, capacity waits and serviced read misses. This closes that reproduced
-regression on the test VM, not low-memory/fault/cancellation or broad lifecycle
-qualification.
+failures, capacity waits and serviced read misses. This is a short non-reproduction
+under the changed implementation; it does not establish a causal fix for the
+earlier process failures or low-memory/fault/cancellation/lifecycle qualification.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached
@@ -104,8 +113,12 @@ guest. A faulted cache must be inspected and explicitly recovered.
 
 ## Remaining RAM-first and ordering coverage
 
-Fitting aligned and partial writes have maintained zero-lower-attempt admission
-checks, and delayed overwrite/retention cases have passed on the current test VM.
+Fitting aligned and partial writes have admission and byte checks, and delayed
+overwrite/retention cases have passed on the current test VM. Plan 35-37's
+aggregate paging-count exception does not prove zero lower I/O for the owned
+write; T084 replaces that attribution. All paging-marked writes currently use
+ordered lower I/O and paging misses are not newly retained, including relevant
+ordinary file-cache/mapped traffic. T085 owns the remaining application benefit.
 The following remain incomplete:
 
 - bounded allocation-failure, cancellation and teardown races;

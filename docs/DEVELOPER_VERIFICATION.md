@@ -19,6 +19,16 @@ different disk so telemetry writes do not contaminate the workload.
 
 ## Suites (plan version 37)
 
+Review correction, planning revision 5: the plan-37 `InFlightBytes` observation
+occurs after selection/pinning and can precede lower submission; the synthetic
+delay is before `LowerIo`. It does not force an already-submitted completion
+race. Equal lower-write/paging-request counts also cannot establish owned-request
+admission causally. Preserve existing byte/policy results, but do not upgrade
+them to those stronger proofs. V7/cache counters are device-wide across processes,
+despite current messages saying process-wide. T083/T084 in the
+[implementation review](IMPLEMENTATION_REVIEW_20260924.md) define the correction;
+bump the executable plan only when implementing the changed measurement/verdict.
+
 Plan 37 adds an observed in-flight mapped-overwrite stage to `paging-coherence`.
 On a 512-byte-sector non-OS volume it waits for an isolated 1,536-byte older
 sparse write under a bounded 2-second drainer delay, then flushes an overlapping

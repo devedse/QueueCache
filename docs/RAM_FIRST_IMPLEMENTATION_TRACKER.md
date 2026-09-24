@@ -27,9 +27,21 @@ the old all-I/O assertion. Plan 36 applies the same exact successful paging-writ
 match there; a local plan-36 verifier completed the policy suite against loaded
 0.4.92.1. Plan 37 adds an observed old sparse in-flight/mapped-overwrite case;
 its local verifier run passed. Exact installed 0.4.92.1 also passed both guarded
-349 MiB active-C: Fast/Strict image cases. Paint/Photos, active-created restart,
+349 MiB active-C: Fast/Strict image cases. The post-drain app comparison, active-created restart,
 memory pressure and fault/cancellation/dependency proof remain; the historical
 BSOD cause is unknown.
+
+Planning revision 5 review at `30dd36e`: see
+[findings and repair instructions](IMPLEMENTATION_REVIEW_20260924.md).
+The owner successfully edited the same `baseline.bmp` twice (uncached red,
+cached yellow), then opened it in Photos; the second save is 15:22:29 UTC.
+C: remained active and error-free at review. This is an ordinary application
+observation, not proof that the image was still pending in QueueCache RAM.
+Dump capture was disabled and Q: also had a 2 GiB cache/benchmark active.
+T080 is now PARTIAL. T082-T086 own remaining progress/scheduling, actual
+submission-order proof, admission attribution, buffered/mapped RAM behavior,
+capture and application/restart/pressure follow-up. T087 documentation is done.
+Review made no VM configuration changes; both caches remain active.
 
 Exact 0.4.92.1 Q: evidence (all on the separate 512-byte-sector non-OS disk):
 `QueueCache-Verify-20260924-104944-4b0e616dc4ba42778129a6edbb8baecd`
@@ -149,9 +161,9 @@ pagefile saved-startup regression without the earlier process corruption.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068, T070-T077 | PARTIAL | Normal C: activation exists. T075-T077 overlays paging reads with resident bytes, drains only overlapping older writes before direct paging writes, and services independent queued page-ins during waits. Diagnostics V7 records routed outcomes. | **Changed this run:** exact 0.4.92.1 guarded C: Fast/Strict image and Q: mapped/quick passed; CI-built plan-37 Q: observed overlap passed. Fault/cancel, memory-pressure and dependency proof remain. Historical BSOD cause unknown. |
-| A08 / T028-T031, T078-T079 | PARTIAL | Plan 32 shares stable target comparison across workers, verifies each image after release and again at final restoration, uses default retention/promotion and decodes routed progress. **Changed this run:** plans 35-36 qualify paging-write exceptions in both policy admission windows; plan 37 adds an observed sparse in-flight/mapped overlap. | CI-built plan-37 full policy and observed overlap passed against loaded 0.4.92.1; exact installed C: image oracle passed. Fault/cancel/dependency cases and paging-role transition remain. |
-| A09 / T032-T037, T073-T074, T080-T081 | PARTIAL | Public activation and saved Fast startup worked on 0.4.87.1 with fixed pagefile/dump registration. Plan 34 adds active-file admission proof to the owned 64 MiB restart preparation. | **Changed this run:** 0.4.92.1 guarded 349 MiB active Fast/Strict C: cases passed and restored. T080 actual Paint/Photos, T081 active-created restart/pressure and broader lifecycle remain. |
+| A07 / T023-T027, T067-T068, T070-T077, T082/T085 | PARTIAL | Installed paging coherence repair and normal C: activation exist. **Review update:** remaining synchronous progress waits, range-drain interference and application RAM-admission gap assigned to T082/T085. | Focused 0.4.92.1 Q:/C: bytes pass. Actual submitted-order/fault/cancel/dependency and lifecycle proof remain. Historical BSOD cause unknown. |
+| A08 / T028-T031, T078-T079, T083-T084 | PARTIAL | Per-case/final image oracles and stable identity are installed and exercised. **Review update:** selected-write overlap and aggregate paging-count matches do not prove submitted completion order or attributable zero-lower admission. | CI-built plan-37 policy/byte passes retained. T083/T084 strengthen the exact claims; role-transition proof remains. |
+| A09 / T032-T037, T073-T074, T080-T081, T086 | PARTIAL | Normal activation and active-created restart preparation exist. **Review update:** owner successfully saved and opened the same BMP uncached and with C: Fast active. | T086 capture and post-drain app comparison, T081 active-created restart/pressure and broader lifecycle remain. The observed app success is not image-range pending proof. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
@@ -170,7 +182,8 @@ in-flight versions. Foreground request ordering alone does not order the drainer
 This is a source-level defect finding, not proof of the historical BSOD cause.
 
 The implementation instructions and acceptance cases are in
-[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
+[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081),
+completed through revision 5's T082-T086 and the review above.
 That sequence supersedes historical next-step instructions below. Plan 37 is the
 current source contract; installed VM driver 0.4.92.1 ran plan 34-37 tools. The Q: case
 is a focused pass, not the forced-ordering gate. A07-A09 remain PARTIAL.
@@ -183,8 +196,19 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 | T077 / A07 | Installed candidate: cooperative paging read service and V7 routed outcomes | No forced paging/capacity/lower-wait dependency proof | Keep Windows paging responsive; check actual progress under pressure. |
 | T078 / A08 | Installed: shared worker identity and per-case/final oracles; host contracts pass | Exact 0.4.92.1 Fast/Strict active image and final post-release oracles passed; actual paging-role transition and restart oracle remain | Ensure each Fast/Strict and restart result proves what it says. |
 | T079 / A06a/A07-A08 | PARTIAL: Q: mapped/unbuffered case passed; plans 35-36 add paging-aware policy attribution; plan 37 observes a sparse old in-flight/mapped overlap | CI-built plan-37 full policy and observed overlap passed, all cleanly restored. Process-wide counters cannot prove exact range ownership; fault/cancel/dependency cases remain | Close remaining focused ordering paths without calling the observed overlap full proof. |
-| T080 / A09/T067 | FALSE: actual application workflow not executed; no general UI automation required | Paint edit/save -> immediate Photos open remains untested | Directly investigate the owner's reported failure. |
+| T080 / A09/T067 | PARTIAL: owner completed uncached and cached edits of the same baseline BMP and opened Photos | Successful app observation plus save timestamp/screenshot; no exact open interval, target-range pending proof or post-drain comparison. Dump capture disabled; Q: benchmark/cache also active | T086 finishes capture/post-drain comparison; preserve this non-reproduction without calling the BSOD fixed. |
 | T081 / A09 | PARTIAL: plan-34 active-write preparation source exists; bounded pressure work pending | No installed active-created restart; earlier uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
+
+### Revision 5 follow-up implementation status
+
+| Task | Implementation | Verification / next concrete result |
+|---|---|---|
+| T082 / A07 | OPEN: top-level cold paging read suppresses service; nested lower wait is synchronous; range-drain scheduling excludes unrelated work before forwarding | Repair ownership/progress and unrelated eligible drain behavior, then force the dependency. Existing cooperative completions do not close it. |
+| T083 / A06a/A07-A08 | OPEN: selected/in-flight observation exists, actual lower-submission/completion gate and fault/cancel orders missing | Extend maintained Q: case at real request/range boundaries; retain plan-37 byte PASS as scoped. |
+| T084 / A08 | OPEN: equal aggregate paging/lower counts can currently make admission PASS without causal attribution | Attribute owned lower attempts, test cross-window interference; counters are per device across processes. |
+| T085 / A07/A11 | OPEN: all paging-marked writes bypass new RAM admission and misses are not retained | Characterize and implement supported ordinary buffered/mapped application caching after progress repair. |
+| T086 / A09 | PARTIAL: successful owner Paint/Photos observation recorded; no capture or missing post-drain/restart/pressure results | Restore capture readiness and complete those separate checks with exact file/environment evidence. |
+| T087 / docs | COMPLETE in planning revision 5 | Current docs reconciled; code/output verdict changes remain T084. |
 
 Implement T075-T077 as one coherent driver slice with narrow tests; include T078,
 build/package, then run T079 before T080/T081. No broad suite or performance
@@ -210,7 +234,7 @@ Plan-31 evidence limitations (preserve original run verdicts):
 - The 0.4.83.1 process failure did not recur in the short 0.4.87.1 observations;
   its root cause was not captured. Do not call it a diagnosed/closed defect.
 
-### Earlier next actions (historical; revision 4 above takes precedence)
+### Earlier next actions (historical; revision 5 above takes precedence)
 
 Planning revision 3, 2026-09-23: the owner prioritizes reproducing and fixing the
 reported large-BMP/Paint/Photos BSOD. Recent iterations mostly advanced the

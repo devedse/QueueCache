@@ -62,7 +62,9 @@ the wrong disk; they are not product activation restrictions.
 - Strict remains a distinct supported choice; it is not the required default.
 - Report known unfixed defects separately from untested risks. The 2026-09-24
   source review identified mixed cached/paging-I/O coherence defects. T075-T077
-  have a source candidate awaiting installed-driver proof. They are not a diagnosed cause of the historical BSOD, and
+  have an installed candidate with focused byte checks. Revision 5's T082-T086
+  still require progress/scheduling repair, attributable ordering/admission,
+  application caching and capture/restart/pressure evidence. They are not a diagnosed cause of the historical BSOD, and
   successful short VM runs do not waive them. Product C: activation remains normal;
   the next controlled C: experiment follows the focused repair/check sequence.
 - Exhaustive certification is not a prerequisite for this private VM alpha.
@@ -92,6 +94,13 @@ the wrong disk; they are not product activation restrictions.
   retaining that optional mode is a separate scope decision.
 
 ## Current priorities and deferred work
+
+Planning revision 5 and the [implementation review](IMPLEMENTATION_REVIEW_20260924.md)
+set the immediate order. A successful normal app save/open is valuable evidence;
+it does not establish RAM admission or complete C: lifecycle support. All paging-
+marked traffic currently avoids new admission/retention, including some ordinary
+application data. Finish that product contract through T085 after progress is
+sound; do not redefine the intended benefit around a convenient test workload.
 
 - Defer TRIM investigation and range-aware TRIM optimization for now. Do not
   remove conservative correctness handling or imply that TRIM was validated.
