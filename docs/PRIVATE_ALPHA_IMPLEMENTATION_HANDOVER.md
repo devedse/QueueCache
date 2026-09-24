@@ -1,6 +1,6 @@
 # QueueCache private alpha implementation handover
 
-Revised: 2026-09-23, planning revision 3. Audience: the executing agent and project
+Revised: 2026-09-24, planning revision 4. Audience: the executing agent and project
 owner. End goal: a production-ready QueueCache product. A01-A12 deliver the first
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
@@ -16,12 +16,13 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
-Immediate priority: investigate T067, the owner's BMP/Paint/Photos BSOD. Follow
-the focused sequence below before resuming general A08 framework expansion or
-T050 performance tuning. Exact 0.4.82.1 plan-26 active Fast passed with full bytes,
-zero paging mapping/capacity failures and clean restoration. Plan 27 promotes that
-policy into normal Enable/public Apply and adds separate Fast/Strict cases; exact
-installation of this newer implementation is pending.
+Immediate priority: implement T075-T077 below to repair the mixed cached/paging
+I/O correctness gap found in review of `89436a8`, then T078-T081 to check the fix
+and run the real BMP/Paint/Photos investigation. Normal C: activation is already
+implemented and exact 0.4.87.1 has limited successful VM evidence. It is not a
+coherence, paging-progress or historical-BSOD resolution verdict. Revision 4's
+sequence supersedes earlier next-step instructions and activation blockers in
+historical checkpoints. The executable runner remains plan 31 until code changes.
 
 ## 1. Start here
 
@@ -29,7 +30,7 @@ installation of this newer implementation is pending.
 |---|---|---|
 | 1 | Read root `AGENTS.md`, this document, `docs/ALPHA_PRODUCT_DECISIONS.md`, and `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md`. | Understand accepted volatility, preserved correctness requirements, and current evidence. |
 | 2 | Inspect Git status/diffs and current HEAD. Do not reset the worktree. | Identify prior uncommitted restoration work, decision documents, and unrelated owner changes. |
-| 3 | Read the current status and execute the T067 investigation sequence below. | Reuse existing evidence; produce crash-capture readiness, a focused code review and the concrete prerequisites for controlled active-C: reproduction. A01-A06's scoped passes do not require restarting those tasks. |
+| 3 | Read the current status and execute revision 4's T075-T081 implementation sequence below. | Repair the identified driver paths, correct the narrow verifier gaps, then run focused Q: and actual C: application checks. A01-A06's historical scoped passes do not require restarting those tasks. |
 | 4 | Follow the revised dependencies in section 5, one small tested change at a time. | Close pre-C: safety and recovery gates before activation; retain separate implementation and verification status. |
 
 This document defines the release sequence and a dated status summary. The
@@ -41,7 +42,101 @@ this handover defines the execution sequence. It authorizes no Git history rewri
 destructive VM recovery. Observe current owner authorization before deployment,
 reboot, driver removal or destructive fault experiments.
 
-### Immediate execution sequence: investigate the C: BSOD
+### Revision 4: implementation-first correction (T075-T081)
+
+This is the next agent's implementation brief, not a request for another broad
+audit or test framework. All seven tasks are pending; update implementation and
+verification separately in the tracker. Keep A01-A16 and T001-T074 intact.
+T075-T077 extend A07/T024 and A06a/T052-T053; T078 repairs A08; T079-T081 supply
+focused A07-A09 evidence. Correctness fixes preempt performance benchmarking.
+
+#### Why the plan changed
+
+`cachepolicy.h::QcShouldCacheDataIo` currently bypasses every `IRP_PAGING_IO`
+request. That flag does not identify only pagefile contents: ordinary cached and
+memory-mapped files can generate paging I/O too. Disk usage counts do not identify
+which sectors belong to a pagefile. The bypass in `writecache.cpp::Read` skips
+newer dirty RAM bytes; `Write` forwards before handling dirty/in-flight overlap
+and only invalidates clean entries after success. Foreground serialization does
+not serialize the independent drainer. An old drain can therefore overwrite a
+newer direct write. A one-time registration flush does not protect later overlap.
+These are source-level correctness findings, not a reproduced explanation of the
+owner's original BSOD. Do not wait for that old crash before fixing them.
+
+#### Required behavior: implementation constraints, not optional test goals
+
+- A read ordered after a successful write returns the latest applicable bytes,
+  irrespective of either request's paging flag. Unwritten neighboring sectors
+  remain unchanged. Define the ordering point for concurrent overlapping requests;
+  do not manufacture an oracle from ambiguous concurrent submission order.
+- A lower write may not be overtaken by an older overlapping cached/draining
+  version. Track the newest version and outstanding lower ownership over the
+  entire overlapping sector range, including partial blocks and pinned versions.
+- On lower failure, short completion, cancellation or teardown, report the real
+  result; preserve acknowledged dirty ownership and a recoverable error state.
+  Never return stale disk data merely because the cache is faulted. Independent
+  non-overlapping paging I/O may progress only when independence is established.
+- Paging progress must not require free ordinary cache quota, pageable allocation
+  or a worker/lock held by a request waiting for that paging I/O. Specify bounded
+  nonpaged resources, buffer/MDL lifetime and single-completion ownership.
+- Preserve fitting supported Fast admission without lower I/O, Strict/write-through
+  and explicit persistence, and unchanged unrelated-range progress. No whole-cache
+  drain per paging request, blanket return to the old paging cache, global C:
+  disable, new UI warning, ignored error, or timeout increase as the fix.
+- A paging request can participate in coherent RAM lookup/overlay without being
+  retained as a new cache entry. Do not confuse avoiding pagefile duplication with
+  permission to ignore existing overlapping cache state. Until reliable finer
+  classification exists, all requests bearing the flag need the same coherence
+  contract; do not guess file types from PID, disk role or usage count.
+- Record which normal buffered/mapped writes still use RAM admission after the
+  repair and which take ordered lower I/O, with the reason and observed counters.
+  Do not claim ordinary application acceleration from unbuffered-write admission
+  alone. Any narrower pagefile classification or further admission change needs
+  evidence and the same lifetime/progress contract, not a speculative shortcut.
+
+#### Ordered implementation tasks
+
+| Task / owner | Concrete source work | Smallest required completion check / application benefit |
+|---|---|---|
+| T075 / A07 | Replace the early paging-read escape in `writecache.cpp::Read` with a coherent range read: snapshot/pin current valid sectors under synchronization, fetch only required lower data using a bounded strategy, overlay the ordered current bytes, then release ownership safely. Correct `cachepolicy.h` names/comments so the flag is not described as pagefile-only. Reuse existing sector/version helpers; explicitly handle an overlapping fault rather than skipping `LastError`. | Native/host checks for full hit, partial hit/miss, clean/dirty/in-flight replacement and error paths, including untouched guards. A fully valid RAM read must not issue lower I/O merely because it is paging-marked. Benefit: opening a file cannot see an older disk copy after a successful cached save. |
+| T076 / A07 | Replace the paging-write escape and clean-only invalidation with range-coherent write ordering shared with the version/drainer machinery. Before lower submission, establish ownership that prevents older overlapping lower writes from landing afterward and prevents stale read-fill publication. Resolve existing dirty overlap through ordered persistence/version reconciliation; after completion reconcile clean and dirty versions without retiring newer writes. Audit `cacheblocks.inl::InvalidateCleanRange`, drainer selection/completion, pins and unlocked copies. Document the chosen state transitions and exact lock/wait order in the operation map in the same commit. | Focused A -> B tests: old A dirty, old A already submitted, partial A/B overlap, and later C admitted while B is outstanding. RAM and final released-cache disk must contain the correct newest bytes/guards. Inject failed/short lower completion where supported, cancellation and a later sparse-segment failure on the disposable target only; no false success or dirty loss. Benefit: background draining cannot undo a newer save. |
+| T077 / A07 | Complete the progress/ownership design for T075/T076 in `driver.cpp` request/service paths and `writecache.cpp` capacity/lower waits. A required paging read must remain serviceable while an ordinary write waits for capacity and while lower completion is pending. Use a bounded independent/cooperative path only as needed, with explicit non-reentrancy, ordering, cancellation and teardown rules. Add minimal real path counters/evidence for requests attempted/completed/failed, overlap handling and waits; extend native/managed diagnostic versions compatibly if layout changes. | Force the specific dependency on Q: or at the native controllable boundary and observe its release/completion, bounded memory and one completion. Retain exact-kernel proof as pending if only a host model ran. Hardcoded zero reserve, unreachable mapping/capacity counters and a removed serviced-miss increment cannot prove progress. Benefit: paging and application I/O do not block each other indefinitely under pressure. |
+| T078 / A08 | Fix the existing verifier only where review found gaps: use one stable-target comparison in preflight AND `SystemFileScenarios.Verify` AND `SystemImageScenarios.Verify`; allow recorded paging-role change, case-insensitive PnP ID, but retain volume/physical identity/size/boot/system checks. In `VerificationWorker`, verify each Fast and Strict image after that case's successful Disable/Release, before proceeding. Replace `VerificationRunner`'s final-image-only success dependency with per-case evidence requirements; preserve recovery behavior for failed/interrupted cases. Use default retention/promotion true for the primary application-facing run, recording exact options; retain off/off as a separate explicit regression. | Host contracts invoke actual worker/comparison paths for true->false and false->true paging roles and reject wrong physical targets. Missing or mismatched Fast post-release bytes must fail even if Strict passes. Bump `VerificationPlan.Version` when implementing the changed contract, update guide/manifest expectations and preserve all plan-31 raw results. Benefit: a green result actually checks every mode and restart path it claims. |
+| T079 / A06a, A07-A08 | Deploy the T075-T078 candidate through normal CI/package flow. Add only the focused mixed-I/O cases to the maintained typed runner, reusing sector/version/ownership helpers. Use buffered or memory-mapped access plus unbuffered access to the same owned ranges on disposable Q:; demonstrate actual flagged I/O/overlap rather than assuming a file API generates it. If exact ordering is not controllable with existing hooks, add one bounded range-targeted kernel test gate restricted to disposable non-OS tests, not a new runner. | Required observed orders: cached A -> paging read; cached A -> paging write B -> drain; in-flight A -> paging B -> completion; B -> later cached C; sparse neighbors; T077 dependency. Compare independent latest bytes during active caching and after drain/release. Run affected quick/policy/fault checks, not `full` or 72-case benchmarks. Remove/disarm hooks and verify clean restoration. Benefit: installed-driver evidence for the fixed failure mechanisms before returning to C:. |
+| T080 / A09, T067 | Once T079 passes and capture/retrieval readiness is rechecked, perform the actual roughly 350 MB BMP workflow on snapshot-backed C:. Record uncached control, then public Fast/default options: open in Paint, edit, save, promptly open in Photos; compare a separate attempt after completed administrative drain. Record app versions, file dimensions/bytes, operation timestamps, memory, routing, dirty/in-flight/error state; retain the file and off-target evidence. Manual owner actions are acceptable; ask promptly if Windows UI/capture setup blocks progress instead of building UI automation. | An unbuffered deterministic BMP test is NOT Paint/Photos or a decoder test. Record whether relevant data was pending at open; global dirty bytes alone cannot identify the image's range. Without range evidence label the attempt ordinary immediate-open, not proven read-during-drain. No synthetic delay/faults on C:. On failure preserve evidence and fix the owning path; on non-reproduction state conditions and next hypothesis, not “BSOD fixed.” Benefit: directly exercises the owner's failure scenario. |
+| T081 / A09 | Write new independently expected owned-file data while C: caching is actually active, then use the existing approved normal-restart/read-only oracle flow. Pair with one bounded memory-pressure exercise within documented guest headroom and an actual active pagefile; record paging activity rather than pagefile size alone. Reuse existing worker and capture machinery. Keep restart and pressure verdicts separate. | Cached-write admission must precede restart; pre-created uncached bytes do not qualify. Distinguish observed pending-write restart from clean restart, and target-range evidence from global dirty counters. Compare all bytes after boot, actual restored profile/hash, errors and application usability. No forced crash/power-cut promise. Benefit: checks that ordinary restart preserves cached work and that the system remains usable under real paging load. |
+
+T075-T077 are one dependent driver repair slice: implement them together with
+their narrow checks; do not deploy an intermediate read-only or write-only fix to
+C:. T078 can be included in that candidate. The Q: file experiment must respect
+Windows mapped/buffered/unbuffered handle synchronization and flush/unmap rules;
+do not create a false mismatch by racing incoherent application views. Prove the
+driver interleaving at its controllable boundary when filesystem semantics cannot
+force it. No raw writes into a mounted filesystem and no assumption that Q: is
+disposable without rediscovering its identity. Include both directions: a paging
+read after a cached write, and an ordinary cached read after a paging write.
+A minimal failing case may be built
+before the fix, but do not spend a full iteration expanding infrastructure while
+leaving a known driver defect untouched. If a baseline case is unsafe or cannot
+be forced yet, record source-level failure reasoning and implement the fix; do not
+require another crash. T079 is the focused installed check, not an excuse to defer
+T075-T077. Native build plus host-safe contracts precede the candidate handoff.
+
+The next deployment handoff should contain actual driver changes, the narrow
+verifier corrections and exact remaining VM checks. If an installation is needed,
+give the owner the candidate identity and ask once; continue other scoped work.
+Each task gets source status, installed-proof status and residual gaps. A test-only
+commit cannot complete T075-T077, and local tests cannot complete T079-T081.
+
+After this slice, resume active usage-registration/failure ordering (T068/T072),
+available normal power/shutdown cases, T054 real external recovery and remaining
+T052/T053 gaps. Unavailable sleep/hibernate/Fast Startup need a suitable environment
+and remain open, not waived; do not make them prerequisites for the bounded
+Paint/Photos experiment. T050 tuning, broad benchmarks, unrelated cleanup and
+A10-A16 qualification stay behind the current correctness work. Do not reintroduce
+product activation bans. A07-A09 stay PARTIAL until their own remaining gates close.
+
+### Earlier investigation sequence (historical context; revision 4 takes precedence)
 
 The recent work mainly improved verification infrastructure. It produced a
 useful uncached C: baseline, but did not reproduce or diagnose the reported
@@ -220,9 +315,9 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | Normal Enable/public Apply accept system paths; paging data stays ordered but bypasses RAM caching and registration preserves routing. **Changed this run:** exact 0.4.87.1 proved Fast/Strict bypass and fixed-pagefile saved startup. | Forced ordering/lifetime, active dynamic-registration and unavailable power transitions remain. The historical pre-A01 incident lacks a dump. | Makes C: use the normal product path without wasting nonpaged RAM on pagefile data. |
-| A08 | TRUE, scoped | Guarded byte/restart and isolated 349 MiB Fast/Strict contracts exist. **Changed this run:** Plan 31 passed both image cases plus a separate post-restart oracle. | 0.4.87.1 matched all bytes, proved admission/bypass counters and restored cleanly. Interactive Paint/Photos is separate. | Gives repeatable, off-disk evidence that active C: caching preserves owned file bytes. |
-| A09 | PARTIAL | Public UI/CLI and identity-bound saved startup accept C:. **Changed this run:** saved Fast restored with a fixed 4 GiB pagefile and dump registration, stayed healthy and passed restart bytes. | Sleep/hibernate/Fast Startup are unavailable; pending-dirty, memory-pressure, interactive-app and broader lifecycle checks remain. | Closes the reproduced pagefile/process-corruption regression on this VM without hiding remaining qualification work. |
+| A07 | PARTIAL | Normal C: activation exists. **Changed this planning run:** T075-T077 specify repairs for paging-read/write coherence and progress. | Limited 0.4.87.1 image/startup passes do not prove those properties. Focused Q: proof, registration/lifetime/power gaps remain. | Prevent stale reads, overwritten saves and paging stalls without banning C:. |
+| A08 | PARTIAL | Image/restart infrastructure exists. **Changed this planning run:** corrected TRUE to PARTIAL; T078-T079 repair worker identity checks, per-mode post-release evidence and mixed-path coverage. | Plan-31 results remain valid only for recorded boundaries; actual paging-role transition and Fast post-release proof were absent. | Make each reported pass a trustworthy check of the intended behavior. |
+| A09 | PARTIAL | Public activation and fixed-pagefile saved startup passed a short observation. **Changed this planning run:** T080-T081 prioritize actual apps and cached-write restart/pressure. | No actual Paint/Photos test; restart oracle was created uncached. No diagnosed closure of the earlier process failure. Broader power/lifecycle evidence remains. | Check real saves, opens and restart behavior, not only synthetic file bytes. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |
 | A12 | FALSE | Private-alpha freeze and participant release pending. | Owner reviews candidate and limitations after preceding gates. | Controlled real-user feedback with an identifiable recoverable build. |
@@ -390,7 +485,7 @@ usability requirement. Avoid reopening completed research without new evidence.
 | A15 | A13, A14; frozen candidate | Environment and endurance qualification | REQ-03,05,10,13,15 | Declared matrix and longer stress/lifecycle checks complete; failures resolved and affected checks rerun. |
 | A16 | A12 feedback, A13-A15 | Production release and support | REQ-12,13,15 | Owner accepts release evidence, support procedure and staged rollout/rollback readiness. |
 
-Planning revision 3 gives the immediate T067 sequence precedence over general
+Planning revision 4 gives T075-T081 precedence over the earlier T067 sequence and general
 task-number order. Whole-step completion and production release gates remain;
 only prerequisites relevant to safe controlled reproduction block that experiment.
 Record any deferred subtask explicitly, with its original release gate intact.
@@ -488,7 +583,7 @@ Their numbers extend the task list without renumbering earlier work.
 
 | Task / owner | Work and reason | Exit evidence / status |
 |---|---|---|
-| T067 / A07, A06a; validation in A08/A09 | Investigate the reported pre-A01 C: incident: cache enabled, Steam game installed, roughly 350 MB BMP edited/saved in Paint, then possibly opened in Photos while draining; memory-related BSOD, followed by QueueCache and Photos failing to launch. Reinstall restored QueueCache; snapshot rollback restored the VM. Exact version, mode, budget, stop code and drain state are unknown. Treat these as observations, not a diagnosed cause. | PARTIAL. No historical dump survived. A separate exact 0.4.83.1 fixed-pagefile reboot reproduced qcache/CoreCLR and unrelated Edge corruption; paging-data caching was removed, and exact 0.4.87.1 passed Fast/Strict 349 MiB plus the same pagefile saved-startup regression. This closes the reproduced defect, not proof that it caused the older BSOD. Interactive Paint/Photos, memory pressure and remaining T052/T053 paths keep the historical incident open. |
+| T067 / A07, A06a; validation in A08/A09 | Investigate the reported pre-A01 C: incident: cache enabled, Steam game installed, roughly 350 MB BMP edited/saved in Paint, then possibly opened in Photos while draining; memory-related BSOD, followed by QueueCache and Photos failing to launch. Reinstall restored QueueCache; snapshot rollback restored the VM. Exact version, mode, budget, stop code and drain state are unknown. Treat these as observations, not a diagnosed cause. | PARTIAL. No historical dump survived. The separate 0.4.83.1 fixed-pagefile process failures did not recur in short 0.4.87.1 observations; no causal fix was established. Revision 4 adds T075-T077 for the current bypass defect and T080-T081 for actual app/restart/pressure checks. Neither historical incident is diagnosed or closed. |
 | T068 / A07, before relying on T025 restrictions | Repair and deterministically test usage-notification/Enable synchronization in `437ee42`. Dispatch read `Routing` under `QueueLock`, unlocked, then incremented the count, allowing concurrent Enable to observe zero. | PARTIAL. Dispatch reserves in-path under the routing lock; rollback/out paths are implemented and native contracts pass. Exact 0.4.87.1 observed successful paging/dump registrations and healthy later activation, but a registration arriving while already active plus forced failure/cancellation still needs installed proof. This is not a diagnosed cause of the older incident. |
 | T069 / A06a, completes T051 measurement contract | Tighten the original plan-12 `pressure` evidence before claiming exact trigger boundaries or bounded reservations. | COMPLETE in plan 14. The exact installed 0.4.64.1 run `QueueCache-Verify-20260922-130140-5a38d389f7694633bb31d489d7fa816b` passed Deferred, Idle, watermark, Automatic, Fixed50, Fixed100 and Fixed0 with independent persisted-byte checks. Telemetry readiness and control trace were present; restoration returned Q: to active 2 GiB Fast/Idle with zero dirty/in-flight bytes and errors. The earlier plan-13 run remains preserved as incomplete. |
 | T070-T074 / A07-A09 | Converge the guarded paging-capable candidate into the normal product path: ordinary Enable, public Apply, desktop/CLI, saved startup, new usage registrations, hibernation/Fast Startup and dump behavior. | C: is selectable and behaves like any other disk without an unsupported warning. Fast retains its normal volatility acknowledgement; backend checks and lifecycle tests prove correctness. See the tracker for the per-task exit evidence. |

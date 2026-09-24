@@ -2,15 +2,25 @@
 
 Updated: 2026-09-24. This is the A07/T023 map of paths that can reach the current
 disk filter. It records implemented behavior and gaps. C: is a normal product
-target; current activation blocks are temporary migration state, not intended
-release policy. Source references name the owning function rather than a historical
+target; normal activation is implemented, not proof of complete system-disk
+correctness. Source references name the owning function rather than a historical
 test wrapper.
 
-Review correction: this is an initial map, not a completed resource-lifetime or
-system-disk audit. T068's source race is repaired: dispatch reserves an incoming
+Revision-4 review: T075-T077 in the
+[handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081)
+own the pending paging-read/write coherence and progress repairs. `IRP_PAGING_IO`
+is not pagefile-only classification. All such requests currently bypass the cache
+on every disk, including ordinary mapped/file-cache traffic. Foreground ordering
+does not prevent overlap with the separate drainer. Neither usage counters nor a
+one-time registration barrier establish safe per-range bypass. Implement the
+range/version/lock and completion rules here alongside the fix; do not describe
+the proposed repaired path as deployed behavior.
+
+This remains an incomplete resource-lifetime/system-disk audit. T068's source
+race is repaired: dispatch reserves an incoming
 usage path under the same routing lock that Enable holds through activation, and
-failure/cancellation paths undo the reservation. Management also rejects boot and
-system targets even if Windows has registered no tracked usage path. Native and
+failure/cancellation paths undo the reservation. Management now permits boot and
+system targets through normal Apply. Native and
 host contracts pass, but exact installed-driver notification interleavings remain
 unproved. T067 separately records the owner's earlier large-image crash; this newer
 race cannot explain an older build's incident.
@@ -20,10 +30,10 @@ race cannot explain an older build's incident.
 | Ordinary read/write, cache inactive | `QcDispatch` forwards directly and holds the remove lock through lower completion. Diagnostics V5 observes `IRP_PAGING_IO` reads/writes before this routing choice. | Plan 25 passed the disabled 349 MiB workload byte-for-byte on exact 0.4.80.1 while measuring bidirectional paging. | Preserve this pass-through behavior in A13 compatibility qualification. |
 | Ordinary read/write, cache active | `QcDispatch` queues to the cancel-safe foreground worker; `QcCacheProcess` calls `Read`/`Write`. Fitting Fast writes complete from preallocated RAM. Paging data bypasses admission, so ordinary fitting writes can use the full configured write quota. | Exact 0.4.87.1 Plan-31 Fast/Strict passed complete 349 MiB byte checks and clean release. | Remaining A09 memory-pressure/application workflow and T052/T053. |
 | Paging, hibernation or dump path registration | Registration is reserved and ordered against Enable. Normal Enable accepts existing counts. A new in-path request takes one drain/lower-flush boundary and invalidates clean raw blocks, but keeps routing enabled. Failed/cancelled registration rolls its count back. | Revised after the exact 0.4.83.1 configured-pagefile failure. Query-stop/remove remains correctly rejected while Windows owns a special-file path. | Exact installed registration race/state and pagefile restart evidence. Hibernation/Fast Startup are unavailable on this VM. |
-| Paging read/write data | Paging requests remain serialized by the foreground worker but bypass RAM admission, clean-read retention and dependency-lane service. Caching swapped-out memory in nonpaged RAM is circular and the 0.4.83.1 pagefile reboot produced process corruption. | Exact 0.4.87.1 fixed-pagefile saved startup stayed active/error-free, passed restart bytes and recorded zero reserve, mapping failures, waits and serviced misses. | Low-memory/fault/cancellation and dynamic-registration proof remain. |
+| Paging-marked read/write data | `Read` forwards without dirty overlay; `Write` forwards then invalidates clean entries only on success. Both bypass the ordinary cache-error check. They can overlap older dirty/in-flight data; foreground serialization is insufficient. The flag includes ordinary file traffic. | Source-level correctness defect, T075/T076. 0.4.87.1 startup non-reproduction does not diagnose the 0.4.83.1 failure. Zero counters behind/removed by the bypass do not prove completion or progress. | T075 coherent reads; T076 range/version write ordering and errors; T077 bounded progress; T079 exact installed checks before next C: experiment. |
 | Queued cancellation | `IO_CSQ` owns queued requests; cancellation releases the request remove lock. A dequeued capacity-waiting request also checks `irp->Cancel`. | Implementation exists; raw disposable-disk cancellation evidence is not in the supported runner. | T053 chooses reachable paging/teardown cases and adds maintained proof. |
 | Application/OS flush | Strict calls `QcCacheBarrier` and a lower flush. Explicit administrative flush always does so. Fast may acknowledge an application flush in RAM but never hides an existing cache error. | Secondary-disk Strict/Fast and lower-flush recovery evidence exists. | T052 forces queued-later-write cutoff ordering; A09 normal restart proof. |
-| Shutdown | Last-chance shutdown notification is registered. `IRP_MJ_SHUTDOWN` is queued, drains and disables through `QcShutdownBarrier`, lower-flushes, then forwards the original shutdown request. Failure is returned. | Code path is ordered; no active-system-disk restart evidence. | A08/A09 normal restart with independent bytes; T054 recovery first. |
+| Shutdown | Last-chance shutdown notification is registered. `IRP_MJ_SHUTDOWN` is queued, drains and disables through `QcShutdownBarrier`, lower-flushes, then forwards the original shutdown request. Failure is returned. | 0.4.87.1 saved-profile reboot smoke passed; its oracle was created while inactive, not pending cached-write proof. | T081 active-write normal restart and independent bytes; T054 recovery remains open. |
 | Device power down/up | Device-power transitions are queued. Leaving D0 records whether caching was active, drains/disables, lower-flushes, marks suspended and forwards. Successful D0 clears suspension and restores the prior active state when capacity and health remain valid. | Implemented plan 27; host policy/native checks pass. | Exact sleep/resume and hibernate/Fast Startup byte/state evidence. |
 | Query stop/query remove | When routing is active, PnP query is queued; the generic PnP boundary drains, disables, invalidates clean data and forwards. Inactive queries forward directly. | Ordered implementation. | A09 device lifecycle checks. |
 | Surprise removal/final remove | Surprise removal marks the cache gone and wakes waiters; later destruction reports and releases any volatile dirty data because the lower device is already unavailable. Final remove closes admission, waits remove locks and worker exit, attempts its removal barrier, destroys cache state, detaches and deletes the device. | No false persistence promise on surprise loss. Normal removal ordering exists. | T053 lifetime/single-completion proof; A13 hot-remove scope decision. |
@@ -39,8 +49,9 @@ populates it for paging, hibernation and dump usage notifications, atomically
 reserves newly introduced paths against Enable, and orders an active path behind
 dirty data. Plan 27 removes the normal Enable and management rejections: all callers
 now use the same system-capable policy. A later registration establishes a lower-
-media boundary without disabling active routing; its paging data remains ordered
-but is not retained in RAM.
+media boundary without disabling active routing. Paging-marked data is not retained
+in RAM by the current early bypass, but its overlap ordering is defective and must
+be repaired under T075-T077; registration ordering cannot substitute for that fix.
 On exact installed 0.4.75.1, a configured C: pagefile and dump produced split
 counts `Paging=4`, `Hibernation=0`, `Dump=1`. Removing both and rebooting changed
 them to `Paging=2`, `Hibernation=0`, `Dump=0`; WMI and the filesystem report no

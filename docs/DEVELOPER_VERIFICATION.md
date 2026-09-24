@@ -18,6 +18,16 @@ different disk so telemetry writes do not contaminate the workload.
 
 ## Suites (plan version 31)
 
+Review correction (2026-09-24): plan 31 remains the executable contract, not a
+completed paging-coherence or paging-progress proof. Its image cases use
+unbuffered I/O, not Paint/Photos; Fast lacks a separate post-release byte check,
+and scenario-worker identity equality still rejects a paging-role change accepted
+by preflight. Existing zero paging counters do not establish bypass completion.
+Implement T075-T078, then run the focused T079-T081 sequence in
+[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
+Bump the executable plan version with the actual workload/evidence fixes, not
+with this documentation update. Preserve prior raw results and their scope.
+
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |

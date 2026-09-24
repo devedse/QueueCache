@@ -1,12 +1,16 @@
 # A06a verification coverage ledger
 
-Updated: 2026-09-22. This ledger maps remaining correctness and usability claims
+Updated: 2026-09-24. This ledger maps remaining correctness and usability claims
 to current code, maintained evidence and release gates. It does not turn a missing
 check into a failure or a scoped PASS into general qualification. Detailed run
 evidence remains in [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
 | Claim / path | Owning code | Maintained proof / evidence | Current status | Gate |
 |---|---|---|---|---|
+| Paging-marked reads observe newest cached sectors | `cachepolicy.h`; `writecache.cpp::Read` | No mixed-path installed proof; early bypass skips dirty bytes | Source defect; implementation pending T075 | T075/T079 before next active-C: experiment |
+| Paging-marked writes cannot be overwritten by an older drain | `writecache.cpp::Write`, drainer; `cacheblocks.inl::InvalidateCleanRange` | Clean-only invalidation does not reconcile dirty/in-flight versions | Source defect; implementation pending T076 | T076/T079 before next active-C: experiment |
+| Paging progresses during capacity/lower waits with bounded resources | Request service, cache waits and lower completion | Plan-31 zero counters cannot establish this property | Open T077; do not equate unreachable counters with proof | T077/T079 before next active-C: experiment |
+| System worker identity and every mode's released-cache bytes are checked | `SystemFileScenarios`, `SystemImageScenarios`, verification worker/runner | Plan-31 actual role transition untested; only last image selected for final oracle | Partial; repair T078, exact proof T079 | A08; implementation-first revision 4 |
 | Fitting full/sector-valid Fast admission avoids lower I/O | `writecache.cpp` `Write`; `sectorcoverage.h` | `policies`: diagnostics-V2 lower-attempt and RAM/disk byte oracles | Passed on 0.4.57.1 for 512-byte sectors, parallelism 1/2/4, retention off/on | Preserve through A13 |
 | Fitting writes and cached reads progress during normal Idle drain | Foreground/drainer; `CacheScenarios`; plan-16 `drain-decision` | `policies` 60-second foreground/background case; seeded parallelism 1/2/4 comparison contract | Fitting case passed on 0.4.57.1; exact installed 0.4.67.1 comparison completed 24/24, with tuning decision still open | T050; A11 |
 | Deferred age, Idle and watermark triggers occur at their contract boundaries | `cachepolicy.h`; `Drainer` | Native truth table; plan-14 `pressure` VM scenario | Passed on exact installed 0.4.64.1 | Preserve through A13 |

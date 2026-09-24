@@ -60,9 +60,11 @@ the wrong disk; they are not product activation restrictions.
   operation, stale reads, incorrect write ordering, freeing unpersisted dirty
   data after an I/O error, or falsely reporting successful explicit persistence.
 - Strict remains a distinct supported choice; it is not the required default.
-- Report known unfixed defects separately from untested risks. No reproduced
-  unfixed corruption defect in the replacement engine has been identified in the
-  reviewed evidence; this is not proof that none exists or a completed audit.
+- Report known unfixed defects separately from untested risks. The 2026-09-24
+  source review identified mixed cached/paging-I/O coherence defects; T075-T077
+  must repair them. They are not a diagnosed cause of the historical BSOD, and
+  successful short VM runs do not waive them. Product C: activation remains normal;
+  the next controlled C: experiment follows the focused repair/check sequence.
 - Exhaustive certification is not a prerequisite for this private VM alpha.
   Use existing test evidence plus focused checks for changed and C:-specific
   paths. Do not bypass known failures or label missing coverage as passed.

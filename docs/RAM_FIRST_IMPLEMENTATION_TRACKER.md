@@ -61,9 +61,9 @@ pagefile saved-startup regression without the earlier process corruption.
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068, T070-T074 | PARTIAL | Normal Enable/public Apply accept system usage paths and the old action is only an ABI alias. Paging data stays ordered but bypasses RAM caching; a new system-file registration takes one lower-media boundary without disabling routing. **Changed this run:** exact 0.4.87.1 proved the bypass under Fast and Strict and through a fixed-pagefile saved-profile reboot. | Remaining gates are forced T052/T053 ordering/lifetime cases, active dynamic-registration timing and unavailable hibernation/Fast Startup transitions. The pre-A01 incident still has no surviving dump. |
-| A08 / T028-T031 | TRUE, scoped | Guarded identity, owned-file, restart and 349 MiB contracts exist. Plan 31 gives Fast/Strict separate validator-approved paths and permits only a paging-role change across restart. **Changed this run:** both active cases and a separate post-restart oracle completed. | Exact 0.4.87.1 Fast/Strict accepted 365,977,600/365,957,120 bytes, matched every byte twice and restored cleanly; the 64 MiB reboot oracle also matched. This is maintained file-I/O proof, not the interactive Paint/Photos workflow. |
-| A09 / T032-T037, T073-T074 | PARTIAL | Desktop/CLI and identity-bound saved startup accept C:. **Changed this run:** saved Fast restored with a real fixed 4 GiB C: pagefile and dump registration, stayed active/error-free, and passed the post-restart byte oracle without qcache/CoreCLR or unrelated process faults. | Normal restart/pagefile regression is closed for this VM. Sleep, hibernate and Fast Startup are unavailable; pending-dirty restart, bounded memory pressure, interactive Paint/Photos and broader lifecycle tests remain. |
+| A07 / T023-T027, T067-T068, T070-T077 | PARTIAL | Normal Enable/public Apply and saved startup accept C:. **Changed this planning run:** identified the paging-read/write coherence gap; T075-T077 define driver repairs, not only more tests. | 0.4.87.1 has scoped image/startup passes, not mixed-I/O ordering or progress proof. T079, remaining T052/T053, active registration and power-path evidence remain open. Historical BSOD cause unknown. |
+| A08 / T028-T031, T078-T079 | PARTIAL | Existing identity, owned-file and image/restart infrastructure. **Changed this planning run:** corrected TRUE to PARTIAL; actual worker identity comparison and per-mode post-release evidence need repair. | Preserve plan-31 2/2 and 64 MiB oracle results with their limited scope. No tested paging-role transition, Fast-specific post-release oracle, default-options image proof or mixed-I/O proof. |
+| A09 / T032-T037, T073-T074, T080-T081 | PARTIAL | Public activation and saved Fast startup worked on 0.4.87.1 with fixed pagefile/dump registration. **Changed this planning run:** non-reproduction is no longer described as a diagnosed defect closure. | T080 actual Paint/Photos, T081 active-write restart/pressure and broader lifecycle remain. The restart oracle was created uncached; unavailable sleep/hibernate/Fast Startup remain unqualified. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
@@ -72,13 +72,63 @@ pagefile saved-startup regression without the earlier process corruption.
 | A15 / T061-T063 | FALSE | Environment/endurance/final performance qualification planned. | Frozen-candidate support matrix and long-run evidence pending. |
 | A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
 
-### Next implementation actions and why this order changed
+### Revision 4 implementation queue: 2026-09-24 review correction
+
+The review of `89436a8` found an unresolved normal-operation coherence gap in
+the all-`IRP_PAGING_IO` bypass added in `56924e6`. This flag also occurs for
+ordinary cached/mapped files; it is not proof of pagefile-only data. Reads skip
+newer dirty cache bytes, and direct writes do not reconcile overlapping dirty or
+in-flight versions. Foreground request ordering alone does not order the drainer.
+This is a source-level defect finding, not proof of the historical BSOD cause.
+
+The implementation instructions and acceptance cases are in
+[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
+That sequence supersedes historical next-step instructions below. The current
+executable contract remains plan 31; this documentation change does not implement
+or deploy a fix. A08 is corrected from TRUE to PARTIAL; A07/A09 remain PARTIAL.
+A01-A06 retain historical scoped passes, not certification of the changed bypass.
+
+| New task / owner | Implementation status | Verification status | Benefit / next action |
+|---|---|---|---|
+| T075 / A07 | FALSE: paging-read coherence repair pending | No installed mixed-path overlap proof | Read the newest saved bytes, including partial cache hits; implement pinned/versioned range reads. |
+| T076 / A07 | FALSE: paging-write/drainer ordering repair pending | Required old/new, partial, fault and cancellation cases pending | Prevent old background writes from overwriting a newer save; reconcile overlapping versions. |
+| T077 / A07 | FALSE: bounded paging progress and truthful path evidence pending | No forced paging/capacity/lower-wait dependency proof | Keep Windows paging responsive without relying on ordinary cache quota or circular waits. |
+| T078 / A08 | PARTIAL: existing scenarios/helpers exist; worker identity and per-case post-release fixes pending | Plan-31 passes do not cover the identified gaps | Ensure each Fast/Strict and restart result proves what it says. |
+| T079 / A06a/A07-A08 | FALSE: focused mixed-path cases pending in the existing runner | No exact candidate run yet | Verify the concrete driver fixes on disposable Q:, then return to C:. |
+| T080 / A09/T067 | FALSE: actual application workflow not executed; no general UI automation required | Paint edit/save -> immediate Photos open remains untested | Directly investigate the owner's reported failure. |
+| T081 / A09 | PARTIAL: existing startup/oracle infrastructure; active-write preparation and bounded pressure work pending | Uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
+
+Implement T075-T077 as one coherent driver slice with narrow tests; include T078,
+build/package, then run T079 before T080/T081. No broad suite or performance
+matrix before the correctness fix. No whole-cache barrier per paging request,
+blanket old-code rollback, C: activation ban, softened oracle, or bigger timeout
+as a substitute. Remaining registration/power/recovery tasks keep their original
+release gates; unavailable VM power modes do not block the bounded app experiment.
+
+Plan-31 evidence limitations (preserve original run verdicts):
+
+- The image writer/reader used unbuffered deterministic I/O, not Paint, Photos,
+  mapping or decoding, and did not establish image-range dirty state at open.
+- Both modes checked bytes while active; final restoration selected only the last
+  passed image (Strict). Fast lacks its own post-release disk-byte proof.
+- Image cases disabled retention/promotion, unlike normal product defaults.
+- Restart preparation created the 64 MiB file with caching inactive. It proves
+  pre-existing bytes and startup usability, not persistence of cached new writes.
+  Both recorded targets already had `IsPaging=true`, so no role change was tested.
+- Preflight allows paging-role change; both actual scenario workers still use
+  full-record target equality. T078 must repair all consumers, not just the helper.
+- Zero reserve/serviced-miss counters and mapping/capacity counters behind the
+  early bypass cannot demonstrate paging completion or absence of a dependency.
+- The 0.4.83.1 process failure did not recur in the short 0.4.87.1 observations;
+  its root cause was not captured. Do not call it a diagnosed/closed defect.
+
+### Earlier next actions (historical; revision 4 above takes precedence)
 
 Planning revision 3, 2026-09-23: the owner prioritizes reproducing and fixing the
 reported large-BMP/Paint/Photos BSOD. Recent iterations mostly advanced the
 verification framework. The earlier 64 MiB uncached C: file baseline is useful
 and complete for its scope, but has not reproduced or diagnosed T067. The detailed immediate sequence
-in the [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#immediate-execution-sequence-investigate-the-c-bsod)
+in the [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081)
 now governs execution. Existing A/T IDs and release gates remain. Plan 21 advances
 only the A08 reproduction contract; it does not promote A08 or resolve T067.
 
