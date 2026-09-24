@@ -20,6 +20,24 @@ Native Release/Debug builds and host contracts pass. Luna's uncommitted
 range-drain edit did not compile and could drain Deferred/Idle data early; both
 were corrected before commit. See the review's disposition section.
 
+Installed plan-38 evidence (2026-09-24): CI build `03120ef` (0.4.99.1, driver
+SHA-256 `48FA0BE1DE4F28FAB4C6BE0042E6AEF6058892736D32A170ABFB19D8DF274468`) loaded
+after a normal reboot; the saved Q: profile restored (task result 0, about four
+minutes after boot). On Q: with no competing workload, each run had `FINISHED.txt`,
+1/1 COMPLETED and clean restoration:
+`QueueCache-Verify-20260924-200833-bb76571cf81e4a6391e900e4b17b01ea` (`paging-coherence`:
+both stages PASS, one overlap wait, newest/guard bytes active and released),
+`QueueCache-Verify-20260924-200916-72edc6167d5544ddbf3edf093ee0b349` (`policies`) and
+`QueueCache-Verify-20260924-201111-1ccf58616ae7429090b38c6573bd3c5b` (`pressure`).
+All 13 source-attributed zero-lower-I/O checks PASSED. Each window had exactly one
+forwarded paging write and zero generated, forwarded non-paging, other-read or
+flush attempts. That explains the one extra lower write that stopped the plan-34
+policy runs. Trigger timings counted drainer writes only
+(deferred-age 1138.6 ms, idle 902.6 ms, watermark on crossing). Afterwards
+Q: V8 showed 33 offloaded paging reads (33 completed, 0 failed, max queued 2), 6
+idle waits by control requests and 38 routed reads. This shows the offload path
+running, not the forced T082 dependency proof.
+
 Plan 37 source candidate, 2026-09-24: range-coherent paging-marked reads and
 targeted overlapping-write drain/fence in `writecache.cpp`; cooperative paging
 read service while blocked on lower I/O, capacity or a drain boundary; Diagnostics
@@ -218,9 +236,9 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 
 | Task | Implementation | Verification / next concrete result |
 |---|---|---|
-| T082 / A07 | SOURCE CANDIDATE (plan 38, not installed): top-level and service-lane paging reads needing lower I/O run on a per-disk paging-read thread with exact-version pins; writes wait only for overlapping offloads; destructive requests wait for all; the fence forces only its overlap and unrelated batches keep policy/size. Remaining synchronous fallback: reads over 1 MiB, a full 64-entry table, and service during destructive/control requests. | Native builds and host contracts only. Install the CI build, then force a paging read behind a capacity-blocked write and a slow lower read on Q: and observe V8 offload completions; check unrelated Deferred data stays dirty during a fence. |
+| T082 / A07 | SOURCE CANDIDATE (plan 38, not installed): top-level and service-lane paging reads needing lower I/O run on a per-disk paging-read thread with exact-version pins; writes wait only for overlapping offloads; destructive requests wait for all; the fence forces only its overlap and unrelated batches keep policy/size. Remaining synchronous fallback: reads over 1 MiB, a full 64-entry table, and service during destructive/control requests. | INSTALLED 0.4.99.1: plan-38 `paging-coherence`, `policies` and `pressure` passed with clean restoration; 33/33 offloaded paging reads completed. Still required: force a paging read behind a capacity-blocked write and a slow lower read on Q: and observe V8 offload completions; check unrelated Deferred data stays dirty during a fence. |
 | T083 / A06a/A07-A08 | OPEN: selected/in-flight observation exists, actual lower-submission/completion gate and fault/cancel orders missing | Extend maintained Q: case at real request/range boundaries; retain plan-37 byte PASS as scoped. |
-| T084 / A08 | SOURCE CANDIDATE (plan 38): driver records each lower attempt's issuing path (V8); byte PASS and zero-lower-I/O verdicts are separate checks; generated writes/flushes fail, forwarded non-paging I/O is SKIP (unproven, makes the run incomplete), forwarded paging I/O is attributed to other activity. Drain-trigger timing uses generated writes. Without V8 any lower attempt is SKIP. | Host contracts cover each source class and missing V8. Needs the CI driver: rerun `policies` and `pressure` and read each admission detail. Per-request identity is still not recorded; a non-paging request from another process yields SKIP, never PASS. |
+| T084 / A08 | SOURCE CANDIDATE (plan 38): driver records each lower attempt's issuing path (V8); byte PASS and zero-lower-I/O verdicts are separate checks; generated writes/flushes fail, forwarded non-paging I/O is SKIP (unproven, makes the run incomplete), forwarded paging I/O is attributed to other activity. Drain-trigger timing uses generated writes. Without V8 any lower attempt is SKIP. | VERIFIED on installed 0.4.99.1: all 13 zero-lower-I/O checks in `policies`/`pressure` PASSED with zero generated/non-paging attempts; each window's single extra write was a forwarded paging write. Per-request identity is still not recorded; a non-paging request from another process yields SKIP, never PASS. Runtime counter wording now says device-wide. |
 | T085 / A07/A11 | OPEN: all paging-marked writes bypass new RAM admission and misses are not retained | Characterize and implement supported ordinary buffered/mapped application caching after progress repair. |
 | T086 / A09 | PARTIAL: successful owner Paint/Photos observation recorded; no capture or missing post-drain/restart/pressure results | Restore capture readiness and complete those separate checks with exact file/environment evidence. |
 | T087 / docs | COMPLETE in planning revision 5 | Current docs reconciled; code/output verdict changes remain T084. |

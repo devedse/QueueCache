@@ -315,7 +315,7 @@ public static class VerificationWorker
                     RunStorage.AtomicJson(job.Reply + ".after-diagnostics.json", diagnosticsAfter);
                     var pagingIo = PagingIoDelta(diagnosticsBefore, diagnosticsAfter);
                     baselineChecks.Add(new("system-image/paging-io-window", "PASS",
-                        $"Process-wide paging I/O observed during this window: reads={pagingIo.ReadRequests} " +
+                        $"Device-wide paging I/O (all processes) observed during this window: reads={pagingIo.ReadRequests} " +
                         $"({pagingIo.ReadBytes} bytes), writes={pagingIo.WriteRequests} ({pagingIo.WriteBytes} bytes). " +
                         "Concurrent Windows activity may contribute to these counts."));
                     RunStorage.AtomicJson(job.Reply, baselineChecks);
@@ -350,7 +350,7 @@ public static class VerificationWorker
                     $"cooperative read completions {pagingProgress.ServicedReadMisses}. " +
                     "No routed failures, mapping failures or cache-capacity waits were observed. " +
                     $"Max observed read/write lengths were {pagingProgress.MaxReadLength}/{pagingProgress.MaxWriteLength} bytes. " +
-                    "This is a process-wide window and does not prove a forced paging dependency."));
+                    "This is a device-wide window across all processes and does not prove a forced paging dependency."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 systemDevice.Control(WriteCacheAction.Flush);
                 var afterAdministrativeFlush = systemDevice.GetWriteCacheState();

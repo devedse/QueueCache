@@ -26,7 +26,7 @@ public static class PagingCoherenceScenarios
             $"then {after.WriteRequests - before.WriteRequests} successful routed paging write(s) " +
             $"and {after.OverlapWaits - before.OverlapWaits} overlap wait(s). " +
             "Newest active and released-cache bytes, including untouched guards, matched. " +
-            "Routed counters are process-wide; a range-targeted kernel gate remains the stronger proof.";
+            "Routed counters are device-wide across all processes; a range-targeted kernel gate remains the stronger proof.";
     }
 
     public static IReadOnlyList<CheckResult> Run(DiskTarget target, CacheDevice device, string workDirectory)
@@ -103,7 +103,7 @@ public static class PagingCoherenceScenarios
                 last.ReadRequests > first.ReadRequests && last.WriteRequests > first.WriteRequests ? "PASS" : "SKIP",
                 $"Routed paging-marked requests: reads {last.ReadRequests - first.ReadRequests}, " +
                 $"writes {last.WriteRequests - first.WriteRequests}, overlap waits {last.OverlapWaits - first.OverlapWaits}. " +
-                "These counters are process-wide; zero overlap does not prove the forced drainer order."),
+                "These counters are device-wide across all processes; zero overlap does not prove the forced drainer order."),
             overlapCheck
         ];
     }
