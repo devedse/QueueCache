@@ -16,15 +16,22 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 32)
+## Suites (plan version 33)
 
-Plan 32 source candidate (2026-09-24) adds routed paging Diagnostics V7 and
+Plan 33 source candidate (2026-09-24) adds a focused non-OS `paging-coherence`
+case to plan 32's routed paging Diagnostics V7 and
 per-case post-release image checks. It uses normal retained-write/read-promotion
 options and one stable system-target comparison across preflight and workers.
 Each passed Fast/Strict case now verifies its own bytes after release, and final
 restoration verifies every passed image oracle. This is a changed verification
 contract; plan-31 raw results remain intact. The source candidate still needs
-exact installed-driver proof before claiming the new results.
+exact installed-driver proof before claiming the new results. The new case uses
+an owned 8 MiB Q: file, one unbuffered Fast write, a mapped read and overwrite,
+then unbuffered live and released-cache byte checks. It records routed paging
+read/write and overlap-wait deltas. A zero routed read or write produces an
+incomplete case, and even nonzero process-wide counts do not prove a forced
+old-drain/new-write interleaving. This is the first focused installed check,
+not the full T079 deterministic ordering gate.
 
 Review correction: plan 31 did not prove paging coherence or progress. Its image cases used
 unbuffered I/O, not Paint/Photos; Fast lacked a separate post-release byte check,
@@ -37,6 +44,7 @@ Preserve prior raw results and their scope.
 | Suite | Scope |
 |---|---|
 | `quick` | Existing file-integrity checks: seeded writes/overwrites, random updates, live reads, flush and filesystem checks. No policy sweep. |
+| `paging-coherence` | One owned-file unbuffered/mapped access check on a validated disposable non-OS disk. Requires Diagnostics V7; no raw writes or synthetic faults. Checks bytes while active and after release; records process-wide flagged-I/O deltas without claiming a forced overlap. |
 | `system-preflight` | Read-only C: disk-identity and cache-state observation. Requires `--recoverable-vm`, exact `--system-instance`/`--system-bytes`, and an existing `--output` directory on a different physical disk with no reparse-point path. No workload files, cache controls, faults, TRIM or reboot. |
 | `system-files` | Guarded 64 MiB owned-file creation on C:, two same-range overwrites, immediate reads, file flush, and live unbuffered comparison. The independently computed seed/SHA oracle is committed to the off-target result directory before the C: workload write. No cache controls, faults, raw I/O, TRIM or reboot. This is a baseline byte check, not an active-cache persistence verdict. |
 | `system-post-restart` | Separate read-only unbuffered comparison of the owned C: file against `--oracle` from a prior `system-files` run on another physical disk. The operator performs any approved normal reboot separately. No workload write or cache configuration. It cannot be called a dirty-cache restart when caching was off. |

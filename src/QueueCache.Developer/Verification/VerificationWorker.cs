@@ -531,6 +531,11 @@ public static class VerificationWorker
                 if (checks.Count == 0)
                     Console.Error.WriteLine("Policy suite returned no checks.");
                 return checks.Count > 0 && checks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "paging-coherence":
+                var pagingChecks = PagingCoherenceScenarios.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, pagingChecks);
+                ReportFailures(pagingChecks, Console.Error);
+                return pagingChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
                 var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, pressureChecks);

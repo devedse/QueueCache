@@ -5,12 +5,15 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-Plan 32 source candidate, 2026-09-24: range-coherent paging-marked reads and
+Plan 33 source candidate, 2026-09-24: range-coherent paging-marked reads and
 targeted overlapping-write drain/fence in `writecache.cpp`; cooperative paging
 read service while blocked on lower I/O, capacity or a drain boundary; Diagnostics
 V7 routed request/completion/failure/overlap counters; per-case and final
 post-release image oracles, default retention/promotion and shared stable target
 identity checks. Native Release build and host management/runner contracts pass.
+The maintained `paging-coherence` suite now exercises an owned non-OS file through
+unbuffered and mapped access; it records the limits of process-wide counters and
+does not replace the forced T079 ordering cases.
 The loaded VM driver is still 0.4.87.1; this source is **not yet installed or
 kernel-verified**. No T075-T081 closure or C: qualification is claimed.
 
@@ -103,7 +106,7 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 | T076 / A07 | Source candidate: range-targeted older-version drain and direct-write fence | Required old/new, partial, fault and cancellation cases pending | Prevent old background writes from overwriting a newer save; prove exact forced order. |
 | T077 / A07 | Source candidate: cooperative paging read service and V7 routed outcomes | No forced paging/capacity/lower-wait dependency proof | Keep Windows paging responsive; check actual progress under pressure. |
 | T078 / A08 | Source candidate: shared worker identity and per-case/final oracles; host contracts pass | Plan-32 exact installed case pending | Ensure each Fast/Strict and restart result proves what it says. |
-| T079 / A06a/A07-A08 | FALSE: focused mixed-path cases pending in the existing runner | No exact candidate run yet | Verify the concrete driver fixes on disposable Q:, then return to C:. |
+| T079 / A06a/A07-A08 | PARTIAL: plan-33 owned Q: mapped/unbuffered case added to existing runner; forced range gate pending | No exact candidate run yet | Verify actual flagged I/O and forced old/new ordering on disposable Q:, then return to C:. |
 | T080 / A09/T067 | FALSE: actual application workflow not executed; no general UI automation required | Paint edit/save -> immediate Photos open remains untested | Directly investigate the owner's reported failure. |
 | T081 / A09 | PARTIAL: existing startup/oracle infrastructure; active-write preparation and bounded pressure work pending | Uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
 

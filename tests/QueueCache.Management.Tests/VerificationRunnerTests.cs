@@ -26,7 +26,10 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 32, "per-case image and identity contract version");
+        Check(VerificationPlan.Version == 33, "mixed paging/file and per-case image contract version");
+        Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
+            .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
+            "mixed paging/file check is one maintained non-OS case");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
