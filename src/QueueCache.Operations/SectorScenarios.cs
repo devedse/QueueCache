@@ -9,16 +9,33 @@ namespace QueueCache.Operations;
 [SupportedOSPlatform("windows")]
 internal static class SectorScenarios
 {
-    internal static string VerifyAdmissionAttempts(CacheAttribution? before, CacheAttribution? after)
+    internal static string VerifyAdmissionAttempts(CacheAttribution? before, CacheAttribution? after,
+        CachePagingRoute? routeBefore = null, CachePagingRoute? routeAfter = null)
     {
         if (before is null || after is null)
             throw new NotSupportedException("Admission proof requires diagnostics V2 lower-I/O attempt counters.");
         var evidence = $"Lower attempts read/write/flush before={before.LowerReadAttempts}/{before.LowerWriteAttempts}/{before.LowerFlushAttempts}, " +
             $"after={after.LowerReadAttempts}/{after.LowerWriteAttempts}/{after.LowerFlushAttempts}.";
-        if (before.LowerReadAttempts != after.LowerReadAttempts || before.LowerWriteAttempts != after.LowerWriteAttempts ||
-            before.LowerFlushAttempts != after.LowerFlushAttempts)
-            throw new IOException("Deferred admission issued lower I/O. " + evidence);
-        return evidence;
+        var lowerWrites = after.LowerWriteAttempts >= before.LowerWriteAttempts
+            ? after.LowerWriteAttempts - before.LowerWriteAttempts : ulong.MaxValue;
+        var routedWrites = routeBefore is not null && routeAfter is not null &&
+            routeAfter.WriteRequests >= routeBefore.WriteRequests &&
+            routeAfter.WriteCompletions >= routeBefore.WriteCompletions &&
+            routeAfter.WriteFailures == routeBefore.WriteFailures
+            ? routeAfter.WriteRequests - routeBefore.WriteRequests : ulong.MaxValue;
+        var completedWrites = routeBefore is not null && routeAfter is not null &&
+            routeAfter.WriteCompletions >= routeBefore.WriteCompletions
+            ? routeAfter.WriteCompletions - routeBefore.WriteCompletions : ulong.MaxValue;
+        if (before.LowerReadAttempts != after.LowerReadAttempts ||
+            before.LowerFlushAttempts != after.LowerFlushAttempts ||
+            (lowerWrites != 0 && (lowerWrites != routedWrites || routedWrites != completedWrites)) ||
+            (routeBefore is not null && routeAfter is not null &&
+                (routedWrites != lowerWrites || routedWrites != completedWrites)))
+            throw new IOException("Deferred admission issued unexplained lower I/O. " + evidence +
+                $" Routed paging writes={routedWrites}, completed={completedWrites}.");
+        return evidence + (lowerWrites == 0 ? " No lower I/O." :
+            $" Exactly {lowerWrites} successful routed paging write(s) coincided with the lower writes; " +
+            "this process-wide counter match does not identify their file range or prove causation.");
     }
 
     public static void Run(DiskTarget target, CacheDevice device, string directory,
@@ -51,7 +68,8 @@ internal static class SectorScenarios
             var before = device.GetWriteCacheState();
             if (before.DirtyBytes != 0 || before.InFlightBytes != 0)
                 throw new IOException(label + ": admission requires a clean, idle lower-data boundary");
-            var attemptsBefore = device.GetDiagnostics().Attribution;
+            var diagnosticsBefore = device.GetDiagnostics();
+            var attemptsBefore = diagnosticsBefore.Attribution;
             if (attemptsBefore is null)
                 throw new NotSupportedException("Sector admission requires diagnostics V2; install the attribution driver.");
             void Write(int offset, int length, byte value)
@@ -72,8 +90,10 @@ internal static class SectorScenarios
             Write(3584, 1536, 169);
             Write(40960, 4096, 211);
             var admitted = device.GetWriteCacheState();
-            var attemptsAfter = device.GetDiagnostics().Attribution;
-            var admissionEvidence = VerifyAdmissionAttempts(attemptsBefore, attemptsAfter);
+            var diagnosticsAfter = device.GetDiagnostics();
+            var attemptsAfter = diagnosticsAfter.Attribution;
+            var admissionEvidence = VerifyAdmissionAttempts(attemptsBefore, attemptsAfter,
+                diagnosticsBefore.PagingRoute, diagnosticsAfter.PagingRoute);
             if (admitted.LowerWrites != before.LowerWrites || admitted.Flushes != before.Flushes)
                 throw new IOException(label + ": unexpected lower write/flush during deferred partial admission");
             file.Read(0, actual);

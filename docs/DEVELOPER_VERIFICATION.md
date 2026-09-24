@@ -17,7 +17,18 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 34)
+## Suites (plan version 35)
+
+Plan 35 keeps the sector-admission check strict about lower reads, flushes and
+actual cache drains. When lower writes occur during its process-wide measurement
+window, it accepts only an exact match with successful routed paging writes from
+Diagnostics V7; missing or failed routing, extra lower writes, and counter
+regressions still fail. The report names the exception and states that equal
+process-wide counts do not identify a file range or establish causation. This
+is needed because plan-34 `policies` on 0.4.92.1 twice observed exactly one lower
+write in the first sector window; the old check could not distinguish a normal
+paging-marked NTFS write from the owned data write. The original incomplete
+results remain evidence, not passes. Plan 35 needs an exact installed rerun.
 
 Plan 34 source candidate (2026-09-24) allows the existing `system-files` and
 `system-post-restart` cases to run with reconciled system usage paths and records
@@ -42,7 +53,7 @@ Review correction: plan 31 did not prove paging coherence or progress. Its image
 unbuffered I/O, not Paint/Photos; Fast lacked a separate post-release byte check,
 and scenario-worker identity equality still rejected a paging-role change accepted
 by preflight. Existing zero paging counters do not establish bypass completion.
-The new source needs focused T079-T081 installed checks in
+The new source still needs forced T079 ordering and T080-T081 installed checks in
 [handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
 Preserve prior raw results and their scope.
 

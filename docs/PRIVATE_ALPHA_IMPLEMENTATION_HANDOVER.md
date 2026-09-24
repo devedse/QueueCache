@@ -5,7 +5,9 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The source verification contract is plan 34; installed VM evidence remains plan 31.
+The source verification contract is plan 35; installed VM evidence includes plan 34
+on exact 0.4.92.1 (focused Q: coherence and quick passes, two incomplete policy
+runs with clean restoration). See the tracker for exact result IDs and limits.
 Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
@@ -17,10 +19,11 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
-Immediate priority: finish and install the T075-T078 source candidate below,
-then T079-T081 to check the fix and run the real BMP/Paint/Photos investigation.
-The source candidate builds and passes host contracts, but the mixed cached/paging
-I/O correctness gap found in review of `89436a8` has no installed proof. Normal C: activation is already
+Immediate priority: install and rerun plan 35's paging-aware policy check, then
+finish T079's forced ordering and T080-T081's actual C: checks. The candidate
+builds and passes host contracts, and a focused installed Q: mapped/unbuffered
+case passed, but the mixed cached/paging gap found in review of `89436a8` has no
+forced-ordering proof. Normal C: activation is already
 implemented and exact 0.4.87.1 has limited successful VM evidence. It is not a
 coherence, paging-progress or historical-BSOD resolution verdict. Revision 4's
 sequence supersedes earlier next-step instructions and activation blockers in

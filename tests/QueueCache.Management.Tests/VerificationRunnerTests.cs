@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 34, "mixed paging/file and active restart contract version");
+        Check(VerificationPlan.Version == 35, "paging-aware sector admission contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -320,6 +320,23 @@ internal static class VerificationRunnerTests
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
             "admission retains exact attempt evidence");
+        var admissionRouteBefore = new QueueCache.Management.CachePagingRoute(0, 0, 0, 0, 0, 0, 0);
+        var admissionRouteAfter = admissionRouteBefore with { WriteRequests = 1, WriteCompletions = 1 };
+        Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts,
+            admissionAttempts with { LowerWriteAttempts = 3 }, admissionRouteBefore, admissionRouteAfter)
+            .Contains("Exactly 1 successful routed paging write"),
+            "sector admission identifies the exact paging lower-write exception");
+        foreach (var invalidRoute in new[] { admissionRouteBefore,
+            admissionRouteAfter with { WriteCompletions = 0 }, admissionRouteAfter with { WriteFailures = 1 } })
+        {
+            try
+            {
+                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts,
+                    admissionAttempts with { LowerWriteAttempts = 3 }, admissionRouteBefore, invalidRoute);
+                throw new Exception("Unexplained sector lower write accepted.");
+            }
+            catch (IOException) { }
+        }
         foreach (var changed in new[] { admissionAttempts with { LowerReadAttempts = 2 }, admissionAttempts with { LowerWriteAttempts = 3 },
             admissionAttempts with { LowerFlushAttempts = 4 }, admissionAttempts with { LowerReadAttempts = 0 } })
         {
