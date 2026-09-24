@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 30, "post-restart paging-transition contract version");
+        Check(VerificationPlan.Version == 31, "isolated active-image path contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -145,13 +145,27 @@ internal static class VerificationRunnerTests
             new("system-active-image-fast", "system-active-image"),
             new("system-active-image-strict", "system-active-image")
         }), "active system-image covers normal Fast and Strict product paths");
-        var fastArtifacts = VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "system-active-image-fast");
-        var strictArtifacts = VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "system-active-image-strict");
+        var imageRoot = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
+        var imageTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
+        var fastArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-fast");
+        var strictArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-strict");
         Check(fastArtifacts.WorkDirectory != strictArtifacts.WorkDirectory &&
               fastArtifacts.OracleFile != strictArtifacts.OracleFile &&
               Path.GetFileName(fastArtifacts.OracleFile) == fastArtifacts.OracleFile &&
               Path.GetFileName(strictArtifacts.OracleFile) == strictArtifacts.OracleFile,
             "active Fast and Strict cases retain separate workload and oracle evidence");
+        QueueCache.Operations.SystemImageScenarios.ValidateOwnedPath(imageTarget,
+            fastArtifacts.WorkDirectory, Path.Combine(fastArtifacts.WorkDirectory, "large-image.bmp"));
+        QueueCache.Operations.SystemImageScenarios.ValidateOwnedPath(imageTarget,
+            strictArtifacts.WorkDirectory, Path.Combine(strictArtifacts.WorkDirectory, "large-image.bmp"));
+        try
+        {
+            var invalidDirectory = imageRoot + "-system-active-image-other";
+            QueueCache.Operations.SystemImageScenarios.ValidateOwnedPath(imageTarget,
+                invalidDirectory, Path.Combine(invalidDirectory, "large-image.bmp"));
+            throw new Exception("Unknown active-image directory suffix accepted.");
+        }
+        catch (IOException) { }
         Reject(() => VerificationRunner.SystemImageArtifacts("C:\\QueueCache-System-run", "../bad"));
         Reject(() => VerificationPlan.Validate(activeImage with { BudgetMiB = 1024 }));
         QueueCache.Management.WriteCacheState ActiveState(ulong accepted, uint flags = 1 | 256 | 512, ulong instance = 7, ulong errors = 0) =>

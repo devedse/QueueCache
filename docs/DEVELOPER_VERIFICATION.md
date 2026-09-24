@@ -16,7 +16,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 30)
+## Suites (plan version 31)
 
 | Suite | Scope |
 |---|---|
@@ -115,6 +115,8 @@ Apply and covers both Fast and Strict; the old action remains only as an ABI ali
 Plan 30 permits the oracle's paging-role flag to change across the deliberate
 pagefile/restart phase, while still requiring the same drive letter, physical disk
 number, byte size, PnP instance, boot role and system role.
+Plan 31 aligns the owned-path gate with Plan 28's isolated cases: only the exact
+`system-active-image-fast` and `system-active-image-strict` suffixes are accepted.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

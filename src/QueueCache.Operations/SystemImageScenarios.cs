@@ -26,7 +26,9 @@ public static class SystemImageScenarios
     {
         if (target.Letter != 'C' || !string.Equals(Path.GetDirectoryName(Path.GetFullPath(directory)), target.Root,
                 StringComparison.OrdinalIgnoreCase) ||
-            !Regex.IsMatch(Path.GetFileName(directory), "^QueueCache-System-[0-9a-f]{32}$", RegexOptions.CultureInvariant) ||
+            !Regex.IsMatch(Path.GetFileName(directory),
+                "^QueueCache-System-[0-9a-f]{32}(?:-system-active-image-(?:fast|strict))?$",
+                RegexOptions.CultureInvariant) ||
             !string.Equals(Path.GetFullPath(file), Path.Combine(Path.GetFullPath(directory), "large-image.bmp"),
                 StringComparison.OrdinalIgnoreCase))
             throw new IOException("System-image workload must use only its unique owned C: directory and large-image.bmp.");

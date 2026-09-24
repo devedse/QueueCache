@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 30. Corrected plan-14 `pressure`
+The executable verification contract is plan 31. Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
