@@ -83,9 +83,17 @@ public static class OrderingFaultScenarios
 
     private static string CreateOwned(string workDirectory, string name)
     {
+        // Write the whole file once so its valid data length covers every owned range. Otherwise NTFS
+        // zero-fills the gap before a later write with a paging write, and the paging fence then
+        // (correctly) drains the owned version early, defeating the arranged order.
         var path = Path.Combine(workDirectory, name);
-        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            file.SetLength(FileBytes);
+        var zeros = new byte[MiB];
+        using (var file = new AlignedFile(path, MiB, create: true))
+        {
+            for (var offset = 0; offset < FileBytes; offset += MiB)
+                file.Write(offset, zeros);
+            file.Flush();
+        }
         return path;
     }
 

@@ -376,7 +376,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     await Worker(Job("restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
-                        Reply = storage.PathFor("restored.json")
+                        Reply = storage.PathFor("restored.json"),
+                        AcceptsLabErrors = options.Suite == "ordering-faults"
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }

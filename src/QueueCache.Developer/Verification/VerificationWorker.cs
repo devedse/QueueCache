@@ -14,7 +14,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, bool RequireImageEvidence = false,
-    string[]? ImageOraclePaths = null);
+    string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -471,6 +471,23 @@ public static class VerificationWorker
                 device.Control(WriteCacheAction.LabDelay, value: 0);
                 if (device.GetDiagnostics().LabGate is not null)
                     device.Control(WriteCacheAction.LabGate, value: 0);
+                // Only ordering-faults deliberately raises the lifetime error count through the driver
+                // lab gate, and each of its stages recovers with Retry. Accept that count only when the
+                // cache is currently healthy, and record exactly what was accepted. Every other suite
+                // still treats any error-count change as a restoration failure.
+                if (job.AcceptsLabErrors)
+                {
+                    var current = device.GetWriteCacheState();
+                    if (current.LastError == 0 && current.Errors > original.State.Errors)
+                    {
+                        RunStorage.AtomicJson(job.Reply + ".accepted-lab-errors.json", new
+                        {
+                            OriginalErrors = original.State.Errors, CurrentErrors = current.Errors,
+                            Reason = "ordering-faults lab-gate failures, each recovered by Retry"
+                        });
+                        original = original with { State = original.State with { Errors = current.Errors } };
+                    }
+                }
                 FlushForRestoration(() =>
                 {
                     Stage("flushing filesystem volume before cache drain");
