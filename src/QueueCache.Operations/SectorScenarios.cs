@@ -26,13 +26,16 @@ internal static class SectorScenarios
         var completedWrites = routeBefore is not null && routeAfter is not null &&
             routeAfter.WriteCompletions >= routeBefore.WriteCompletions
             ? routeAfter.WriteCompletions - routeBefore.WriteCompletions : ulong.MaxValue;
+        var routeEvidence = routeBefore is null || routeAfter is null ? "Routed paging counters unavailable." :
+            $"Routed paging writes (requests/completions/failures) before=" +
+            $"{routeBefore.WriteRequests}/{routeBefore.WriteCompletions}/{routeBefore.WriteFailures}, " +
+            $"after={routeAfter.WriteRequests}/{routeAfter.WriteCompletions}/{routeAfter.WriteFailures}.";
         if (before.LowerReadAttempts != after.LowerReadAttempts ||
             before.LowerFlushAttempts != after.LowerFlushAttempts ||
             (lowerWrites != 0 && (lowerWrites != routedWrites || routedWrites != completedWrites)) ||
             (routeBefore is not null && routeAfter is not null &&
                 (routedWrites != lowerWrites || routedWrites != completedWrites)))
-            throw new IOException("Deferred admission issued unexplained lower I/O. " + evidence +
-                $" Routed paging writes={routedWrites}, completed={completedWrites}.");
+            throw new IOException("Deferred admission issued unexplained lower I/O. " + evidence + " " + routeEvidence);
         return evidence + (lowerWrites == 0 ? " No lower I/O." :
             $" Exactly {lowerWrites} successful routed paging write(s) coincided with the lower writes; " +
             "this process-wide counter match does not identify their file range or prove causation.");

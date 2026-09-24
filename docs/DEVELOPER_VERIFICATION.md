@@ -17,7 +17,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 35)
+## Suites (plan version 36)
+
+Plan 36 applies plan 35's routed-paging admission accounting to the separate
+first-write window in `foreground-background` too; plan 35 covered the six
+sector windows but missed this second caller. The failed plan-35 run remains
+incomplete and retains its raw counters. Failures now print the actual before/
+after routing values rather than an internal sentinel. The 60-second workload
+and its later drain/read/latency assertions are unchanged.
 
 Plan 35 keeps the sector-admission check strict about lower reads, flushes and
 actual cache drains. When lower writes occur during its process-wide measurement

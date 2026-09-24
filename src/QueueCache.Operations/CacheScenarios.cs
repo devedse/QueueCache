@@ -138,7 +138,8 @@ public static class CacheScenarios
             LowPercent: 40, HighPercent: 80, BatchKiB: 256, Parallelism: 1);
         ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast) { Options = options }, true);
         var before = device.GetWriteCacheState();
-        var attemptsBefore = device.GetDiagnostics().Attribution ??
+        var diagnosticsBefore = device.GetDiagnostics();
+        var attemptsBefore = diagnosticsBefore.Attribution ??
             throw new NotSupportedException("Sustained admission proof requires diagnostics V2.");
         var writeMilliseconds = new List<double>();
         var readMilliseconds = new List<double>();
@@ -165,8 +166,10 @@ public static class CacheScenarios
 
         // At a clean boundary, one fitting write and its cached read must not issue lower I/O.
         WriteAndRead();
-        var attemptsAfterAdmission = device.GetDiagnostics().Attribution;
-        var admissionEvidence = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, attemptsAfterAdmission);
+        var diagnosticsAfterAdmission = device.GetDiagnostics();
+        var attemptsAfterAdmission = diagnosticsAfterAdmission.Attribution;
+        var admissionEvidence = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, attemptsAfterAdmission,
+            diagnosticsBefore.PagingRoute, diagnosticsAfterAdmission.PagingRoute);
 
         var timer = Stopwatch.StartNew();
         var nextSample = TimeSpan.Zero;
