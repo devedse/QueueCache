@@ -5,6 +5,21 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
+Plan 38 source candidate, 2026-09-24 (not installed, no VM evidence yet):
+T082 moves every paging read that needs lower I/O (at most 1 MiB, 64 queued)
+off the sole request worker onto one per-disk paging-read thread that depends only
+on the cache mutex and lower completion. Offloaded reads overlay and unpin the
+exact versions they pinned. Writes wait only for overlapping offloaded reads;
+slot-retiring/state-changing requests wait for all of them and block new
+offloads. A paging-write fence now forces only its own overlap; unrelated dirty
+data keeps its own drain policy and normal batch size. T084 adds Diagnostics V8
+lower-attempt source attribution (generated, forwarded non-paging, forwarded
+paging) plus offload counters; admission checks fail on QueueCache-generated I/O,
+stay unproven on forwarded non-paging I/O and no longer use aggregate matching.
+Native Release/Debug builds and host contracts pass. Luna's uncommitted
+range-drain edit did not compile and could drain Deferred/Idle data early; both
+were corrected before commit. See the review's disposition section.
+
 Plan 37 source candidate, 2026-09-24: range-coherent paging-marked reads and
 targeted overlapping-write drain/fence in `writecache.cpp`; cooperative paging
 read service while blocked on lower I/O, capacity or a drain boundary; Diagnostics
@@ -184,7 +199,7 @@ This is a source-level defect finding, not proof of the historical BSOD cause.
 The implementation instructions and acceptance cases are in
 [handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081),
 completed through revision 5's T082-T086 and the review above.
-That sequence supersedes historical next-step instructions below. Plan 37 is the
+That sequence supersedes historical next-step instructions below. Plan 38 is the
 current source contract; installed VM driver 0.4.92.1 ran plan 34-37 tools. The Q: case
 is a focused pass, not the forced-ordering gate. A07-A09 remain PARTIAL.
 A01-A06 retain historical scoped passes, not certification of the changed bypass.
@@ -203,9 +218,9 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 
 | Task | Implementation | Verification / next concrete result |
 |---|---|---|
-| T082 / A07 | OPEN: top-level cold paging read suppresses service; nested lower wait is synchronous; range-drain scheduling excludes unrelated work before forwarding | Repair ownership/progress and unrelated eligible drain behavior, then force the dependency. Existing cooperative completions do not close it. |
+| T082 / A07 | SOURCE CANDIDATE (plan 38, not installed): top-level and service-lane paging reads needing lower I/O run on a per-disk paging-read thread with exact-version pins; writes wait only for overlapping offloads; destructive requests wait for all; the fence forces only its overlap and unrelated batches keep policy/size. Remaining synchronous fallback: reads over 1 MiB, a full 64-entry table, and service during destructive/control requests. | Native builds and host contracts only. Install the CI build, then force a paging read behind a capacity-blocked write and a slow lower read on Q: and observe V8 offload completions; check unrelated Deferred data stays dirty during a fence. |
 | T083 / A06a/A07-A08 | OPEN: selected/in-flight observation exists, actual lower-submission/completion gate and fault/cancel orders missing | Extend maintained Q: case at real request/range boundaries; retain plan-37 byte PASS as scoped. |
-| T084 / A08 | OPEN: equal aggregate paging/lower counts can currently make admission PASS without causal attribution | Attribute owned lower attempts, test cross-window interference; counters are per device across processes. |
+| T084 / A08 | SOURCE CANDIDATE (plan 38): driver records each lower attempt's issuing path (V8); byte PASS and zero-lower-I/O verdicts are separate checks; generated writes/flushes fail, forwarded non-paging I/O is SKIP (unproven, makes the run incomplete), forwarded paging I/O is attributed to other activity. Drain-trigger timing uses generated writes. Without V8 any lower attempt is SKIP. | Host contracts cover each source class and missing V8. Needs the CI driver: rerun `policies` and `pressure` and read each admission detail. Per-request identity is still not recorded; a non-paging request from another process yields SKIP, never PASS. |
 | T085 / A07/A11 | OPEN: all paging-marked writes bypass new RAM admission and misses are not retained | Characterize and implement supported ordinary buffered/mapped application caching after progress repair. |
 | T086 / A09 | PARTIAL: successful owner Paint/Photos observation recorded; no capture or missing post-drain/restart/pressure results | Restore capture readiness and complete those separate checks with exact file/environment evidence. |
 | T087 / docs | COMPLETE in planning revision 5 | Current docs reconciled; code/output verdict changes remain T084. |

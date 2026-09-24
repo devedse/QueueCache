@@ -147,7 +147,7 @@ static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, QcCompletion, ext, TRUE, TRUE, TRUE);
 #if QCACHE_CACHE_DRIVER
-    QcCacheRecordLowerAttempt(&ext->Cache, IoGetCurrentIrpStackLocation(irp)->MajorFunction);
+    QcCacheRecordLowerAttempt(&ext->Cache, IoGetCurrentIrpStackLocation(irp)->MajorFunction, irp);
 #endif
     return IoCallDriver(ext->Lower, irp);
 }
@@ -461,6 +461,17 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
                                   selection.AfterSequence);
         NTSTATUS status;
         const auto deviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
+        if (QcCacheOffloadPagingRead(&ext->Cache, read, deviceBytes))
+        {
+            // The independent paging thread owns and completes this read; this
+            // lane does not wait for its lower I/O. Do not touch it again.
+            if (diagnostics)
+                Increment(&ext->Cache.Performance.ServiceReadCompletions);
+            completed = true;
+            continue;
+        }
+        // Offload refused (full hit, active range, blocked request or full table):
+        // a hit completes here; otherwise the bounded synchronous lane remains.
         if (QcCacheTryReadHit(&ext->Cache, read, deviceBytes, &status) ||
             QcCacheTryPagingReadProgress(&ext->Cache, read, deviceBytes, &status))
         {
@@ -499,6 +510,15 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
     // stable fence, exhausted queue or known miss returns false (no busy retry).
     return completed || selection.More;
 }
+// Paging-thread callback for an offloaded original read. Its remove-lock
+// reference was taken in QcDispatch and is released exactly once here.
+static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
+{
+    auto ext = static_cast<QC_EXTENSION*>(context);
+    auto bytes = NT_SUCCESS(status) ? irp->IoStatus.Information : 0;
+    IoReleaseRemoveLock(&ext->RemoveLock, irp);
+    Complete(irp, status, bytes);
+}
 #endif
 static void RequestWorker(PVOID context)
 {
@@ -520,7 +540,17 @@ static void RequestWorker(PVOID context)
             // older direct I/O before any queued request changes cache state.
             KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
 #if QCACHE_CACHE_DRIVER
-            auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0));
+            bool transferred;
+            auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0),
+                                         &transferred);
+            if (transferred)
+            {
+                // The paging thread completes it and releases its remove lock.
+                KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
+                ext->ActiveSince = 0;
+                KeReleaseSpinLock(&ext->QueueLock, activeIrql);
+                continue;
+            }
             auto stack = IoGetCurrentIrpStackLocation(irp);
             if (NT_SUCCESS(status) && QcTrackedUsageNotification(stack))
                 UsageStateChanged(ext);
@@ -554,8 +584,9 @@ static void RequestWorker(PVOID context)
 #if QCACHE_CACHE_DRIVER
             QC_STATE state;
             QcCacheSnapshot(&ext->Cache, &state);
+            // Direct I/O must not overtake an offloaded paging read still in flight.
             if (!ext->PendingControls && !(state.Flags & (1UL | 4UL | 16UL)) && !state.DirtyBytes &&
-                NT_SUCCESS(state.LastError))
+                NT_SUCCESS(state.LastError) && !QcCachePagingReadsOutstanding(&ext->Cache))
                 ext->Routing = FALSE;
 #else
             ext->Routing = FALSE;
@@ -570,6 +601,7 @@ static void RequestWorker(PVOID context)
             KeWaitForSingleObject(&ext->WorkAvailable, Executive, KernelMode, FALSE, nullptr);
     }
 #if QCACHE_CACHE_DRIVER
+    QcCacheWaitPagingReads(&ext->Cache);
     QcCacheBarrier(&ext->Cache, TRUE, QcRemoveBarrier);
 #endif
     PsTerminateSystemThread(STATUS_SUCCESS);
@@ -829,6 +861,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV7Size ? QcDiagnosticsV7Size :
                 outputLength >= QcDiagnosticsV6Size ? QcDiagnosticsV6Size :
                 outputLength >= QcDiagnosticsV5Size ? QcDiagnosticsV5Size :
                 outputLength >= QcDiagnosticsV4Size ? QcDiagnosticsV4Size :
@@ -836,7 +869,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 outputLength >= QcDiagnosticsV2Size ? QcDiagnosticsV2Size : QcDiagnosticsV1Size;
             diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : returned == QcDiagnosticsV2Size ? 2 :
                 returned == QcDiagnosticsV3Size ? 3 : returned == QcDiagnosticsV4Size ? 4 :
-                returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 : 7;
+                returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 :
+                returned == QcDiagnosticsV7Size ? 7 : 8;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -990,7 +1024,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             IoCopyCurrentIrpStackLocationToNext(irp);
             IoSetCompletionRoutine(irp, DirectCompletion, ext, TRUE, TRUE, TRUE);
 #if QCACHE_CACHE_DRIVER
-            QcCacheRecordLowerAttempt(&ext->Cache, stack->MajorFunction);
+            QcCacheRecordLowerAttempt(&ext->Cache, stack->MajorFunction, irp);
 #endif
             return IoCallDriver(ext->Lower, irp);
         }
@@ -1079,6 +1113,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     KeInitializeEvent(&ext->WorkAvailable, NotificationEvent, FALSE);
 #if QCACHE_CACHE_DRIVER
     ext->Cache.ServiceReads = ServiceCachedReads;
+    ext->Cache.CompleteRequest = CompleteOffloadedRead;
     ext->Cache.ServiceContext = ext;
     ext->Cache.RequestAvailable = &ext->WorkAvailable;
 #endif

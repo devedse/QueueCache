@@ -63,6 +63,13 @@ struct QC_DIAGNOSTICS
     ULONGLONG PagingRoutedReadRequests, PagingRoutedReadCompletions, PagingRoutedReadFailures;
     ULONGLONG PagingRoutedWriteRequests, PagingRoutedWriteCompletions, PagingRoutedWriteFailures;
     ULONGLONG PagingOverlapWaits;
+    // V8: paging reads executed by the independent paging-read thread.
+    ULONGLONG PagingOffloadedReads, PagingOffloadCompletions, PagingOffloadFailures;
+    ULONGLONG PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
+    // V8: lower attempts by source. Generated = drainer writes; Forwarded = an
+    // original non-paging request; PagingForwarded = an original paging request.
+    ULONGLONG LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
+    ULONGLONG LowerPagingForwardedReads, LowerOtherReads;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -70,7 +77,9 @@ static constexpr ULONG QcDiagnosticsV3Size = 240;
 static constexpr ULONG QcDiagnosticsV4Size = 408;
 static constexpr ULONG QcDiagnosticsV5Size = 480;
 static constexpr ULONG QcDiagnosticsV6Size = 528;
-static_assert(sizeof(QC_DIAGNOSTICS) == 584);
+static constexpr ULONG QcDiagnosticsV7Size = 584;
+static_assert(sizeof(QC_DIAGNOSTICS) == 672);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOffloadedReads) == QcDiagnosticsV7Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingUsagePaths) == QcDiagnosticsV2Size);
@@ -146,6 +155,18 @@ struct QC_SLOT
     ULONGLONG DirtySince;
 };
 struct QC_CACHE;
+// A paging read that needs lower I/O is executed by one dedicated thread per
+// disk, never by the sole request worker. The table records ranges only: once
+// forwarded, the IRP's Tail/DriverContext belong to the lower stack.
+static constexpr ULONG QcPagingReadSlots = 64;
+static constexpr ULONG QcPagingPinBlocks = 256; // 1 MiB of 4 KiB cache blocks.
+struct QC_PAGING_READ
+{
+    PIRP Irp; // Null when free.
+    LONGLONG Start, End;
+    ULONGLONG Sequence;
+    BOOLEAN Started;
+};
 struct QC_DRAIN_WORKER
 {
     QC_CACHE* Cache;
@@ -208,6 +229,29 @@ struct QC_CACHE
     volatile LONG64 PagingRoutedReadRequests, PagingRoutedReadCompletions, PagingRoutedReadFailures;
     volatile LONG64 PagingRoutedWriteRequests, PagingRoutedWriteCompletions, PagingRoutedWriteFailures;
     volatile LONG64 PagingOverlapWaits;
+    volatile LONG64 PagingOffloadedReads, PagingOffloadCompletions, PagingOffloadFailures;
+    volatile LONG64 PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
+    volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
+    volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
+    // Offloaded paging reads. PagingLock protects the table, PagingQueued and
+    // PagingStop. Only the request worker inserts; only PagingThread executes.
+    // The worker never waits for the paging thread while holding Mutex, and the
+    // paging thread waits only for Mutex and lower completion, never the worker.
+    KSPIN_LOCK PagingLock;
+    QC_PAGING_READ PagingReads[QcPagingReadSlots];
+    ULONG PagingQueued;
+    ULONGLONG PagingSequence;
+    BOOLEAN PagingStop;
+    KEVENT PagingWork, PagingDone;
+    HANDLE PagingThread;
+    ULONG PagingPins[QcPagingPinBlocks]; // Paging thread only.
+    // Mutex. Set by the request worker: OffloadBlocked around requests that may
+    // retire pinned slots or change power/media state; ActiveWrite while a write
+    // (including its barrier/fence waits) owns [ActiveWriteStart, ActiveWriteEnd).
+    BOOLEAN OffloadBlocked, ActiveWrite;
+    LONGLONG ActiveWriteStart, ActiveWriteEnd;
+    // Completes an offloaded original IRP and releases its remove lock.
+    void (*CompleteRequest)(PVOID, PIRP, NTSTATUS);
     ULONG DelayMs, InjectFault;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
@@ -223,7 +267,7 @@ void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
-void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major);
+void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major, PIRP original = nullptr);
 void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath);
 void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
                                ULONGLONG processId);
@@ -234,6 +278,11 @@ LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
-NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
+// Request worker only. True: the paging thread now owns and will complete irp.
+bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
+bool QcCachePagingReadsOutstanding(QC_CACHE* cache);
+void QcCacheWaitPagingReads(QC_CACHE* cache);
+// *transferred: the paging thread owns irp; the caller must not complete it.
+NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, bool* transferred);
 NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable, QC_BARRIER_REASON reason,
                        PIRP request = nullptr, ULONG code = 0);

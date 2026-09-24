@@ -5,7 +5,7 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The source verification contract is plan 37. Loaded 0.4.92.1 VM evidence includes
+The source verification contract is plan 38 (T082 paging-read offload and T084 V8 source attribution: source/host-tested only, not installed). Loaded 0.4.92.1 VM evidence includes
 plan-34 Q: focused/quick and guarded 349 MiB active-C: Fast/Strict passes. Plan-35
 policy was incomplete; CI-built plan-37 policy and observed-overlap checks
 passed with clean restoration. See the tracker for exact IDs and limits.
@@ -54,8 +54,8 @@ The [2026-09-24 implementation review](IMPLEMENTATION_REVIEW_20260924.md)
 contains source evidence, severity, detailed implementation constraints and
 completion criteria. This sequence supersedes revision 4's pending-state text,
 while retaining its required correctness behavior and original task IDs.
-Planning revision is 5; executable verification contract remains plan 37 until
-runtime behavior/measurement changes are implemented.
+Planning revision is 5; the executable verification contract is plan 38, which
+implements the T084 verdict change (and records T082 offload diagnostics).
 
 | Task / owner | Deliverable | Completion rule |
 |---|---|---|

@@ -17,6 +17,15 @@ public sealed record CachePagingProgress(ulong MapFailures, ulong CapacityWaits,
     ulong ReservedBytes, ulong MaxReadLength, ulong MaxWriteLength);
 public sealed record CachePagingRoute(ulong ReadRequests, ulong ReadCompletions, ulong ReadFailures,
     ulong WriteRequests, ulong WriteCompletions, ulong WriteFailures, ulong OverlapWaits);
+/// <summary>V8: paging reads executed by the per-disk paging-read thread instead of the request worker.
+/// WriteWaits/IdleWaits count requests that waited for overlapping/all offloaded reads.</summary>
+public sealed record CachePagingOffload(ulong OffloadedReads, ulong Completions, ulong Failures,
+    ulong WriteWaits, ulong IdleWaits, ulong MaxQueued);
+/// <summary>V8: lower attempts attributed at their issuing path. Generated writes are QueueCache drains;
+/// Forwarded writes are original non-paging requests; PagingForwarded are original paging requests.
+/// Lower flushes are always QueueCache barriers or forwarded original flushes (see attribution totals).</summary>
+public sealed record CacheLowerSources(ulong GeneratedWrites, ulong ForwardedWrites, ulong PagingForwardedWrites,
+    ulong PagingForwardedReads, ulong OtherReads);
 
 /// <summary>Lifetime request counters; deferred flushes are not durable flush completions.</summary>
 public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFlushes, ulong WriteThroughWrites,
@@ -30,12 +39,15 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int PagingIoWireSize = 480;
     public const int PagingProgressWireSize = 528;
     public const int PagingRouteWireSize = 584;
+    public const int PagingOffloadWireSize = 672;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
     public CachePagingIo? PagingIo { get; init; }
     public CachePagingProgress? PagingProgress { get; init; }
     public CachePagingRoute? PagingRoute { get; init; }
+    public CachePagingOffload? PagingOffload { get; init; }
+    public CacheLowerSources? LowerSources { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -47,6 +59,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingIoWireSize => 5u,
             PagingProgressWireSize => 6u,
             PagingRouteWireSize => 7u,
+            PagingOffloadWireSize => 8u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -112,6 +125,22 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 throw new InvalidDataException("Inconsistent routed paging completion counters.");
             pagingRoute = new(route[0], route[1], route[2], route[3], route[4], route[5], route[6]);
         }
+        CachePagingOffload? pagingOffload = null;
+        CacheLowerSources? lowerSources = null;
+        if (bytes.Length >= PagingOffloadWireSize)
+        {
+            var offload = new ulong[11];
+            for (var index = 0; index < offload.Length; index++)
+                offload[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingRouteWireSize + index * 8)..]);
+            if (offload[1] + offload[2] > offload[0] || offload[5] > 64)
+                throw new InvalidDataException("Inconsistent offloaded paging-read counters.");
+            // The driver reads source counters before totals and increments totals first.
+            if (offload[6] + offload[7] + offload[8] > attribution!.LowerWriteAttempts ||
+                offload[9] + offload[10] > attribution.LowerReadAttempts)
+                throw new InvalidDataException("Attributed lower attempts exceed total lower attempts.");
+            pagingOffload = new(offload[0], offload[1], offload[2], offload[3], offload[4], offload[5]);
+            lowerSources = new(offload[6], offload[7], offload[8], offload[9], offload[10]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -119,7 +148,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             UsageActivity = usageActivity,
             PagingIo = pagingIo,
             PagingProgress = pagingProgress,
-            PagingRoute = pagingRoute
+            PagingRoute = pagingRoute,
+            PagingOffload = pagingOffload,
+            LowerSources = lowerSources
         };
     }
 }

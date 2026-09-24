@@ -86,13 +86,13 @@ public static class PressureScenarios
         var expected = Pattern(seed, 0);
         var actual = new byte[TransferBytes];
         var before = device.GetWriteCacheState();
-        var attemptsBefore = RequiredAttribution(device, label);
+        var attemptsBefore = RequiredDiagnostics(device, label);
         var timer = Stopwatch.StartNew();
         file.Write(0, expected);
         file.Read(0, actual);
         if (!expected.AsSpan().SequenceEqual(actual))
             throw new IOException(label + ": immediate cached bytes did not match");
-        var admission = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, RequiredAttribution(device, label));
+        var admission = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, RequiredDiagnostics(device, label));
 
         for (var revision = 0; revision < overwriteAtMilliseconds.Length; ++revision)
         {
@@ -102,12 +102,12 @@ public static class PressureScenarios
         }
         WaitUntil(timer, noEarlierThan, token);
         var early = device.GetWriteCacheState();
-        var attemptsAtBoundary = RequiredAttribution(device, label);
-        if (attemptsAtBoundary.LowerWriteAttempts != attemptsBefore.LowerWriteAttempts ||
+        var attemptsAtBoundary = RequiredDiagnostics(device, label);
+        if (SectorScenarios.DrainWriteAttempts(attemptsAtBoundary) != SectorScenarios.DrainWriteAttempts(attemptsBefore) ||
             early.DrainedBytes != before.DrainedBytes || early.DirtyBytes == 0)
             throw new IOException(label + ": background drain started before the configured trigger window");
 
-        var attempt = WaitForWriteAttempt(device, attemptsBefore.LowerWriteAttempts,
+        var attempt = WaitForWriteAttempt(device, SectorScenarios.DrainWriteAttempts(attemptsBefore),
             noLaterThan - timer.Elapsed, token, label + " did not issue lower I/O in its trigger window");
         var triggerMilliseconds = timer.Elapsed.TotalMilliseconds;
         ValidateTriggerWindow(triggerMilliseconds, noEarlierThan.TotalMilliseconds, noLaterThan.TotalMilliseconds);
@@ -122,9 +122,10 @@ public static class PressureScenarios
             throw new IOException(label + ": final disk bytes/state mismatch");
         results.Add(new(label, "PASS",
             $"No lower write attempt before {noEarlierThan.TotalMilliseconds:F0} ms; first attempt at " +
-            $"{triggerMilliseconds:F1} ms (attempt delta {attempt.LowerWriteAttempts - attemptsBefore.LowerWriteAttempts}); " +
+            $"{triggerMilliseconds:F1} ms (drain-write attempt delta {SectorScenarios.DrainWriteAttempts(attempt) - SectorScenarios.DrainWriteAttempts(attemptsBefore)}); " +
             $"completion observed with dirty/in-flight {triggered.DirtyBytes}/{triggered.InFlightBytes}. " +
-            admission + " Persisted bytes verified after Disable."));
+            "Persisted bytes verified after Disable."));
+        results.Add(SectorScenarios.AdmissionCheck(label + "/first-write-zero-lower-io", admission));
     }
 
     private static void RunWatermarkTrigger(DiskTarget target, CacheDevice device, string directory,
@@ -145,9 +146,9 @@ public static class PressureScenarios
         if (length > 20 << 20)
             throw new IOException(label + ": bounded workload is too small for the configured high watermark");
         using var file = new AlignedFile(path, TransferBytes, create: false);
-        var attemptsBefore = RequiredAttribution(device, label);
+        var attemptsBefore = RequiredDiagnostics(device, label);
         var actual = new byte[TransferBytes];
-        string? admission = null;
+        SectorScenarios.AdmissionEvidence? admission = null;
         for (var block = 0; block < belowBlocks; ++block)
         {
             token.ThrowIfCancellationRequested();
@@ -159,17 +160,17 @@ public static class PressureScenarios
                 file.Read(0, actual);
                 if (!expected.AsSpan().SequenceEqual(actual))
                     throw new IOException(label + ": immediate cached bytes did not match");
-                admission = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, RequiredAttribution(device, label));
+                admission = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, RequiredDiagnostics(device, label));
             }
         }
         var below = device.GetWriteCacheState();
-        var attemptsBelow = RequiredAttribution(device, label);
+        var attemptsBelow = RequiredDiagnostics(device, label);
         if (below.DirtyBytes >= highBytes || below.DrainedBytes != before.DrainedBytes ||
-            attemptsBelow.LowerWriteAttempts != attemptsBefore.LowerWriteAttempts)
+            SectorScenarios.DrainWriteAttempts(attemptsBelow) != SectorScenarios.DrainWriteAttempts(attemptsBefore))
             throw new IOException(label + ": lower I/O started below the configured high watermark");
 
         file.Write(belowBlocks * TransferBytes, Pattern(9200, belowBlocks));
-        var attempt = WaitForWriteAttempt(device, attemptsBefore.LowerWriteAttempts, TimeSpan.FromSeconds(2), token,
+        var attempt = WaitForWriteAttempt(device, SectorScenarios.DrainWriteAttempts(attemptsBefore), TimeSpan.FromSeconds(2), token,
             label + " did not issue lower I/O after crossing the high watermark");
         var triggered = WaitForState(device, state => state.DrainedBytes > before.DrainedBytes,
             TimeSpan.FromSeconds(3), token, label + " issued lower I/O but did not complete draining");
@@ -181,9 +182,11 @@ public static class PressureScenarios
             throw new IOException(label + ": final state mismatch");
         results.Add(new(label, "PASS",
             $"No lower write attempt at {below.DirtyBytes} bytes below the {highBytes}-byte high watermark; " +
-            $"crossing it produced attempt delta {attempt.LowerWriteAttempts - attemptsBefore.LowerWriteAttempts} and " +
-            $"drained delta {triggered.DrainedBytes - before.DrainedBytes}. " + admission +
-            " Persisted bytes verified after Disable."));
+            $"crossing it produced drain-write attempt delta {SectorScenarios.DrainWriteAttempts(attempt) - SectorScenarios.DrainWriteAttempts(attemptsBefore)} and " +
+            $"drained delta {triggered.DrainedBytes - before.DrainedBytes}. " +
+            "Persisted bytes verified after Disable."));
+        if (admission is not null)
+            results.Add(SectorScenarios.AdmissionCheck(label + "/first-write-zero-lower-io", admission));
     }
 
     private static void RunCapacityCase(DiskTarget target, CacheDevice device, string directory,
@@ -198,10 +201,10 @@ public static class PressureScenarios
         device.Control(WriteCacheAction.LabDelay, value: 25);
         using var file = new AlignedFile(path, TransferBytes, create: false);
         var before = device.GetWriteCacheState();
-        var diagnosticsBefore = RequiredAttribution(device, label);
+        var diagnosticsBefore = RequiredDiagnostics(device, label);
         var actual = new byte[TransferBytes];
         ulong peakDirty = 0, peakWriteOwned = 0, peakOccupiedSlots = 0, peakInFlight = 0;
-        string? admission = null;
+        SectorScenarios.AdmissionEvidence? admission = null;
         for (var offset = 0; offset < length; offset += TransferBytes)
         {
             token.ThrowIfCancellationRequested();
@@ -213,7 +216,7 @@ public static class PressureScenarios
                 if (!expected.AsSpan().SequenceEqual(actual))
                     throw new IOException(label + ": immediate bytes did not match");
                 if (options.WritePercent != 0 || options.Allocation == CacheAllocation.Automatic)
-                    admission = SectorScenarios.VerifyAdmissionAttempts(diagnosticsBefore, RequiredAttribution(device, label));
+                    admission = SectorScenarios.VerifyAdmissionAttempts(diagnosticsBefore, RequiredDiagnostics(device, label));
             }
             var sample = device.GetWriteCacheState();
             peakDirty = Math.Max(peakDirty, sample.DirtyBytes);
@@ -222,12 +225,12 @@ public static class PressureScenarios
             peakInFlight = Math.Max(peakInFlight, sample.InFlightBytes);
         }
         var after = device.GetWriteCacheState();
-        var diagnosticsAfter = RequiredAttribution(device, label);
+        var diagnosticsAfter = RequiredDiagnostics(device, label);
         var cached = options.Allocation == CacheAllocation.Automatic || options.WritePercent > 0;
         if (cached && after.ThrottleWaits <= before.ThrottleWaits)
             throw new IOException(label + ": writes beyond the pool never observed capacity backpressure");
         if (!cached && (after.ThrottleWaits != before.ThrottleWaits ||
-            diagnosticsAfter.QuotaWriteBarriers <= diagnosticsBefore.QuotaWriteBarriers))
+            diagnosticsAfter.Attribution!.QuotaWriteBarriers <= diagnosticsBefore.Attribution!.QuotaWriteBarriers))
             throw new IOException(label + ": Fixed 0% did not use its explicit quota fallback");
         var writeLimit = options.Allocation == CacheAllocation.Automatic ? before.PayloadCapacity :
             before.PayloadCapacity * (ulong)options.WritePercent / 100;
@@ -246,13 +249,15 @@ public static class PressureScenarios
             $"Wrote and verified {length} bytes with payload/write limit {before.PayloadCapacity}/{writeLimit}; " +
             $"capacity-wait delta {after.ThrottleWaits - before.ThrottleWaits}; peak dirty/in-flight/write-owned/occupied slots " +
             $"{peakDirty}/{peakInFlight}/{peakWriteOwned}/{peakOccupiedSlots}; " +
-            $"lower-write-attempt delta {diagnosticsAfter.LowerWriteAttempts - diagnosticsBefore.LowerWriteAttempts}; " +
-            $"quota-barrier delta {diagnosticsAfter.QuotaWriteBarriers - diagnosticsBefore.QuotaWriteBarriers}. " +
-            (admission ?? "Fixed 0% intentionally uses ordered lower I/O.") + " Persisted bytes verified after Disable."));
+            $"lower-write-attempt delta {diagnosticsAfter.Attribution!.LowerWriteAttempts - diagnosticsBefore.Attribution!.LowerWriteAttempts}; " +
+            $"quota-barrier delta {diagnosticsAfter.Attribution!.QuotaWriteBarriers - diagnosticsBefore.Attribution!.QuotaWriteBarriers}. " +
+            "Persisted bytes verified after Disable."));
+        if (admission is not null)
+            results.Add(SectorScenarios.AdmissionCheck(label + "/first-fitting-write-zero-lower-io", admission));
     }
 
-    private static CacheAttribution RequiredAttribution(CacheDevice device, string label) =>
-        device.GetDiagnostics().Attribution ??
+    private static CacheDiagnostics RequiredDiagnostics(CacheDevice device, string label) =>
+        device.GetDiagnostics() is { Attribution: not null } diagnostics ? diagnostics :
         throw new NotSupportedException(label + " requires diagnostics V2 lower-I/O attempt counters.");
 
     internal static void ValidateTriggerWindow(double observedMilliseconds, double noEarlierMilliseconds,
@@ -319,7 +324,7 @@ public static class PressureScenarios
         throw new TimeoutException(failure);
     }
 
-    private static CacheAttribution WaitForWriteAttempt(CacheDevice device, ulong attemptsBefore,
+    private static CacheDiagnostics WaitForWriteAttempt(CacheDevice device, ulong attemptsBefore,
         TimeSpan timeout, CancellationToken token, string failure)
     {
         if (timeout <= TimeSpan.Zero)
@@ -328,8 +333,8 @@ public static class PressureScenarios
         while (timer.Elapsed < timeout)
         {
             token.ThrowIfCancellationRequested();
-            var attempts = RequiredAttribution(device, failure);
-            if (attempts.LowerWriteAttempts > attemptsBefore)
+            var attempts = RequiredDiagnostics(device, failure);
+            if (SectorScenarios.DrainWriteAttempts(attempts) > attemptsBefore)
                 return attempts;
             Thread.Sleep(20);
         }

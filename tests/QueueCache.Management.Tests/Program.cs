@@ -252,6 +252,33 @@ for (var index = 0; index < pagingRouteValues.Length; index++)
 var pagingRoute = CacheDiagnostics.Decode(pagingRouteBytes);
 Check(pagingRoute.PagingProgress == pagingProgress.PagingProgress && pagingRoute.PagingRoute ==
     new CachePagingRoute(11, 10, 1, 22, 21, 1, 3), "V7 routed paging offsets and V6 prefix");
+Check(pagingRoute.PagingOffload is null, "V7 offloaded paging reads are unavailable, not zero");
+var pagingOffloadBytes = new byte[CacheDiagnostics.PagingOffloadWireSize];
+pagingRouteBytes.CopyTo(pagingOffloadBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingOffloadBytes, 8);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingOffloadBytes.AsSpan(4), CacheDiagnostics.PagingOffloadWireSize);
+// V2 prefix above: lower read/write attempts are 11/12.
+ulong[] pagingOffloadValues = [9, 7, 2, 4, 5, 3, 5, 3, 2, 6, 4];
+for (var index = 0; index < pagingOffloadValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + index * 8),
+        pagingOffloadValues[index]);
+var pagingOffload = CacheDiagnostics.Decode(pagingOffloadBytes);
+Check(pagingOffload.PagingRoute == pagingRoute.PagingRoute &&
+    pagingOffload.PagingOffload == new CachePagingOffload(9, 7, 2, 4, 5, 3) &&
+    pagingOffload.LowerSources == new CacheLowerSources(5, 3, 2, 6, 4), "V8 offload/source offsets and V7 prefix");
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 48), 8);
+Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes), "attributed lower writes exceed total writes");
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 48), 5);
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 80), 6);
+Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes), "attributed lower reads exceed total reads");
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 80), 4);
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 8), 8);
+Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes), "offloaded outcomes exceed offloaded reads");
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 8), 7);
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 40), 65);
+Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes), "offload queue exceeds driver table");
+Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes.AsSpan(0, CacheDiagnostics.PagingOffloadWireSize - 1)),
+    "short offloaded paging diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingProgressBytes.AsSpan(0, 527)), "short paging progress diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");

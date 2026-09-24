@@ -168,8 +168,7 @@ public static class CacheScenarios
         WriteAndRead();
         var diagnosticsAfterAdmission = device.GetDiagnostics();
         var attemptsAfterAdmission = diagnosticsAfterAdmission.Attribution;
-        var admissionEvidence = SectorScenarios.VerifyAdmissionAttempts(attemptsBefore, attemptsAfterAdmission,
-            diagnosticsBefore.PagingRoute, diagnosticsAfterAdmission.PagingRoute);
+        var admissionEvidence = SectorScenarios.VerifyAdmissionAttempts(diagnosticsBefore, diagnosticsAfterAdmission);
 
         var timer = Stopwatch.StartNew();
         var nextSample = TimeSpan.Zero;
@@ -219,6 +218,7 @@ public static class CacheScenarios
             $"{after.AcceptedBytes - before.AcceptedBytes}/{after.DrainedBytes - before.DrainedBytes} bytes; read-hit delta " +
             $"{after.ReadHitBytes - before.ReadHitBytes} bytes; capacity-wait delta {after.ThrottleWaits - before.ThrottleWaits}; " +
             $"peak dirty {peakDirty}/{before.PayloadCapacity} bytes; lower-write attempts delta " +
-            $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}. {admissionEvidence} Persisted bytes verified after Disable."));
+            $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}. Persisted bytes verified after Disable."));
+        results.Add(SectorScenarios.AdmissionCheck(label + "/first-fitting-write-zero-lower-io", admissionEvidence));
     }
 }

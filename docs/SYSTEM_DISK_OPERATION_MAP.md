@@ -31,7 +31,7 @@ race cannot explain an older build's incident.
 | Ordinary read/write, cache inactive | `QcDispatch` forwards directly and holds the remove lock through lower completion. Diagnostics V5 observes `IRP_PAGING_IO` reads/writes before this routing choice. | Plan 25 passed the disabled 349 MiB workload byte-for-byte on exact 0.4.80.1 while measuring bidirectional paging. | Preserve this pass-through behavior in A13 compatibility qualification. |
 | Ordinary read/write, cache active | `QcDispatch` queues to the cancel-safe foreground worker; `QcCacheProcess` calls `Read`/`Write`. Fitting Fast writes complete from preallocated RAM. Paging data bypasses admission, so ordinary fitting writes can use the full configured write quota. | Exact 0.4.87.1 Plan-31 Fast/Strict passed complete 349 MiB byte checks and clean release. | Remaining A09 memory-pressure/application workflow and T052/T053. |
 | Paging, hibernation or dump path registration | Registration is reserved and ordered against Enable. Normal Enable accepts existing counts. A new in-path request takes one drain/lower-flush boundary and invalidates clean raw blocks, but keeps routing enabled. Failed/cancelled registration rolls its count back. | Revised after the exact 0.4.83.1 configured-pagefile failure. Query-stop/remove remains correctly rejected while Windows owns a special-file path. | Exact installed registration race/state and pagefile restart evidence. Hibernation/Fast Startup are unavailable on this VM. |
-| Paging-marked read/write data | `Read` overlays resident sectors without new paging retention. Cold paging reads call `OriginalIo(...false)`. `Write` drains overlapping versions, invalidates clean entries and fences the direct write. Before forwarding the drainer excludes unrelated ranges; during forwarding it allows them but forces single-block batches. Some waits synchronously service a queued page-in; its own lower wait cannot service another. | Installed 0.4.92.1 has focused Q:/C: byte evidence. V7 counters aggregate all processes on the device. Selected-before-submission overlap evidence is limited; R1-R5 identify remaining gaps. | T082 progress/scheduling, T083 real submission/failure orders, T084 attribution, T085 application admission. |
+| Paging-marked read/write data | Plan-38 source (see ownership below): a paging read that is not a full RAM hit and needs at most 1 MiB is recorded in a 64-entry range table and executed by the per-disk paging-read thread; the request worker continues immediately. That thread overlays resident sectors from the exact versions it pinned, never retains paging data, never runs the read service and completes the IRP. `Write` waits only for overlapping offloaded reads, drains overlapping versions, invalidates clean entries and fences the direct write. The fence forces only its overlap; unrelated dirty data drains under its own policy with normal batching, never mixed into a fenced batch. | Installed 0.4.92.1 has focused Q:/C: byte evidence for the plan-37 driver. Plan-38 offload is built and host-tested only. V7/V8 counters aggregate all processes on the device. | Install plan 38; force a paging read behind capacity/lower waits (T082), T083 real submission/failure orders, T085 application admission. |
 | Queued cancellation | `IO_CSQ` owns queued requests; cancellation releases the request remove lock. A dequeued capacity-waiting request also checks `irp->Cancel`. | Implementation exists; raw disposable-disk cancellation evidence is not in the supported runner. | T053 chooses reachable paging/teardown cases and adds maintained proof. |
 | Application/OS flush | Strict calls `QcCacheBarrier` and a lower flush. Explicit administrative flush always does so. Fast may acknowledge an application flush in RAM but never hides an existing cache error. | Secondary-disk Strict/Fast and lower-flush recovery evidence exists. | T052 forces queued-later-write cutoff ordering; A09 normal restart proof. |
 | Shutdown | Last-chance shutdown notification is registered. `IRP_MJ_SHUTDOWN` is queued, drains and disables through `QcShutdownBarrier`, lower-flushes, then forwards the original shutdown request. Failure is returned. | 0.4.87.1 saved-profile reboot smoke passed; its oracle was created while inactive, not pending cached-write proof. | T081 active-write normal restart and independent bytes; T054 recovery remains open. |
@@ -41,6 +41,45 @@ race cannot explain an older build's incident.
 | Storage controls and TRIM | Read-only observation controls bypass the worker without draining. Other controls are ordered; media-changing/unknown controls drain then invalidate clean data. METHOD_NEITHER and raw controller pass-through are rejected from the system worker because caller pointers/context cannot be preserved there. | Conservative ordering; file-level TRIM is unsupported on the current VM. | T056 supported-control/TRIM scope. |
 | Direct/buffered data | The filter copies the lower device's direct/buffered flags. Cache buffers are nonpaged; data mapping uses the request MDL when present. All dispatch/cache code is nonpageable. | Necessary foundation, not memory-pressure qualification. | T053 allocation/pin/progress and A09 bounded memory-pressure exercise. |
 | Saved-profile startup | Installer task runs `qcache policy restore` as SYSTEM after a 30-second startup delay. Restore validates schema, volume, PnP identity, disk size, policy and volatile-flush acknowledgement, then uses the same unrestricted public Apply path. | Exact 0.4.87.1 task completed successfully with fixed 4 GiB C: pagefile, dump registration and a passing post-restart oracle. | Broader startup failure, power and servicing matrix remains. |
+
+## Paging-read ownership and wait order (plan 38, T082)
+
+Threads per disk: one request worker (sole foreground owner of admission,
+controls and fences), up to four drainers, and one paging-read thread.
+
+- Ownership: after CSQ removal the worker either completes a request or, for an
+  offloaded paging read, transfers it by inserting a range record under
+  `PagingLock`. From then on only the paging thread touches the IRP. It keeps its
+  remove-lock reference until `CompleteRequest` releases it and completes the IRP
+  exactly once. The record stores the range separately because a forwarded IRP's
+  `Tail.Overlay` and `DriverContext` belong to the lower stack. Offloaded reads are
+  not cancellable while queued; `Read` still rejects `irp->Cancel` at start.
+- Buffer lifetime: the paging thread pins every resident version in its range
+  under `Mutex` and records the index. It copies from, and unpins, only those
+  versions. A newer version or a clean read-fill added meanwhile is never
+  unpinned by mistake or used for this read.
+- Who may retire pinned slots: `FreeSlots` (Release/Configure/destroy) and
+  `InvalidateCleanRange` do not check pins. They run only inside requests that
+  set `OffloadBlocked` and first wait for all offloaded reads, or inside a write
+  whose range excludes new offloads (`ActiveWrite`) and whose overlapping
+  offloads finished before it started.
+- Lock order: `QueueLock` may be held while briefly taking `PagingLock`
+  (routing-idle check). `PagingLock` never takes another lock. `Mutex` is never
+  held while waiting for the paging thread, and the paging thread never holds
+  `PagingLock` while taking `Mutex`.
+- Wait graph: worker to paging thread (a write waiting for overlapping reads, or a
+  destructive request waiting for all reads); paging thread to `Mutex` (bounded
+  critical sections, never held across waits) and to lower completion. The
+  paging thread never waits for the worker, a drainer or `WorkAvailable`, so no
+  cycle exists. A write waiting for overlaps may still service or offload other
+  reads, which exclude its range, so the awaited set only shrinks. Full waits do
+  not service, so new offloads cannot extend them.
+- Routing: the worker keeps queued routing while any offloaded read is
+  outstanding, so direct pass-through cannot overtake one. Final removal waits
+  remove locks (all offloaded IRPs), then the worker, then stops the thread.
+- Remaining synchronous paths: paging reads over 1 MiB, a full table, and the
+  bounded service lane during an `OffloadBlocked` request. They are counted in
+  V7 routed and V8 offload diagnostics, not hidden.
 
 ## Activation migration decision
 

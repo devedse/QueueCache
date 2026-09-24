@@ -9,37 +9,66 @@ namespace QueueCache.Operations;
 [SupportedOSPlatform("windows")]
 internal static class SectorScenarios
 {
-    internal static string VerifyAdmissionAttempts(CacheAttribution? before, CacheAttribution? after,
-        CachePagingRoute? routeBefore = null, CachePagingRoute? routeAfter = null)
+    internal sealed record AdmissionEvidence(string Status, string Detail);
+
+    /// <summary>
+    /// Verifies that the owned supported write reached no lower I/O path. Owned verifier I/O is unbuffered
+    /// (non-paging). With V8 source attribution, QueueCache-generated writes/flushes are a failure,
+    /// forwarded non-paging requests leave the assertion unproven (they could be the owned request), and
+    /// forwarded paging-marked requests are other activity: the owned request cannot take that path.
+    /// Without V8, any lower attempt leaves it unproven; aggregate count matching is never attribution.
+    /// </summary>
+    internal static AdmissionEvidence VerifyAdmissionAttempts(CacheDiagnostics? before, CacheDiagnostics? after)
     {
-        if (before is null || after is null)
+        var first = before?.Attribution;
+        var last = after?.Attribution;
+        if (first is null || last is null)
             throw new NotSupportedException("Admission proof requires diagnostics V2 lower-I/O attempt counters.");
-        var evidence = $"Lower attempts read/write/flush before={before.LowerReadAttempts}/{before.LowerWriteAttempts}/{before.LowerFlushAttempts}, " +
-            $"after={after.LowerReadAttempts}/{after.LowerWriteAttempts}/{after.LowerFlushAttempts}.";
-        var lowerWrites = after.LowerWriteAttempts >= before.LowerWriteAttempts
-            ? after.LowerWriteAttempts - before.LowerWriteAttempts : ulong.MaxValue;
-        var routedWrites = routeBefore is not null && routeAfter is not null &&
-            routeAfter.WriteRequests >= routeBefore.WriteRequests &&
-            routeAfter.WriteCompletions >= routeBefore.WriteCompletions &&
-            routeAfter.WriteFailures == routeBefore.WriteFailures
-            ? routeAfter.WriteRequests - routeBefore.WriteRequests : ulong.MaxValue;
-        var completedWrites = routeBefore is not null && routeAfter is not null &&
-            routeAfter.WriteCompletions >= routeBefore.WriteCompletions
-            ? routeAfter.WriteCompletions - routeBefore.WriteCompletions : ulong.MaxValue;
-        var routeEvidence = routeBefore is null || routeAfter is null ? "Routed paging counters unavailable." :
-            $"Routed paging writes (requests/completions/failures) before=" +
-            $"{routeBefore.WriteRequests}/{routeBefore.WriteCompletions}/{routeBefore.WriteFailures}, " +
-            $"after={routeAfter.WriteRequests}/{routeAfter.WriteCompletions}/{routeAfter.WriteFailures}.";
-        if (before.LowerReadAttempts != after.LowerReadAttempts ||
-            before.LowerFlushAttempts != after.LowerFlushAttempts ||
-            (lowerWrites != 0 && (lowerWrites != routedWrites || routedWrites != completedWrites)) ||
-            (routeBefore is not null && routeAfter is not null &&
-                (routedWrites != lowerWrites || routedWrites != completedWrites)))
-            throw new IOException("Deferred admission issued unexplained lower I/O. " + evidence + " " + routeEvidence);
-        return evidence + (lowerWrites == 0 ? " No lower I/O." :
-            $" Exactly {lowerWrites} successful routed paging write(s) coincided with the lower writes; " +
-            "this process-wide counter match does not identify their file range or prove causation.");
+        var evidence = $"Lower attempts read/write/flush before={first.LowerReadAttempts}/{first.LowerWriteAttempts}/{first.LowerFlushAttempts}, " +
+            $"after={last.LowerReadAttempts}/{last.LowerWriteAttempts}/{last.LowerFlushAttempts}.";
+        if (last.LowerReadAttempts < first.LowerReadAttempts ||
+            last.LowerWriteAttempts < first.LowerWriteAttempts ||
+            last.LowerFlushAttempts < first.LowerFlushAttempts)
+            throw new IOException("Lower-I/O attempt counters regressed. " + evidence);
+        var lowerReads = last.LowerReadAttempts - first.LowerReadAttempts;
+        var lowerWrites = last.LowerWriteAttempts - first.LowerWriteAttempts;
+        var lowerFlushes = last.LowerFlushAttempts - first.LowerFlushAttempts;
+        if (lowerReads == 0 && lowerWrites == 0 && lowerFlushes == 0)
+            return new("PASS", evidence + " No lower-I/O attempts occurred in this interval.");
+        var sourceBefore = before!.LowerSources;
+        var sourceAfter = after!.LowerSources;
+        if (sourceBefore is null || sourceAfter is null)
+            return new("SKIP", evidence + $" Zero-lower-I/O admission is UNPROVEN: attempts in this interval were " +
+                $"read/write/flush={lowerReads}/{lowerWrites}/{lowerFlushes} and the driver lacks diagnostics V8 " +
+                "source attribution. Device-wide paging counters are not causal attribution.");
+        static ulong Delta(ulong a, ulong b, string name) =>
+            b >= a ? b - a : throw new IOException($"Lower-I/O source counter {name} regressed.");
+        var generated = Delta(sourceBefore.GeneratedWrites, sourceAfter.GeneratedWrites, "generated writes");
+        var forwarded = Delta(sourceBefore.ForwardedWrites, sourceAfter.ForwardedWrites, "forwarded writes");
+        var pagingWrites = Delta(sourceBefore.PagingForwardedWrites, sourceAfter.PagingForwardedWrites, "paging writes");
+        var pagingReads = Delta(sourceBefore.PagingForwardedReads, sourceAfter.PagingForwardedReads, "paging reads");
+        var otherReads = Delta(sourceBefore.OtherReads, sourceAfter.OtherReads, "other reads");
+        var sources = $" Sources: generated writes {generated}, forwarded non-paging writes {forwarded}, " +
+            $"forwarded paging writes {pagingWrites}, forwarded paging reads {pagingReads}, other reads {otherReads}, " +
+            $"flushes {lowerFlushes}.";
+        if (generated != 0 || lowerFlushes != 0)
+            throw new IOException("Supported admission issued QueueCache-generated lower I/O. " + evidence + sources);
+        if (forwarded != 0 || otherReads != 0)
+            return new("SKIP", evidence + sources + " Zero-lower-I/O admission is UNPROVEN: a non-paging " +
+                "original request reached the lower device and could be the owned request.");
+        return new("PASS", evidence + sources + " No generated or non-paging lower I/O; the remaining attempts " +
+            "were forwarded paging-marked requests, a path the owned unbuffered request cannot take.");
     }
+
+    /// <summary>Background-drain lower write attempts: QueueCache-generated writes with V8 attribution,
+    /// otherwise every lower write (conservative: unrelated forwarded I/O can only fail a check early).</summary>
+    internal static ulong DrainWriteAttempts(CacheDiagnostics diagnostics) =>
+        diagnostics.LowerSources is { } sources ? sources.GeneratedWrites :
+        diagnostics.Attribution?.LowerWriteAttempts ??
+        throw new NotSupportedException("Lower-write attribution requires diagnostics V2.");
+
+    internal static CheckResult AdmissionCheck(string id, AdmissionEvidence evidence) =>
+        new(id, evidence.Status, evidence.Detail);
 
     public static void Run(DiskTarget target, CacheDevice device, string directory,
         List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
@@ -95,14 +124,15 @@ internal static class SectorScenarios
             var admitted = device.GetWriteCacheState();
             var diagnosticsAfter = device.GetDiagnostics();
             var attemptsAfter = diagnosticsAfter.Attribution;
-            var admissionEvidence = VerifyAdmissionAttempts(attemptsBefore, attemptsAfter,
-                diagnosticsBefore.PagingRoute, diagnosticsAfter.PagingRoute);
+            var admissionEvidence = VerifyAdmissionAttempts(diagnosticsBefore, diagnosticsAfter);
             if (admitted.LowerWrites != before.LowerWrites || admitted.Flushes != before.Flushes)
                 throw new IOException(label + ": unexpected lower write/flush during deferred partial admission");
             file.Read(0, actual);
             if (!expected.AsSpan().SequenceEqual(actual))
                 throw new IOException(label + ": cold neighbour/partial overlay mismatch");
-            results.Add(new(label + "/admission", "PASS", "All sector positions, crossing and full writes plus cached reads matched. " + admissionEvidence));
+            results.Add(new(label + "/admission-bytes", "PASS",
+                "All sector positions, crossing and full writes plus cached reads matched."));
+            results.Add(AdmissionCheck(label + "/zero-lower-io", admissionEvidence));
             device.Control(WriteCacheAction.Disable);
             var beforeDiskRead = device.GetDiagnostics().Attribution!;
             file.Read(0, actual);

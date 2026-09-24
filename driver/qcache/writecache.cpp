@@ -27,6 +27,7 @@ static ULONGLONG NowMs()
     return KeQueryInterruptTime() / 10000;
 }
 #include "cacheblocks.inl"
+static void PagingReader(PVOID context);
 static ULONGLONG Tick()
 {
     return KeQueryPerformanceCounter(nullptr).QuadPart;
@@ -135,6 +136,11 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     KIRQL irql;
     KeAcquireSpinLock(&c->SnapshotLock, &irql);
     *output = c->DiagnosticsSnapshot;
+    output->LowerGeneratedWrites = InterlockedCompareExchange64(&c->LowerGeneratedWrites, 0, 0);
+    output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
+    output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
+    output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
+    output->LowerOtherReads = InterlockedCompareExchange64(&c->LowerOtherReads, 0, 0);
     output->LowerReadAttempts = InterlockedCompareExchange64(&c->LowerReadAttempts, 0, 0);
     output->LowerWriteAttempts = InterlockedCompareExchange64(&c->LowerWriteAttempts, 0, 0);
     output->LowerFlushAttempts = InterlockedCompareExchange64(&c->LowerFlushAttempts, 0, 0);
@@ -166,13 +172,22 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingReservedBytes = 0; // Paging data is ordered but never admitted to RAM.
     output->PagingMaxReadLength = InterlockedCompareExchange64(&c->PagingMaxReadLength, 0, 0);
     output->PagingMaxWriteLength = InterlockedCompareExchange64(&c->PagingMaxWriteLength, 0, 0);
-    output->PagingRoutedReadRequests = InterlockedCompareExchange64(&c->PagingRoutedReadRequests, 0, 0);
+    // Outcomes are read before requests: each request is counted before its
+    // outcome, so a concurrently completing paging read cannot make a snapshot
+    // report more outcomes than requests.
     output->PagingRoutedReadCompletions = InterlockedCompareExchange64(&c->PagingRoutedReadCompletions, 0, 0);
     output->PagingRoutedReadFailures = InterlockedCompareExchange64(&c->PagingRoutedReadFailures, 0, 0);
-    output->PagingRoutedWriteRequests = InterlockedCompareExchange64(&c->PagingRoutedWriteRequests, 0, 0);
+    output->PagingRoutedReadRequests = InterlockedCompareExchange64(&c->PagingRoutedReadRequests, 0, 0);
     output->PagingRoutedWriteCompletions = InterlockedCompareExchange64(&c->PagingRoutedWriteCompletions, 0, 0);
     output->PagingRoutedWriteFailures = InterlockedCompareExchange64(&c->PagingRoutedWriteFailures, 0, 0);
+    output->PagingRoutedWriteRequests = InterlockedCompareExchange64(&c->PagingRoutedWriteRequests, 0, 0);
     output->PagingOverlapWaits = InterlockedCompareExchange64(&c->PagingOverlapWaits, 0, 0);
+    output->PagingOffloadCompletions = InterlockedCompareExchange64(&c->PagingOffloadCompletions, 0, 0);
+    output->PagingOffloadFailures = InterlockedCompareExchange64(&c->PagingOffloadFailures, 0, 0);
+    output->PagingOffloadedReads = InterlockedCompareExchange64(&c->PagingOffloadedReads, 0, 0);
+    output->PagingOffloadWriteWaits = InterlockedCompareExchange64(&c->PagingOffloadWriteWaits, 0, 0);
+    output->PagingOffloadIdleWaits = InterlockedCompareExchange64(&c->PagingOffloadIdleWaits, 0, 0);
+    output->PagingOffloadMaxQueued = InterlockedCompareExchange64(&c->PagingOffloadMaxQueued, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 static void RecordMaximum(volatile LONG64* target, ULONG value)
@@ -249,12 +264,24 @@ static NTSTATUS InjectLowerCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     // This driver created the IRP; do not propagate PendingReturned to a nonexistent upper stack location.
     return STATUS_CONTINUE_COMPLETION;
 }
-void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major)
+// original: the forwarded original IRP, or null for QueueCache-generated I/O
+// (drainer writes and barrier flushes). Totals are incremented before the source
+// counters, and diagnostics read sources first, so a snapshot never shows more
+// attributed attempts than total attempts.
+void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major, PIRP original)
 {
+    const bool paging = original && (original->Flags & IRP_PAGING_IO);
     if (major == IRP_MJ_READ)
+    {
         InterlockedIncrement64(&cache->LowerReadAttempts);
+        InterlockedIncrement64(paging ? &cache->LowerPagingForwardedReads : &cache->LowerOtherReads);
+    }
     else if (major == IRP_MJ_WRITE)
+    {
         InterlockedIncrement64(&cache->LowerWriteAttempts);
+        InterlockedIncrement64(!original ? &cache->LowerGeneratedWrites :
+            paging ? &cache->LowerPagingForwardedWrites : &cache->LowerForwardedWrites);
+    }
     else if (major == IRP_MJ_FLUSH_BUFFERS)
         InterlockedIncrement64(&cache->LowerFlushAttempts);
 }
@@ -414,7 +441,7 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
-    QcCacheRecordLowerAttempt(c, IoGetCurrentIrpStackLocation(irp)->MajorFunction);
+    QcCacheRecordLowerAttempt(c, IoGetCurrentIrpStackLocation(irp)->MajorFunction, irp);
     auto status = IoCallDriver(c->Lower, irp);
     if (status == STATUS_PENDING)
     {
@@ -471,6 +498,98 @@ static bool ResidentRange(QC_CACHE* c, LONGLONG first, LONGLONG end)
             return true;
     return false;
 }
+static bool DrainCandidate(QC_CACHE* c, ULONG index)
+{
+    const auto slot = &c->Slots[index];
+    if (slot->InFlight || slot->Filling || FindOldestSlot(c, slot->Offset.QuadPart) != index)
+        return false;
+    return !c->RangeDrain || !c->RangeForward ||
+        !RangeOverlaps(c->RangeStart, c->RangeEnd, slot->Offset.QuadPart);
+}
+// A batch never mixes fenced and unrelated blocks, and never includes a fenced
+// block once its direct write has been forwarded. Unrelated batches keep normal
+// size. Caller holds Mutex.
+static bool FenceSplitsBatch(QC_CACHE* c, LONGLONG block, bool anchorOverlaps)
+{
+    if (!c->RangeDrain)
+        return false;
+    const bool overlaps = RangeOverlaps(c->RangeStart, c->RangeEnd, block);
+    return overlaps != anchorOverlaps || (c->RangeForward && overlaps);
+}
+// A paging-write fence forces only its own overlapping versions. Unrelated dirty
+// data drains only when its own policy (or a barrier/capacity waiter) says so;
+// the fence must not make Deferred/Idle data drain early. Caller holds Mutex.
+static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
+{
+    // Before forwarding the fenced write, choose its oldest eligible overlap
+    // first, but keep unrelated policy-eligible work moving when that overlap is
+    // already owned by another lower request. After forwarding, exclude the fence.
+    if (c->RangeDrain && !c->RangeForward)
+        for (auto index = c->Head; index != NoSlot; index = c->Slots[index].QueueNext)
+            if (DrainCandidate(c, index) &&
+                RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart))
+                return index;
+    if (!policyDrain)
+        return NoSlot;
+    for (auto index = c->Head; index != NoSlot; index = c->Slots[index].QueueNext)
+        if (DrainCandidate(c, index))
+            return index;
+    return NoSlot;
+}
+static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    bool overlap = false;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->PagingLock, &irql);
+    for (const auto& read : c->PagingReads)
+        if (read.Irp && read.Start < end && read.End > first)
+        {
+            overlap = true;
+            break;
+        }
+    KeReleaseSpinLock(&c->PagingLock, irql);
+    return overlap;
+}
+// Called by the request worker with Mutex released. Offloaded reads depend only
+// on Mutex and lower completion, so this wait cannot form a cycle with the worker.
+// A blocked write may service/offload further independent reads; those exclude
+// the blocked range, so the overlapping set only shrinks. A full wait (no range)
+// never services, so it cannot be extended indefinitely by new offloads.
+static void WaitForPagingReads(QC_CACHE* c, LONGLONG first, LONGLONG end, PIRP blockedWrite,
+                               volatile LONG64* counter)
+{
+    bool counted = false;
+    for (;;)
+    {
+        KeClearEvent(&c->PagingDone);
+        if (!PagingReadsOverlap(c, first, end))
+            return;
+        if (!counted)
+        {
+            InterlockedIncrement64(counter);
+            counted = true;
+        }
+        if (blockedWrite && c->ServiceReads && c->ServiceReads(c->ServiceContext, blockedWrite))
+            continue;
+        LARGE_INTEGER interval;
+        interval.QuadPart = -1000000;
+        if (blockedWrite && c->RequestAvailable)
+        {
+            PVOID objects[] = {&c->PagingDone, c->RequestAvailable};
+            KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &interval, nullptr);
+        }
+        else
+            KeWaitForSingleObject(&c->PagingDone, Executive, KernelMode, FALSE, &interval);
+    }
+}
+bool QcCachePagingReadsOutstanding(QC_CACHE* c)
+{
+    return PagingReadsOverlap(c, MINLONGLONG, MAXLONGLONG);
+}
+void QcCacheWaitPagingReads(QC_CACHE* c)
+{
+    WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits);
+}
 // Called with Mutex released. Read service may perform one independent page-in;
 // waking on RequestAvailable is essential when a drainer needs that page-in.
 static void WaitForCacheProgress(QC_CACHE* c, PIRP blockedRequest)
@@ -511,15 +630,16 @@ static void Drainer(PVOID context)
         }
         bool pressure = c->Pressure != FALSE;
         auto now = NowMs();
-        bool drain = QcShouldDrain(c->Options,
-                                   c->State.DirtyBytes,
-                                   static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
-                                   now - c->Slots[c->Head].DirtySince,
-                                   now - c->LastWriteTime,
-                                   c->Barrier || c->WriterWaiting || c->RangeDrain,
-                                   pressure);
+        const bool drain = QcShouldDrain(c->Options,
+                                         c->State.DirtyBytes,
+                                         static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
+                                         now - c->Slots[c->Head].DirtySince,
+                                         now - c->LastWriteTime,
+                                         c->Barrier || c->WriterWaiting,
+                                         pressure);
         c->Pressure = pressure;
-        if (!drain)
+        const bool fenceDrain = c->RangeDrain && !c->RangeForward;
+        if (!drain && !fenceDrain)
         {
             Publish(c);
             KeClearEvent(&c->Wake);
@@ -535,16 +655,10 @@ static void Drainer(PVOID context)
         // The oldest eligible block remains the fairness anchor. Gather forward
         // by address below; never scan the whole cache under the mutex.
         const auto selectionStart = c->Timing ? Tick() : 0;
-        auto index = c->Head;
         // Distinct disk ranges can drain concurrently. Never issue a newer version
-        // while an older write to that address is still outstanding.
-        while (index != NoSlot && (c->Slots[index].InFlight || c->Slots[index].Filling ||
-                                   (c->RangeDrain &&
-                                       ((c->RangeForward != FALSE) ==
-                                        RangeOverlaps(c->RangeStart, c->RangeEnd,
-                                                      c->Slots[index].Offset.QuadPart))) ||
-                                   FindOldestSlot(c, c->Slots[index].Offset.QuadPart) != index))
-            index = c->Slots[index].QueueNext;
+        // while an older write to that address is still outstanding. A range fence
+        // prioritizes its overlap without freezing unrelated eligible work.
+        auto index = SelectDrainCandidate(c, drain);
         if (index == NoSlot)
         {
             if (selectionStart)
@@ -559,13 +673,17 @@ static void Drainer(PVOID context)
         // Arrival order can be random even when neighboring disk blocks are dirty.
         // Walk backwards by at most one batch before gathering forwards, keeping
         // the oldest eligible anchor in the batch and preserving version order.
-        auto batchBlocks = c->RangeDrain ? 1UL : c->Slots[index].ValidSectors == 255
+        auto batchBlocks = c->Slots[index].ValidSectors == 255
                                ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
+        const bool batchOverlapsFence = c->RangeDrain &&
+            RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart);
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
             auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
             if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling ||
                 c->Slots[previous].ValidSectors != 255)
+                break;
+            if (FenceSplitsBatch(c, c->Slots[previous].Offset.QuadPart, batchOverlapsFence))
                 break;
             index = previous;
         }
@@ -581,6 +699,8 @@ static void Drainer(PVOID context)
             if (slot->InFlight || slot->Filling)
                 break;
             if (merged && slot->ValidSectors != 255)
+                break;
+            if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence))
                 break;
             selected[merged++] = index;
             slot->InFlight = TRUE;
@@ -726,9 +846,20 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower)
     KeInitializeSpinLock(&c->SnapshotLock);
     KeInitializeEvent(&c->Wake, NotificationEvent, FALSE);
     KeInitializeEvent(&c->Changed, NotificationEvent, FALSE);
+    KeInitializeSpinLock(&c->PagingLock);
+    KeInitializeEvent(&c->PagingWork, SynchronizationEvent, FALSE);
+    KeInitializeEvent(&c->PagingDone, NotificationEvent, FALSE);
     Publish(c);
     OBJECT_ATTRIBUTES attrs;
     InitializeObjectAttributes(&attrs, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
+    auto pagingStatus =
+        PsCreateSystemThread(&c->PagingThread, THREAD_ALL_ACCESS, &attrs, nullptr, nullptr, PagingReader, c);
+    if (!NT_SUCCESS(pagingStatus))
+    {
+        c->PagingThread = nullptr;
+        QcCacheDestroy(c);
+        return pagingStatus;
+    }
     for (ULONG i = 0; i < RTL_NUMBER_OF(c->Workers); ++i)
     {
         auto worker = &c->Workers[i];
@@ -836,6 +967,19 @@ void QcCacheDestroy(QC_CACHE* c)
     c->Stop = TRUE;
     WakeDrainers(c);
     ReleaseCache(c);
+    if (c->PagingThread)
+    {
+        // Remove-lock drain already completed every offloaded IRP; the thread
+        // still finishes any queued entry before it observes PagingStop.
+        KIRQL irql;
+        KeAcquireSpinLock(&c->PagingLock, &irql);
+        c->PagingStop = TRUE;
+        KeReleaseSpinLock(&c->PagingLock, irql);
+        KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+        ZwWaitForSingleObject(c->PagingThread, FALSE, nullptr);
+        ZwClose(c->PagingThread);
+        c->PagingThread = nullptr;
+    }
     for (auto& worker : c->Workers)
         if (worker.Thread)
         {
@@ -1379,7 +1523,13 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
 }
 // Foreground admission remains single-owner. Pins protect exact cached versions
 // from drainer retirement while lower reads and payload copies run without Mutex.
-static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true)
+// pinned: the paging thread's scratch (QcPagingPinBlocks entries, range already
+// bounded). An offloaded read runs concurrently with the request worker, which
+// may add a clean read-fill or a newer version for these blocks. It therefore
+// overlays and unpins exactly the versions it pinned; FindSlot could name a slot
+// this read never pinned. Writes overlapping it wait (WaitForPagingReads).
+static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true,
+                     ULONG* pinned = nullptr)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Read.Length;
@@ -1402,8 +1552,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     if (pagingIo && !ResidentRange(c, start, end))
     {
         // No cached version exists to overlay. Avoid RAM retention and mapping.
+        // The request worker may service independent reads during this wait;
+        // the paging thread and nested service never do (allowReadService).
         ReleaseCache(c);
-        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, false);
+        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, allowReadService);
     }
     if (!NT_SUCCESS(c->State.LastError))
     {
@@ -1414,7 +1566,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     if (!c->Enabled && !c->State.DirtyBytes)
     {
         ReleaseCache(c);
-        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp);
+        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, allowReadService);
     }
     auto target = Map(irp);
     if (!target)
@@ -1444,9 +1596,12 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         ReleaseCache(c);
         return STATUS_NOT_FOUND;
     }
-    for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
+    const auto firstBlock = start / Chunk * Chunk;
+    for (auto block = firstBlock; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);
+        if (pinned)
+            pinned[(block - firstBlock) / Chunk] = index;
         if (index != NoSlot)
             ++c->Slots[index].Pins;
     }
@@ -1474,7 +1629,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             auto first = block;
             for (; count < RTL_NUMBER_OF(buffers) && block < end; ++count, block += Chunk)
             {
-                auto index = FindSlot(c, block);
+                auto index = pinned ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
                 buffers[count] = index == NoSlot ? nullptr : c->Slots[index].Buffer;
                 valid[count] = index == NoSlot ? 0 : c->Slots[index].ValidSectors;
                 const auto from = max(start, block);
@@ -1504,17 +1659,21 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     // Release every pin before admission can evict anything. Deferred retirement
     // allows a read to finish even if retention is disabled and draining completed.
-    for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
+    for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto index = FindSlot(c, block);
+        auto index = pinned ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
         if (index != NoSlot)
             UnpinSlot(c, index);
     }
     if (NT_SUCCESS(status))
     {
-        for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
+        for (auto block = firstBlock; block < end; block += Chunk)
         {
             auto index = FindSlot(c, block);
+            // An unpinned version may have retired; touch only the version this
+            // read used when it is still the current one.
+            if (pinned && index != pinned[(block - firstBlock) / Chunk])
+                continue;
             if (index != NoSlot)
             {
                 TouchClean(c, index);
@@ -1584,6 +1743,111 @@ bool QcCacheTryPagingReadProgress(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, N
     if (NT_SUCCESS(*status))
         InterlockedIncrement64(&c->PagingServicedReadMisses);
     return true;
+}
+static bool FullyResident(QC_CACHE* c, LONGLONG start, LONGLONG end)
+{
+    for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
+    {
+        auto index = FindSlot(c, block);
+        const auto from = max(start, block);
+        const auto to = min(end, block + Chunk);
+        if (index == NoSlot || c->Slots[index].Filling ||
+            !QcCovers(c->Slots[index].ValidSectors, static_cast<ULONG>(from - block), static_cast<ULONG>(to - from)))
+            return false;
+    }
+    return true;
+}
+bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction != IRP_MJ_READ || !(irp->Flags & IRP_PAGING_IO) || !c->PagingThread ||
+        !c->CompleteRequest)
+        return false;
+    const auto start = stack->Parameters.Read.ByteOffset.QuadPart;
+    const auto length = stack->Parameters.Read.Length;
+    if (start < 0 || start > deviceBytes || !length ||
+        length > static_cast<ULONGLONG>(deviceBytes - start) ||
+        (c->SectorBytes && (start % c->SectorBytes || length % c->SectorBytes)))
+        return false;
+    const auto end = start + length;
+    // Larger reads keep the ordered worker path (bounded pin scratch).
+    if ((end - start / Chunk * Chunk + Chunk - 1) / Chunk > QcPagingPinBlocks)
+        return false;
+    // Only the request worker sets these fields and offloads, so the decision
+    // cannot race a new fence, active write or blocking request.
+    AcquireCache(c);
+    const bool refused = c->OffloadBlocked || c->Stop || c->Gone ||
+        (c->RangeDrain && start < c->RangeEnd && end > c->RangeStart) ||
+        (c->ActiveWrite && start < c->ActiveWriteEnd && end > c->ActiveWriteStart) ||
+        FullyResident(c, start, end); // A RAM hit completes faster on the worker.
+    ReleaseCache(c);
+    if (refused)
+        return false;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->PagingLock, &irql);
+    QC_PAGING_READ* entry = nullptr;
+    if (!c->PagingStop)
+        for (auto& read : c->PagingReads)
+            if (!read.Irp)
+            {
+                entry = &read;
+                break;
+            }
+    if (entry)
+    {
+        entry->Irp = irp;
+        entry->Start = start;
+        entry->End = end;
+        entry->Sequence = ++c->PagingSequence;
+        entry->Started = FALSE;
+        RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
+    }
+    KeReleaseSpinLock(&c->PagingLock, irql);
+    if (!entry)
+        return false; // Table full: the caller keeps its existing ordered path.
+    // The paging thread owns irp from here; do not touch it again.
+    InterlockedIncrement64(&c->PagingOffloadedReads);
+    InterlockedIncrement64(&c->PagingRoutedReadRequests);
+    KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+    return true;
+}
+// One per disk. Executes offloaded paging reads oldest-first. It depends only on
+// Mutex (never held across waits) and lower completion. It never runs the read
+// service, never waits for the request worker and never admits cached writes.
+static void PagingReader(PVOID context)
+{
+    auto c = static_cast<QC_CACHE*>(context);
+    for (;;)
+    {
+        QC_PAGING_READ* next = nullptr;
+        KIRQL irql;
+        KeAcquireSpinLock(&c->PagingLock, &irql);
+        for (auto& read : c->PagingReads)
+            if (read.Irp && !read.Started && (!next || read.Sequence < next->Sequence))
+                next = &read;
+        if (next)
+            next->Started = TRUE;
+        const bool stop = c->PagingStop && !next;
+        KeReleaseSpinLock(&c->PagingLock, irql);
+        if (stop)
+            break;
+        if (!next)
+        {
+            KeWaitForSingleObject(&c->PagingWork, Executive, KernelMode, FALSE, nullptr);
+            continue;
+        }
+        auto irp = next->Irp;
+        auto status = Read(c, irp, false, false, c->PagingPins);
+        InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
+        InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+        c->CompleteRequest(c->ServiceContext, irp, status);
+        KeAcquireSpinLock(&c->PagingLock, &irql);
+        next->Irp = nullptr;
+        --c->PagingQueued;
+        KeReleaseSpinLock(&c->PagingLock, irql);
+        KeSetEvent(&c->PagingDone, IO_NO_INCREMENT, FALSE);
+    }
+    PsTerminateSystemThread(STATUS_SUCCESS);
 }
 // Only optimized, bounded, full-cache-block TRIM ranges are handled here. Any
 // unfamiliar flags/parameters/alignment use the existing ordered drain/pass-through.
@@ -1690,7 +1954,7 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     *result = status;
     return true;
 }
-NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
+static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     irp->IoStatus.Information = 0;
@@ -1897,4 +2161,61 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (!NT_SUCCESS(status))
         return status;
     return OriginalIo(c, irp);
+}
+// Request-worker entry point. Offloaded paging reads run concurrently with the
+// worker, so every request class states what it must not overlap:
+// - paging read needing lower I/O: handed to the paging thread (never waits here);
+// - write: waits only for offloaded reads overlapping its range, servicing
+//   independent reads meanwhile; ActiveWrite keeps new offloads out of its range;
+// - flush and read-only/observation controls: no slot retirement, no wait;
+// - everything else (QueueCache controls, TRIM, power, shutdown, PnP, usage,
+//   unknown controls) may retire pinned slots or change device state. It waits
+//   for all offloaded reads and blocks new offloads (the synchronous service
+//   lane remains) until it completes.
+NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* transferred)
+{
+    *transferred = false;
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    const auto major = stack->MajorFunction;
+    if (major == IRP_MJ_READ)
+    {
+        if ((irp->Flags & IRP_PAGING_IO) && QcCacheOffloadPagingRead(c, irp, deviceBytes))
+        {
+            *transferred = true;
+            return STATUS_PENDING;
+        }
+        return Process(c, irp, deviceBytes);
+    }
+    if (major == IRP_MJ_WRITE)
+    {
+        const auto first = stack->Parameters.Write.ByteOffset.QuadPart;
+        const auto length = stack->Parameters.Write.Length;
+        if (first < 0 || !length)
+            return Process(c, irp, deviceBytes); // Rejected or a no-op; owns no range.
+        const auto end = first > MAXLONGLONG - static_cast<LONGLONG>(length) ? MAXLONGLONG : first + length;
+        AcquireCache(c);
+        c->ActiveWrite = TRUE;
+        c->ActiveWriteStart = first;
+        c->ActiveWriteEnd = end;
+        ReleaseCache(c);
+        WaitForPagingReads(c, first, end, irp, &c->PagingOffloadWriteWaits);
+        auto status = Process(c, irp, deviceBytes);
+        AcquireCache(c);
+        c->ActiveWrite = FALSE;
+        ReleaseCache(c);
+        return status;
+    }
+    const bool control = major == IRP_MJ_DEVICE_CONTROL || major == IRP_MJ_INTERNAL_DEVICE_CONTROL;
+    if (major == IRP_MJ_FLUSH_BUFFERS ||
+        (control && (QcObservationRequest(stack) || !QcMayChangeMedia(stack->Parameters.DeviceIoControl.IoControlCode))))
+        return Process(c, irp, deviceBytes);
+    AcquireCache(c);
+    c->OffloadBlocked = TRUE;
+    ReleaseCache(c);
+    QcCacheWaitPagingReads(c);
+    auto status = Process(c, irp, deviceBytes);
+    AcquireCache(c);
+    c->OffloadBlocked = FALSE;
+    ReleaseCache(c);
+    return status;
 }

@@ -38,6 +38,30 @@ Severity describes the release consequence, not a claim that a crash reproduced.
 | R6 / high evidence gap: application capture and experiment identity were incomplete | The owner used `baseline.bmp` for both edits, not the separate `cached.bmp`. No save/open interval trace was running. CrashDumpEnabled is 0. Q: also has an active 2 GiB cache and CrystalDiskMark/DiskSpd workload, so this was not a 512 MiB-only or isolated experiment. | T086/T080: preserve this successful owner observation with its actual conditions. Before further pressure/reproduction work, arrange working dump collection, exact file/operation times and off-target evidence using the maintained capture facilities; coordinate the competing workload. Do not repeat the same successful manual action merely to obtain another green result. |
 | R7 / medium: current documentation contradicts the tracker | The operation map and coverage ledger still call the driver undeployed, the handover's current table names 0.4.87.1, and known issues claims a diagnosed closure that the evidence does not establish. Policy text also obscures paging admission limitations. | T087: corrected in this review commit. Keep dated historical checkpoints intact and label them historical; current summaries refer to the tracker and this review. Runtime output wording and changed verifier verdicts belong to T084 and a new verification-plan version. |
 
+## Disposition update: plan-38 source candidate
+
+Source only. Native Release/Debug builds and host contracts pass; nothing below
+is installed or VM-verified.
+
+- R1 (T082): the synchronous page-in path is replaced for the common case. A
+  paging read that needs lower I/O goes to a per-disk paging-read thread from
+  both the top-level worker and the service lane; neither waits for its lower
+  completion. The thread depends only on the cache mutex and lower completion.
+  Ownership, pin lifetime, lock order and the wait graph are in the
+  [operation map](SYSTEM_DISK_OPERATION_MAP.md#paging-read-ownership-and-wait-order-plan-38-t082).
+  Remaining synchronous cases are reads over 1 MiB, a full 64-entry table and
+  the bounded lane during destructive/control requests. A forced installed
+  dependency test is still required before T082 is complete.
+- R3 (T084): Diagnostics V8 attributes every lower attempt to its issuing path.
+  Admission verdicts no longer subtract aggregate counts; see
+  [plan 38](DEVELOPER_VERIFICATION.md#suites-plan-version-38).
+- R5: the fence forces only overlapping versions. Unrelated dirty data keeps its
+  own drain policy (the earlier code, and Luna's first attempt, forced it through
+  `RangeDrain`) and normal batching; batches never mix fenced and unrelated blocks.
+  Luna's uncommitted drainer edit had unbalanced conditions and did not compile.
+- R2, R4, R6 are unchanged: T083 submission gate, T085 application admission and
+  T086 capture remain open.
+
 ## Actual application observation
 
 The owner reports two successful Paint edits and Photos opens of `baseline.bmp`:

@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 37, "observed mapped/drainer overlap contract version");
+        Check(VerificationPlan.Version == 38, "source-attributed admission and offloaded paging-read contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -337,41 +337,68 @@ internal static class VerificationRunnerTests
             catch (IOException) { }
         }
         var admissionAttempts = new QueueCache.Management.CacheAttribution(1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-        Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, admissionAttempts).Contains("before=1/2/3, after=1/2/3"),
-            "admission retains exact attempt evidence");
-        var admissionRouteBefore = new QueueCache.Management.CachePagingRoute(0, 0, 0, 0, 0, 0, 0);
-        var admissionRouteAfter = admissionRouteBefore with { WriteRequests = 1, WriteCompletions = 1 };
-        Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts,
-            admissionAttempts with { LowerWriteAttempts = 3 }, admissionRouteBefore, admissionRouteAfter)
-            .Contains("Exactly 1 successful routed paging write"),
-            "sector admission identifies the exact paging lower-write exception");
-        foreach (var invalidRoute in new[] { admissionRouteBefore,
-            admissionRouteAfter with { WriteCompletions = 0 }, admissionRouteAfter with { WriteFailures = 1 } })
-        {
-            try
-            {
-                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts,
-                    admissionAttempts with { LowerWriteAttempts = 3 }, admissionRouteBefore, invalidRoute);
-                throw new Exception("Unexplained sector lower write accepted.");
-            }
-            catch (IOException) { }
-        }
+        static QueueCache.Management.CacheDiagnostics AdmissionDiagnostics(QueueCache.Management.CacheAttribution? attribution,
+            QueueCache.Management.CacheLowerSources? sources = null) =>
+            new(0, 0, 0, 0, 0, 0, 0, 0, 0) { Attribution = attribution, LowerSources = sources };
+        var noSources = AdmissionDiagnostics(admissionAttempts);
+        var zeroIoAdmission = QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(noSources, noSources);
+        Check(zeroIoAdmission.Status == "PASS" && zeroIoAdmission.Detail.Contains("before=1/2/3, after=1/2/3"),
+            "zero lower attempts support the admission assertion");
         foreach (var changed in new[] { admissionAttempts with { LowerReadAttempts = 2 }, admissionAttempts with { LowerWriteAttempts = 3 },
-            admissionAttempts with { LowerFlushAttempts = 4 }, admissionAttempts with { LowerReadAttempts = 0 } })
+            admissionAttempts with { LowerFlushAttempts = 4 } })
+        {
+            var unattributed = QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(noSources, AdmissionDiagnostics(changed));
+            Check(unattributed.Status == "SKIP" && unattributed.Detail.Contains("UNPROVEN") &&
+                unattributed.Detail.Contains("not causal attribution"),
+                "without V8 source attribution any lower attempt keeps admission unproven");
+        }
+        var sources = new QueueCache.Management.CacheLowerSources(5, 6, 7, 8, 9);
+        var withSources = AdmissionDiagnostics(admissionAttempts, sources);
+        var pagingOnly = QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(withSources,
+            AdmissionDiagnostics(admissionAttempts with { LowerReadAttempts = 2, LowerWriteAttempts = 4 },
+                sources with { PagingForwardedWrites = 9, PagingForwardedReads = 9 }));
+        Check(pagingOnly.Status == "PASS" && pagingOnly.Detail.Contains("forwarded paging writes 2"),
+            "forwarded paging-marked requests cannot be the owned unbuffered admission");
+        foreach (var (changed, source) in new[]
+        {
+            (admissionAttempts with { LowerWriteAttempts = 3 }, sources with { ForwardedWrites = 7 }),
+            (admissionAttempts with { LowerReadAttempts = 2 }, sources with { OtherReads = 10 })
+        })
+        {
+            Check(QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(withSources,
+                AdmissionDiagnostics(changed, source)).Status == "SKIP",
+                "a forwarded non-paging request could be the owned request: unproven, not pass");
+        }
+        foreach (var (changed, source) in new[]
+        {
+            (admissionAttempts with { LowerWriteAttempts = 3 }, sources with { GeneratedWrites = 6 }),
+            (admissionAttempts with { LowerFlushAttempts = 4 }, sources)
+        })
         {
             try
             {
-                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(admissionAttempts, changed);
-                throw new Exception("Lower attempt difference accepted.");
+                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(withSources, AdmissionDiagnostics(changed, source));
+                throw new Exception("QueueCache-generated lower I/O accepted during admission.");
             }
             catch (IOException) { }
         }
+        Check(QueueCache.Operations.SectorScenarios.DrainWriteAttempts(withSources) == 5 &&
+            QueueCache.Operations.SectorScenarios.DrainWriteAttempts(noSources) == 2,
+            "drain triggers use generated writes when attributed, else every lower write");
+        try
+        {
+            QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(noSources,
+                AdmissionDiagnostics(admissionAttempts with { LowerReadAttempts = 0 }));
+            throw new Exception("Reversed lower attempt counter accepted.");
+        }
+        catch (IOException) { }
         foreach (var pair in new[] { (Before: (QueueCache.Management.CacheAttribution?)null, After: (QueueCache.Management.CacheAttribution?)admissionAttempts),
             (Before: (QueueCache.Management.CacheAttribution?)admissionAttempts, After: (QueueCache.Management.CacheAttribution?)null) })
         {
             try
             {
-                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(pair.Before, pair.After);
+                QueueCache.Operations.SectorScenarios.VerifyAdmissionAttempts(AdmissionDiagnostics(pair.Before),
+                    AdmissionDiagnostics(pair.After));
                 throw new Exception("Missing attempt counters accepted.");
             }
             catch (NotSupportedException) { }
