@@ -66,7 +66,19 @@ restoration were checked. A local plan-37 verifier completed
 `QueueCache-Verify-20260924-111751-cfad088eb4b940cdbb83cdfebecbf788`:
 an isolated 1,536-byte in-flight sparse write, three successful routed paging
 writes, one overlap wait, and newest live/released bytes with untouched guards.
-It too restored Q: cleanly. CI-built plan-37 confirmation remains.
+It too restored Q: cleanly; the subsequent CI-built confirmation is below.
+
+CI-built 0.4.95.1 plan-37 tooling (source `33543d3`) confirmed both focused
+Q: cases against the unchanged loaded 0.4.92.1 driver. `paging-coherence`
+completed in `QueueCache-Verify-20260924-145544-b0d3844ff8e64839bd703be83d9d74ff`:
+the observed 1,536-byte in-flight write, three successful routed paging writes,
+one overlap wait, active/released latest bytes and guards all passed. `policies`
+completed in `QueueCache-Verify-20260924-145656-915f1436a6344d8cac35caaf4307f8d3`:
+six sector admissions, observed in-flight replacement, the 60-second fitting
+window and six policy configurations passed. Both have `FINISHED.txt`, 1/1
+COMPLETED, ready control tracing, no restoration failure and Q: disabled,
+released, clean and error-free afterward. These are focused successes, not
+exact-range/fault/cancellation or C: application proof.
 
 Exact installed 0.4.92.1 completed read-only C: preflight in
 `QueueCache-Verify-20260924-110300-f78df30fced34a69ad8132f4e92b9b30`,
@@ -89,7 +101,7 @@ This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
 row below. The source verification contract is plan 37; the latest CI-installed
-driver is 0.4.92.1/plan 34, with local plan-36/37 verifier runs as labelled.
+driver is 0.4.92.1/plan 34, with CI-built plan-37 verifier runs as labelled.
 Historical plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
@@ -138,7 +150,7 @@ pagefile saved-startup regression without the earlier process corruption.
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
 | A07 / T023-T027, T067-T068, T070-T077 | PARTIAL | Normal C: activation exists. T075-T077 overlays paging reads with resident bytes, drains only overlapping older writes before direct paging writes, and services independent queued page-ins during waits. Diagnostics V7 records routed outcomes. | **Changed this run:** exact 0.4.92.1 guarded C: Fast/Strict image and Q: mapped/quick passed; local plan-37 Q: observed overlap passed. Fault/cancel, memory-pressure and dependency proof remain. Historical BSOD cause unknown. |
-| A08 / T028-T031, T078-T079 | PARTIAL | Plan 32 shares stable target comparison across workers, verifies each image after release and again at final restoration, uses default retention/promotion and decodes routed progress. **Changed this run:** plans 35-36 qualify paging-write exceptions in both policy admission windows; plan 37 adds an observed sparse in-flight/mapped overlap. | Local plan-36 full policy and plan-37 overlap passed against 0.4.92.1; exact installed C: image oracle passed. CI-built plan-37 Q: confirmation, fault/cancel/dependency cases and paging-role transition remain. |
+| A08 / T028-T031, T078-T079 | PARTIAL | Plan 32 shares stable target comparison across workers, verifies each image after release and again at final restoration, uses default retention/promotion and decodes routed progress. **Changed this run:** plans 35-36 qualify paging-write exceptions in both policy admission windows; plan 37 adds an observed sparse in-flight/mapped overlap. | CI-built plan-37 full policy and observed overlap passed against loaded 0.4.92.1; exact installed C: image oracle passed. Fault/cancel/dependency cases and paging-role transition remain. |
 | A09 / T032-T037, T073-T074, T080-T081 | PARTIAL | Public activation and saved Fast startup worked on 0.4.87.1 with fixed pagefile/dump registration. Plan 34 adds active-file admission proof to the owned 64 MiB restart preparation. | **Changed this run:** 0.4.92.1 guarded 349 MiB active Fast/Strict C: cases passed and restored. T080 actual Paint/Photos, T081 active-created restart/pressure and broader lifecycle remain. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
@@ -170,7 +182,7 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 | T076 / A07 | Installed candidate: range-targeted older-version drain and direct-write fence | Local plan-37 Q: observed isolated 1,536-byte old in-flight write, mapped overwrite, overlap wait and newest/guard bytes; fault/cancellation and exact-range attribution remain | Prevent old background writes from overwriting a newer save; prove exact forced order. |
 | T077 / A07 | Installed candidate: cooperative paging read service and V7 routed outcomes | No forced paging/capacity/lower-wait dependency proof | Keep Windows paging responsive; check actual progress under pressure. |
 | T078 / A08 | Installed: shared worker identity and per-case/final oracles; host contracts pass | Exact 0.4.92.1 Fast/Strict active image and final post-release oracles passed; actual paging-role transition and restart oracle remain | Ensure each Fast/Strict and restart result proves what it says. |
-| T079 / A06a/A07-A08 | PARTIAL: Q: mapped/unbuffered case passed; plans 35-36 add paging-aware policy attribution; plan 37 observes a sparse old in-flight/mapped overlap | Plan-34 Q: focused/quick and local plan-36 full policy/plan-37 overlap passed, all cleanly restored. Process-wide counters cannot prove exact range ownership; fault/cancel/dependency cases remain | Rerun CI-built plan 37 and close remaining focused ordering paths without calling the local pass full proof. |
+| T079 / A06a/A07-A08 | PARTIAL: Q: mapped/unbuffered case passed; plans 35-36 add paging-aware policy attribution; plan 37 observes a sparse old in-flight/mapped overlap | CI-built plan-37 full policy and observed overlap passed, all cleanly restored. Process-wide counters cannot prove exact range ownership; fault/cancel/dependency cases remain | Close remaining focused ordering paths without calling the observed overlap full proof. |
 | T080 / A09/T067 | FALSE: actual application workflow not executed; no general UI automation required | Paint edit/save -> immediate Photos open remains untested | Directly investigate the owner's reported failure. |
 | T081 / A09 | PARTIAL: plan-34 active-write preparation source exists; bounded pressure work pending | No installed active-created restart; earlier uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
 

@@ -7,7 +7,7 @@ physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
 The source verification contract is plan 37. Loaded 0.4.92.1 VM evidence includes
 plan-34 Q: focused/quick and guarded 349 MiB active-C: Fast/Strict passes. Plan-35
-policy was incomplete; local plan-36 policy and plan-37 observed-overlap checks
+policy was incomplete; CI-built plan-37 policy and observed-overlap checks
 passed with clean restoration. See the tracker for exact IDs and limits.
 Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
@@ -20,8 +20,8 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
-Immediate priority: confirm plan 37 with CI-built tooling, finish remaining
-T079 fault/cancel/dependency ordering checks and T080-T081's actual C: checks.
+Immediate priority: finish remaining T079 fault/cancel/dependency ordering
+checks and T080-T081's actual C: checks. CI-built plan 37 passed focused Q:.
 The candidate builds and passes host contracts, and installed Q: mapped/unbuffered
 plus bounded C: image cases passed; exact-range/failure proof and the owner's
 application workflow remain. Normal C: activation is already
@@ -50,8 +50,9 @@ reboot, driver removal or destructive fault experiments.
 
 ### Revision 4: implementation-first correction (T075-T081)
 
-This is the next agent's implementation brief. T075-T078 have source candidates,
-not installed proof; T079-T081 remain pending. Update implementation and
+This is the implementation brief, preserved with its original acceptance
+criteria. T075-T078 now have installed candidate evidence, not complete proof;
+T079-T081 remain partial or pending. Update implementation and
 verification separately in the tracker. Keep A01-A16 and T001-T074 intact.
 T075-T077 extend A07/T024 and A06a/T052-T053; T078 repairs A08; T079-T081 supply
 focused A07-A09 evidence. Correctness fixes preempt performance benchmarking.

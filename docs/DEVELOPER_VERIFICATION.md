@@ -26,8 +26,8 @@ mapped rewrite. Successful routed paging writes and an overlap-wait increase
 are required; newest bytes and untouched guards are checked while active and
 after release. A missing observation fails the case. The delay is cleared in
 `finally`, with no fault hook or raw-device write. Process-wide counters do not
-prove exact file-range ownership. A local plan-37 tool passed against loaded
-0.4.92.1; CI-built confirmation is still required.
+prove exact file-range ownership. The CI-built 0.4.95.1 plan-37 tool passed
+against the unchanged loaded 0.4.92.1 driver, with clean restoration.
 
 Plan 36 applies plan 35's routed-paging admission accounting to the separate
 first-write window in `foreground-background` too; plan 35 covered the six
@@ -45,8 +45,8 @@ process-wide counts do not identify a file range or establish causation. This
 is needed because plan-34 `policies` on 0.4.92.1 twice observed exactly one lower
 write in the first sector window; the old check could not distinguish a normal
 paging-marked NTFS write from the owned data write. The original incomplete
-results remain evidence, not passes. A local plan-36 tool passed the complete
-policy case against loaded 0.4.92.1; CI-built verifier confirmation remains.
+results remain evidence, not passes. A local plan-36 tool and the CI-built
+plan-37 tool passed the complete policy case against loaded 0.4.92.1.
 
 Plan 34 source candidate (2026-09-24) allows the existing `system-files` and
 `system-post-restart` cases to run with reconciled system usage paths and records
