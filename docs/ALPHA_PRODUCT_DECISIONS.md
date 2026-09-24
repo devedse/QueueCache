@@ -61,8 +61,8 @@ the wrong disk; they are not product activation restrictions.
   data after an I/O error, or falsely reporting successful explicit persistence.
 - Strict remains a distinct supported choice; it is not the required default.
 - Report known unfixed defects separately from untested risks. The 2026-09-24
-  source review identified mixed cached/paging-I/O coherence defects; T075-T077
-  must repair them. They are not a diagnosed cause of the historical BSOD, and
+  source review identified mixed cached/paging-I/O coherence defects. T075-T077
+  have a source candidate awaiting installed-driver proof. They are not a diagnosed cause of the historical BSOD, and
   successful short VM runs do not waive them. Product C: activation remains normal;
   the next controlled C: experiment follows the focused repair/check sequence.
 - Exhaustive certification is not a prerequisite for this private VM alpha.

@@ -241,6 +241,17 @@ var pagingProgress = CacheDiagnostics.Decode(pagingProgressBytes);
 Check(pagingProgress.PagingIo == pagingIo.PagingIo && pagingProgress.PagingProgress ==
     new CachePagingProgress(81, 82, 83, 84, 85, 86),
     "V6 paging progress offsets and V5 prefix");
+var pagingRouteBytes = new byte[CacheDiagnostics.PagingRouteWireSize];
+pagingProgressBytes.CopyTo(pagingRouteBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingRouteBytes, 7);
+BinaryPrimitives.WriteUInt32LittleEndian(pagingRouteBytes.AsSpan(4), CacheDiagnostics.PagingRouteWireSize);
+ulong[] pagingRouteValues = [11, 10, 1, 22, 21, 1, 3];
+for (var index = 0; index < pagingRouteValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(pagingRouteBytes.AsSpan(CacheDiagnostics.PagingProgressWireSize + index * 8),
+        pagingRouteValues[index]);
+var pagingRoute = CacheDiagnostics.Decode(pagingRouteBytes);
+Check(pagingRoute.PagingProgress == pagingProgress.PagingProgress && pagingRoute.PagingRoute ==
+    new CachePagingRoute(11, 10, 1, 22, 21, 1, 3), "V7 routed paging offsets and V6 prefix");
 Reject(() => CacheDiagnostics.Decode(pagingProgressBytes.AsSpan(0, 527)), "short paging progress diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");

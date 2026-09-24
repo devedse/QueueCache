@@ -8,13 +8,11 @@ test wrapper.
 
 Revision-4 review: T075-T077 in the
 [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081)
-own the pending paging-read/write coherence and progress repairs. `IRP_PAGING_IO`
-is not pagefile-only classification. All such requests currently bypass the cache
-on every disk, including ordinary mapped/file-cache traffic. Foreground ordering
-does not prevent overlap with the separate drainer. Neither usage counters nor a
-one-time registration barrier establish safe per-range bypass. Implement the
-range/version/lock and completion rules here alongside the fix; do not describe
-the proposed repaired path as deployed behavior.
+own the paging-read/write coherence and progress source candidate. `IRP_PAGING_IO`
+is not pagefile-only classification. The prior driver bypassed all such requests,
+including ordinary mapped/file-cache traffic. Plan-32 source uses a range fence
+against the separate drainer and retains a pinned sector overlay for reads. Only
+this source behavior is described below; loaded-VM proof remains on plan 31.
 
 This remains an incomplete resource-lifetime/system-disk audit. T068's source
 race is repaired: dispatch reserves an incoming
@@ -30,7 +28,7 @@ race cannot explain an older build's incident.
 | Ordinary read/write, cache inactive | `QcDispatch` forwards directly and holds the remove lock through lower completion. Diagnostics V5 observes `IRP_PAGING_IO` reads/writes before this routing choice. | Plan 25 passed the disabled 349 MiB workload byte-for-byte on exact 0.4.80.1 while measuring bidirectional paging. | Preserve this pass-through behavior in A13 compatibility qualification. |
 | Ordinary read/write, cache active | `QcDispatch` queues to the cancel-safe foreground worker; `QcCacheProcess` calls `Read`/`Write`. Fitting Fast writes complete from preallocated RAM. Paging data bypasses admission, so ordinary fitting writes can use the full configured write quota. | Exact 0.4.87.1 Plan-31 Fast/Strict passed complete 349 MiB byte checks and clean release. | Remaining A09 memory-pressure/application workflow and T052/T053. |
 | Paging, hibernation or dump path registration | Registration is reserved and ordered against Enable. Normal Enable accepts existing counts. A new in-path request takes one drain/lower-flush boundary and invalidates clean raw blocks, but keeps routing enabled. Failed/cancelled registration rolls its count back. | Revised after the exact 0.4.83.1 configured-pagefile failure. Query-stop/remove remains correctly rejected while Windows owns a special-file path. | Exact installed registration race/state and pagefile restart evidence. Hibernation/Fast Startup are unavailable on this VM. |
-| Paging-marked read/write data | `Read` forwards without dirty overlay; `Write` forwards then invalidates clean entries only on success. Both bypass the ordinary cache-error check. They can overlap older dirty/in-flight data; foreground serialization is insufficient. The flag includes ordinary file traffic. | Source-level correctness defect, T075/T076. 0.4.87.1 startup non-reproduction does not diagnose the 0.4.83.1 failure. Zero counters behind/removed by the bypass do not prove completion or progress. | T075 coherent reads; T076 range/version write ordering and errors; T077 bounded progress; T079 exact installed checks before next C: experiment. |
+| Paging-marked read/write data | Plan-32 `Read` uses the ordinary pinned sector overlay when cached versions exist and does not retain new paging read data. `Write` fences the affected range, waits for older dirty/in-flight versions to drain, invalidates stale clean entries, forwards, then releases the fence. The drainer selects target blocks first and can continue unrelated blocks while the lower direct write is pending. Service lane may complete one independent queued page-in during waits. | Source candidate built, not deployed. V7 reports routed requests/completions/failures and overlap waits; zero old V6 counters alone are no longer treated as proof. 0.4.87.1 startup non-reproduction does not diagnose the 0.4.83.1 failure. | T079 force old/new, partial, fault, cancellation and dependency orders on exact installed build. T080/T081 after that. |
 | Queued cancellation | `IO_CSQ` owns queued requests; cancellation releases the request remove lock. A dequeued capacity-waiting request also checks `irp->Cancel`. | Implementation exists; raw disposable-disk cancellation evidence is not in the supported runner. | T053 chooses reachable paging/teardown cases and adds maintained proof. |
 | Application/OS flush | Strict calls `QcCacheBarrier` and a lower flush. Explicit administrative flush always does so. Fast may acknowledge an application flush in RAM but never hides an existing cache error. | Secondary-disk Strict/Fast and lower-flush recovery evidence exists. | T052 forces queued-later-write cutoff ordering; A09 normal restart proof. |
 | Shutdown | Last-chance shutdown notification is registered. `IRP_MJ_SHUTDOWN` is queued, drains and disables through `QcShutdownBarrier`, lower-flushes, then forwards the original shutdown request. Failure is returned. | 0.4.87.1 saved-profile reboot smoke passed; its oracle was created while inactive, not pending cached-write proof. | T081 active-write normal restart and independent bytes; T054 recovery remains open. |

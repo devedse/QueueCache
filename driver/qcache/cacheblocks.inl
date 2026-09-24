@@ -128,7 +128,8 @@ static void ClearClean(QC_CACHE* c)
         {
         }
 }
-// Called after a real drain, before forwarding an uncached/partial write.
+// Called after overlapping dirty/in-flight versions have drained (or when none
+// existed), before forwarding an uncached write. Caller owns range ordering.
 // Only intersecting blocks become stale; unrelated clean payload must survive.
 static void InvalidateCleanRange(QC_CACHE* c, LONGLONG offset, ULONG length)
 {

@@ -15,6 +15,8 @@ public sealed record CachePagingIo(ulong ReadRequests, ulong ReadBytes, ulong Wr
     ulong LastMajor, ulong LastFlags, ulong LastOffset, ulong LastLength, ulong LastProcessId);
 public sealed record CachePagingProgress(ulong MapFailures, ulong CapacityWaits, ulong ServicedReadMisses,
     ulong ReservedBytes, ulong MaxReadLength, ulong MaxWriteLength);
+public sealed record CachePagingRoute(ulong ReadRequests, ulong ReadCompletions, ulong ReadFailures,
+    ulong WriteRequests, ulong WriteCompletions, ulong WriteFailures, ulong OverlapWaits);
 
 /// <summary>Lifetime request counters; deferred flushes are not durable flush completions.</summary>
 public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFlushes, ulong WriteThroughWrites,
@@ -27,11 +29,13 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int UsageActivityWireSize = 408;
     public const int PagingIoWireSize = 480;
     public const int PagingProgressWireSize = 528;
+    public const int PagingRouteWireSize = 584;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
     public CachePagingIo? PagingIo { get; init; }
     public CachePagingProgress? PagingProgress { get; init; }
+    public CachePagingRoute? PagingRoute { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -42,6 +46,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             UsageActivityWireSize => 4u,
             PagingIoWireSize => 5u,
             PagingProgressWireSize => 6u,
+            PagingRouteWireSize => 7u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -90,12 +95,22 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             pagingIo = new(paging[0], paging[1], paging[2], paging[3], paging[4], paging[5], paging[6], paging[7], paging[8]);
         }
         CachePagingProgress? pagingProgress = null;
-        if (bytes.Length == PagingProgressWireSize)
+        if (bytes.Length >= PagingProgressWireSize)
         {
             var progress = new ulong[6];
             for (var index = 0; index < progress.Length; index++)
                 progress[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingIoWireSize + index * 8)..]);
             pagingProgress = new(progress[0], progress[1], progress[2], progress[3], progress[4], progress[5]);
+        }
+        CachePagingRoute? pagingRoute = null;
+        if (bytes.Length >= PagingRouteWireSize)
+        {
+            var route = new ulong[7];
+            for (var index = 0; index < route.Length; index++)
+                route[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingProgressWireSize + index * 8)..]);
+            if (route[1] + route[2] > route[0] || route[4] + route[5] > route[3])
+                throw new InvalidDataException("Inconsistent routed paging completion counters.");
+            pagingRoute = new(route[0], route[1], route[2], route[3], route[4], route[5], route[6]);
         }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
@@ -103,7 +118,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             UsagePaths = usagePaths,
             UsageActivity = usageActivity,
             PagingIo = pagingIo,
-            PagingProgress = pagingProgress
+            PagingProgress = pagingProgress,
+            PagingRoute = pagingRoute
         };
     }
 }

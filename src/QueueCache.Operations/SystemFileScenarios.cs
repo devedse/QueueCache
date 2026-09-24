@@ -109,8 +109,7 @@ public static class SystemFileScenarios
     public static IReadOnlyList<CheckResult> Verify(DiskTarget target, SystemFileOracle oracle)
     {
         target.ValidateCurrent();
-        if (target != oracle.Target)
-            throw new IOException("System-file target identity changed since the oracle was written.");
+        DiskTarget.ValidateRecordedSystemTarget(oracle.Target, target);
         var directory = Path.GetDirectoryName(oracle.FilePath)!;
         ValidateOwnedPath(target, directory, oracle.FilePath);
         if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||

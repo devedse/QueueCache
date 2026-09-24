@@ -60,13 +60,17 @@ struct QC_DIAGNOSTICS
     ULONGLONG PagingLastMajor, PagingLastFlags, PagingLastOffset, PagingLastLength, PagingLastProcessId;
     ULONGLONG PagingMapFailures, PagingCapacityWaits, PagingServicedReadMisses;
     ULONGLONG PagingReservedBytes, PagingMaxReadLength, PagingMaxWriteLength;
+    ULONGLONG PagingRoutedReadRequests, PagingRoutedReadCompletions, PagingRoutedReadFailures;
+    ULONGLONG PagingRoutedWriteRequests, PagingRoutedWriteCompletions, PagingRoutedWriteFailures;
+    ULONGLONG PagingOverlapWaits;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
 static constexpr ULONG QcDiagnosticsV3Size = 240;
 static constexpr ULONG QcDiagnosticsV4Size = 408;
 static constexpr ULONG QcDiagnosticsV5Size = 480;
-static_assert(sizeof(QC_DIAGNOSTICS) == 528);
+static constexpr ULONG QcDiagnosticsV6Size = 528;
+static_assert(sizeof(QC_DIAGNOSTICS) == 584);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingUsagePaths) == QcDiagnosticsV2Size);
@@ -79,6 +83,7 @@ static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageOutFailures) == 360);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, UsageLastProcessId) == 384);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadRequests) == QcDiagnosticsV4Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingMapFailures) == QcDiagnosticsV5Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingRoutedReadRequests) == QcDiagnosticsV6Size);
 enum QC_BARRIER_REASON : ULONG
 {
     QcControlBarrier = 1, QcStrictWriteBarrier, QcDisabledWriteBarrier, QcQuotaWriteBarrier,
@@ -185,6 +190,10 @@ struct QC_CACHE
     BOOLEAN Enabled, Barrier, Suspended, Stop, ResumeEnabled;
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
+    // One foreground paging write owns this range until its lower completion.
+    // RangeForward becomes true after older dirty versions have drained.
+    BOOLEAN RangeDrain, RangeForward;
+    LONGLONG RangeStart, RangeEnd;
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
     volatile LONG Gone, PagingPathCount;
     volatile LONG PagingUsageCount, HibernationUsageCount, DumpUsageCount;
@@ -196,6 +205,9 @@ struct QC_CACHE
     volatile LONG64 PagingLastMajor, PagingLastFlags, PagingLastOffset, PagingLastLength, PagingLastProcessId;
     volatile LONG64 PagingMapFailures, PagingCapacityWaits, PagingServicedReadMisses;
     volatile LONG64 PagingMaxReadLength, PagingMaxWriteLength;
+    volatile LONG64 PagingRoutedReadRequests, PagingRoutedReadCompletions, PagingRoutedReadFailures;
+    volatile LONG64 PagingRoutedWriteRequests, PagingRoutedWriteCompletions, PagingRoutedWriteFailures;
+    volatile LONG64 PagingOverlapWaits;
     ULONG DelayMs, InjectFault;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
@@ -221,6 +233,7 @@ void QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
+bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 NTSTATUS QcCacheProcess(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
 NTSTATUS QcCacheBarrier(QC_CACHE* cache, BOOLEAN disable, QC_BARRIER_REASON reason,
                        PIRP request = nullptr, ULONG code = 0);

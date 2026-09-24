@@ -132,6 +132,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             throw new ArgumentException("Expected a system-active-image case ID and workload root.");
         return (workDirectory + "-" + caseId, caseId + ".oracle.json");
     }
+    public static string[] PassedSystemImageOracles(string runDirectory, IEnumerable<CaseResult> results) =>
+        results.Where(result => result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) &&
+                                result.Status == "PASS")
+            .Select(result => Path.Combine(runDirectory, SystemImageArtifacts(runDirectory, result.Id).OracleFile))
+            .ToArray();
     private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0) =>
         Worker(Job("control") with
         {
@@ -308,7 +313,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                                     test.Id.EndsWith("-strict", StringComparison.Ordinal)
                                         ? CachePreset.Strict : CachePreset.Fast)
                                 {
-                                    Options = new(Drain: DrainAlgorithm.Idle, RetainWrites: false, PromoteOnRead: false)
+                                    Options = new(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true)
                                 }
                                 : null
                         }, deadline.Token, test.Operation is "system-image-baseline" or "system-active-image" ? 900 : test.Operation == "system-file-create" ? 300 : 120);
@@ -383,11 +388,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
-                    var lastPassedImage = storage.Results.LastOrDefault(result =>
-                        result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) && result.Status == "PASS");
-                    var restorationOracle = lastPassedImage is null
-                        ? storage.PathFor("oracle.json")
-                        : storage.PathFor(SystemImageArtifacts(workDirectory!, lastPassedImage.Id).OracleFile);
+                    var requiredImageOracles = PassedSystemImageOracles(storage.DirectoryPath, storage.Results);
                     await Worker(Job("system-restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
@@ -395,7 +396,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         SystemInstance = options.SystemInstance,
                         SystemBytes = options.SystemBytes,
                         RecoverableVm = options.RecoverableVm,
-                        OraclePath = restorationOracle,
+                        OraclePath = storage.PathFor("oracle.json"),
+                        ImageOraclePaths = requiredImageOracles,
                         RequireImageEvidence = VerificationWorker.RequiresSystemImageEvidence(storage.Results)
                     }, CancellationToken.None, 300);
                 }
@@ -878,7 +880,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 SystemBytes = systemRecovery ? original.Target.Bytes : null,
                 RecoverableVm = systemRecovery,
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
-                RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults)
+                RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),
+                ImageOraclePaths = systemRecovery ? PassedSystemImageOracles(path, priorResults) : null
             }, token, 300);
             storage.Write("recovery-result.json", new
             {

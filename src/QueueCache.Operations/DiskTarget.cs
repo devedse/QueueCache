@@ -17,6 +17,17 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     public string Root => $"{Letter}:\\";
     public string Device => $"PhysicalDrive{Number}";
 
+    // Pagefile configuration can change IsPaging across a restart. The other
+    // fields identify the volume, physical disk and required system role.
+    public static void ValidateRecordedSystemTarget(DiskTarget recorded, DiskTarget current)
+    {
+        if (recorded.Letter != current.Letter || recorded.Number != current.Number ||
+            recorded.Bytes != current.Bytes ||
+            !string.Equals(recorded.Instance, current.Instance, StringComparison.OrdinalIgnoreCase) ||
+            recorded.IsBoot != current.IsBoot || recorded.IsSystem != current.IsSystem)
+            throw new IOException("System oracle target identity changed.");
+    }
+
     public static async Task<DiskTarget> InspectAsync(string volume, CancellationToken cancellationToken = default)
     {
         if (volume.Length != 2 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':')

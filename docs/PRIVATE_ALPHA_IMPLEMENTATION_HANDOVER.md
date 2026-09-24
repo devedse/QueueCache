@@ -5,7 +5,8 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The executable verification contract is plan 31. Corrected plan-14 `pressure`
+The source verification contract is plan 32; installed VM evidence remains plan 31.
+Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
 restoration. Plan 16 corrected that assumption; its exact-build 0.4.67.1 VM run
@@ -16,13 +17,14 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
-Immediate priority: implement T075-T077 below to repair the mixed cached/paging
-I/O correctness gap found in review of `89436a8`, then T078-T081 to check the fix
-and run the real BMP/Paint/Photos investigation. Normal C: activation is already
+Immediate priority: finish and install the T075-T078 source candidate below,
+then T079-T081 to check the fix and run the real BMP/Paint/Photos investigation.
+The source candidate builds and passes host contracts, but the mixed cached/paging
+I/O correctness gap found in review of `89436a8` has no installed proof. Normal C: activation is already
 implemented and exact 0.4.87.1 has limited successful VM evidence. It is not a
 coherence, paging-progress or historical-BSOD resolution verdict. Revision 4's
 sequence supersedes earlier next-step instructions and activation blockers in
-historical checkpoints. The executable runner remains plan 31 until code changes.
+historical checkpoints.
 
 ## 1. Start here
 
@@ -44,8 +46,8 @@ reboot, driver removal or destructive fault experiments.
 
 ### Revision 4: implementation-first correction (T075-T081)
 
-This is the next agent's implementation brief, not a request for another broad
-audit or test framework. All seven tasks are pending; update implementation and
+This is the next agent's implementation brief. T075-T078 have source candidates,
+not installed proof; T079-T081 remain pending. Update implementation and
 verification separately in the tracker. Keep A01-A16 and T001-T074 intact.
 T075-T077 extend A07/T024 and A06a/T052-T053; T078 repairs A08; T079-T081 supply
 focused A07-A09 evidence. Correctness fixes preempt performance benchmarking.
@@ -304,7 +306,7 @@ Do not delete it incidentally or pretend its soak has passed.
 TRUE means this step's stated scope is complete; PARTIAL means some deliverables
 exist but its exit gate is open; FALSE means the step is not delivered. It does not
 mean the entire driver is production-qualified. Source/verification details and
-immutable run IDs are in the tracker. New planning tasks below are all pending.
+immutable run IDs are in the tracker. Source work and installed proof are separate.
 
 | Step | Status | What changed or exists | Evidence and remaining boundary | Benefit |
 |---|---|---|---|---|
@@ -315,8 +317,8 @@ immutable run IDs are in the tracker. New planning tasks below are all pending.
 | A05 | TRUE, scoped | One developer CLI; duplicate wrappers removed; independent recovery script retained. | Host packaging checks passed; actual offline recovery rehearsal remains T054/A10. | Repeatable tests and a recovery route that can be tested without a working CLI. |
 | A06 | TRUE, scoped | Secondary-disk byte and lower-write/lower-flush recovery checks passed. | 512-byte-sector Q:, 0.4.57.1. One incomplete admission-precondition run preserved. Allocation/cancel/capacity/deterministic race gaps remain. | Confidence in exercised data paths before expanding exposure. |
 | A06a | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; plan-17 `policies` adds observed overlap; T051/T069 are complete. Recovery prevalidation is strengthened. | Exact installed 0.4.64.1 pressure, 0.4.67.1 drain and 0.4.69.1 overlap policy checks passed. Copied-hive recovery dry run passed; T050 tuning, controlled T052-T053 and actual T054 recovery remain. | Prevents known gaps and performance questions from disappearing behind completed labels. |
-| A07 | PARTIAL | Normal C: activation exists. **Changed this planning run:** T075-T077 specify repairs for paging-read/write coherence and progress. | Limited 0.4.87.1 image/startup passes do not prove those properties. Focused Q: proof, registration/lifetime/power gaps remain. | Prevent stale reads, overwritten saves and paging stalls without banning C:. |
-| A08 | PARTIAL | Image/restart infrastructure exists. **Changed this planning run:** corrected TRUE to PARTIAL; T078-T079 repair worker identity checks, per-mode post-release evidence and mixed-path coverage. | Plan-31 results remain valid only for recorded boundaries; actual paging-role transition and Fast post-release proof were absent. | Make each reported pass a trustworthy check of the intended behavior. |
+| A07 | PARTIAL | Normal C: activation exists. **Changed this run:** plan-32 source candidate repairs paging read overlay and overlapping direct-write order; cooperative page-in service and V7 outcomes added. | Native Release build passes. Focused installed Q: proof, registration/lifetime/power gaps remain; historical BSOD cause unknown. | Prevent stale reads, overwritten saves and paging stalls without banning C:. |
+| A08 | PARTIAL | **Changed this run:** plan-32 source checks every mode after release, every successful image at final restoration, default options and one stable identity rule. | Host contracts pass; plan-32 installed image/role transition and mixed-path proof remain. Plan-31 results retain their original scope. | Make each reported pass a trustworthy check of the intended behavior. |
 | A09 | PARTIAL | Public activation and fixed-pagefile saved startup passed a short observation. **Changed this planning run:** T080-T081 prioritize actual apps and cached-write restart/pressure. | No actual Paint/Photos test; restart oracle was created uncached. No diagnosed closure of the earlier process failure. Broader power/lifecycle evidence remains. | Check real saves, opens and restart behavior, not only synthetic file bytes. |
 | A10 | PARTIAL | Cleanup, packaging and recovery foundations exist; recovery now prevalidates all disk keys before mutation and identifies `-WhatIf` as a dry run. | Installed 0.4.70.1 script changed a disposable copied SYSTEM hive as expected; real offline/Safe Mode boot recovery, install/upgrade failure/uninstall matrix and final docs remain. | Installation and maintenance failures have a tested way out. |
 | A11 | PARTIAL | Runner and historical measurements exist. | Final-candidate comparisons, full 72-case collection and bounded smoke remain. | Establishes usable performance and catches longer-running defects. |

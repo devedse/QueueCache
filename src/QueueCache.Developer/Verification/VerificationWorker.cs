@@ -13,7 +13,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     ulong Value = 0, string? Recovery = null, int Seconds = 0, string? StopFile = null,
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
-    string? OraclePath = null, bool RequireImageEvidence = false);
+    string? OraclePath = null, bool RequireImageEvidence = false,
+    string[]? ImageOraclePaths = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -94,9 +95,9 @@ public static class VerificationWorker
     public static void ValidateActiveSystemPaths(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
         ValidateSystemUsageDiagnostics(statistics, diagnostics);
-        if (diagnostics.PagingIo is null || diagnostics.PagingProgress is null)
+        if (diagnostics.PagingIo is null || diagnostics.PagingProgress is null || diagnostics.PagingRoute is null)
             throw new NotSupportedException(
-                "Active C: verification requires Diagnostics V6 paging progress data.");
+                "Active C: verification requires Diagnostics V7 routed paging progress data.");
     }
     public static CachePagingProgress ValidatePagingProgressWindow(CacheDiagnostics before, CacheDiagnostics after)
     {
@@ -113,10 +114,29 @@ public static class VerificationWorker
             CapacityWaits = last.CapacityWaits - first.CapacityWaits,
             ServicedReadMisses = last.ServicedReadMisses - first.ServicedReadMisses
         };
-        if (delta.MapFailures != 0 || delta.CapacityWaits != 0 || delta.ServicedReadMisses != 0 ||
-            last.ReservedBytes != 0)
+        if (delta.MapFailures != 0 || delta.CapacityWaits != 0 || last.ReservedBytes != 0)
             throw new IOException(
-                "Paging I/O entered RAM admission/read service instead of the ordered lower-device bypass.");
+                "Paging-marked I/O encountered a mapping or ordinary cache-capacity failure.");
+        return delta;
+    }
+    public static CachePagingRoute ValidatePagingRouteWindow(CacheDiagnostics before, CacheDiagnostics after)
+    {
+        var first = before.PagingRoute ??
+            throw new NotSupportedException("Active system verification requires routed paging diagnostics V7.");
+        var last = after.PagingRoute ??
+            throw new NotSupportedException("Active system verification requires routed paging diagnostics V7.");
+        if (last.ReadRequests < first.ReadRequests || last.ReadCompletions < first.ReadCompletions ||
+            last.ReadFailures < first.ReadFailures || last.WriteRequests < first.WriteRequests ||
+            last.WriteCompletions < first.WriteCompletions || last.WriteFailures < first.WriteFailures ||
+            last.OverlapWaits < first.OverlapWaits)
+            throw new IOException("Routed paging counters moved backwards during the active window.");
+        var delta = new CachePagingRoute(
+            last.ReadRequests - first.ReadRequests, last.ReadCompletions - first.ReadCompletions,
+            last.ReadFailures - first.ReadFailures, last.WriteRequests - first.WriteRequests,
+            last.WriteCompletions - first.WriteCompletions, last.WriteFailures - first.WriteFailures,
+            last.OverlapWaits - first.OverlapWaits);
+        if (delta.ReadFailures != 0 || delta.WriteFailures != 0)
+            throw new IOException("A routed paging-marked I/O request failed during the active window.");
         return delta;
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
@@ -224,8 +244,9 @@ public static class VerificationWorker
                 {
                     var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!)) ??
                         throw new InvalidDataException("Missing system recovery snapshot.");
+                    DiskTarget.ValidateRecordedSystemTarget(original.Target, target);
                     if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName ||
-                        original.Target != target || original.State.Enabled || original.State.BudgetBytes != 0)
+                        original.State.Enabled || original.State.BudgetBytes != 0)
                         throw new IOException("System recovery identity or disabled/released baseline changed.");
                     FlushForRestoration(() =>
                     {
@@ -243,22 +264,34 @@ public static class VerificationWorker
                     var mismatches = RestorationMismatches(original, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
-                    if (job.RequireImageEvidence &&
-                        (string.IsNullOrWhiteSpace(job.OraclePath) || !File.Exists(job.OraclePath)))
-                        throw new IOException("Required post-release system-image oracle is missing.");
-                    if (!string.IsNullOrWhiteSpace(job.OraclePath) && File.Exists(job.OraclePath))
+                    var requiredOracles = job.ImageOraclePaths ?? [];
+                    if (job.RequireImageEvidence && requiredOracles.Length == 0)
+                        throw new IOException("Required per-case system-image oracle list is missing.");
+                    foreach (var oraclePath in requiredOracles)
+                    {
+                        if (!File.Exists(oraclePath))
+                            throw new IOException("Required post-release system-image oracle is missing: " + oraclePath);
+                        var oracle = SystemImageScenarios.ReadOracle(oraclePath);
+                        if (!File.Exists(oracle.FilePath))
+                            throw new IOException("Required post-release system-image file is missing: " + oracle.FilePath);
+                        var restoredImageChecks = SystemImageScenarios.Verify(target, oracle);
+                        RunStorage.AtomicJson(job.Reply + "." + Path.GetFileName(oraclePath) + ".post-release-checks.json", restoredImageChecks);
+                        ReportFailures(restoredImageChecks, Console.Error);
+                        if (restoredImageChecks.Any(check => check.Result != "PASS"))
+                            throw new IOException("System-image bytes failed after cache disable/release restoration.");
+                    }
+                    if (requiredOracles.Length == 0 && !string.IsNullOrWhiteSpace(job.OraclePath) &&
+                        File.Exists(job.OraclePath))
                     {
                         var oracle = SystemImageScenarios.ReadOracle(job.OraclePath);
-                        var postReleaseChecks = File.Exists(oracle.FilePath)
-                            ? SystemImageScenarios.Verify(target, oracle)
-                            : new[] { new CheckResult("system-image/post-release-bytes", "SKIP",
-                                "The active operation failed before creating its owned image; restoration itself completed.") };
-                        RunStorage.AtomicJson(job.Reply + ".post-release-checks.json", postReleaseChecks);
-                        ReportFailures(postReleaseChecks, Console.Error);
-                        if (job.RequireImageEvidence && postReleaseChecks.Any(check => check.Result != "PASS"))
-                            throw new IOException("Required system-image bytes were unavailable after cache disable/release restoration.");
-                        if (postReleaseChecks.Any(check => check.Result is not ("PASS" or "SKIP")))
-                            throw new IOException("System-image bytes failed after cache disable/release restoration.");
+                        if (File.Exists(oracle.FilePath))
+                        {
+                            var fallbackImageChecks = SystemImageScenarios.Verify(target, oracle);
+                            RunStorage.AtomicJson(job.Reply + ".post-release-checks.json", fallbackImageChecks);
+                            ReportFailures(fallbackImageChecks, Console.Error);
+                            if (fallbackImageChecks.Any(check => check.Result != "PASS"))
+                                throw new IOException("System-image bytes failed after cache disable/release restoration.");
+                        }
                     }
                     return 0;
                 }
@@ -306,11 +339,17 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply + ".after-application-flush-diagnostics.json",
                     diagnosticsAfterApplicationFlush);
                 var pagingProgress = ValidatePagingProgressWindow(diagnosticsEnabled, diagnosticsAfterApplicationFlush);
+                var pagingRoute = ValidatePagingRouteWindow(diagnosticsEnabled, diagnosticsAfterApplicationFlush);
                 checks.Add(new("system-image/cache-accepted-bytes", "PASS",
                     $"The active C: cache accepted at least the complete image ({afterApplicationFlush.AcceptedBytes - active.AcceptedBytes} bytes observed)."));
-                checks.Add(new("system-image/paging-forward-progress", "PASS",
-                    $"Paging I/O bypassed RAM admission with zero mapping failures, capacity waits and serviced " +
-                    $"paging-read misses; max observed read/write lengths were {pagingProgress.MaxReadLength}/{pagingProgress.MaxWriteLength} bytes."));
+                checks.Add(new("system-image/paging-observation", "PASS",
+                    $"Routed paging-marked requests during this window: reads {pagingRoute.ReadRequests}, " +
+                    $"completed {pagingRoute.ReadCompletions}; writes {pagingRoute.WriteRequests}, " +
+                    $"completed {pagingRoute.WriteCompletions}; overlap waits {pagingRoute.OverlapWaits}, " +
+                    $"cooperative read completions {pagingProgress.ServicedReadMisses}. " +
+                    "No routed failures, mapping failures or cache-capacity waits were observed. " +
+                    $"Max observed read/write lengths were {pagingProgress.MaxReadLength}/{pagingProgress.MaxWriteLength} bytes. " +
+                    "This is a process-wide window and does not prove a forced paging dependency."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
                 systemDevice.Control(WriteCacheAction.Flush);
                 var afterAdministrativeFlush = systemDevice.GetWriteCacheState();
@@ -320,6 +359,7 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply + ".after-administrative-flush-diagnostics.json",
                     diagnosticsAfterAdministrativeFlush);
                 ValidatePagingProgressWindow(diagnosticsEnabled, diagnosticsAfterAdministrativeFlush);
+                ValidatePagingRouteWindow(diagnosticsEnabled, diagnosticsAfterAdministrativeFlush);
                 checks.Add(new("system-image/administrative-flush", "PASS",
                     "The administrative flush returned while the cache remained routed and error-free; unrelated live C: writes may already be dirty again."));
                 checks.AddRange(SystemImageScenarios.Verify(target, SystemImageScenarios.ReadOracle(job.OraclePath)));
@@ -332,6 +372,10 @@ public static class VerificationWorker
                     throw new IOException("Active system-image case did not return C: to a disabled/released state.");
                 checks.Add(new("system-image/runtime-release", "PASS",
                     "The normal product path disabled, drained and released the C: runtime cache cleanly."));
+                var postReleaseChecks = SystemImageScenarios.Verify(target,
+                    SystemImageScenarios.ReadOracle(job.OraclePath));
+                RunStorage.AtomicJson(job.Reply + ".post-release-checks.json", postReleaseChecks);
+                checks.AddRange(postReleaseChecks);
                 RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);
                 return checks.All(check => check.Result == "PASS") ? 0 : 1;

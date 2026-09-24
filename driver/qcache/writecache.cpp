@@ -166,6 +166,13 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingReservedBytes = 0; // Paging data is ordered but never admitted to RAM.
     output->PagingMaxReadLength = InterlockedCompareExchange64(&c->PagingMaxReadLength, 0, 0);
     output->PagingMaxWriteLength = InterlockedCompareExchange64(&c->PagingMaxWriteLength, 0, 0);
+    output->PagingRoutedReadRequests = InterlockedCompareExchange64(&c->PagingRoutedReadRequests, 0, 0);
+    output->PagingRoutedReadCompletions = InterlockedCompareExchange64(&c->PagingRoutedReadCompletions, 0, 0);
+    output->PagingRoutedReadFailures = InterlockedCompareExchange64(&c->PagingRoutedReadFailures, 0, 0);
+    output->PagingRoutedWriteRequests = InterlockedCompareExchange64(&c->PagingRoutedWriteRequests, 0, 0);
+    output->PagingRoutedWriteCompletions = InterlockedCompareExchange64(&c->PagingRoutedWriteCompletions, 0, 0);
+    output->PagingRoutedWriteFailures = InterlockedCompareExchange64(&c->PagingRoutedWriteFailures, 0, 0);
+    output->PagingOverlapWaits = InterlockedCompareExchange64(&c->PagingOverlapWaits, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 static void RecordMaximum(volatile LONG64* target, ULONG value)
@@ -415,8 +422,10 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
         {
             // This IRP remains owned by the lower stack until RetainCompletion.
             // Cache.Read has pinned its hit versions before reaching this wait.
-            // Only hit-only reads may bypass; no nested lower request is issued.
-            if (read && allowReadService && c->ServiceReads && c->RequestAvailable)
+            // The service lane can complete cached hits or one independent
+            // paging-marked miss. A nested lower wait cannot recurse again.
+            if (allowReadService && c->ServiceReads && c->RequestAvailable &&
+                (read || c->RangeDrain))
             {
                 // Null means the active request is a read. Do not inspect an IRP
                 // whose current stack location belongs to the pending lower I/O.
@@ -435,6 +444,48 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
         }
     }
     return irp->IoStatus.Status;
+}
+static bool RangeOverlaps(LONGLONG first, LONGLONG end, LONGLONG block)
+{
+    return block < end && block + Chunk > first;
+}
+// Inspect every version, including an older version already owned by a drainer.
+// The caller holds Mutex. This is used only for paging-marked direct I/O.
+static bool PendingRange(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    if (!c->Capacity)
+        return false;
+    for (auto block = first - first % Chunk; block < end; block += Chunk)
+        for (auto i = c->Buckets[Bucket(c, block)]; i != NoSlot; i = c->Slots[i].HashNext)
+            if (c->Slots[i].Offset.QuadPart == block &&
+                (c->Slots[i].Dirty || c->Slots[i].InFlight || c->Slots[i].Filling))
+                return true;
+    return false;
+}
+static bool ResidentRange(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    if (!c->Capacity)
+        return false;
+    for (auto block = first - first % Chunk; block < end; block += Chunk)
+        if (FindSlot(c, block) != NoSlot)
+            return true;
+    return false;
+}
+// Called with Mutex released. Read service may perform one independent page-in;
+// waking on RequestAvailable is essential when a drainer needs that page-in.
+static void WaitForCacheProgress(QC_CACHE* c, PIRP blockedRequest)
+{
+    if (c->ServiceReads && c->ServiceReads(c->ServiceContext, blockedRequest))
+        return;
+    LARGE_INTEGER interval;
+    interval.QuadPart = -1000000;
+    if (c->RequestAvailable)
+    {
+        PVOID objects[] = {&c->Changed, c->RequestAvailable};
+        KeWaitForMultipleObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, &interval, nullptr);
+    }
+    else
+        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
 }
 static void Drainer(PVOID context)
 {
@@ -465,7 +516,7 @@ static void Drainer(PVOID context)
                                    static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                                    now - c->Slots[c->Head].DirtySince,
                                    now - c->LastWriteTime,
-                                   c->Barrier || c->WriterWaiting,
+                                   c->Barrier || c->WriterWaiting || c->RangeDrain,
                                    pressure);
         c->Pressure = pressure;
         if (!drain)
@@ -488,6 +539,10 @@ static void Drainer(PVOID context)
         // Distinct disk ranges can drain concurrently. Never issue a newer version
         // while an older write to that address is still outstanding.
         while (index != NoSlot && (c->Slots[index].InFlight || c->Slots[index].Filling ||
+                                   (c->RangeDrain &&
+                                       ((c->RangeForward != FALSE) ==
+                                        RangeOverlaps(c->RangeStart, c->RangeEnd,
+                                                      c->Slots[index].Offset.QuadPart))) ||
                                    FindOldestSlot(c, c->Slots[index].Offset.QuadPart) != index))
             index = c->Slots[index].QueueNext;
         if (index == NoSlot)
@@ -504,7 +559,7 @@ static void Drainer(PVOID context)
         // Arrival order can be random even when neighboring disk blocks are dirty.
         // Walk backwards by at most one batch before gathering forwards, keeping
         // the oldest eligible anchor in the batch and preserving version order.
-        auto batchBlocks = c->Slots[index].ValidSectors == 255
+        auto batchBlocks = c->RangeDrain ? 1UL : c->Slots[index].ValidSectors == 255
                                ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
@@ -747,7 +802,7 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
         KeClearEvent(&c->Changed);
         WakeDrainers(c);
         ReleaseCache(c);
-        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, nullptr);
+        WaitForCacheProgress(c, nullptr);
         AcquireCache(c);
     }
     auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
@@ -1054,17 +1109,53 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     }
     if (!QcShouldCacheDataIo(pagingIo))
     {
-        // A cache fault in ordinary file data must not prevent independent
-        // pagefile I/O from reaching the lower device and destabilize Windows.
+        // A paging-marked write can also be ordinary mapped-file data. Drain
+        // only its overlapping versions, including writes already issued by a
+        // drainer. Keep the range fenced until the direct lower write completes.
+        // The foreground worker owns the only range fence; unrelated blocks may
+        // continue draining and fitting ordinary writes retain RAM admission.
+        const auto first = offset.QuadPart;
+        const auto end = first + length;
+        c->RangeStart = first;
+        c->RangeEnd = end;
+        c->RangeDrain = TRUE;
+        c->RangeForward = FALSE;
+        WakeDrainers(c);
+        if (PendingRange(c, first, end))
+            InterlockedIncrement64(&c->PagingOverlapWaits);
+        while (PendingRange(c, first, end) && NT_SUCCESS(c->State.LastError) &&
+               !c->Gone && !irp->Cancel)
+        {
+            KeClearEvent(&c->Changed);
+            ReleaseCache(c);
+            WaitForCacheProgress(c, irp);
+            AcquireCache(c);
+        }
+        if (PendingRange(c, first, end) || c->Gone || irp->Cancel)
+        {
+            auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED :
+                irp->Cancel ? STATUS_CANCELLED : c->State.LastError;
+            c->RangeDrain = c->RangeForward = FALSE;
+            WakeDrainers(c);
+            ReleaseCache(c);
+            return error;
+        }
+        // Do not use stale clean data while the direct request owns this range.
+        InvalidateCleanRange(c, first, length);
+        c->RangeForward = TRUE;
         ReleaseCache(c);
         auto status = OriginalIo(c, irp);
-        if (NT_SUCCESS(status))
-        {
-            AcquireCache(c);
-            InvalidateCleanRange(c, offset.QuadPart, length);
-            Publish(c);
-            ReleaseCache(c);
-        }
+        if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
+            status = STATUS_DEVICE_DATA_ERROR;
+        AcquireCache(c);
+        // A failed or short lower write may still have changed some sectors.
+        // The request reports that failure; no old clean view may survive it.
+        InvalidateCleanRange(c, first, length);
+        c->RangeDrain = c->RangeForward = FALSE;
+        Publish(c);
+        KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+        WakeDrainers(c);
+        ReleaseCache(c);
         return status;
     }
     if (!NT_SUCCESS(c->State.LastError))
@@ -1307,11 +1398,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         irp->IoStatus.Information = 0;
         return STATUS_SUCCESS;
     }
-    if (!QcShouldCacheDataIo((irp->Flags & IRP_PAGING_IO) != 0))
+    const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+    if (pagingIo && !ResidentRange(c, start, end))
     {
-        // Do not retain pagefile reads or serve them from the ordinary file-data
-        // cache. They stay ordered by the foreground worker and complete from the
-        // lower stack without recursively consuming cache capacity.
+        // No cached version exists to overlay. Avoid RAM retention and mapping.
         ReleaseCache(c);
         return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, false);
     }
@@ -1321,7 +1411,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         ReleaseCache(c);
         return error;
     }
-    if (!c->Enabled)
+    if (!c->Enabled && !c->State.DirtyBytes)
     {
         ReleaseCache(c);
         return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp);
@@ -1430,7 +1520,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 TouchClean(c, index);
                 continue;
             }
-            if (block >= start && block + Chunk <= end && ReadRoom(c))
+            if (!pagingIo && block >= start && block + Chunk <= end && ReadRoom(c))
             {
                 index = AllocateSlot(c, false, true);
                 auto fill = &c->Slots[index];
@@ -1461,7 +1551,39 @@ bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* st
     if (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes))
         return false;
     *status = Read(c, irp, true);
+    if (*status != STATUS_NOT_FOUND && (irp->Flags & IRP_PAGING_IO))
+    {
+        InterlockedIncrement64(&c->PagingRoutedReadRequests);
+        InterlockedIncrement64(NT_SUCCESS(*status)
+            ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+    }
     return *status != STATUS_NOT_FOUND;
+}
+bool QcCacheTryPagingReadProgress(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction != IRP_MJ_READ || !(irp->Flags & IRP_PAGING_IO))
+        return false;
+    auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    auto length = stack->Parameters.Read.Length;
+    if (offset < 0 || offset > deviceBytes || !length ||
+        length > static_cast<ULONGLONG>(deviceBytes - offset) ||
+        (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes)))
+        return false;
+    AcquireCache(c);
+    const bool overlapsActiveWrite = c->RangeDrain &&
+        offset < c->RangeEnd && offset + length > c->RangeStart;
+    ReleaseCache(c);
+    if (overlapsActiveWrite)
+        return false;
+    // One bounded, independent page-in can unblock the lower operation on the
+    // foreground worker. No recursive read service is allowed from its lower wait.
+    InterlockedIncrement64(&c->PagingRoutedReadRequests);
+    *status = Read(c, irp, false, false);
+    InterlockedIncrement64(NT_SUCCESS(*status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+    if (NT_SUCCESS(*status))
+        InterlockedIncrement64(&c->PagingServicedReadMisses);
+    return true;
 }
 // Only optimized, bounded, full-cache-block TRIM ranges are handled here. Any
 // unfamiliar flags/parameters/alignment use the existing ordered drain/pass-through.
@@ -1705,7 +1827,16 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             return STATUS_INVALID_PARAMETER;
         if (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes))
             return STATUS_INVALID_PARAMETER;
-        return stack->MajorFunction == IRP_MJ_WRITE ? Write(c, irp) : Read(c, irp);
+        const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+        const bool write = stack->MajorFunction == IRP_MJ_WRITE;
+        if (pagingIo)
+            InterlockedIncrement64(write ? &c->PagingRoutedWriteRequests : &c->PagingRoutedReadRequests);
+        auto status = write ? Write(c, irp) : Read(c, irp);
+        if (pagingIo)
+            InterlockedIncrement64(write
+                ? NT_SUCCESS(status) ? &c->PagingRoutedWriteCompletions : &c->PagingRoutedWriteFailures
+                : NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+        return status;
     }
     if (stack->MajorFunction == IRP_MJ_FLUSH_BUFFERS)
     {

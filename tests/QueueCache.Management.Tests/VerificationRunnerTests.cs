@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 31, "isolated active-image path contract version");
+        Check(VerificationPlan.Version == 32, "per-case image and identity contract version");
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -109,7 +109,8 @@ internal static class VerificationRunnerTests
         catch (NotSupportedException) { }
         var guardedPaging = pagingAfter with
         {
-            PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 0, 1UL << 20, 2UL << 20)
+            PagingProgress = new QueueCache.Management.CachePagingProgress(5, 7, 9, 0, 1UL << 20, 2UL << 20),
+            PagingRoute = new QueueCache.Management.CachePagingRoute(10, 10, 0, 20, 20, 0, 1)
         };
         VerificationWorker.ValidateActiveSystemPaths(usageStatistics, guardedPaging);
         var allSystemActivity = new QueueCache.Management.CacheUsageActivities(
@@ -124,13 +125,36 @@ internal static class VerificationRunnerTests
         var progressAfter = guardedPaging;
         Check(VerificationWorker.ValidatePagingProgressWindow(guardedPaging, progressAfter) ==
             new QueueCache.Management.CachePagingProgress(0, 0, 0, 0, 1UL << 20, 2UL << 20),
-            "active paging window bypasses RAM admission and read service");
+            "active paging window has no mapping or capacity failure");
+        Check(VerificationWorker.ValidatePagingProgressWindow(guardedPaging,
+            guardedPaging with { PagingProgress = guardedPaging.PagingProgress! with { ServicedReadMisses = 10 } })
+            .ServicedReadMisses == 1, "cooperative paging read may complete");
+        Check(VerificationWorker.ValidatePagingRouteWindow(guardedPaging, guardedPaging) ==
+            new QueueCache.Management.CachePagingRoute(0, 0, 0, 0, 0, 0, 0),
+            "routed paging completion window");
+        var routedAfter = guardedPaging with
+        {
+            PagingRoute = guardedPaging.PagingRoute! with
+            {
+                ReadRequests = 12, ReadCompletions = 12,
+                WriteRequests = 21, WriteCompletions = 21, OverlapWaits = 2
+            }
+        };
+        Check(VerificationWorker.ValidatePagingRouteWindow(guardedPaging, routedAfter) ==
+            new QueueCache.Management.CachePagingRoute(2, 2, 0, 1, 1, 0, 1),
+            "routed paging actual completion deltas");
+        try
+        {
+            VerificationWorker.ValidatePagingRouteWindow(guardedPaging,
+                routedAfter with { PagingRoute = routedAfter.PagingRoute! with { ReadFailures = 1 } });
+            throw new Exception("Failed routed paging request accepted.");
+        }
+        catch (IOException) { }
         foreach (var invalid in new[]
         {
             progressAfter with { PagingProgress = progressAfter.PagingProgress! with { MapFailures = 6 } },
             progressAfter with { PagingProgress = progressAfter.PagingProgress! with { CapacityWaits = 8 } },
-            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ReservedBytes = 1 } },
-            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ServicedReadMisses = 10 } }
+            progressAfter with { PagingProgress = progressAfter.PagingProgress! with { ReservedBytes = 1 } }
         })
         {
             try
@@ -213,6 +237,11 @@ internal static class VerificationRunnerTests
         try { SystemPreflightGuard.ValidateTargets(systemTarget, resultsTarget, "WRONG", 100L << 30); throw new Exception("Wrong identity accepted."); }
         catch (IOException) { }
         SystemPreflightGuard.ValidateRecordedTarget(systemTarget with { IsPaging = false }, systemTarget with { IsPaging = true });
+        QueueCache.Operations.DiskTarget.ValidateRecordedSystemTarget(
+            systemTarget with { IsPaging = true, Instance = "scsi\\test" },
+            systemTarget with { IsPaging = false });
+        QueueCache.Operations.DiskTarget.ValidateRecordedSystemTarget(
+            systemTarget with { IsPaging = false }, systemTarget with { IsPaging = true });
         foreach (var changed in new[]
         {
             systemTarget with { Letter = 'D' },
@@ -226,6 +255,20 @@ internal static class VerificationRunnerTests
             try { SystemPreflightGuard.ValidateRecordedTarget(systemTarget, changed); throw new Exception("Changed post-restart disk identity accepted."); }
             catch (IOException) { }
         }
+        foreach (var changed in new[] { systemTarget with { Number = 2 }, systemTarget with { IsBoot = false } })
+        {
+            try { QueueCache.Operations.DiskTarget.ValidateRecordedSystemTarget(systemTarget, changed); throw new Exception("Worker identity accepted a different system disk."); }
+            catch (IOException) { }
+        }
+        var imageCases = new[]
+        {
+            new CaseResult("system-active-image-fast", "PASS", "", DateTimeOffset.UtcNow, 1),
+            new CaseResult("system-active-image-strict", "PASS", "", DateTimeOffset.UtcNow, 1)
+        };
+        var imageOracles = VerificationRunner.PassedSystemImageOracles("Q:\\verification", imageCases);
+        Check(imageOracles.Length == 2 && imageOracles[0].EndsWith("system-active-image-fast.oracle.json") &&
+              imageOracles[1].EndsWith("system-active-image-strict.oracle.json"),
+            "both successful image cases retain independent post-release oracles");
         var ownedDirectory = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
         QueueCache.Operations.SystemFileScenarios.ValidateOwnedPath(systemTarget, ownedDirectory, ownedDirectory + "\\payload.bin");
         foreach (var badPath in new[] { "C:\\Windows\\payload.bin", ownedDirectory + "\\other.bin", "Q:\\QueueCache-System-0123456789abcdef0123456789abcdef\\payload.bin" })

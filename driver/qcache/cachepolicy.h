@@ -50,13 +50,13 @@ constexpr ULONG QcWriteLimit(const QC_OPTIONS& o, ULONG capacity)
 }
 constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool, bool)
 {
-    // Paging data bypasses this cache, so ordinary fitting writes may use the
-    // complete configured write quota without waiting for an unused reserve.
+    // Paging-marked writes use an ordered lower path. Ordinary fitting writes
+    // retain the full quota; no unused paging reserve is held in nonpaged RAM.
     return writeLimit;
 }
-// The cache accelerates ordinary file data. Paging-file traffic is already RAM
-// eviction/reload; retaining it in nonpaged RAM is circular and can prevent the
-// memory manager from making forward progress. Keep it ordered but uncached.
+// IRP_PAGING_IO also marks filesystem cache and mapped-file traffic, not only
+// pagefile contents. Avoid new RAM admission for these writes, but the caller
+// must reconcile every overlapping cached/in-flight version before forwarding.
 constexpr bool QcShouldCacheDataIo(bool pagingIo)
 {
     return !pagingIo;

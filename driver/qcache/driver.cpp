@@ -460,7 +460,9 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
             InterlockedExchange64(reinterpret_cast<volatile LONG64*>(&ext->Cache.Performance.LastAfterSequence),
                                   selection.AfterSequence);
         NTSTATUS status;
-        if (QcCacheTryReadHit(&ext->Cache, read, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &status))
+        const auto deviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
+        if (QcCacheTryReadHit(&ext->Cache, read, deviceBytes, &status) ||
+            QcCacheTryPagingReadProgress(&ext->Cache, read, deviceBytes, &status))
         {
             auto bytes = NT_SUCCESS(status) ? read->IoStatus.Information : 0;
             IoReleaseRemoveLock(&ext->RemoveLock, read);
@@ -473,8 +475,8 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
         {
             if (diagnostics)
                 Increment(&ext->Cache.Performance.ServiceReadMisses);
-            // The sole foreground owner is still blocked. Draining and cache hits
-            // cannot populate a missing block; retry after normal admission advances.
+            // The sole foreground owner is still blocked. Ordinary misses cannot
+            // populate a missing block; retry after normal admission advances.
             // DriverContext[3] belongs to CSQ and must never be used here.
             read->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(ext->ReadServiceEpoch);
             // A miss must not block this lane on the lower device. Reinsertion at
@@ -827,13 +829,14 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV6Size ? QcDiagnosticsV6Size :
                 outputLength >= QcDiagnosticsV5Size ? QcDiagnosticsV5Size :
                 outputLength >= QcDiagnosticsV4Size ? QcDiagnosticsV4Size :
                 outputLength >= QcDiagnosticsV3Size ? QcDiagnosticsV3Size :
                 outputLength >= QcDiagnosticsV2Size ? QcDiagnosticsV2Size : QcDiagnosticsV1Size;
             diagnostics.Version = returned == QcDiagnosticsV1Size ? 1 : returned == QcDiagnosticsV2Size ? 2 :
                 returned == QcDiagnosticsV3Size ? 3 : returned == QcDiagnosticsV4Size ? 4 :
-                returned == QcDiagnosticsV5Size ? 5 : 6;
+                returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 : 7;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
