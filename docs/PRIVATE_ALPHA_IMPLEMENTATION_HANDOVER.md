@@ -5,10 +5,10 @@ owner. End goal: a production-ready QueueCache product. A01-A12 deliver the firs
 controlled milestone: a private recoverable-VM alpha including Fast caching on the
 physical disk backing C:. A13-A16 define the subsequent production qualification
 and release gates. None of these planned gates is a readiness verdict.
-The source verification contract is plan 36; loaded 0.4.92.1 VM evidence includes
-plan-34 focused Q: coherence and quick passes, then incomplete policy runs.
-Plan 35 passed its sector checks but stopped at a separate unconverted fitting
-admission caller; all runs restored. See the tracker for exact IDs and limits.
+The source verification contract is plan 37. Loaded 0.4.92.1 VM evidence includes
+plan-34 Q: focused/quick and guarded 349 MiB active-C: Fast/Strict passes. Plan-35
+policy was incomplete; local plan-36 policy and plan-37 observed-overlap checks
+passed with clean restoration. See the tracker for exact IDs and limits.
 Corrected plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a verifier assumption about NTFS metadata, with clean
@@ -20,11 +20,11 @@ overlap observation and an A07/T026 last-boundary identity recheck; exact-build
 preflight. Plan 19 adds a bounded owned-file oracle and read-only post-restart
 check; both passed on the VM with C: caching disabled. Active C: is not qualified.
 
-Immediate priority: run plan 36's paging-aware policy check, then
-finish T079's forced ordering and T080-T081's actual C: checks. The candidate
-builds and passes host contracts, and a focused installed Q: mapped/unbuffered
-case passed, but the mixed cached/paging gap found in review of `89436a8` has no
-forced-ordering proof. Normal C: activation is already
+Immediate priority: confirm plan 37 with CI-built tooling, finish remaining
+T079 fault/cancel/dependency ordering checks and T080-T081's actual C: checks.
+The candidate builds and passes host contracts, and installed Q: mapped/unbuffered
+plus bounded C: image cases passed; exact-range/failure proof and the owner's
+application workflow remain. Normal C: activation is already
 implemented and exact 0.4.87.1 has limited successful VM evidence. It is not a
 coherence, paging-progress or historical-BSOD resolution verdict. Revision 4's
 sequence supersedes earlier next-step instructions and activation blockers in

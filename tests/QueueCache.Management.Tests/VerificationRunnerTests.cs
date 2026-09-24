@@ -26,10 +26,29 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 36, "paging-aware sector and fitting admission contract version");
+        Check(VerificationPlan.Version == 37, "observed mapped/drainer overlap contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
+        var overlapBefore = new QueueCache.Management.CachePagingRoute(0, 0, 0, 0, 0, 0, 0);
+        var overlapAfter = overlapBefore with { WriteRequests = 1, WriteCompletions = 1, OverlapWaits = 1 };
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyObservedOverlap(overlapBefore, overlapAfter, 1536)
+            .Contains("isolated 1536-byte older write"), "mixed-I/O case requires observed sparse in-flight payload");
+        foreach (var (observed, route) in new[]
+        {
+            (0UL, overlapAfter), (4096UL, overlapAfter), (1536UL, overlapBefore),
+            (1536UL, overlapAfter with { WriteCompletions = 0 }),
+            (1536UL, overlapAfter with { WriteFailures = 1 }),
+            (1536UL, overlapAfter with { OverlapWaits = 0 })
+        })
+        {
+            try
+            {
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyObservedOverlap(overlapBefore, route, observed);
+                throw new Exception("Unobserved paging/drainer overlap accepted.");
+            }
+            catch (IOException) { }
+        }
         var usageActivity = new QueueCache.Management.CacheUsageActivities(
             new(2, 0, 2, 0, 0, 0, 556), new(0, 0, 0, 0, 0, 0, 0), new(0, 0, 0, 0, 0, 0, 0));
         var usageDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
