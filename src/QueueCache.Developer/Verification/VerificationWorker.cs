@@ -52,7 +52,8 @@ public static class VerificationWorker
         results.Any(result => result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) &&
                               result.Status == "PASS");
     public static bool AllowsSystemUsagePaths(string operation) =>
-        operation is "system-capture" or "system-active-image" or "system-restore";
+        operation is "system-capture" or "system-active-image" or "system-restore" or
+            "system-file-create" or "system-file-verify";
     public static void ValidateSystemUsageDiagnostics(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
         var paths = diagnostics.UsagePaths ??
@@ -394,14 +395,20 @@ public static class VerificationWorker
                 if (before.Faulted || before.Errors != 0 || before.LastError != 0)
                     throw new IOException("System-disk cache reports a fault; do not start a file workload or treat a byte read as recovery.");
                 RunStorage.AtomicJson(job.Reply + ".before.json", before);
-                IReadOnlyList<CheckResult> checks = job.Operation == "system-file-create"
+                var checks = new List<CheckResult>(job.Operation == "system-file-create"
                     ? SystemFileScenarios.Create(target, job.WorkDirectory!, job.OraclePath)
-                    : SystemFileScenarios.Verify(target, SystemFileScenarios.ReadOracle(job.OraclePath));
-                RunStorage.AtomicJson(job.Reply, checks);
+                    : SystemFileScenarios.Verify(target, SystemFileScenarios.ReadOracle(job.OraclePath)));
                 var after = beforeObservation.GetWriteCacheState();
                 RunStorage.AtomicJson(job.Reply + ".after.json", after);
                 if (after.Faulted || after.Errors != before.Errors || after.LastError != before.LastError)
                     throw new IOException("System-disk cache reported a new error during the file check.");
+                if (job.Operation == "system-file-create" && before.Enabled)
+                {
+                    ValidateActiveImageRouting(before, after, (ulong)SystemFileScenarios.FileMiB << 20);
+                    checks.Add(new("system-file/active-admission", "PASS",
+                        $"Active C: cache accepted {after.AcceptedBytes - before.AcceptedBytes} bytes during the owned file write."));
+                }
+                RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);
                 return checks.Count > 0 && checks.All(check => check.Result == "PASS") ? 0 : 1;
             }

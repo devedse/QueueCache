@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 33, "mixed paging/file and per-case image contract version");
+        Check(VerificationPlan.Version == 34, "mixed paging/file and active restart contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -84,6 +84,8 @@ internal static class VerificationRunnerTests
         Check(VerificationWorker.AllowsSystemUsagePaths("system-capture") &&
             VerificationWorker.AllowsSystemUsagePaths("system-active-image") &&
             VerificationWorker.AllowsSystemUsagePaths("system-restore") &&
+            VerificationWorker.AllowsSystemUsagePaths("system-file-create") &&
+            VerificationWorker.AllowsSystemUsagePaths("system-file-verify") &&
             !VerificationWorker.AllowsSystemUsagePaths("system-image-baseline"),
             "active capture/workload/restoration accept reconciled system usage paths");
         var pagingBefore = usageDiagnostics with

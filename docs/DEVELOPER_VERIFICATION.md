@@ -6,6 +6,7 @@ test application, installer, scheduled task or `--detach` option is needed.
 ```powershell
 # Elevated terminal on the test machine
 qcache developer verify Q: --suite quick
+qcache developer verify Q: --suite paging-coherence --output C:\QueueCache-Results
 qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 ```
@@ -16,9 +17,13 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 33)
+## Suites (plan version 34)
 
-Plan 33 source candidate (2026-09-24) adds a focused non-OS `paging-coherence`
+Plan 34 source candidate (2026-09-24) allows the existing `system-files` and
+`system-post-restart` cases to run with reconciled system usage paths and records
+actual active cache admission for a newly created owned file. The normal restart
+remains an explicit separate action; creation while active does not by itself
+prove dirty bytes survived a reboot. Plan 33 added a focused non-OS `paging-coherence`
 case to plan 32's routed paging Diagnostics V7 and
 per-case post-release image checks. It uses normal retained-write/read-promotion
 options and one stable system-target comparison across preflight and workers.

@@ -5,7 +5,7 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-Plan 33 source candidate, 2026-09-24: range-coherent paging-marked reads and
+Plan 34 source candidate, 2026-09-24: range-coherent paging-marked reads and
 targeted overlapping-write drain/fence in `writecache.cpp`; cooperative paging
 read service while blocked on lower I/O, capacity or a drain boundary; Diagnostics
 V7 routed request/completion/failure/overlap counters; per-case and final
@@ -14,6 +14,10 @@ identity checks. Native Release build and host management/runner contracts pass.
 The maintained `paging-coherence` suite now exercises an owned non-OS file through
 unbuffered and mapped access; it records the limits of process-wide counters and
 does not replace the forced T079 ordering cases.
+Plan 34 also allows an existing system-file oracle to be created while the saved
+C: cache is active with reconciled usage paths; it requires an observed acceptance
+delta before calling that phase an active-write result. The reboot/read-only
+phase and bounded pressure exercise remain separate installed checks.
 The loaded VM driver is still 0.4.87.1; this source is **not yet installed or
 kernel-verified**. No T075-T081 closure or C: qualification is claimed.
 
@@ -26,7 +30,8 @@ benefits and dependencies are in
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
-row below. The executable verification contract is plan 31: plan-14 `pressure`
+row below. The source verification contract is plan 34; installed VM evidence is
+still plan 31. Historical plan-14 `pressure`
 passed on exact installed 0.4.64.1. The first plan-15 T050 run on 0.4.66.1
 stopped at case 4/24 on a metadata oracle with clean restoration. Plan 16
 corrected that assumption. Its exact-build 0.4.67.1 three-repeat VM run
@@ -75,7 +80,7 @@ pagefile saved-startup regression without the earlier process corruption.
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
 | A07 / T023-T027, T067-T068, T070-T077 | PARTIAL | Normal C: activation exists. **Changed this run:** T075-T077 source candidate overlays paging reads with resident bytes, drains only overlapping older writes before direct paging writes, and services independent queued page-ins during waits. Diagnostics V7 records routed outcomes. | Native Release build passes; no installed mixed-I/O ordering, fault/cancel, memory-pressure or dependency proof yet. T079 and remaining T052/T053, registration and power gates remain. Historical BSOD cause unknown. |
 | A08 / T028-T031, T078-T079 | PARTIAL | **Changed this run:** plan 32 shares stable target comparison across workers, verifies each image after release and again at final restoration, uses default retention/promotion and decodes routed progress. | Host tests pass; plan-32 exact installed checks, actual paging-role transition, and mixed-I/O proof remain. Preserve plan-31 raw results with their old boundaries. |
-| A09 / T032-T037, T073-T074, T080-T081 | PARTIAL | Public activation and saved Fast startup worked on 0.4.87.1 with fixed pagefile/dump registration. **Changed this planning run:** non-reproduction is no longer described as a diagnosed defect closure. | T080 actual Paint/Photos, T081 active-write restart/pressure and broader lifecycle remain. The restart oracle was created uncached; unavailable sleep/hibernate/Fast Startup remain unqualified. |
+| A09 / T032-T037, T073-T074, T080-T081 | PARTIAL | Public activation and saved Fast startup worked on 0.4.87.1 with fixed pagefile/dump registration. **Changed this run:** plan-34 source adds active-file admission proof to the owned 64 MiB restart preparation. | T080 actual Paint/Photos, T081 installed active-created restart/pressure and broader lifecycle remain. The earlier restart oracle was created uncached; unavailable sleep/hibernate/Fast Startup remain unqualified. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
@@ -95,7 +100,7 @@ This is a source-level defect finding, not proof of the historical BSOD cause.
 
 The implementation instructions and acceptance cases are in
 [handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
-That sequence supersedes historical next-step instructions below. Plan 32 is the
+That sequence supersedes historical next-step instructions below. Plan 34 is the
 current source contract; installed VM driver 0.4.87.1 remains plan 31. The source
 candidate does not close an installed correctness gate. A07-A09 remain PARTIAL.
 A01-A06 retain historical scoped passes, not certification of the changed bypass.
@@ -108,7 +113,7 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 | T078 / A08 | Source candidate: shared worker identity and per-case/final oracles; host contracts pass | Plan-32 exact installed case pending | Ensure each Fast/Strict and restart result proves what it says. |
 | T079 / A06a/A07-A08 | PARTIAL: plan-33 owned Q: mapped/unbuffered case added to existing runner; forced range gate pending | No exact candidate run yet | Verify actual flagged I/O and forced old/new ordering on disposable Q:, then return to C:. |
 | T080 / A09/T067 | FALSE: actual application workflow not executed; no general UI automation required | Paint edit/save -> immediate Photos open remains untested | Directly investigate the owner's reported failure. |
-| T081 / A09 | PARTIAL: existing startup/oracle infrastructure; active-write preparation and bounded pressure work pending | Uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
+| T081 / A09 | PARTIAL: plan-34 active-write preparation source exists; bounded pressure work pending | No installed active-created restart; earlier uncached-created oracle and short startup smoke only | Check cached work survives normal restart and Windows stays usable under paging pressure. |
 
 Implement T075-T077 as one coherent driver slice with narrow tests; include T078,
 build/package, then run T079 before T080/T081. No broad suite or performance
