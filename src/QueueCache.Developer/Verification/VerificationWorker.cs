@@ -466,8 +466,11 @@ public static class VerificationWorker
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
                 if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName || original.Target != target)
                     throw new IOException("Recovery identity/version mismatch.");
-                // This suite never sets fault injection. Clear only its delay hook; do not hide device faults.
+                // This suite never sets fault injection. Clear only its delay and range-gate hooks;
+                // do not hide device faults. Older drivers without V9 have no gate to disarm.
                 device.Control(WriteCacheAction.LabDelay, value: 0);
+                if (device.GetDiagnostics().LabGate is not null)
+                    device.Control(WriteCacheAction.LabGate, value: 0);
                 FlushForRestoration(() =>
                 {
                     Stage("flushing filesystem volume before cache drain");

@@ -26,6 +26,10 @@ public sealed record CachePagingOffload(ulong OffloadedReads, ulong Completions,
 /// Lower flushes are always QueueCache barriers or forwarded original flushes (see attribution totals).</summary>
 public sealed record CacheLowerSources(ulong GeneratedWrites, ulong ForwardedWrites, ulong PagingForwardedWrites,
     ulong PagingForwardedReads, ulong OtherReads);
+/// <summary>V9 lab range gate. Sequence values share one per-disk counter; zero means not observed.
+/// State: 0 off, 1 armed, 2 holding a submitted overlapping drain, 3 released.</summary>
+public sealed record CacheLabGate(ulong State, ulong Hits, ulong OldSubmitSeq, ulong OldLowerDoneSeq,
+    ulong OldRetireSeq, ulong DirectWaitSeq, ulong DirectSubmitSeq, ulong DirectDoneSeq);
 
 /// <summary>Lifetime request counters; deferred flushes are not durable flush completions.</summary>
 public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFlushes, ulong WriteThroughWrites,
@@ -40,6 +44,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int PagingProgressWireSize = 528;
     public const int PagingRouteWireSize = 584;
     public const int PagingOffloadWireSize = 672;
+    public const int LabGateWireSize = 736;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -48,6 +53,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CachePagingRoute? PagingRoute { get; init; }
     public CachePagingOffload? PagingOffload { get; init; }
     public CacheLowerSources? LowerSources { get; init; }
+    public CacheLabGate? LabGate { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -60,6 +66,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingProgressWireSize => 6u,
             PagingRouteWireSize => 7u,
             PagingOffloadWireSize => 8u,
+            LabGateWireSize => 9u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -141,6 +148,16 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             pagingOffload = new(offload[0], offload[1], offload[2], offload[3], offload[4], offload[5]);
             lowerSources = new(offload[6], offload[7], offload[8], offload[9], offload[10]);
         }
+        CacheLabGate? labGate = null;
+        if (bytes.Length >= LabGateWireSize)
+        {
+            var gate = new ulong[8];
+            for (var index = 0; index < gate.Length; index++)
+                gate[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingOffloadWireSize + index * 8)..]);
+            if (gate[0] > 3 || gate[1] > 1)
+                throw new InvalidDataException("Invalid lab gate state.");
+            labGate = new(gate[0], gate[1], gate[2], gate[3], gate[4], gate[5], gate[6], gate[7]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -150,7 +167,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingProgress = pagingProgress,
             PagingRoute = pagingRoute,
             PagingOffload = pagingOffload,
-            LowerSources = lowerSources
+            LowerSources = lowerSources,
+            LabGate = labGate
         };
     }
 }

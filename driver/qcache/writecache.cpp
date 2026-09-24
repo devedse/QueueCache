@@ -28,6 +28,15 @@ static ULONGLONG NowMs()
 }
 #include "cacheblocks.inl"
 static void PagingReader(PVOID context);
+// Lab gate evidence: store the next per-disk sequence once. Returns true if set.
+static bool RecordLabSequence(QC_CACHE* c, volatile LONG64* field)
+{
+    return InterlockedCompareExchange64(field, InterlockedIncrement64(&c->LabSequence), 0) == 0;
+}
+static bool LabGateOverlaps(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    return c->LabGateState != QcLabGateOff && first < c->LabGateEnd && end > c->LabGateStart;
+}
 static ULONGLONG Tick()
 {
     return KeQueryPerformanceCounter(nullptr).QuadPart;
@@ -188,6 +197,14 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingOffloadWriteWaits = InterlockedCompareExchange64(&c->PagingOffloadWriteWaits, 0, 0);
     output->PagingOffloadIdleWaits = InterlockedCompareExchange64(&c->PagingOffloadIdleWaits, 0, 0);
     output->PagingOffloadMaxQueued = InterlockedCompareExchange64(&c->PagingOffloadMaxQueued, 0, 0);
+    output->LabGateState = c->LabGateState;
+    output->LabGateHits = InterlockedCompareExchange64(&c->LabGateHits, 0, 0);
+    output->LabGateOldSubmitSeq = InterlockedCompareExchange64(&c->LabGateOldSubmitSeq, 0, 0);
+    output->LabGateOldLowerDoneSeq = InterlockedCompareExchange64(&c->LabGateOldLowerDoneSeq, 0, 0);
+    output->LabGateOldRetireSeq = InterlockedCompareExchange64(&c->LabGateOldRetireSeq, 0, 0);
+    output->LabGateDirectWaitSeq = InterlockedCompareExchange64(&c->LabGateDirectWaitSeq, 0, 0);
+    output->LabGateDirectSubmitSeq = InterlockedCompareExchange64(&c->LabGateDirectSubmitSeq, 0, 0);
+    output->LabGateDirectDoneSeq = InterlockedCompareExchange64(&c->LabGateDirectDoneSeq, 0, 0);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 static void RecordMaximum(volatile LONG64* target, ULONG value)
@@ -710,6 +727,17 @@ static void Drainer(PVOID context)
         }
         const auto transferBytes = io.ValidSectors == 255 ? io.Length : QcValidBytes(io.ValidSectors);
         c->State.InFlightBytes += transferBytes;
+        // Lab gate (one shot): keep this overlapping batch in flight, after its
+        // lower write completed, for a bounded hold. Newer overlapping direct
+        // writes must wait for its retirement, not merely for its submission.
+        ULONG gateHoldMs = 0;
+        if (c->LabGateState == QcLabGateArmed &&
+            LabGateOverlaps(c, io.Offset.QuadPart, io.Offset.QuadPart + io.Length))
+        {
+            c->LabGateState = QcLabGateHolding;
+            gateHoldMs = c->LabGateHoldMs;
+            InterlockedIncrement64(&c->LabGateHits);
+        }
         auto delay = c->DelayMs;
         auto inject = c->InjectFault == 1 || c->InjectFault == 2 || c->InjectFault == 4 || c->InjectFault == 5
                           ? c->InjectFault
@@ -738,6 +766,8 @@ static void Drainer(PVOID context)
         auto status = inject == 1   ? STATUS_IO_DEVICE_ERROR
                       : inject == 2 ? STATUS_DEVICE_DATA_ERROR
                                     : STATUS_SUCCESS;
+        if (gateHoldMs)
+            RecordLabSequence(c, &c->LabGateOldSubmitSeq);
         if (NT_SUCCESS(status))
         {
             if (io.ValidSectors == 255)
@@ -764,6 +794,13 @@ static void Drainer(PVOID context)
             }
         }
         const auto lowerTicks = lowerStart ? Tick() - lowerStart : 0;
+        if (gateHoldMs)
+        {
+            RecordLabSequence(c, &c->LabGateOldLowerDoneSeq);
+            LARGE_INTEGER interval;
+            interval.QuadPart = -10000LL * gateHoldMs;
+            KeDelayExecutionThread(KernelMode, FALSE, &interval);
+        }
         const auto retirementStart = c->Timing ? Tick() : 0;
         AcquireCache(c);
         c->Performance.LowerIoTicks += lowerTicks;
@@ -809,6 +846,13 @@ static void Drainer(PVOID context)
             if (retirementStart)
                 c->Performance.DrainRetirementTicks += Tick() - retirementStart;
             Fault(c, status); // Keep the dirty slot and stop retries until explicit recovery.
+        }
+        if (gateHoldMs)
+        {
+            RecordLabSequence(c, &c->LabGateOldRetireSeq);
+            if (c->LabGateState == QcLabGateHolding)
+                c->LabGateState = QcLabGateReleased;
+            KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
         }
         WakeDrainers(c);
         ReleaseCache(c);
@@ -1188,6 +1232,37 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         else
             c->InjectFault = static_cast<ULONG>(command.Value);
         break;
+    case QcLabGate:
+    {
+        const auto bytes = static_cast<ULONG>(command.Value);
+        const auto holdMs = static_cast<ULONG>(command.Value >> 32);
+        if (!command.Value)
+        {
+            // Disarm; recorded sequences remain readable as evidence.
+            c->LabGateState = QcLabGateOff;
+            break;
+        }
+        // Never on a disk that hosts paging/hibernation/dump backing, never
+        // while a previous hold is active, and only for a bounded range/time.
+        if (QcCachePagingPathCount(c) > 0 || c->LabGateState == QcLabGateHolding)
+            status = STATUS_INVALID_DEVICE_STATE;
+        else if (!bytes || bytes > QcLabGateMaxBytes || !holdMs || holdMs > QcLabGateMaxHoldMs ||
+                 command.BudgetBytes > static_cast<ULONGLONG>(MAXLONGLONG - bytes))
+            status = STATUS_INVALID_PARAMETER;
+        else
+        {
+            c->LabGateStart = static_cast<LONGLONG>(command.BudgetBytes);
+            c->LabGateEnd = c->LabGateStart + bytes;
+            c->LabGateHoldMs = holdMs;
+            volatile LONG64* evidence[] = {&c->LabGateHits, &c->LabGateOldSubmitSeq, &c->LabGateOldLowerDoneSeq,
+                                           &c->LabGateOldRetireSeq, &c->LabGateDirectWaitSeq,
+                                           &c->LabGateDirectSubmitSeq, &c->LabGateDirectDoneSeq};
+            for (auto field : evidence)
+                InterlockedExchange64(field, 0);
+            c->LabGateState = QcLabGateArmed;
+        }
+        break;
+    }
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
     }
@@ -1265,8 +1340,13 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         c->RangeDrain = TRUE;
         c->RangeForward = FALSE;
         WakeDrainers(c);
+        const bool gateRecord = LabGateOverlaps(c, first, end);
         if (PendingRange(c, first, end))
+        {
             InterlockedIncrement64(&c->PagingOverlapWaits);
+            if (gateRecord)
+                RecordLabSequence(c, &c->LabGateDirectWaitSeq);
+        }
         while (PendingRange(c, first, end) && NT_SUCCESS(c->State.LastError) &&
                !c->Gone && !irp->Cancel)
         {
@@ -1288,7 +1368,10 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         InvalidateCleanRange(c, first, length);
         c->RangeForward = TRUE;
         ReleaseCache(c);
+        const bool gateSubmit = gateRecord && RecordLabSequence(c, &c->LabGateDirectSubmitSeq);
         auto status = OriginalIo(c, irp);
+        if (gateSubmit)
+            RecordLabSequence(c, &c->LabGateDirectDoneSeq);
         if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
             status = STATUS_DEVICE_DATA_ERROR;
         AcquireCache(c);

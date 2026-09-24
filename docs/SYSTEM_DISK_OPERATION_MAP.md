@@ -77,6 +77,10 @@ controls and fences), up to four drainers, and one paging-read thread.
 - Routing: the worker keeps queued routing while any offloaded read is
   outstanding, so direct pass-through cannot overtake one. Final removal waits
   remove locks (all offloaded IRPs), then the worker, then stops the thread.
+- Lab range gate (plan 39, verification only): a one-shot hold of one drain batch
+  after lower completion, before retirement, while its slots stay in flight and
+  pinned. The drainer holds no lock while it sleeps (at most 5 s). It is refused
+  on disks with paging/hibernation/dump paths and is never armed by product code.
 - Remaining synchronous paths: paging reads over 1 MiB, a full table, and the
   bounded service lane during an `OffloadBlocked` request. They are counted in
   V7 routed and V8 offload diagnostics, not hidden.

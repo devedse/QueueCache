@@ -279,6 +279,21 @@ BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnost
 Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes), "offload queue exceeds driver table");
 Reject(() => CacheDiagnostics.Decode(pagingOffloadBytes.AsSpan(0, CacheDiagnostics.PagingOffloadWireSize - 1)),
     "short offloaded paging diagnostics");
+BinaryPrimitives.WriteUInt64LittleEndian(pagingOffloadBytes.AsSpan(CacheDiagnostics.PagingRouteWireSize + 40), 3);
+Check(CacheDiagnostics.Decode(pagingOffloadBytes).LabGate is null, "V8 lab gate is unavailable, not zero");
+var labGateBytes = new byte[CacheDiagnostics.LabGateWireSize];
+pagingOffloadBytes.CopyTo(labGateBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(labGateBytes, 9);
+BinaryPrimitives.WriteUInt32LittleEndian(labGateBytes.AsSpan(4), CacheDiagnostics.LabGateWireSize);
+ulong[] labGateValues = [3, 1, 21, 22, 24, 23, 25, 26];
+for (var index = 0; index < labGateValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(labGateBytes.AsSpan(CacheDiagnostics.PagingOffloadWireSize + index * 8),
+        labGateValues[index]);
+var labGate = CacheDiagnostics.Decode(labGateBytes);
+Check(labGate.LowerSources == new CacheLowerSources(5, 3, 2, 6, 4) &&
+    labGate.LabGate == new CacheLabGate(3, 1, 21, 22, 24, 23, 25, 26), "V9 lab gate offsets and V8 prefix");
+BinaryPrimitives.WriteUInt64LittleEndian(labGateBytes.AsSpan(CacheDiagnostics.PagingOffloadWireSize), 4);
+Reject(() => CacheDiagnostics.Decode(labGateBytes), "unknown lab gate state");
 Reject(() => CacheDiagnostics.Decode(pagingProgressBytes.AsSpan(0, 527)), "short paging progress diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");

@@ -70,6 +70,10 @@ struct QC_DIAGNOSTICS
     // original non-paging request; PagingForwarded = an original paging request.
     ULONGLONG LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
     ULONGLONG LowerPagingForwardedReads, LowerOtherReads;
+    // V9: one-shot lab range gate (disposable non-paging disks only). Sequence
+    // values come from one per-disk counter, so they order these events.
+    ULONGLONG LabGateState, LabGateHits, LabGateOldSubmitSeq, LabGateOldLowerDoneSeq;
+    ULONGLONG LabGateOldRetireSeq, LabGateDirectWaitSeq, LabGateDirectSubmitSeq, LabGateDirectDoneSeq;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -78,7 +82,18 @@ static constexpr ULONG QcDiagnosticsV4Size = 408;
 static constexpr ULONG QcDiagnosticsV5Size = 480;
 static constexpr ULONG QcDiagnosticsV6Size = 528;
 static constexpr ULONG QcDiagnosticsV7Size = 584;
-static_assert(sizeof(QC_DIAGNOSTICS) == 672);
+static constexpr ULONG QcDiagnosticsV8Size = 672;
+static_assert(sizeof(QC_DIAGNOSTICS) == 736);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LabGateState) == QcDiagnosticsV8Size);
+// LabGateState: 0 disarmed, 1 armed, 2 holding a submitted overlapping drain, 3 released.
+enum : ULONG
+{
+    QcLabGateOff,
+    QcLabGateArmed,
+    QcLabGateHolding,
+    QcLabGateReleased
+};
+static constexpr ULONG QcLabGateMaxHoldMs = 5000, QcLabGateMaxBytes = 1024 * 1024;
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOffloadedReads) == QcDiagnosticsV7Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
@@ -140,7 +155,10 @@ enum : ULONG
     QcRelease,
     QcDropClean,
     QcPerformanceTiming,
-    QcEnablePaging // Deprecated compatibility alias for QcEnable.
+    QcEnablePaging, // Deprecated compatibility alias for QcEnable.
+    // Lab: BudgetBytes = range start; Value = hold ms << 32 | range bytes.
+    // Value 0 disarms. Refused on any disk hosting a paging/hibernation/dump path.
+    QcLabGate
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {
@@ -253,6 +271,11 @@ struct QC_CACHE
     // Completes an offloaded original IRP and releases its remove lock.
     void (*CompleteRequest)(PVOID, PIRP, NTSTATUS);
     ULONG DelayMs, InjectFault;
+    // Lab range gate. State/range/hold under Mutex; sequences written once each.
+    ULONG LabGateState, LabGateHoldMs;
+    LONGLONG LabGateStart, LabGateEnd;
+    volatile LONG64 LabSequence, LabGateHits, LabGateOldSubmitSeq, LabGateOldLowerDoneSeq, LabGateOldRetireSeq;
+    volatile LONG64 LabGateDirectWaitSeq, LabGateDirectSubmitSeq, LabGateDirectDoneSeq;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
 {

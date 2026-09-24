@@ -29,6 +29,53 @@ public static class PagingCoherenceScenarios
             "Routed counters are device-wide across all processes; a range-targeted kernel gate remains the stronger proof.";
     }
 
+    /// <summary>
+    /// T083 gate order: the old overlapping drain was submitted and completed at the lower device, the newer
+    /// direct paging write started waiting while that drain was still held in flight, and the direct write was
+    /// submitted only after the old drain retired. Any missing or out-of-order event fails.
+    /// </summary>
+    internal static string VerifyGateOrder(CacheLabGate? gate)
+    {
+        if (gate is null)
+            throw new NotSupportedException("Gated ordering requires Diagnostics V9.");
+        if (gate.Hits != 1)
+            throw new IOException($"The range gate held {gate.Hits} drain batches; exactly one was required.");
+        ulong[] order = [gate.OldSubmitSeq, gate.OldLowerDoneSeq, gate.DirectWaitSeq, gate.OldRetireSeq,
+            gate.DirectSubmitSeq, gate.DirectDoneSeq];
+        if (order.Any(value => value == 0))
+            throw new IOException("Gate evidence is incomplete (submit/lower-done/direct-wait/retire/direct-submit/direct-done " +
+                string.Join('/', order) + ").");
+        for (var index = 1; index < order.Length; index++)
+            if (order[index] <= order[index - 1])
+                throw new IOException("Gate events are out of order (submit/lower-done/direct-wait/retire/direct-submit/direct-done " +
+                    string.Join('/', order) + ").");
+        return $"Gate sequence submit {order[0]} < old lower completion {order[1]} < direct paging write waiting {order[2]} " +
+            $"< old retirement {order[3]} < direct submission {order[4]} < direct completion {order[5]}.";
+    }
+
+    /// <summary>T082: an offloaded page-in completed while a cached write was still capacity-blocked.</summary>
+    internal static CheckResult VerifyBlockedPageIn(CachePagingOffload? before, CachePagingOffload? after,
+        bool writerStillBlocked, int pagesMatched, double slowestPageMs)
+    {
+        if (before is null || after is null)
+            throw new NotSupportedException("Blocked page-in check requires Diagnostics V8 offload counters.");
+        var offloaded = after.OffloadedReads - before.OffloadedReads;
+        var completed = after.Completions - before.Completions;
+        var failed = after.Failures - before.Failures;
+        if (after.OffloadedReads < before.OffloadedReads || after.Completions < before.Completions || failed != 0)
+            throw new IOException($"Offloaded page-in counters regressed or failed (failures {failed}).");
+        var detail = $"{pagesMatched} mapped page(s) matched; slowest fault {slowestPageMs:F1} ms; " +
+            $"offloaded/completed paging reads {offloaded}/{completed}; writer still capacity-blocked: {writerStillBlocked}.";
+        if (offloaded == 0 || completed < offloaded)
+            return new("paging-coherence/capacity-blocked-page-in", "SKIP",
+                detail + " No page-in was observed completing on the paging-read thread; the dependency is unproven.");
+        if (!writerStillBlocked)
+            return new("paging-coherence/capacity-blocked-page-in", "SKIP",
+                detail + " The blocked write finished before the page-ins; the dependency is unproven.");
+        return new("paging-coherence/capacity-blocked-page-in", "PASS",
+            detail + " Page-ins completed on the paging-read thread while the request worker was blocked.");
+    }
+
     public static IReadOnlyList<CheckResult> Run(DiskTarget target, CacheDevice device, string workDirectory)
     {
         target.ValidateCurrent();
@@ -95,6 +142,8 @@ public static class PagingCoherenceScenarios
         if (!actual.AsSpan().SequenceEqual(b))
             throw new IOException("Released-cache disk bytes did not match the latest mapped write.");
         var overlapCheck = RunObservedPagingOverlap(target, device, workDirectory);
+        var gatedChecks = RunGatedSubmittedOverlap(target, device, workDirectory);
+        var blockedPageIn = RunCapacityBlockedPageIn(target, device, workDirectory);
         return
         [
             new("paging-coherence/mapped-after-cache", "PASS", "Mapped read matched the accepted unbuffered write."),
@@ -104,8 +153,175 @@ public static class PagingCoherenceScenarios
                 $"Routed paging-marked requests: reads {last.ReadRequests - first.ReadRequests}, " +
                 $"writes {last.WriteRequests - first.WriteRequests}, overlap waits {last.OverlapWaits - first.OverlapWaits}. " +
                 "These counters are device-wide across all processes; zero overlap does not prove the forced drainer order."),
-            overlapCheck
+            overlapCheck,
+            .. gatedChecks,
+            blockedPageIn
         ];
+    }
+
+    // T083: hold an old overlapping drain after its real lower write completed; a newer mapped (paging)
+    // write must wait for its retirement. Then a later cached write C must remain newest.
+    private static IReadOnlyList<CheckResult> RunGatedSubmittedOverlap(DiskTarget target, CacheDevice device,
+        string workDirectory)
+    {
+        const int blockBytes = 4096;
+        const ulong holdMs = 2000;
+        if (device.GetDiagnostics().LabGate is null)
+            throw new NotSupportedException("Gated ordering requires Diagnostics V9 (plan-39 driver).");
+        var path = Path.Combine(workDirectory, "gated-submitted-overlap.bin");
+        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            file.SetLength(FileBytes);
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 1, RetainWrites: false)
+        }, true);
+        var a = new byte[blockBytes];
+        var b = new byte[blockBytes];
+        var c = new byte[blockBytes];
+        new Random(104789).NextBytes(a);
+        new Random(104801).NextBytes(b);
+        new Random(104827).NextBytes(c);
+        var routeBefore = device.GetDiagnostics().PagingRoute!;
+        CacheLabGate? gate;
+        double directMilliseconds;
+        device.Control(WriteCacheAction.LabGate, (ulong)Offset, (holdMs << 32) | blockBytes);
+        try
+        {
+            using (var file = new AlignedFile(path, blockBytes, create: false))
+                file.Write(Offset, a);
+            // Proceed only once A's real lower write has completed and the gate is holding it in flight.
+            CacheLabGate? held = null;
+            if (!SpinWait.SpinUntil(() =>
+                {
+                    held = device.GetDiagnostics().LabGate;
+                    return held is { State: 2, OldLowerDoneSeq: > 0 };
+                }, 8000))
+                throw new IOException($"The owned write was not held after lower completion (gate state {held?.State}).");
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            using (var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0,
+                       MemoryMappedFileAccess.ReadWrite))
+            using (var view = map.CreateViewAccessor(0, FileBytes, MemoryMappedFileAccess.ReadWrite))
+            {
+                view.WriteArray(Offset, b, 0, b.Length);
+                view.Flush();
+            }
+            directMilliseconds = timer.Elapsed.TotalMilliseconds;
+            gate = device.GetDiagnostics().LabGate;
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabGate, value: 0);
+        }
+        var order = VerifyGateOrder(gate);
+        var routeAfter = device.GetDiagnostics().PagingRoute!;
+        if (routeAfter.WriteFailures != routeBefore.WriteFailures || routeAfter.OverlapWaits <= routeBefore.OverlapWaits)
+            throw new IOException("The direct paging write failed or recorded no overlap wait.");
+        var actual = new byte[blockBytes];
+        using (var file = new AlignedFile(path, blockBytes, create: false))
+            file.Read(Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(b))
+            throw new IOException("After the held old drain retired, the newest mapped bytes were not visible.");
+        // Later cached C after direct B: RAM admission of C must become the newest view and final media.
+        using (var file = new AlignedFile(path, blockBytes, create: false))
+        {
+            file.Write(Offset, c);
+            file.Read(Offset, actual);
+        }
+        if (!actual.AsSpan().SequenceEqual(c))
+            throw new IOException("Later cached write C was not the newest active view.");
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        device.Control(WriteCacheAction.Release);
+        Array.Clear(actual);
+        using (var file = new AlignedFile(path, blockBytes, create: false))
+            file.Read(Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(c))
+            throw new IOException("Released-cache media did not hold later cached write C.");
+        return
+        [
+            new("paging-coherence/gated-submitted-old-before-direct", "PASS",
+                order + $" The mapped flush took {directMilliseconds:F0} ms against a {holdMs} ms hold; newest bytes B matched."),
+            new("paging-coherence/later-cached-after-direct", "PASS",
+                "Cached write C after direct paging write B was the newest active view and the released-cache media.")
+        ];
+    }
+
+    // T082: a required page-in must complete while the request worker is blocked by a capacity wait.
+    private static CheckResult RunCapacityBlockedPageIn(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const int pageInBytes = 8 * MiB;
+        const int writerBytes = 32 * MiB;
+        var pageInPath = Path.Combine(workDirectory, "blocked-page-in.bin");
+        var writerPath = Path.Combine(workDirectory, "blocked-writer.bin");
+        var pattern = new byte[pageInBytes];
+        new Random(104831).NextBytes(pattern);
+        // Written while caching is released: neither QueueCache nor the system cache holds these pages.
+        using (var file = new AlignedFile(pageInPath, MiB, create: true))
+            for (var offset = 0; offset < pageInBytes; offset += MiB)
+                file.Write(offset, pattern.AsSpan(offset, MiB).ToArray());
+        using (var file = new FileStream(writerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            file.SetLength(writerBytes);
+        ConfigurationManager.Apply(target, new CacheConfiguration(16, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 1, RetainWrites: false, BatchKiB: 256)
+        }, true);
+        var writerBlock = new byte[MiB];
+        new Random(104849).NextBytes(writerBlock);
+        var throttleBefore = device.GetWriteCacheState().ThrottleWaits;
+        CheckResult result;
+        device.Control(WriteCacheAction.LabDelay, value: 200);
+        Task writer = Task.CompletedTask;
+        try
+        {
+            writer = Task.Run(() =>
+            {
+                using var file = new AlignedFile(writerPath, MiB, create: false);
+                for (var offset = 0; offset < writerBytes; offset += MiB)
+                    file.Write(offset, writerBlock);
+            });
+            if (!SpinWait.SpinUntil(() => writer.IsCompleted ||
+                    device.GetWriteCacheState().ThrottleWaits > throttleBefore, 15000) || writer.IsCompleted)
+                throw new IOException("The writer never became capacity-blocked; the dependency could not be set up.");
+            var before = device.GetDiagnostics().PagingOffload;
+            var matched = 0;
+            var slowest = 0.0;
+            using (var map = MemoryMappedFile.CreateFromFile(pageInPath, FileMode.Open, null, 0,
+                       MemoryMappedFileAccess.Read))
+            using (var view = map.CreateViewAccessor(0, pageInBytes, MemoryMappedFileAccess.Read))
+            {
+                var page = new byte[4096];
+                foreach (var offset in new[] { 0, 2 * MiB + 8192, 4 * MiB + 20480, 6 * MiB + 40960 })
+                {
+                    var timer = System.Diagnostics.Stopwatch.StartNew();
+                    view.ReadArray(offset, page, 0, page.Length);
+                    slowest = Math.Max(slowest, timer.Elapsed.TotalMilliseconds);
+                    if (!page.AsSpan().SequenceEqual(pattern.AsSpan(offset, page.Length)))
+                        throw new IOException($"Page-in at {offset} returned wrong bytes while the writer was blocked.");
+                    matched++;
+                }
+            }
+            var stillBlocked = !writer.IsCompleted;
+            result = VerifyBlockedPageIn(before, device.GetDiagnostics().PagingOffload, stillBlocked, matched, slowest);
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabDelay, value: 0);
+            try { writer.Wait(TimeSpan.FromMinutes(2)); } catch (AggregateException) { }
+        }
+        if (!writer.IsCompletedSuccessfully)
+            throw new IOException("The capacity-blocked writer failed or did not finish after the delay was cleared.");
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        device.Control(WriteCacheAction.Release);
+        var actual = new byte[MiB];
+        using (var file = new AlignedFile(writerPath, MiB, create: false))
+            for (var offset = 0; offset < writerBytes; offset += MiB)
+            {
+                file.Read(offset, actual);
+                if (!actual.AsSpan().SequenceEqual(writerBlock))
+                    throw new IOException($"Capacity-blocked writer bytes differed at {offset} after release.");
+            }
+        return result;
     }
 
     private static CheckResult RunObservedPagingOverlap(DiskTarget target, CacheDevice device, string workDirectory)

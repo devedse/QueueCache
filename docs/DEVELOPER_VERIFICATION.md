@@ -17,7 +17,30 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 38)
+## Suites (plan version 39)
+
+Plan 39 adds three stages to `paging-coherence` (needs the plan-39 driver, Diagnostics V9):
+
+- `gated-submitted-old-before-direct` (T083): a one-shot driver lab gate holds
+  the owned 4 KiB drain in flight *after* its real lower write completed. A mapped
+  overwrite is then flushed. The case passes only if the gate's per-disk sequence
+  is old submit < old lower completion < direct paging write waiting < old
+  retirement < direct submission < direct completion, with newest bytes. Any
+  missing or out-of-order event fails.
+- `later-cached-after-direct`: a cached write after that direct write stays the
+  newest view and released-cache media.
+- `capacity-blocked-page-in` (T082): with a 16 MiB cache and a bounded 200 ms
+  drain delay, a 32 MiB writer becomes capacity-blocked. Four page faults on an
+  uncached file must complete while the writer is still blocked and appear as
+  V8 offloaded paging-read completions. Otherwise it is SKIP (unproven), and the
+  run is incomplete.
+
+Gate safety: the driver refuses `LabGate` on a disk hosting any paging,
+hibernation or dump path. It is one-shot, limited to 1 MiB and a 5-second hold,
+disarmed in the scenario's `finally` and again by the maintained restore job.
+Fault, short-completion and cancellation orders remain open.
+
+Plan 38 (unchanged below)
 
 Plan 38 changes admission verdicts (T084). Byte correctness and the
 zero-lower-I/O assertion are separate check IDs (`.../admission-bytes`,

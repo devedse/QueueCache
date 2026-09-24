@@ -26,10 +26,43 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 38, "source-attributed admission and offloaded paging-read contract version");
+        Check(VerificationPlan.Version == 39, "gated submitted-order and blocked page-in contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
+        var gateOrder = new QueueCache.Management.CacheLabGate(3, 1, 10, 11, 13, 12, 14, 15);
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyGateOrder(gateOrder).Contains("< old retirement 13 <"),
+            "gated direct paging write waited for the submitted old drain's retirement");
+        foreach (var bad in new[]
+        {
+            gateOrder with { Hits = 0 }, gateOrder with { DirectWaitSeq = 0 },
+            gateOrder with { DirectSubmitSeq = 13 }, // submitted without waiting for the old drain's retirement
+            gateOrder with { DirectWaitSeq = 10 },   // started waiting before the old write reached the device
+            gateOrder with { OldLowerDoneSeq = 9 }
+        })
+        {
+            try
+            {
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyGateOrder(bad);
+                throw new Exception("Out-of-order or incomplete gate evidence accepted.");
+            }
+            catch (IOException) { }
+        }
+        var offloadBefore = new QueueCache.Management.CachePagingOffload(5, 5, 0, 0, 0, 1);
+        var offloadAfter = offloadBefore with { OffloadedReads = 8, Completions = 8 };
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyBlockedPageIn(offloadBefore, offloadAfter, true, 4, 3.0)
+            .Result == "PASS", "page-ins completed on the paging thread while the writer was blocked");
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyBlockedPageIn(offloadBefore, offloadAfter, false, 4, 3.0)
+            .Result == "SKIP", "a writer that finished first leaves the dependency unproven");
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyBlockedPageIn(offloadBefore, offloadBefore, true, 4, 3.0)
+            .Result == "SKIP", "page-ins served without the paging thread leave the dependency unproven");
+        try
+        {
+            QueueCache.Operations.PagingCoherenceScenarios.VerifyBlockedPageIn(offloadBefore,
+                offloadAfter with { Failures = 1 }, true, 4, 3.0);
+            throw new Exception("Failed offloaded page-in accepted.");
+        }
+        catch (IOException) { }
         var overlapBefore = new QueueCache.Management.CachePagingRoute(0, 0, 0, 0, 0, 0, 0);
         var overlapAfter = overlapBefore with { WriteRequests = 1, WriteCompletions = 1, OverlapWaits = 1 };
         Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyObservedOverlap(overlapBefore, overlapAfter, 1536)

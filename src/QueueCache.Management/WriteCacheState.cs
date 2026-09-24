@@ -170,5 +170,8 @@ public sealed record WriteCacheState(uint Flags, int LastError, ulong DeviceByte
 public enum WriteCacheAction : uint
 {
     Configure = 1, Enable, Flush, Disable, Retry, LabDelay, LabFault, FlushPolicy, Release, DropClean,
-    PerformanceTiming, EnablePaging
+    PerformanceTiming, EnablePaging,
+    /// <summary>Lab only: budgetBytes = range start, value = holdMs &lt;&lt; 32 | rangeBytes; value 0 disarms.
+    /// The driver refuses it on disks hosting paging/hibernation/dump paths.</summary>
+    LabGate
 }

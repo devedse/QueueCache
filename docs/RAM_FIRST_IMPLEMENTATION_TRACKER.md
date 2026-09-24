@@ -5,7 +5,11 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-Plan 38 source candidate, 2026-09-24 (not installed, no VM evidence yet):
+Plan 39 source candidate, 2026-09-24 (not installed): Diagnostics V9 lab range
+gate plus paging-coherence stages for T083 submitted-order, later cached C and
+the T082 capacity-blocked page-in dependency. See DEVELOPER_VERIFICATION plan 39.
+
+Plan 38 source candidate, 2026-09-24 (installed as 0.4.99.1; see evidence below):
 T082 moves every paging read that needs lower I/O (at most 1 MiB, 64 queued)
 off the sole request worker onto one per-disk paging-read thread that depends only
 on the cache mutex and lower completion. Offloaded reads overlay and unpin the
@@ -217,7 +221,7 @@ This is a source-level defect finding, not proof of the historical BSOD cause.
 The implementation instructions and acceptance cases are in
 [handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081),
 completed through revision 5's T082-T086 and the review above.
-That sequence supersedes historical next-step instructions below. Plan 38 is the
+That sequence supersedes historical next-step instructions below. Plan 39 is the
 current source contract; installed VM driver 0.4.92.1 ran plan 34-37 tools. The Q: case
 is a focused pass, not the forced-ordering gate. A07-A09 remain PARTIAL.
 A01-A06 retain historical scoped passes, not certification of the changed bypass.
@@ -237,7 +241,7 @@ A01-A06 retain historical scoped passes, not certification of the changed bypass
 | Task | Implementation | Verification / next concrete result |
 |---|---|---|
 | T082 / A07 | SOURCE CANDIDATE (plan 38, not installed): top-level and service-lane paging reads needing lower I/O run on a per-disk paging-read thread with exact-version pins; writes wait only for overlapping offloads; destructive requests wait for all; the fence forces only its overlap and unrelated batches keep policy/size. Remaining synchronous fallback: reads over 1 MiB, a full 64-entry table, and service during destructive/control requests. | INSTALLED 0.4.99.1: plan-38 `paging-coherence`, `policies` and `pressure` passed with clean restoration; 33/33 offloaded paging reads completed. Still required: force a paging read behind a capacity-blocked write and a slow lower read on Q: and observe V8 offload completions; check unrelated Deferred data stays dirty during a fence. |
-| T083 / A06a/A07-A08 | OPEN: selected/in-flight observation exists, actual lower-submission/completion gate and fault/cancel orders missing | Extend maintained Q: case at real request/range boundaries; retain plan-37 byte PASS as scoped. |
+| T083 / A06a/A07-A08 | SOURCE CANDIDATE (plan 39, not installed): one-shot range gate holds an owned drain after its real lower completion; Diagnostics V9 sequences prove the direct paging write waited for its retirement; later cached C covered. Plan 39 `capacity-blocked-page-in` also supplies the T082 forced dependency. | Host contracts pass. Install the plan-39 CI build and run `paging-coherence` on Q:. Fault, short-completion and cancellation orders remain open. |
 | T084 / A08 | SOURCE CANDIDATE (plan 38): driver records each lower attempt's issuing path (V8); byte PASS and zero-lower-I/O verdicts are separate checks; generated writes/flushes fail, forwarded non-paging I/O is SKIP (unproven, makes the run incomplete), forwarded paging I/O is attributed to other activity. Drain-trigger timing uses generated writes. Without V8 any lower attempt is SKIP. | VERIFIED on installed 0.4.99.1: all 13 zero-lower-I/O checks in `policies`/`pressure` PASSED with zero generated/non-paging attempts; each window's single extra write was a forwarded paging write. Per-request identity is still not recorded; a non-paging request from another process yields SKIP, never PASS. Runtime counter wording now says device-wide. |
 | T085 / A07/A11 | OPEN: all paging-marked writes bypass new RAM admission and misses are not retained | Characterize and implement supported ordinary buffered/mapped application caching after progress repair. |
 | T086 / A09 | PARTIAL: successful owner Paint/Photos observation recorded; no capture or missing post-drain/restart/pressure results | Restore capture readiness and complete those separate checks with exact file/environment evidence. |
