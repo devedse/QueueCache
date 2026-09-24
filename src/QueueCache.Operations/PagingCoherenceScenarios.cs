@@ -184,7 +184,11 @@ public static class PagingCoherenceScenarios
         var routeBefore = device.GetDiagnostics().PagingRoute!;
         CacheLabGate? gate;
         double directMilliseconds;
-        device.Control(WriteCacheAction.LabGate, (ulong)Offset, (holdMs << 32) | blockBytes);
+        // The file was extended (clusters allocated) above; resolve the owned block's disk location.
+        var diskOffset = DiskOffsetOf(path, Offset, target.Root);
+        if (diskOffset % blockBytes != 0)
+            throw new NotSupportedException("The owned block is not 4 KiB aligned on disk; the gated case needs aligned clusters.");
+        device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, (holdMs << 32) | blockBytes);
         try
         {
             using (var file = new AlignedFile(path, blockBytes, create: false))
@@ -393,6 +397,62 @@ public static class PagingCoherenceScenarios
             throw new IOException("Newest mapped bytes or untouched sector guards differed after cache release.");
         return new("paging-coherence/observed-inflight-mapped-overlap", "PASS", overlapEvidence);
     }
+
+    /// <summary>
+    /// Physical disk byte offset of one file byte: the driver gate works in disk offsets, not file offsets.
+    /// Refuses sparse/unallocated clusters and volumes that are not a single disk extent.
+    /// </summary>
+    internal static long DiskOffsetOf(string path, long fileOffset, string volumeRoot)
+    {
+        if (!GetDiskFreeSpaceW(volumeRoot, out var sectorsPerCluster, out var bytesPerSector, out _, out _))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var clusterBytes = (long)sectorsPerCluster * bytesPerSector;
+        var vcn = fileOffset / clusterBytes;
+        var output = new byte[64 * 1024];
+        using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            var input = BitConverter.GetBytes(vcn);
+            if (!DeviceIoControl(file.SafeFileHandle, 0x00090073 /* FSCTL_GET_RETRIEVAL_POINTERS */, input, input.Length,
+                    output, output.Length, out _, IntPtr.Zero) && Marshal.GetLastWin32Error() != 234 /* ERROR_MORE_DATA */)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        }
+        var extents = BitConverter.ToUInt32(output, 0);
+        var currentVcn = BitConverter.ToInt64(output, 8);
+        long? lcn = null;
+        for (var index = 0; index < extents && 16 + index * 16 + 16 <= output.Length; index++)
+        {
+            var nextVcn = BitConverter.ToInt64(output, 16 + index * 16);
+            var extentLcn = BitConverter.ToInt64(output, 24 + index * 16);
+            if (vcn >= currentVcn && vcn < nextVcn)
+            {
+                if (extentLcn < 0)
+                    throw new IOException("The owned file range is sparse/unallocated; no physical offset exists.");
+                lcn = extentLcn + (vcn - currentVcn);
+                break;
+            }
+            currentVcn = nextVcn;
+        }
+        if (lcn is null)
+            throw new IOException("The owned file range has no retrieval pointer.");
+        long partitionStart;
+        using (var volume = new FileStream(@"\\.\" + volumeRoot.TrimEnd('\\'), FileMode.Open, FileAccess.Read,
+                   FileShare.ReadWrite))
+        {
+            var disk = new byte[256];
+            if (!DeviceIoControl(volume.SafeFileHandle, 0x00560000 /* IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS */, null, 0,
+                    disk, disk.Length, out _, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            if (BitConverter.ToUInt32(disk, 0) != 1)
+                throw new NotSupportedException("The gated case requires a volume on exactly one disk extent.");
+            partitionStart = BitConverter.ToInt64(disk, 16);
+        }
+        return partitionStart + lcn.Value * clusterBytes + fileOffset % clusterBytes;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(Microsoft.Win32.SafeHandles.SafeFileHandle device, uint code,
+        byte[]? input, int inputLength, byte[] output, int outputLength, out int returned, IntPtr overlapped);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
