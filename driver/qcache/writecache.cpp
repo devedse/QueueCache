@@ -1833,8 +1833,14 @@ bool QcCacheTryPagingReadProgress(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, N
         InterlockedIncrement64(&c->PagingServicedReadMisses);
     return true;
 }
+// Caller holds Mutex. Like ResidentRange/PendingRange, a released cache has no
+// index: Bucket() divides by Capacity, so it must never be reached with zero.
+// (0.4.99.1-0.4.104.1 lacked this check: a paging read arriving just after a
+// Release bugchecked with 0x7E/divide-by-zero in FindSlot.)
 static bool FullyResident(QC_CACHE* c, LONGLONG start, LONGLONG end)
 {
+    if (!c->Capacity)
+        return false;
     for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);

@@ -13,6 +13,19 @@ submission/admission attribution, normal application caching behavior and
 capture/restart/pressure evidence. The historical BSOD remains undiagnosed.
 The older version checkpoints below describe their original scope.
 
+## Fixed: bugcheck 0x7E after cache release (0.4.99.1-0.4.104.1)
+
+Builds 0.4.99.1 through 0.4.104.1 can crash Windows (bugcheck 0x7E, integer
+divide-by-zero in `FindSlot` called from `FullyResident`) when a paging read
+reaches the request worker just after a cache Release, while routing is still
+active. The T082 offload check looked up the released (zero-capacity) index.
+The VM crashed twice during `ordering-faults` runs (2026-09-25 00:18 and 00:42).
+The second crash produced minidump `092526-9562-01.dmp`, analysed against the
+CI 0.4.104.1 PDB. Fixed in the following build by the same zero-capacity guard
+the other lookups use. Crash dumps were previously disabled on the VM
+(`CrashDumpEnabled=0`, dump folder on Q:). Small memory dumps to
+`C:\Windows\Minidump` are now enabled.
+
 ## Experimental trust and durability
 
 The driver and installer are test-signed development artifacts. Fast mode is

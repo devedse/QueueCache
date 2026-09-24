@@ -5,6 +5,17 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
+Crash found and fixed, 2026-09-25: installed 0.4.104.1 bugchecked twice (0x7E,
+divide-by-zero) during `ordering-faults`. The minidump pins it to
+`FullyResident` (T082 offload check) indexing a released, zero-capacity cache.
+Fixed with a zero-capacity guard; see KNOWN_ISSUES. Plan-40 `ordering-faults`
+passed twice on 0.4.104.1 before the second crash
+(`QueueCache-Verify-20260924-223800-f0198d85...`, `...-224059-4384bf62...`):
+a failed old drain stops the waiting newer paging write before submission and
+keeps its dirty version, a short last sparse run keeps the whole version, and a
+cancelled capacity-blocked write admits nothing. The fixed build needs the same
+suites repeated without a crash.
+
 Plan 39 source candidate, 2026-09-24 (not installed): Diagnostics V9 lab range
 gate plus paging-coherence stages for T083 submitted-order, later cached C and
 the T082 capacity-blocked page-in dependency. See DEVELOPER_VERIFICATION plan 39.
