@@ -13,10 +13,12 @@ data and damage the filesystem. Strict mode and explicit administrative flushes
 preserve their lower-I/O boundary, but neither makes an experimental driver a
 production storage product.
 
-Testing is currently confined to the snapshot-backed VM and clean secondary-disk
-workloads while active C: validation begins. C: is nevertheless a normal product
-target, not a planned unsupported feature. Production signing, unattended recovery
-and certification are not implemented.
+Testing is currently confined to the snapshot-backed VM, clean secondary-disk
+workloads and bounded owned-file C: scenarios. Exact 0.4.87.1 passed active Fast,
+Strict and saved-profile/fixed-pagefile restart checks, but that scoped VM evidence
+is not production qualification. C: is a normal product target, not a planned
+unsupported feature. Production signing, unattended recovery and certification
+are not implemented.
 
 ## Lifecycle scope remains incomplete
 
@@ -30,8 +32,8 @@ Exact installed 0.4.75.1 identified the protected C: registrations by type. With
 a live C: pagefile and kernel dump configured it reported `Paging=4`, `Dump=1`.
 After both were removed and the VM rebooted it reported `Paging=2`,
 `Hibernation=0`, `Dump=0`, while WMI and the filesystem showed no pagefile,
-swapfile or hiberfile. Active C: verification therefore remains blocked until
-the remaining paging-type kernel paths are explained or supported. The combined
+swapfile or hiberfile. At that stage active C: verification remained blocked until
+the paging-type kernel paths were supported. The combined
 count remains authoritative; do not bypass it merely because
 `Win32_PageFileUsage` is empty. Plan 22 allows only the disabled/pass-through
 image baseline in this state.
@@ -50,9 +52,9 @@ occurred. `Paging=2` is therefore two accepted outstanding Windows/storage-path
 registrations, not a QueueCache decrement leak. A notification can be propagated
 from a related device stack, so the count must not be treated as proof of two
 visible page files. Plan 24 adds the required not-disableable PnP state and rejects
-query-stop/query-remove while any special-file registration remains. Active C:
-caching stays blocked until paging I/O has proven nonpageable progress and
-overlap-ordering behavior. This follows Microsoft's
+query-stop/query-remove while any special-file registration remains. The earlier
+active C: gate selected the implemented paging-bypass design; remaining forced
+overlap/lifetime cases still belong to T052/T053. This follows Microsoft's
 [special-file usage-notification contract](https://learn.microsoft.com/windows-hardware/drivers/kernel/irp-mn-device-usage-notification).
 
 Exact installed/rebooted 0.4.79.1 proved that plan-24 PnP state. Plan 25 adds
@@ -69,18 +71,24 @@ non-overlapping paging-read misses can progress past an unrelated capacity wait.
 Diagnostics V6 makes any mapping failure or paging capacity wait fail the active
 case. Exact 0.4.82.1 passed that active case with complete bytes and clean
 restoration. Plan 27 removes normal C: and saved-profile activation blocks, keeps
-new usage registrations active after establishing reserve, restores active state
-after device-power resume, and tests normal Fast plus Strict. Exact packaged VM
-evidence for these newer paths is pending.
+new usage registrations active after establishing its then-current boundary,
+restores active state after device-power resume, and tests normal Fast plus Strict.
+Plan 29 replaced paging admission with bypass; exact Plan-31 evidence is below.
 
 Exact 0.4.83.1 is not a C: pagefile candidate. A saved Fast profile with a fixed
 4 GiB C: pagefile booted, after which qcache/CoreCLR repeatedly faulted with stack
 overflow/access violations and an unrelated Edge updater also access-violated.
 WER evidence is retained on the VM's Q: evidence disk. Removing the saved profile,
 reverting the pagefile/dump settings and rebooting restored stable pass-through.
-The candidate fix keeps paging I/O ordered but bypasses RAM caching and takes a
-one-time persistence/invalidation boundary on new system-file registration. It is
-not qualified until the same installed pagefile/restart test passes.
+The fix keeps paging I/O ordered but bypasses RAM caching and takes a one-time
+persistence/invalidation boundary on new system-file registration. Exact installed
+0.4.87.1 passed the same saved-profile/fixed-4-GiB-pagefile restart without new
+qcache/CoreCLR, Edge or other application faults. The startup task restored C:
+active, a separate 64 MiB post-restart oracle matched every byte, dump registration
+coexisted with the cache, and paging diagnostics remained at zero reserve, mapping
+failures, capacity waits and serviced read misses. This closes that reproduced
+regression on the test VM, not low-memory/fault/cancellation or broad lifecycle
+qualification.
 
 The pre-A01 large-BMP/Paint/Photos BSOD has no surviving dump or BugCheck event
 in the restored snapshot and is unresolved. Plan 21 supplies matching uncached

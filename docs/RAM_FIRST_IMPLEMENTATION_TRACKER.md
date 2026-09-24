@@ -1,11 +1,11 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-23. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-24. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-## Current release execution status: 2026-09-23
+## Current release execution status: 2026-09-24
 
 The end goal is production readiness. A01-A12 are the private VM alpha milestone;
 A13-A16 cover production qualification and release. The detailed task definitions,
@@ -49,6 +49,8 @@ expected paging-role transition caused by adding or removing a pagefile.
 The first exact 0.4.86.1 attempt then stopped before its image write because the
 Plan-28 per-case directory suffix was not accepted by the owned-path validator;
 plan 31 accepts only the exact Fast/Strict suffixes and keeps all other paths rejected.
+Exact installed 0.4.87.1 then completed both active-image cases and the configured
+pagefile saved-startup regression without the earlier process corruption.
 
 | Step / tasks | Status | Implementation | Verification / remaining boundary |
 |---|---|---|---|
@@ -59,9 +61,9 @@ plan 31 accepts only the exact Fast/Strict suffixes and keeps all other paths re
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
 | A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. |
-| A07 / T023-T027, T067-T068, T070-T074 | PARTIAL | Normal Enable/public Apply accept system usage paths and the old action is only an ABI alias. **Changed this run:** paging data now stays ordered but bypasses RAM caching; a new system-file registration takes one lower-media boundary without disabling routing. | Exact 0.4.83.1 normal Fast passed, but its saved-profile/pagefile reboot produced process corruption. The bypass fix has native/host coverage and still requires exact installed proof. Hibernation/Fast Startup are unavailable on this VM. |
-| A08 / T028-T031 | PARTIAL | Guarded identity, owned-file, restart and 349 MiB contracts exist. **Changed this run:** Plan 28 isolates Fast/Strict workload and oracle files after the first exact two-case run caught reuse. | 0.4.83.1 Fast accepted 368,731,648 bytes and restored cleanly. Strict was not executed because the old shared-path guard correctly stopped it. Exact fixed two-case execution and pagefile-reboot byte proof remain. |
-| A09 / T032-T037, T073-T074 | PARTIAL | Desktop/CLI and saved startup accept C:. **Changed this run:** a 4 GiB C: pagefile plus saved Fast reboot reproduced repeatable qcache/CoreCLR stack/access violations and an unrelated Edge access violation; evidence was copied to Q:, then the profile/pagefile/dump changes were removed and the VM returned stable. | The new paging-data bypass must pass the same saved-profile/pagefile restart. Sleep, hibernate and Fast Startup cannot execute because the VM firmware exposes none; crash-dump configuration alone did not register a dump path. |
+| A07 / T023-T027, T067-T068, T070-T074 | PARTIAL | Normal Enable/public Apply accept system usage paths and the old action is only an ABI alias. Paging data stays ordered but bypasses RAM caching; a new system-file registration takes one lower-media boundary without disabling routing. **Changed this run:** exact 0.4.87.1 proved the bypass under Fast and Strict and through a fixed-pagefile saved-profile reboot. | Remaining gates are forced T052/T053 ordering/lifetime cases, active dynamic-registration timing and unavailable hibernation/Fast Startup transitions. The pre-A01 incident still has no surviving dump. |
+| A08 / T028-T031 | TRUE, scoped | Guarded identity, owned-file, restart and 349 MiB contracts exist. Plan 31 gives Fast/Strict separate validator-approved paths and permits only a paging-role change across restart. **Changed this run:** both active cases and a separate post-restart oracle completed. | Exact 0.4.87.1 Fast/Strict accepted 365,977,600/365,957,120 bytes, matched every byte twice and restored cleanly; the 64 MiB reboot oracle also matched. This is maintained file-I/O proof, not the interactive Paint/Photos workflow. |
+| A09 / T032-T037, T073-T074 | PARTIAL | Desktop/CLI and identity-bound saved startup accept C:. **Changed this run:** saved Fast restored with a real fixed 4 GiB C: pagefile and dump registration, stayed active/error-free, and passed the post-restart byte oracle without qcache/CoreCLR or unrelated process faults. | Normal restart/pagefile regression is closed for this VM. Sleep, hibernate and Fast Startup are unavailable; pending-dirty restart, bounded memory pressure, interactive Paint/Photos and broader lifecycle tests remain. |
 | A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
 | A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
@@ -199,11 +201,44 @@ This is required product work, not an optional relaxation of testing standards:
 
 | Task | Required change | Exit evidence |
 |---|---|---|
-| T070 / A07 | Make ordinary kernel Enable select the paging-capable policy and retire the verifier-only activation split. | IMPLEMENTED in plan 27; legacy action 12 is an identical compatibility alias. Exact installed normal-Enable proof pending. |
-| T071 / A07 | Remove boot/system/paging rejection from public Apply while retaining disk identity, available-memory, policy, live-driver and error-state validation. | IMPLEMENTED; CLI and desktop share public Apply and the attach message has no C:-unsupported warning. Exact installed UI/CLI proof pending. |
-| T072 / A07-A09 | Do not disable a healthy active cache merely because a system usage path registers. Define ordered paging, hibernation/Fast Startup and crash-dump behavior. | REVISED after 0.4.83.1 pagefile failure: registration preserves routing but takes one persistence/invalidation boundary; paging data bypasses RAM caching. Exact installed pagefile/restart proof pending. |
-| T073 / A09 | Enable saved C: profiles through the same identity-bound startup restore used by other disks. | IMPLEMENTED through unrestricted public Apply; exact saved-profile reboot and byte evidence pending. |
-| T074 / A08-A09 | Keep system-test identity, off-target evidence, lease and recovery controls, but test the public path as well as the lower-level candidate. | IMPLEMENTED plan-27 contract with Fast/Strict public Apply and per-case release; exact installed execution and remaining lifecycle runs pending. |
+| T070 / A07 | Make ordinary kernel Enable select the paging-capable policy and retire the verifier-only activation split. | IMPLEMENTED in plan 27; legacy action 12 is an identical compatibility alias. Exact 0.4.87.1 normal Fast/Strict Apply proof passed. |
+| T071 / A07 | Remove boot/system/paging rejection from public Apply while retaining disk identity, available-memory, policy, live-driver and error-state validation. | IMPLEMENTED; CLI and desktop share public Apply and the attach message has no C:-unsupported warning. Exact installed CLI/public-path proof passed; interactive desktop click remains A09 UI coverage. |
+| T072 / A07-A09 | Do not disable a healthy active cache merely because a system usage path registers. Define ordered paging, hibernation/Fast Startup and crash-dump behavior. | REVISED after 0.4.83.1: paging bypass plus registration boundary. Exact fixed-pagefile/dump saved-startup proof passed on 0.4.87.1; active dynamic registration and unavailable hibernation/Fast Startup remain. |
+| T073 / A09 | Enable saved C: profiles through the same identity-bound startup restore used by other disks. | IMPLEMENTED and exact 0.4.87.1 startup task completed successfully with active-state and post-restart byte proof. |
+| T074 / A08-A09 | Keep system-test identity, off-target evidence, lease and recovery controls, but test the public path as well as the lower-level candidate. | IMPLEMENTED; exact Plan-31 Fast/Strict public Apply and per-case release completed, while the broader lifecycle campaign remains A09. |
+
+### Plan-31 exact C: checkpoint: 2026-09-24
+
+Exact installed 0.4.87.1 came from `7ff1381`; the loaded driver was
+`QueueCache-0.4.87.1-09553FB6327C.sys`, SHA-256
+`09553FB6327CF992EC2175B17AC07F5E2C329BCEDC78CA2EC4BB366B709F7DC3`.
+Run `QueueCache-Verify-20260924-045431-b85c9a03afc94e6b9c8f7d1ffa501d99`
+completed 2/2. Fast and Strict accepted 365,977,600 and 365,957,120 bytes,
+respectively; each matched the complete 349 MiB off-target oracle before and
+after administrative flush, recorded zero paging mapping failures/capacity waits,
+zero paging reads serviced from RAM and zero paging reserve, then released C:
+cleanly. Final system restoration passed.
+
+A fresh 64 MiB create run
+`QueueCache-Verify-20260924-045548-c469270475044086961e3afd8135392f`
+completed before applying a saved 512 MiB Fast profile. After configuring a fixed
+4 GiB C: pagefile plus kernel-dump target and rebooting, the startup task completed
+successfully and the cache was active/routed with `Paging=4`, `Dump=1` and no
+driver error. Post-restart run
+`QueueCache-Verify-20260924-045930-94c0721be30a4e6fb7ad670cd8b6bf9d`
+matched every owned byte. Repeated observations showed continuing paging traffic,
+zero mapping failures/capacity waits/serviced paging misses and no new qcache,
+CoreCLR, Edge or other application fault. Two WER submissions referenced an old
+September 11 ResourceTimeout dump and were not current crashes.
+
+Cleanup used normal `qcache policy remove C:`, restored the recorded pagefile and
+dump values, and rebooted. The final state is C: disabled/released/error-free,
+profiles `[]`, manual pagefile setting `C:\pagefile.sys 0 0` with its usual
+512 MiB allocation, crash dumping disabled with Q: paths restored, and no new
+Application Error, BugCheck or critical kernel event. Hibernation/Fast Startup
+remain unavailable in this VM; dynamic in-path registration while already active,
+pending-dirty restart, low-memory/fault/cancellation and the interactive app
+workflow are not claimed by this checkpoint.
 
 Disk-role labels may remain factual inventory information. They must not disable
 the C: controls or imply that the user accepts an unknown correctness defect.

@@ -46,16 +46,16 @@ qcache developer verify C: --suite system-files --recoverable-vm --system-instan
 qcache developer verify C: --suite system-post-restart --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --oracle Q:\QueueCache-System-File-Results\QueueCache-Verify-<create-run-id>\oracle.json --output Q:\QueueCache-System-File-Results
 # Safe disabled/pass-through baseline (usage paths are recorded but do not block this case):
 qcache developer verify C: --suite system-image-baseline --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-System-Image-Results
-# Only after C: reports no paging/hibernation/dump usage path and external recovery is ready:
+# Only after external recovery is ready; reconciled system usage paths are recorded and validated:
 qcache developer verify C: --suite system-active-image --budget-mib 512 --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-System-Image-Results
 ```
 
 The create run's `FINISHED.txt`/status/results/log and oracle must be retained;
 an interrupted run is not completed evidence. The file is intentionally
-retained for the second phase. These suites do not enable caching or relax
-existing non-OS suite guards. Both phases have only been VM-tested through a
-split managed CLI on installed 0.4.70.1 with C: disabled; exact packaged
-plan-19 packaged proof and active-cache proof remain pending. Plan 21 supersedes
+retained for the second phase. The file/restart suites do not configure caching,
+and no system suite relaxes existing non-OS guards. Their original split managed
+CLI baseline used installed 0.4.70.1 with C: disabled; exact Plan-31 active and
+saved-profile restart evidence is recorded below. Plan 21 supersedes
 the original plan-20 active-image contract before VM use: it adds the matching
 uncached image baseline, proves active-cache admission, separates byte checks from
 the application flush, tolerates unrelated live C: dirty bytes after an administrative
@@ -117,6 +117,17 @@ pagefile/restart phase, while still requiring the same drive letter, physical di
 number, byte size, PnP instance, boot role and system role.
 Plan 31 aligns the owned-path gate with Plan 28's isolated cases: only the exact
 `system-active-image-fast` and `system-active-image-strict` suffixes are accepted.
+Exact installed 0.4.87.1 run
+`QueueCache-Verify-20260924-045431-b85c9a03afc94e6b9c8f7d1ffa501d99`
+completed both cases. Fast/Strict accepted 365,977,600/365,957,120 bytes,
+matched every byte before and after administrative flush, kept reserve, mapping
+failure, capacity-wait and serviced-paging-miss counters at zero, and released C:
+cleanly. A saved 512 MiB Fast profile subsequently restored after reboot with a
+fixed 4 GiB C: pagefile and `Dump=1`; post-restart run
+`QueueCache-Verify-20260924-045930-94c0721be30a4e6fb7ad670cd8b6bf9d`
+matched its independent 64 MiB oracle. Cleanup restored the recorded original
+settings. This does not claim unavailable hibernation/Fast Startup transitions,
+dynamic registration while already active or low-memory/fault/cancellation proof.
 
 The first VM plan-22 baseline used the split plan-22 CLI against the unchanged
 installed 0.4.75.1 driver. Run

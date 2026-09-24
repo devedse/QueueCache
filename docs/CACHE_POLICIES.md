@@ -73,8 +73,11 @@ Mixed-hit reads currently use an original lower read plus cached-block overlays;
 
 Review caveat: the usage-path notification/Enable race found in A07/T068 is repaired
 by one routing-lock protocol. Exact 0.4.82.1 active Fast passed; plan 27 removes the
-management rejection and uses normal activation. Native/host contracts pass, but
-exact installed Fast/Strict, restart and lifecycle proof remain open.
+management rejection and uses normal activation. Exact installed 0.4.87.1 passed
+Fast/Strict 349 MiB byte checks and a saved Fast reboot with a fixed 4 GiB C:
+pagefile plus dump registration. Dynamic registration while already active,
+sleep/hibernate/Fast Startup, low-memory/fault/cancellation and broader lifecycle
+proof remain open.
 
 Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery on the current secondary-disk VM. The plan-11 sustained fitting-write/cached-read case also passed on installed build 0.4.57.1 while Idle draining made progress; this remains scoped evidence, not capacity-pressure or cold-read qualification. Plan 14 corrects the tightened trigger/capacity checks after an installed plan-13 run exposed an over-strict Fixed0 read-slot assertion; its exact-build rerun is pending.
 
