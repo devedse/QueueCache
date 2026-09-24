@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 39, "gated submitted-order and blocked page-in contract version");
+        Check(VerificationPlan.Version == 40, "fault/short/cancel ordering contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -45,6 +45,39 @@ internal static class VerificationRunnerTests
             {
                 QueueCache.Operations.PagingCoherenceScenarios.VerifyGateOrder(bad);
                 throw new Exception("Out-of-order or incomplete gate evidence accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "ordering-faults"))
+            .SequenceEqual([new IntegrityCase("ordering-faults", "ordering-faults")]), "fault ordering is one maintained non-OS case");
+        var failedGate = new QueueCache.Management.CacheLabGate(3, 1, 1, 2, 4, 3, 0, 0);
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyFailedOldDrain(failedGate, true, true, 4096)
+            .Contains("never submitted"), "failed old drain stops the waiting paging write before submission");
+        foreach (var (gate, failed, faulted, dirty) in new[]
+        {
+            (failedGate with { DirectSubmitSeq = 5 }, true, true, 4096UL),  // submitted despite the failure
+            (failedGate, false, true, 4096UL),                               // false success
+            (failedGate, true, false, 4096UL),                               // no fault
+            (failedGate, true, true, 0UL),                                   // dirty version lost
+            (failedGate with { DirectWaitSeq = 0 }, true, true, 4096UL)      // never waited
+        })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyFailedOldDrain(gate, failed, faulted, dirty);
+                throw new Exception("Unsafe failed-drain ordering accepted.");
+            }
+            catch (IOException) { }
+        }
+        var shortGate = new QueueCache.Management.CacheLabGate(3, 1, 1, 2, 3, 0, 0, 0);
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyShortSparse(shortGate, true, true, 6144, 2048)
+            .Contains("stayed dirty"), "short sparse completion keeps the whole version dirty");
+        foreach (var (flushFailed, faulted, dirty) in new[] { (false, true, 2048UL), (true, false, 2048UL), (true, true, 1024UL) })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyShortSparse(shortGate, flushFailed, faulted, dirty, 2048);
+                throw new Exception("Unsafe short sparse completion accepted.");
             }
             catch (IOException) { }
         }

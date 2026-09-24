@@ -332,7 +332,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         await Worker(Job("configure") with { Configuration = configuration }, deadline.Token);
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
-                    if (test.Operation is "trim-file" or "paging-coherence")
+                    if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;

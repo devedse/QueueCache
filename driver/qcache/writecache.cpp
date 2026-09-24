@@ -730,12 +730,15 @@ static void Drainer(PVOID context)
         // Lab gate (one shot): keep this overlapping batch in flight, after its
         // lower write completed, for a bounded hold. Newer overlapping direct
         // writes must wait for its retirement, not merely for its submission.
-        ULONG gateHoldMs = 0;
+        ULONG gateHoldMs = 0, gateInject = 0;
         if (c->LabGateState == QcLabGateArmed &&
             LabGateOverlaps(c, io.Offset.QuadPart, io.Offset.QuadPart + io.Length))
         {
             c->LabGateState = QcLabGateHolding;
             gateHoldMs = c->LabGateHoldMs;
+            // Report failure (4) or a short transfer (5) for the real lower write:
+            // for a sparse version, on its LAST run, after earlier runs landed.
+            gateInject = c->LabGateMode == 1 ? 4UL : c->LabGateMode == 2 ? 5UL : 0UL;
             InterlockedIncrement64(&c->LabGateHits);
         }
         auto delay = c->DelayMs;
@@ -771,7 +774,7 @@ static void Drainer(PVOID context)
         if (NT_SUCCESS(status))
         {
             if (io.ValidSectors == 255)
-                status = LowerIo(c, IRP_MJ_WRITE, &io, inject);
+                status = LowerIo(c, IRP_MJ_WRITE, &io, inject ? inject : gateInject);
             else
             {
                 // Sparse writes own only these sectors. Issue contiguous valid runs;
@@ -788,7 +791,8 @@ static void Drainer(PVOID context)
                     part.Offset.QuadPart += firstSector * 512;
                     part.Buffer += firstSector * 512;
                     part.Length = (sector - firstSector) * 512;
-                    status = LowerIo(c, IRP_MJ_WRITE, &part, inject);
+                    const bool lastRun = sector == 8 || !(io.ValidSectors >> sector);
+                    status = LowerIo(c, IRP_MJ_WRITE, &part, inject ? inject : lastRun ? gateInject : 0);
                     inject = 0;
                 }
             }
@@ -1235,7 +1239,8 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     case QcLabGate:
     {
         const auto bytes = static_cast<ULONG>(command.Value);
-        const auto holdMs = static_cast<ULONG>(command.Value >> 32);
+        const auto holdMs = static_cast<ULONG>((command.Value >> 32) & 0xFFFF);
+        const auto mode = static_cast<ULONG>(command.Value >> 48);
         if (!command.Value)
         {
             // Disarm; recorded sequences remain readable as evidence.
@@ -1246,7 +1251,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         // while a previous hold is active, and only for a bounded range/time.
         if (QcCachePagingPathCount(c) > 0 || c->LabGateState == QcLabGateHolding)
             status = STATUS_INVALID_DEVICE_STATE;
-        else if (!bytes || bytes > QcLabGateMaxBytes || !holdMs || holdMs > QcLabGateMaxHoldMs ||
+        else if (!bytes || bytes > QcLabGateMaxBytes || !holdMs || holdMs > QcLabGateMaxHoldMs || mode > 2 ||
                  command.BudgetBytes > static_cast<ULONGLONG>(MAXLONGLONG - bytes))
             status = STATUS_INVALID_PARAMETER;
         else
@@ -1254,6 +1259,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             c->LabGateStart = static_cast<LONGLONG>(command.BudgetBytes);
             c->LabGateEnd = c->LabGateStart + bytes;
             c->LabGateHoldMs = holdMs;
+            c->LabGateMode = mode;
             volatile LONG64* evidence[] = {&c->LabGateHits, &c->LabGateOldSubmitSeq, &c->LabGateOldLowerDoneSeq,
                                            &c->LabGateOldRetireSeq, &c->LabGateDirectWaitSeq,
                                            &c->LabGateDirectSubmitSeq, &c->LabGateDirectDoneSeq};

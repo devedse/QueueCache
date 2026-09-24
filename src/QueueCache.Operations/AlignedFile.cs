@@ -80,6 +80,14 @@ internal sealed class AlignedFile : IDisposable
         if (returned != 4 || BinaryPrimitives.ReadUInt32LittleEndian(output) != 1)
             throw new IOException("Incomplete file trim.");
     }
+    /// <summary>Cancels this handle's pending I/O from another thread. False: nothing was pending.</summary>
+    public bool CancelPending()
+    {
+        if (CancelIoEx(handle, IntPtr.Zero))
+            return true;
+        var error = Marshal.GetLastWin32Error();
+        return error == 1168 /* ERROR_NOT_FOUND */ ? false : throw new Win32Exception(error);
+    }
     public void Dispose()
     {
         handle.Dispose();
@@ -103,6 +111,9 @@ internal sealed class AlignedFile : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] input, uint inputBytes,
         [Out] byte[] output, uint outputBytes, out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CancelIoEx(SafeFileHandle handle, IntPtr overlapped);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr VirtualAlloc(IntPtr address, nuint bytes, uint allocation, uint protection);
     [DllImport("kernel32.dll")]

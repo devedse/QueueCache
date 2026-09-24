@@ -546,6 +546,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, pagingChecks);
                 ReportFailures(pagingChecks, Console.Error);
                 return pagingChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "ordering-faults":
+                var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, faultChecks);
+                ReportFailures(faultChecks, Console.Error);
+                return faultChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
                 var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, pressureChecks);

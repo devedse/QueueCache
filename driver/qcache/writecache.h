@@ -156,7 +156,9 @@ enum : ULONG
     QcDropClean,
     QcPerformanceTiming,
     QcEnablePaging, // Deprecated compatibility alias for QcEnable.
-    // Lab: BudgetBytes = range start; Value = hold ms << 32 | range bytes.
+    // Lab: BudgetBytes = range start; Value = mode << 48 | hold ms << 32 | range bytes.
+    // Mode 1/2: the held batch's real lower write reports failure/short transfer
+    // (last run of a sparse version) and faults the cache as a real error would.
     // Value 0 disarms. Refused on any disk hosting a paging/hibernation/dump path.
     QcLabGate
 }; // Toggle optional detailed timing; never resets counters.
@@ -272,7 +274,7 @@ struct QC_CACHE
     void (*CompleteRequest)(PVOID, PIRP, NTSTATUS);
     ULONG DelayMs, InjectFault;
     // Lab range gate. State/range/hold under Mutex; sequences written once each.
-    ULONG LabGateState, LabGateHoldMs;
+    ULONG LabGateState, LabGateHoldMs, LabGateMode; // Mode: 0 success, 1 report failure, 2 short transfer.
     LONGLONG LabGateStart, LabGateEnd;
     volatile LONG64 LabSequence, LabGateHits, LabGateOldSubmitSeq, LabGateOldLowerDoneSeq, LabGateOldRetireSeq;
     volatile LONG64 LabGateDirectWaitSeq, LabGateDirectSubmitSeq, LabGateDirectDoneSeq;
