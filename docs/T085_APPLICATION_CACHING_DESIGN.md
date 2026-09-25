@@ -1,6 +1,10 @@
 # T085: caching ordinary application traffic, and page-backed cache memory
 
-Status: implemented in source (plan 42), 2026-09-25. See the tracker for VM evidence.
+Status: implemented and verified on installed 0.4.111.1 (plans 43-46), 2026-09-25.
+Q: `app-write-profile` admitted 256 of 256 MiB in every mode (buffered + flush
+wait 9.1 s before, 115 ms after) and a 1 GiB cache added 21.7 MiB nonpaged pool.
+C: `system-paging-recognition` recognised 59 paging-file requests with zero
+reference misses under 4 GiB of memory pressure. Details are in the tracker.
 
 ## Problem, measured before the change
 
