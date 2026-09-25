@@ -16,8 +16,7 @@ Current execution status lives in the
 [private-alpha handover](docs/PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md) and
 [RAM-first tracker](docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md). Confirmed gaps are
 listed in [known issues](docs/KNOWN_ISSUES.md).
-The [2026-09-24 implementation review](docs/IMPLEMENTATION_REVIEW_20260924.md)
-defines the remaining paging-progress, application-admission and evidence work.
+Remaining work is ordered in the [next phase plan](docs/NEXT_PHASE_PLAN.md).
 
 ## Product model
 

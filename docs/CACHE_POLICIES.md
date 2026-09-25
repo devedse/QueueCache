@@ -1,13 +1,11 @@
 # RAM cache policies
 
-Current implementation boundary (2026-09-24): Fast RAM admission applies to
-eligible non-paging writes. `IRP_PAGING_IO` also covers ordinary file-cache/mapped
-traffic: those writes currently take coherent ordered lower I/O, and their read
-misses are not newly retained. Resident sectors still participate in coherent
-reads. Therefore these policies do not establish that every Paint save or game
-read benefits from QueueCache RAM. T082-T085 in the
-[implementation review](IMPLEMENTATION_REVIEW_20260924.md) own progress and
-application-admission completion; normal C: activation remains available.
+Current implementation boundary (2026-09-25): RAM admission applies to eligible
+writes, including ordinary application file-cache write-back and memory-mapped
+writes (paging-marked requests whose originating file is not a paging file).
+Paging-file and unknown-origin requests take coherent ordered lower I/O. Paging
+read misses are not newly retained; resident sectors still serve coherent reads.
+See the [T085 design](T085_APPLICATION_CACHING_DESIGN.md).
 
 QueueCache uses one block index: dirty writes, retained clean writes and clean reads never need separate copies of the same current block. An older in-flight write can temporarily coexist with its newer replacement. Reads select the newest version; the older version must finish before its replacement can be written to disk.
 
@@ -72,11 +70,11 @@ Use `--discard-drained` or `--no-promotion` to disable those retention behaviour
 
 ## Memory and confirmed state
 
-The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include all active disk budgets in experiment planning. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Memory is preallocated nonpaged RAM; it does not shrink automatically under later Windows memory pressure.
+The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include all active disk budgets in experiment planning. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Cache payload is preallocated physical pages (not kernel nonpaged pool); only bookkeeping uses nonpaged pool. It does not shrink automatically under later Windows memory pressure.
 
 The driver advertises a versioned state/policy contract while retaining its old ABI. A new-driver **Active** state requires enabled routing, allocated payload, and no fault, suspension, removal or barrier. Settings are read back and compared after Apply. Instance/revision identify the live cache, not a saved profile; unavailable samples must not be displayed as live. A status sample confirms driver state at that instant, not filesystem correctness, physical durability, or a throughput guarantee.
 
-Mixed-hit reads currently use an original lower read plus cached-block overlays; fully cached reads avoid disk. Unsupported media-changing controls conservatively invalidate clean data after draining. Paging/hibernation/dump paths are counted and ordered. Plan 27 uses the system-capable policy for normal Enable, public Apply and saved-profile startup. After the exact 0.4.83.1 pagefile failure, paging data bypasses RAM caching; a new registration takes one persistence/invalidation boundary without disabling routing. Device-power down drains and successful D0 resumes prior active state. Exact installed lifecycle qualification is still tracked separately. SSD/L2 caching is not planned.
+Mixed-hit reads currently use an original lower read plus cached-block overlays; fully cached reads avoid disk. Unsupported media-changing controls conservatively invalidate clean data after draining. Paging/hibernation/dump paths are counted and ordered. Plan 27 uses the system-capable policy for normal Enable, public Apply and saved-profile startup. After the exact 0.4.83.1 pagefile failure, paging-file data bypasses RAM caching (application paging data is admitted since T085); a new registration takes one persistence/invalidation boundary without disabling routing. Shutdown and device-power down drain and disable; requests after them keep flowing to the disk, and successful D0 resumes prior active state. Exact installed lifecycle qualification is still tracked separately. SSD/L2 caching is not planned.
 
 ## Dashboard
 

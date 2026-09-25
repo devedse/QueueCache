@@ -1,5 +1,9 @@
 # Implementation review and next repair slice
 
+> Status 2026-09-25: the repair slice below (T082-T086) is implemented and
+> VM-verified on 0.4.117.1. See the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md)
+> and [next phase plan](NEXT_PHASE_PLAN.md). This review is kept as history.
+
 Reviewed 2026-09-24 at source `30dd36e`. Scope: changes since `89436a8`,
 especially `9580c7e`, `f77ccf7`, `0cbb04b`, `d8c0771`, `b189d98` and
 `33543d3`, plus their current callers and documentation. This is a source and

@@ -4,14 +4,43 @@ This file describes the current QueueCache implementation. Removed historical
 engine defects remain available in Git history and must not be reported as current
 bugs without a reproduction on the current driver.
 
-Current review (2026-09-24): loaded 0.4.92.1 has focused Q: coherence/policy and
-bounded C: Fast/Strict byte passes. The owner also reports successful Paint saves
-and Photos opens with caching off and on. T082-T086 in the
-[implementation review](IMPLEMENTATION_REVIEW_20260924.md) track remaining
-synchronous paging-progress waits, range-drain interference, insufficient
-submission/admission attribution, normal application caching behavior and
-capture/restart/pressure evidence. The historical BSOD remains undiagnosed.
-The older version checkpoints below describe their original scope.
+Current status (2026-09-25, installed 0.4.117.1): T082-T086 are implemented and
+VM-verified. Ordinary application writes (buffered, flushed and memory-mapped) are
+cached; paging-file traffic is recognised per request and never cached. Cache
+memory is page-backed, not nonpaged pool. C: active restarts passed once with a
+runtime-only profile and four times with a saved profile; a real Paint/Photos
+session passed its post-drain byte check. One shutdown hang (below) is open. The
+historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
+describe their original scope.
+
+## Open: one shutdown hang with a saved C: profile (0.4.117.1)
+
+On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
+83 MB dirty after a bounded memory-pressure run) stayed on "Restarting" for over
+20 minutes; the owner reset the VM. No dump exists, and every C: write since the
+previous boot was lost, including the event log and the saved-profile change
+(expected for Fast mode on a hard reset). `chkdsk C: /scan` found no problems. The
+same sequence then restarted cleanly four times. The cause is unknown: it may be
+QueueCache's shutdown barrier or unrelated. The VM now writes a kernel memory dump
+and crashes on NMI (`CrashDumpEnabled=2`, `NMICrashDump=1`); if it recurs, inject
+an NMI from the hypervisor before resetting.
+
+## Fixed: bugcheck 0x7A while restarting with dirty C: data (0.4.111.1 and earlier)
+
+After `IRP_MJ_SHUTDOWN` drained the cache, the driver marked itself suspended and
+failed every later request with `STATUS_DEVICE_NOT_READY`. Windows still pages
+during shutdown, so an exiting `dwm.exe` faulting in `win32kbase.sys` code
+bugchecked with 0x7A (minidump `092526-7734-01.dmp`). The owned test file was
+intact because the drain had finished. Since 0.4.117.1 suspension only blocks
+re-enabling the cache; requests keep flowing to the disk.
+
+## Application caching scope (T085)
+
+Paging-marked writes are admitted when their originating file object is not a
+paging file. Remaining limits: read misses are not retained as clean entries, the
+budget does not shrink under system memory pressure, and NTFS metadata/zero-fill
+write-back is admitted like any other write, so the cache shares drain intervals
+with it.
 
 ## Fixed: bugcheck 0x7E after cache release (0.4.99.1-0.4.104.1)
 
@@ -129,10 +158,10 @@ guest. A faulted cache must be inspected and explicitly recovered.
 Fitting aligned and partial writes have admission and byte checks, and delayed
 overwrite/retention cases have passed on the current test VM. Plan 35-37's
 aggregate paging-count exception does not prove zero lower I/O for the owned
-write; T084 replaces that attribution. All paging-marked writes currently use
-ordered lower I/O and paging misses are not newly retained, including relevant
-ordinary file-cache/mapped traffic. T085 owns the remaining application benefit.
-The following remain incomplete:
+write; T084 replaces that attribution. Since T085, application paging writes
+(file-cache write-back and mapped files) use RAM admission; paging-file and
+unknown-origin requests keep ordered lower I/O. Paging read misses are still not
+newly retained. The following remain incomplete:
 
 - bounded allocation-failure, cancellation and teardown races;
 - oversized and quota-boundary requests under concurrency;
