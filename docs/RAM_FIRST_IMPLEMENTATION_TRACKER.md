@@ -13,7 +13,10 @@ saved-profile cycles) under bounded memory pressure, and an operator Paint/Photo
 session with a post-drain byte match. Found and fixed on the way: bugcheck 0x7A while
 restarting with dirty C: data (0.4.111.1). Open: one unexplained shutdown hang with a
 saved C: profile (see KNOWN_ISSUES; the VM now captures a kernel dump on NMI). The
-next phase is planned in [NEXT_PHASE_PLAN.md](NEXT_PHASE_PLAN.md). Older dated notes
+next phase is planned in [NEXT_PHASE_PLAN.md](NEXT_PHASE_PLAN.md). At the owner's
+request the VM's raw run directories, workloads and old builds were deleted on
+2026-09-25; run IDs cited below remain as references, their summaries recorded here
+are the retained evidence. Older dated notes
 below are history.
 
 Crash found and fixed, 2026-09-25: installed 0.4.104.1 bugchecked twice (0x7E,
