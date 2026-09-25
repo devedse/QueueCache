@@ -28,6 +28,7 @@ static ULONGLONG NowMs()
 }
 #include "cacheblocks.inl"
 static void PagingReader(PVOID context);
+static bool RangesOverlap(const QC_SPECIAL_RANGE* ranges, ULONG count, LONGLONG first, LONGLONG end);
 // Lab gate evidence: store the next per-disk sequence once. Returns true if set.
 static bool RecordLabSequence(QC_CACHE* c, volatile LONG64* field)
 {
@@ -205,6 +206,15 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LabGateDirectWaitSeq = InterlockedCompareExchange64(&c->LabGateDirectWaitSeq, 0, 0);
     output->LabGateDirectSubmitSeq = InterlockedCompareExchange64(&c->LabGateDirectSubmitSeq, 0, 0);
     output->LabGateDirectDoneSeq = InterlockedCompareExchange64(&c->LabGateDirectDoneSeq, 0, 0);
+    output->PagingAdmittedWrites = InterlockedCompareExchange64(&c->PagingAdmittedWrites, 0, 0);
+    output->PagingAdmittedBytes = InterlockedCompareExchange64(&c->PagingAdmittedBytes, 0, 0);
+    output->PagingDirectWrites = InterlockedCompareExchange64(&c->PagingDirectWrites, 0, 0);
+    output->PagingFileRequests = InterlockedCompareExchange64(&c->PagingFileRequests, 0, 0);
+    output->PagingNoFileObject = InterlockedCompareExchange64(&c->PagingNoFileObject, 0, 0);
+    output->PagingHighIrql = InterlockedCompareExchange64(&c->PagingHighIrql, 0, 0);
+    output->PagingReferenceMisses = InterlockedCompareExchange64(&c->PagingReferenceMisses, 0, 0);
+    output->ForceDirectRanges = c->ForceDirectCount;
+    output->ReferenceRanges = c->ReferenceCount;
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 static void RecordMaximum(volatile LONG64* target, ULONG value)
@@ -243,6 +253,25 @@ void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
     }
     else
         return;
+    // T085 recognition evidence, counted for every paging request (cache active or
+    // not). A reference miss is a request inside a known paging-file extent that
+    // per-request recognition would have treated as application traffic.
+    auto fileObject = stack->FileObject;
+    if (!fileObject)
+        InterlockedIncrement64(&c->PagingNoFileObject);
+    else if (KeGetCurrentIrql() > APC_LEVEL)
+        InterlockedIncrement64(&c->PagingHighIrql);
+    else if (FsRtlIsPagingFile(fileObject))
+        InterlockedIncrement64(&c->PagingFileRequests);
+    else
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&c->RangeLock, &irql);
+        const bool miss = RangesOverlap(c->Reference, c->ReferenceCount, offset, offset + length);
+        KeReleaseSpinLock(&c->RangeLock, irql);
+        if (miss)
+            InterlockedIncrement64(&c->PagingReferenceMisses);
+    }
     // These last-request fields are diagnostic breadcrumbs, not an atomic tuple.
     InterlockedExchange64(&c->PagingLastMajor, stack->MajorFunction);
     InterlockedExchange64(&c->PagingLastFlags, irp->Flags);
@@ -514,6 +543,63 @@ static bool ResidentRange(QC_CACHE* c, LONGLONG first, LONGLONG end)
         if (FindSlot(c, block) != NoSlot)
             return true;
     return false;
+}
+static bool RangesOverlap(const QC_SPECIAL_RANGE* ranges, ULONG count, LONGLONG first, LONGLONG end)
+{
+    for (ULONG i = 0; i < count; ++i)
+        if (ranges[i].Start < end && ranges[i].Start + ranges[i].Length > first)
+            return true;
+    return false;
+}
+// T085. True when a paging-marked request is ordinary application traffic
+// (file-cache write-back or a mapped file) and may use RAM admission. The
+// request's file object must be present and must not be a paging file; the
+// check runs at PASSIVE/APC_LEVEL only (FsRtlIsPagingFile's contract). Growth
+// of a paging file keeps its file object, so no layout map is needed. Unknown
+// origin, high IRQL, a paging file or a forced-direct range: ordered direct path.
+static bool ApplicationPaging(QC_CACHE* c, PIRP irp, LONGLONG first, LONGLONG end)
+{
+    auto fileObject = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    if (!fileObject || KeGetCurrentIrql() > APC_LEVEL || FsRtlIsPagingFile(fileObject))
+        return false;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->RangeLock, &irql);
+    const bool forced = RangesOverlap(c->ForceDirect, c->ForceDirectCount, first, end);
+    KeReleaseSpinLock(&c->RangeLock, irql);
+    return !forced;
+}
+static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    const auto inputBytes = stack->Parameters.DeviceIoControl.InputBufferLength;
+    if (inputBytes < sizeof(QC_SPECIAL_RANGES_HEADER) || !irp->AssociatedIrp.SystemBuffer)
+        return STATUS_INVALID_PARAMETER;
+    const auto header = *static_cast<QC_SPECIAL_RANGES_HEADER*>(irp->AssociatedIrp.SystemBuffer);
+    if (header.Version != 1 || header.Size != sizeof(header) || header.Count > QcSpecialRangeMax ||
+        (header.Flags != QcRangesForceDirect && header.Flags != QcRangesReference) ||
+        inputBytes != sizeof(header) + header.Count * sizeof(QC_SPECIAL_RANGE))
+        return STATUS_INVALID_PARAMETER;
+    auto ranges = reinterpret_cast<const QC_SPECIAL_RANGE*>(
+        static_cast<PUCHAR>(irp->AssociatedIrp.SystemBuffer) + sizeof(header));
+    for (ULONG i = 0; i < header.Count; ++i)
+        if (ranges[i].Start < 0 || ranges[i].Length <= 0 || ranges[i].Start > MAXLONGLONG - ranges[i].Length)
+            return STATUS_INVALID_PARAMETER;
+    // A newly forced range may cover cached versions; the direct path's overlap
+    // fence reconciles them before any lower write, so no drain is needed here.
+    KIRQL irql;
+    KeAcquireSpinLock(&c->RangeLock, &irql);
+    if (header.Flags == QcRangesForceDirect)
+    {
+        RtlCopyMemory(c->ForceDirect, ranges, header.Count * sizeof(QC_SPECIAL_RANGE));
+        c->ForceDirectCount = header.Count;
+    }
+    else
+    {
+        RtlCopyMemory(c->Reference, ranges, header.Count * sizeof(QC_SPECIAL_RANGE));
+        c->ReferenceCount = header.Count;
+    }
+    KeReleaseSpinLock(&c->RangeLock, irql);
+    return STATUS_SUCCESS;
 }
 static bool DrainCandidate(QC_CACHE* c, ULONG index)
 {
@@ -895,6 +981,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower)
     KeInitializeEvent(&c->Wake, NotificationEvent, FALSE);
     KeInitializeEvent(&c->Changed, NotificationEvent, FALSE);
     KeInitializeSpinLock(&c->PagingLock);
+    KeInitializeSpinLock(&c->RangeLock);
     KeInitializeEvent(&c->PagingWork, SynchronizationEvent, FALSE);
     KeInitializeEvent(&c->PagingDone, NotificationEvent, FALSE);
     Publish(c);
@@ -923,6 +1010,39 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower)
     }
     return STATUS_SUCCESS;
 }
+// Cache payload comes from physical pages owned by this driver, not from the
+// shared nonpaged pool other drivers depend on. Fully required: a partial
+// allocation fails the whole slab. The mapping is kernel-only, cached, no-execute.
+static PUCHAR AllocateSlab(PMDL* mdl)
+{
+    PHYSICAL_ADDRESS low{}, high{}, skip{};
+    high.QuadPart = -1;
+    auto pages = MmAllocatePagesForMdlEx(low, high, skip, SlabBytes, MmCached, MM_ALLOCATE_FULLY_REQUIRED);
+    if (!pages)
+        return nullptr;
+    if (MmGetMdlByteCount(pages) != SlabBytes)
+    {
+        MmFreePagesFromMdl(pages);
+        ExFreePool(pages);
+        return nullptr;
+    }
+    auto mapping = static_cast<PUCHAR>(MmMapLockedPagesSpecifyCache(
+        pages, KernelMode, MmCached, nullptr, FALSE, NormalPagePriority | MdlMappingNoExecute));
+    if (!mapping)
+    {
+        MmFreePagesFromMdl(pages);
+        ExFreePool(pages);
+        return nullptr;
+    }
+    *mdl = pages;
+    return mapping;
+}
+static void FreeSlab(PMDL mdl, PUCHAR mapping)
+{
+    MmUnmapLockedPages(mapping, mdl);
+    MmFreePagesFromMdl(mdl);
+    ExFreePool(mdl);
+}
 // Shared across disk instances, not a separate 4 GiB reservation per disk.
 static void FreeSlots(QC_CACHE* c)
 {
@@ -931,10 +1051,13 @@ static void FreeSlots(QC_CACHE* c)
     if (c->Slots)
     {
         for (ULONG i = 0; i < c->Capacity; i += SlotsPerSlab)
-            if (c->Slots[i].Buffer)
-                ExFreePoolWithTag(c->Slots[i].Buffer, Tag);
+            if (c->SlabMdls && c->SlabMdls[i / SlotsPerSlab] && c->Slots[i].Buffer)
+                FreeSlab(c->SlabMdls[i / SlotsPerSlab], c->Slots[i].Buffer);
         ExFreePoolWithTag(c->Slots, Tag);
     }
+    if (c->SlabMdls)
+        ExFreePoolWithTag(c->SlabMdls, Tag);
+    c->SlabMdls = nullptr;
     c->Count = c->CleanCount[0] = c->CleanCount[1] = 0;
     c->DirtySlots = 0;
     c->CleanValidBytes[0] = c->CleanValidBytes[1] = 0;
@@ -1073,7 +1196,10 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     // Include both page-rounded descriptor and hash-index allocations in the hard budget.
     c->DrainCapacity = budget < (16ULL << 20) ? SlabBytes / 4 : MaxBatchBytes;
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
-    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes) / (Chunk + sizeof(QC_SLOT) + sizeof(ULONG)));
+    // Reserve the page-rounded slab-handle table first (one PMDL per slab).
+    const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
+    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) /
+                                (Chunk + sizeof(QC_SLOT) + sizeof(ULONG)));
     n = n / SlotsPerSlab * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
@@ -1087,6 +1213,16 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     c->Capacity = n;
+    const auto slabTableBytes =
+        (static_cast<SIZE_T>(n / SlotsPerSlab) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
+    c->SlabMdls = static_cast<PMDL*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, slabTableBytes, Tag));
+    if (!c->SlabMdls)
+    {
+        FreeSlots(c);
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
     auto indexBytes = (static_cast<SIZE_T>(n) * sizeof(ULONG) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Buckets = static_cast<ULONG*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, indexBytes, Tag));
     if (!c->Buckets)
@@ -1108,9 +1244,8 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     for (ULONG i = 0; i < n; ++i)
     {
         c->Slots[i].Buffer = allocationFault == 7 && i == 2 * SlotsPerSlab ? nullptr
-                             : i % SlotsPerSlab == 0
-                                 ? static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, SlabBytes, Tag))
-                                 : c->Slots[i - 1].Buffer + Chunk;
+                             : i % SlotsPerSlab == 0 ? AllocateSlab(&c->SlabMdls[i / SlotsPerSlab])
+                                                     : c->Slots[i - 1].Buffer + Chunk;
         if (!c->Slots[i].Buffer)
         {
             FreeSlots(c);
@@ -1122,7 +1257,7 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     c->FreeHead = 0;
     c->State.BudgetBytes = budget;
-    c->State.ReservedBytes = stagingBytes + descriptors + indexBytes + static_cast<ULONGLONG>(n) * Chunk;
+    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk;
     c->State.PayloadCapacity = static_cast<ULONGLONG>(n) * Chunk;
     ++c->Generation;
     Publish(c);
@@ -1311,6 +1446,67 @@ static PUCHAR Map(PIRP irp)
                 ((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute));
     return static_cast<PUCHAR>(irp->AssociatedIrp.SystemBuffer); // Neither-I/O is not supported for cached data.
 }
+// Ordered direct path for paging-marked writes that are not admitted to RAM
+// (special-file ranges, no current special map, or an unmappable buffer).
+// Caller holds Mutex; it is released on return.
+static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
+{
+    const auto end = first + length;
+    // A paging-marked write can also be ordinary mapped-file data. Drain
+    // only its overlapping versions, including writes already issued by a
+    // drainer. Keep the range fenced until the direct lower write completes.
+    // The foreground worker owns the only range fence; unrelated blocks may
+    // continue draining and fitting ordinary writes retain RAM admission.
+    c->RangeStart = first;
+    c->RangeEnd = end;
+    c->RangeDrain = TRUE;
+    c->RangeForward = FALSE;
+    WakeDrainers(c);
+    const bool gateRecord = LabGateOverlaps(c, first, end);
+    if (PendingRange(c, first, end))
+    {
+        InterlockedIncrement64(&c->PagingOverlapWaits);
+        if (gateRecord)
+            RecordLabSequence(c, &c->LabGateDirectWaitSeq);
+    }
+    while (PendingRange(c, first, end) && NT_SUCCESS(c->State.LastError) &&
+           !c->Gone && !irp->Cancel)
+    {
+        KeClearEvent(&c->Changed);
+        ReleaseCache(c);
+        WaitForCacheProgress(c, irp);
+        AcquireCache(c);
+    }
+    if (PendingRange(c, first, end) || c->Gone || irp->Cancel)
+    {
+        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED :
+            irp->Cancel ? STATUS_CANCELLED : c->State.LastError;
+        c->RangeDrain = c->RangeForward = FALSE;
+        WakeDrainers(c);
+        ReleaseCache(c);
+        return error;
+    }
+    // Do not use stale clean data while the direct request owns this range.
+    InvalidateCleanRange(c, first, length);
+    c->RangeForward = TRUE;
+    ReleaseCache(c);
+    const bool gateSubmit = gateRecord && RecordLabSequence(c, &c->LabGateDirectSubmitSeq);
+    auto status = OriginalIo(c, irp);
+    if (gateSubmit)
+        RecordLabSequence(c, &c->LabGateDirectDoneSeq);
+    if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
+        status = STATUS_DEVICE_DATA_ERROR;
+    AcquireCache(c);
+    // A failed or short lower write may still have changed some sectors.
+    // The request reports that failure; no old clean view may survive it.
+    InvalidateCleanRange(c, first, length);
+    c->RangeDrain = c->RangeForward = FALSE;
+    Publish(c);
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    WakeDrainers(c);
+    ReleaseCache(c);
+    return status;
+}
 static NTSTATUS Write(QC_CACHE* c, PIRP irp)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -1332,64 +1528,10 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         irp->IoStatus.Information = 0;
         return STATUS_SUCCESS;
     }
-    if (!QcShouldCacheDataIo(pagingIo))
+    if (!QcShouldCacheDataIo(pagingIo, pagingIo && ApplicationPaging(c, irp, offset.QuadPart, offset.QuadPart + length)))
     {
-        // A paging-marked write can also be ordinary mapped-file data. Drain
-        // only its overlapping versions, including writes already issued by a
-        // drainer. Keep the range fenced until the direct lower write completes.
-        // The foreground worker owns the only range fence; unrelated blocks may
-        // continue draining and fitting ordinary writes retain RAM admission.
-        const auto first = offset.QuadPart;
-        const auto end = first + length;
-        c->RangeStart = first;
-        c->RangeEnd = end;
-        c->RangeDrain = TRUE;
-        c->RangeForward = FALSE;
-        WakeDrainers(c);
-        const bool gateRecord = LabGateOverlaps(c, first, end);
-        if (PendingRange(c, first, end))
-        {
-            InterlockedIncrement64(&c->PagingOverlapWaits);
-            if (gateRecord)
-                RecordLabSequence(c, &c->LabGateDirectWaitSeq);
-        }
-        while (PendingRange(c, first, end) && NT_SUCCESS(c->State.LastError) &&
-               !c->Gone && !irp->Cancel)
-        {
-            KeClearEvent(&c->Changed);
-            ReleaseCache(c);
-            WaitForCacheProgress(c, irp);
-            AcquireCache(c);
-        }
-        if (PendingRange(c, first, end) || c->Gone || irp->Cancel)
-        {
-            auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED :
-                irp->Cancel ? STATUS_CANCELLED : c->State.LastError;
-            c->RangeDrain = c->RangeForward = FALSE;
-            WakeDrainers(c);
-            ReleaseCache(c);
-            return error;
-        }
-        // Do not use stale clean data while the direct request owns this range.
-        InvalidateCleanRange(c, first, length);
-        c->RangeForward = TRUE;
-        ReleaseCache(c);
-        const bool gateSubmit = gateRecord && RecordLabSequence(c, &c->LabGateDirectSubmitSeq);
-        auto status = OriginalIo(c, irp);
-        if (gateSubmit)
-            RecordLabSequence(c, &c->LabGateDirectDoneSeq);
-        if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
-            status = STATUS_DEVICE_DATA_ERROR;
-        AcquireCache(c);
-        // A failed or short lower write may still have changed some sectors.
-        // The request reports that failure; no old clean view may survive it.
-        InvalidateCleanRange(c, first, length);
-        c->RangeDrain = c->RangeForward = FALSE;
-        Publish(c);
-        KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
-        WakeDrainers(c);
-        ReleaseCache(c);
-        return status;
+        InterlockedIncrement64(&c->PagingDirectWrites);
+        return DirectPagingWrite(c, irp, offset.QuadPart, length);
     }
     if (!NT_SUCCESS(c->State.LastError))
     {
@@ -1430,7 +1572,12 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     if (!source)
     {
         if (pagingIo)
+        {
+            // Under memory pressure an application paging write must still make
+            // progress: use the ordered direct path, which needs no mapping.
             InterlockedIncrement64(&c->PagingMapFailures);
+            return DirectPagingWrite(c, irp, offset.QuadPart, length);
+        }
         ReleaseCache(c);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
@@ -1607,6 +1754,11 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         WakeDrainers(c);
     c->Pressure = pressure;
     ReleaseCache(c);
+    if (pagingIo)
+    {
+        InterlockedIncrement64(&c->PagingAdmittedWrites);
+        InterlockedAdd64(&c->PagingAdmittedBytes, length);
+    }
     irp->IoStatus.Information = length;
     return STATUS_SUCCESS;
 }
@@ -2094,6 +2246,9 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
         stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_CONTROL_V1)
         return Control(c, irp, deviceBytes);
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
+        stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_SPECIAL_RANGES_V1)
+        return SetSpecialRanges(c, irp);
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
@@ -2150,6 +2305,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     }
     if (QcTrackedUsageNotification(stack))
     {
+
         // In-path was reserved under QueueLock before this request entered the
         // worker. Preserve active routing. If ordinary dirty data predates the
         // first registration, drain only enough to establish its paging reserve.
@@ -2228,6 +2384,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     }
     // Modifying and unclassified controls (including unsupported TRIM) must not overtake accepted dirty writes.
     AcquireCache(c);
+
     bool dirty = c->State.DirtyBytes != 0;
     bool resident = c->CleanCount[0] != 0 || c->CleanCount[1] != 0;
     auto error = c->State.LastError;

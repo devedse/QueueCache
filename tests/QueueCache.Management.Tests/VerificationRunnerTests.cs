@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 41, "application write profile contract version");
+        Check(VerificationPlan.Version == 42, "application paging admission and page-backed memory contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -57,6 +57,43 @@ internal static class VerificationRunnerTests
             profileBefore, profileBefore with { PagingWriteBytes = 256UL << 20, PagingForwardedWrites = 64 });
         Check(profileText.Contains("RAM-admitted 0.0 MiB") && profileText.Contains("paging-marked writes 256.0 MiB") &&
             profileText.Contains("512 MiB/s"), "application write profile reports admitted versus forwarded bytes");
+        Check(VerificationPlan.Integrity(new VerificationOptions("C:", "system-paging-recognition"))
+            .SequenceEqual([new IntegrityCase("system-paging-recognition", "system-paging-recognition")]),
+            "paging recognition is one guarded system case");
+        var admittedAll = new Dictionary<string, ulong> { ["buffered-close"] = 256UL << 20, ["mapped-flush"] = 250UL << 20 };
+        Check(QueueCache.Operations.AppWriteProfileScenarios.VerifyAdmission(true, admittedAll).Result == "PASS",
+            "application writes admitted to RAM pass");
+        Check(QueueCache.Operations.AppWriteProfileScenarios.VerifyAdmission(false, admittedAll).Result == "SKIP",
+            "older drivers cannot claim application admission");
+        try
+        {
+            QueueCache.Operations.AppWriteProfileScenarios.VerifyAdmission(true,
+                new Dictionary<string, ulong> { ["buffered-flush"] = 0 });
+            throw new Exception("Unadmitted application writes accepted.");
+        }
+        catch (IOException) { }
+        Check(QueueCache.Operations.AppWriteProfileScenarios.VerifyPoolIndependent(true, 100UL << 20, 110UL << 20, 1024UL << 20)
+            .Result == "PASS", "a small nonpaged delta proves page-backed cache memory");
+        try
+        {
+            QueueCache.Operations.AppWriteProfileScenarios.VerifyPoolIndependent(true, 100UL << 20, 1124UL << 20, 1024UL << 20);
+            throw new Exception("Pool-backed cache payload accepted.");
+        }
+        catch (IOException) { }
+        var recognitionBefore = new QueueCache.Management.CachePagingAdmission(0, 0, 0, 10, 1, 0, 0, 0, 3);
+        var ioBefore = new QueueCache.Management.CachePagingIo(5, 0, 5, 0, 0, 0, 0, 0, 0);
+        var recognised = QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore,
+            recognitionBefore with { PagingFileRequests = 40 }, ioBefore, ioBefore with { ReadRequests = 25, WriteRequests = 20 }, "test");
+        Check(recognised.All(check => check.Result == "PASS"), "recognised paging-file I/O without misses passes");
+        Check(QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore, recognitionBefore, ioBefore, ioBefore, "idle")
+            .Any(check => check.Result == "SKIP"), "no paging-file I/O leaves recognition unexercised");
+        try
+        {
+            QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore,
+                recognitionBefore with { PagingFileRequests = 40, ReferenceMisses = 1 }, ioBefore, ioBefore, "miss");
+            throw new Exception("An unrecognised paging-file request was accepted.");
+        }
+        catch (IOException) { }
         var failedGate = new QueueCache.Management.CacheLabGate(3, 1, 1, 2, 4, 3, 0, 0);
         Check(QueueCache.Operations.OrderingFaultScenarios.VerifyFailedOldDrain(failedGate, true, true, 4096)
             .Contains("never submitted"), "failed old drain stops the waiting paging write before submission");

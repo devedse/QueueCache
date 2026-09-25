@@ -188,6 +188,8 @@ public static class PagingCoherenceScenarios
         var diskOffset = DiskOffsetOf(path, Offset, target.Root);
         if (diskOffset % blockBytes != 0)
             throw new NotSupportedException("The owned block is not 4 KiB aligned on disk; the gated case needs aligned clusters.");
+        // Since T085 ordinary mapped writes use RAM admission; this stage verifies the direct paging path.
+        device.SetSpecialRanges([new DiskRange(diskOffset, blockBytes)], SpecialRangeKind.ForceDirect);
         device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, (holdMs << 32) | blockBytes);
         try
         {
@@ -215,6 +217,7 @@ public static class PagingCoherenceScenarios
         finally
         {
             device.Control(WriteCacheAction.LabGate, value: 0);
+            device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
         }
         var order = VerifyGateOrder(gate);
         var routeAfter = device.GetDiagnostics().PagingRoute!;
@@ -343,6 +346,8 @@ public static class PagingCoherenceScenarios
         var b = new byte[patchBytes];
         new Random(104761).NextBytes(a);
         new Random(104773).NextBytes(b);
+        // Keep the owned block's mapped overwrite on the direct paging path (not T085 RAM admission).
+        device.SetSpecialRanges([new DiskRange(DiskOffsetOf(path, Offset, target.Root), 4096)], SpecialRangeKind.ForceDirect);
         device.Control(WriteCacheAction.LabDelay, value: 2000);
         CachePagingRoute? before = null;
         CachePagingRoute after;
@@ -377,6 +382,7 @@ public static class PagingCoherenceScenarios
         finally
         {
             device.Control(WriteCacheAction.LabDelay, value: 0);
+            device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
         }
         var first = before ?? throw new IOException("Missing routed paging baseline during overlap.");
         var overlapEvidence = VerifyObservedOverlap(first, after, observedInFlight);

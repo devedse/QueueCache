@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 
@@ -46,6 +47,57 @@ public static class AppWriteProfileScenarios
                 $"({forwarded} forwarded straight to disk); all bytes reached QueueCache within {settleMs:F0} ms of completion.");
     }
 
+    /// <summary>T085 acceptance: every application mode's bytes reach QueueCache RAM (at least 90%; NTFS may
+    /// write a little metadata separately). Older drivers without V10 cannot admit and report SKIP.</summary>
+    internal static CheckResult VerifyAdmission(bool admissionAvailable, IReadOnlyDictionary<string, ulong> admitted)
+    {
+        const string id = "app-write-profile/application-writes-admitted";
+        var detail = string.Join("; ", admitted.Select(pair =>
+            FormattableString.Invariant($"{pair.Key} {pair.Value / (double)MiB:F1} MiB admitted")));
+        if (!admissionAvailable)
+            return new(id, "SKIP", detail + ". The loaded driver predates application paging admission (V10).");
+        var short_ = admitted.Where(pair => pair.Value < (ulong)FileBytes * 9 / 10).Select(pair => pair.Key).ToList();
+        if (short_.Count != 0)
+            throw new IOException($"{id}: application writes were not admitted to RAM for {string.Join(", ", short_)} ({detail}).");
+        return new(id, "PASS", detail + FormattableString.Invariant($" of {FileBytes / MiB} MiB each."));
+    }
+
+    /// <summary>Cache payload must not come from the kernel nonpaged pool: a 1 GiB Configure may add only
+    /// descriptors, index and staging (well under 10% of the budget).</summary>
+    internal static CheckResult VerifyPoolIndependent(bool pageBacked, ulong poolBefore, ulong poolAfter, ulong budget)
+    {
+        const string id = "app-write-profile/cache-memory-outside-nonpaged-pool";
+        var delta = poolAfter > poolBefore ? poolAfter - poolBefore : 0;
+        var detail = FormattableString.Invariant(
+            $"Kernel nonpaged pool changed by {delta / (double)MiB:F1} MiB while configuring a {budget / MiB} MiB cache.");
+        if (!pageBacked)
+            return new(id, "SKIP", detail + " The loaded driver predates page-backed cache memory.");
+        if (delta > budget / 10)
+            throw new IOException($"{id}: {detail} Cache payload appears to use nonpaged pool.");
+        return new(id, "PASS", detail);
+    }
+
+    private static ulong KernelNonpagedBytes()
+    {
+        var info = new PerformanceInformation { Size = (uint)Marshal.SizeOf<PerformanceInformation>() };
+        if (!GetPerformanceInfo(ref info, info.Size))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return (ulong)info.KernelNonpaged * (ulong)info.PageSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PerformanceInformation
+    {
+        public uint Size;
+        public nuint CommitTotal, CommitLimit, CommitPeak, PhysicalTotal, PhysicalAvailable, SystemCache,
+            KernelTotal, KernelPaged, KernelNonpaged, PageSize;
+        public uint HandleCount, ProcessCount, ThreadCount;
+    }
+
+    [DllImport("psapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetPerformanceInfo(ref PerformanceInformation information, uint size);
+
     public static IReadOnlyList<CheckResult> Run(DiskTarget target, CacheDevice device, string workDirectory)
     {
         target.ValidateCurrent();
@@ -54,11 +106,19 @@ public static class AppWriteProfileScenarios
                 StringComparison.OrdinalIgnoreCase) || Directory.Exists(workDirectory))
             throw new IOException("Application write profile requires a fresh owned directory on a non-OS disk.");
         Directory.CreateDirectory(workDirectory);
+        // Release the existing cache first so the kernel nonpaged-pool delta of a fresh 1 GiB Configure is measured.
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        device.Control(WriteCacheAction.Release);
+        var poolBefore = KernelNonpagedBytes();
         // A cache large enough to hold every mode's bytes, with a policy that does not drain during measurement.
         ConfigurationManager.Apply(target, new CacheConfiguration(1024, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Idle, IdleMs: 60000, MaxDirtyAgeMs: 3600000)
         }, true);
+        var poolAfter = KernelNonpagedBytes();
+        var admissionAvailable = device.GetDiagnostics().PagingAdmission is not null;
+        var admitted = new Dictionary<string, ulong>();
         var block = new byte[4 * MiB];
         new Random(105019).NextBytes(block);
         var results = new List<CheckResult>();
@@ -105,8 +165,11 @@ public static class AppWriteProfileScenarios
                 Thread.Sleep(100);
             } while (settle.Elapsed < TimeSpan.FromSeconds(60));
             var settleMs = settle.Elapsed.TotalMilliseconds;
+            admitted[mode] = after.Accepted - before.Accepted;
             results.Add(new($"app-write-profile/{mode}", "PASS", Describe(mode, appMs, settleMs, before, after)));
         }
+        results.Add(VerifyAdmission(admissionAvailable, admitted));
+        results.Add(VerifyPoolIndependent(admissionAvailable, poolBefore, poolAfter, 1024UL << 20));
         // Integrity: every mode's bytes must be on media after the cache is released.
         device.Control(WriteCacheAction.Flush);
         device.Control(WriteCacheAction.Disable);

@@ -28,6 +28,19 @@ public sealed record CacheLowerSources(ulong GeneratedWrites, ulong ForwardedWri
     ulong PagingForwardedReads, ulong OtherReads);
 /// <summary>V9 lab range gate. Sequence values share one per-disk counter; zero means not observed.
 /// State: 0 off, 1 armed, 2 holding a submitted overlapping drain, 3 released.</summary>
+/// <summary>
+/// V10 (T085): paging-marked writes admitted to RAM versus kept on the ordered direct path, and per-request
+/// paging-file recognition counted at dispatch for every paging request. ReferenceMisses counts requests inside a
+/// known paging-file extent that recognition would have treated as application traffic; it must stay zero.
+/// </summary>
+public sealed record CachePagingAdmission(ulong AdmittedWrites, ulong AdmittedBytes, ulong DirectWrites,
+    ulong PagingFileRequests, ulong NoFileObject, ulong HighIrql, ulong ReferenceMisses,
+    ulong ForceDirectRanges, ulong ReferenceRanges);
+/// <summary>Which driver range set to replace: ForceDirect keeps matching paging traffic on the direct path;
+/// Reference is observe-only paging-file extents for the recognition cross-check.</summary>
+public enum SpecialRangeKind : uint { ForceDirect = 1, Reference = 2 }
+/// <summary>One special-file range in disk byte offsets.</summary>
+public sealed record DiskRange(long Start, long Length);
 public sealed record CacheLabGate(ulong State, ulong Hits, ulong OldSubmitSeq, ulong OldLowerDoneSeq,
     ulong OldRetireSeq, ulong DirectWaitSeq, ulong DirectSubmitSeq, ulong DirectDoneSeq);
 
@@ -45,6 +58,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int PagingRouteWireSize = 584;
     public const int PagingOffloadWireSize = 672;
     public const int LabGateWireSize = 736;
+    public const int PagingAdmissionWireSize = 808;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -54,6 +68,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CachePagingOffload? PagingOffload { get; init; }
     public CacheLowerSources? LowerSources { get; init; }
     public CacheLabGate? LabGate { get; init; }
+    public CachePagingAdmission? PagingAdmission { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -67,6 +82,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingRouteWireSize => 7u,
             PagingOffloadWireSize => 8u,
             LabGateWireSize => 9u,
+            PagingAdmissionWireSize => 10u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -158,6 +174,17 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 throw new InvalidDataException("Invalid lab gate state.");
             labGate = new(gate[0], gate[1], gate[2], gate[3], gate[4], gate[5], gate[6], gate[7]);
         }
+        CachePagingAdmission? pagingAdmission = null;
+        if (bytes.Length >= PagingAdmissionWireSize)
+        {
+            var admission = new ulong[9];
+            for (var index = 0; index < admission.Length; index++)
+                admission[index] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(LabGateWireSize + index * 8)..]);
+            if (admission[7] > SpecialRangeMap.MaxRanges || admission[8] > SpecialRangeMap.MaxRanges)
+                throw new InvalidDataException("Invalid driver range-set size.");
+            pagingAdmission = new(admission[0], admission[1], admission[2], admission[3], admission[4], admission[5],
+                admission[6], admission[7], admission[8]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -168,7 +195,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingRoute = pagingRoute,
             PagingOffload = pagingOffload,
             LowerSources = lowerSources,
-            LabGate = labGate
+            LabGate = labGate,
+            PagingAdmission = pagingAdmission
         };
     }
 }

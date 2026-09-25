@@ -81,6 +81,15 @@ controls and fences), up to four drainers, and one paging-read thread.
   after lower completion, before retirement, while its slots stay in flight and
   pinned. The drainer holds no lock while it sleeps (at most 5 s). It is refused
   on disks with paging/hibernation/dump paths and is never armed by product code.
+- T085 (plan 42): a paging-marked write is admitted like any write when its
+  request carries a file object that `FsRtlIsPagingFile` says is not a paging
+  file. The check runs at PASSIVE in the request worker, and the request must not
+  touch a force-direct range. Paging-file, unknown-origin and force-direct
+  requests keep the ordered direct path above. An unmappable buffer also falls
+  back to it. Dispatch counts recognition evidence for every paging request.
+- Cache payload memory (plan 42) is physical pages per 256 KiB slab
+  (`MmAllocatePagesForMdlEx`, mapped once), not nonpaged pool. It is allocated in
+  Configure and freed in FreeSlots under the same Mutex/lifetime rules as before.
 - Remaining synchronous paths: paging reads over 1 MiB, a full table, and the
   bounded service lane during an `OffloadBlocked` request. They are counted in
   V7 routed and V8 offload diagnostics, not hidden.

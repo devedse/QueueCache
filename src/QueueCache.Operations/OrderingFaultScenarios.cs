@@ -108,6 +108,7 @@ public static class OrderingFaultScenarios
     private static void Recover(CacheDevice device, string label)
     {
         device.Control(WriteCacheAction.LabGate, value: 0);
+        device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
         device.Control(WriteCacheAction.Retry);
         var state = device.GetWriteCacheState();
         if (state.LastError != 0 || state.DirtyBytes != 0 || state.InFlightBytes != 0)
@@ -135,6 +136,8 @@ public static class OrderingFaultScenarios
         var gateOffset = GateOffset(path, target);
         var directFailed = false;
         string evidence;
+        // The waiting newer write must be a direct paging write (not T085 RAM admission).
+        device.SetSpecialRanges([new DiskRange(gateOffset, BlockBytes)], SpecialRangeKind.ForceDirect);
         device.Control(WriteCacheAction.LabGate, (ulong)gateOffset, GateFail << 48 | 500UL << 32 | BlockBytes);
         try
         {

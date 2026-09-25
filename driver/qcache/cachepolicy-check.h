@@ -27,7 +27,7 @@ constexpr bool PolicyChecks()
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||
-        !QcShouldCacheDataIo(false) || QcShouldCacheDataIo(true) ||
+        !QcShouldCacheDataIo(false, false) || QcShouldCacheDataIo(true, false) || !QcShouldCacheDataIo(true, true) ||
         !QcResumeAfterPower(true, true, true, false) ||
         QcResumeAfterPower(false, true, true, false) ||
         QcResumeAfterPower(true, false, true, false) ||

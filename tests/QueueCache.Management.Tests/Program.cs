@@ -294,6 +294,32 @@ Check(labGate.LowerSources == new CacheLowerSources(5, 3, 2, 6, 4) &&
     labGate.LabGate == new CacheLabGate(3, 1, 21, 22, 24, 23, 25, 26), "V9 lab gate offsets and V8 prefix");
 BinaryPrimitives.WriteUInt64LittleEndian(labGateBytes.AsSpan(CacheDiagnostics.PagingOffloadWireSize), 4);
 Reject(() => CacheDiagnostics.Decode(labGateBytes), "unknown lab gate state");
+BinaryPrimitives.WriteUInt64LittleEndian(labGateBytes.AsSpan(CacheDiagnostics.PagingOffloadWireSize), 3);
+Check(CacheDiagnostics.Decode(labGateBytes).PagingAdmission is null, "V9 paging admission is unavailable, not zero");
+var admissionBytes = new byte[CacheDiagnostics.PagingAdmissionWireSize];
+labGateBytes.CopyTo(admissionBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(admissionBytes, 10);
+BinaryPrimitives.WriteUInt32LittleEndian(admissionBytes.AsSpan(4), CacheDiagnostics.PagingAdmissionWireSize);
+ulong[] admissionValues = [31, 32, 33, 34, 35, 36, 0, 2, 5];
+for (var index = 0; index < admissionValues.Length; index++)
+    BinaryPrimitives.WriteUInt64LittleEndian(admissionBytes.AsSpan(CacheDiagnostics.LabGateWireSize + index * 8), admissionValues[index]);
+Check(CacheDiagnostics.Decode(admissionBytes).PagingAdmission == new CachePagingAdmission(31, 32, 33, 34, 35, 36, 0, 2, 5) &&
+    CacheDiagnostics.Decode(admissionBytes).LabGate == labGate.LabGate, "V10 paging admission offsets and V9 prefix");
+BinaryPrimitives.WriteUInt64LittleEndian(admissionBytes.AsSpan(CacheDiagnostics.LabGateWireSize + 64), 257);
+Reject(() => CacheDiagnostics.Decode(admissionBytes), "range set larger than the driver table");
+var normalized = SpecialRangeMap.Normalize([new DiskRange(8192 + 100, 50), new DiskRange(4096, 4096), new DiskRange(1 << 20, 1)]);
+Check(normalized.SequenceEqual([new DiskRange(4096, 8192), new DiskRange(1 << 20, 4096)]),
+    "special ranges round outward to cache blocks and merge adjacent ranges");
+var encoded = SpecialRangeMap.Encode(normalized, SpecialRangeKind.Reference);
+Check(encoded.Length == 24 + 2 * 16 && BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(8)) == 2 &&
+    BinaryPrimitives.ReadUInt32LittleEndian(encoded.AsSpan(12)) == 2 &&
+    BinaryPrimitives.ReadInt64LittleEndian(encoded.AsSpan(24)) == 4096 &&
+    BinaryPrimitives.ReadInt64LittleEndian(encoded.AsSpan(32)) == 8192, "special range wire layout");
+Check(SpecialRangeMap.Encode([], SpecialRangeKind.ForceDirect).Length == 24, "an empty set clears it");
+Check(SpecialRangeMap.IsFixedPagingFileEntry(@"C:\pagefile.sys 512 512", 'C', out var onC) && onC &&
+    !SpecialRangeMap.IsFixedPagingFileEntry(@"C:\pagefile.sys 0 0", 'C', out _) &&
+    !SpecialRangeMap.IsFixedPagingFileEntry(@"?:\pagefile.sys", 'D', out var anyVolume) && anyVolume &&
+    !SpecialRangeMap.IsFixedPagingFileEntry(@"D:\pagefile.sys 512 1024", 'D', out _), "paging-file registry entries");
 Reject(() => CacheDiagnostics.Decode(pagingProgressBytes.AsSpan(0, 527)), "short paging progress diagnostics");
 Reject(() => CacheDiagnostics.Decode(pagingIoBytes.AsSpan(0, 479)), "short paging I/O diagnostics");
 Reject(() => CacheDiagnostics.Decode(activityBytes.AsSpan(0, 407)), "short usage lifecycle");

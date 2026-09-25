@@ -10,6 +10,31 @@
 #define IOCTL_QCACHE_STATE_V3 CTL_CODE(0x8844UL, 0xD14UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_OPTIONS_V1 CTL_CODE(0x8844UL, 0xD15UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// T085 disk byte range sets. Input: QC_SPECIAL_RANGES_HEADER + Count entries.
+// Paging-file traffic is recognised per request (FsRtlIsPagingFile on the
+// request's file object), not by these ranges. Flags selects exactly one set:
+//   QcRangesForceDirect (1): paging-marked requests touching these ranges always
+//     take the ordered direct path (verification of that path on test disks).
+//   QcRangesReference (2): observe-only extents of known paging files; the driver
+//     counts paging requests inside them that per-request recognition missed.
+// Count 0 clears the selected set.
+#define IOCTL_QCACHE_SPECIAL_RANGES_V1 CTL_CODE(0x8844UL, 0xD17UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
+struct QC_SPECIAL_RANGE
+{
+    LONGLONG Start, Length;
+};
+enum : ULONG
+{
+    QcRangesForceDirect = 1,
+    QcRangesReference = 2
+};
+struct QC_SPECIAL_RANGES_HEADER
+{
+    ULONG Version, Size, Count, Flags;
+    ULONGLONG Generation;
+};
+static_assert(sizeof(QC_SPECIAL_RANGE) == 16 && sizeof(QC_SPECIAL_RANGES_HEADER) == 24);
+static constexpr ULONG QcSpecialRangeMax = 256;
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
 // The first 192 bytes remain V1 and the first 408 bytes remain V2.
@@ -74,6 +99,12 @@ struct QC_DIAGNOSTICS
     // values come from one per-disk counter, so they order these events.
     ULONGLONG LabGateState, LabGateHits, LabGateOldSubmitSeq, LabGateOldLowerDoneSeq;
     ULONGLONG LabGateOldRetireSeq, LabGateDirectWaitSeq, LabGateDirectSubmitSeq, LabGateDirectDoneSeq;
+    // V10: T085 application paging admission and paging-file recognition.
+    // Direct = paging writes kept on the ordered direct path. The classification
+    // counters are recorded at dispatch for every paging request, routed or not.
+    ULONGLONG PagingAdmittedWrites, PagingAdmittedBytes, PagingDirectWrites;
+    ULONGLONG PagingFileRequests, PagingNoFileObject, PagingHighIrql, PagingReferenceMisses;
+    ULONGLONG ForceDirectRanges, ReferenceRanges;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -83,7 +114,9 @@ static constexpr ULONG QcDiagnosticsV5Size = 480;
 static constexpr ULONG QcDiagnosticsV6Size = 528;
 static constexpr ULONG QcDiagnosticsV7Size = 584;
 static constexpr ULONG QcDiagnosticsV8Size = 672;
-static_assert(sizeof(QC_DIAGNOSTICS) == 736);
+static constexpr ULONG QcDiagnosticsV9Size = 736;
+static_assert(sizeof(QC_DIAGNOSTICS) == 808);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingAdmittedWrites) == QcDiagnosticsV9Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LabGateState) == QcDiagnosticsV8Size);
 // LabGateState: 0 disarmed, 1 armed, 2 holding a submitted overlapping drain, 3 released.
 enum : ULONG
@@ -225,6 +258,10 @@ struct QC_CACHE
     KEVENT Wake, Changed;
     QC_DRAIN_WORKER Workers[4];
     QC_SLOT* Slots;
+    // One MDL per 256 KiB payload slab: physical pages from the memory manager
+    // (MmAllocatePagesForMdlEx), mapped once, never nonpaged pool. Indexed by
+    // slot / SlotsPerSlab; the slab's mapping is Slots[slab * SlotsPerSlab].Buffer.
+    PMDL* SlabMdls;
     ULONG* Buckets;
     PUCHAR DrainBuffer;
     ULONG Capacity, Head, Tail, FreeHead, Count, SectorBytes, DrainCapacity;
@@ -278,6 +315,13 @@ struct QC_CACHE
     LONGLONG LabGateStart, LabGateEnd;
     volatile LONG64 LabSequence, LabGateHits, LabGateOldSubmitSeq, LabGateOldLowerDoneSeq, LabGateOldRetireSeq;
     volatile LONG64 LabGateDirectWaitSeq, LabGateDirectSubmitSeq, LabGateDirectDoneSeq;
+    // T085 range sets. RangeLock (spin lock) because dispatch reads the reference
+    // set at up to DISPATCH_LEVEL for classification counters.
+    KSPIN_LOCK RangeLock;
+    ULONG ForceDirectCount, ReferenceCount;
+    QC_SPECIAL_RANGE ForceDirect[QcSpecialRangeMax], Reference[QcSpecialRangeMax];
+    volatile LONG64 PagingAdmittedWrites, PagingAdmittedBytes, PagingDirectWrites;
+    volatile LONG64 PagingFileRequests, PagingNoFileObject, PagingHighIrql, PagingReferenceMisses;
 };
 FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
 {

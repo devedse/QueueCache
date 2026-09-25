@@ -199,7 +199,8 @@ public static class VerificationWorker
         else
             target = await DiskTarget.InspectAsync(job.Volume);
         if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or
-            "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore")
+            "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore" or
+            "system-paging-recognition")
         {
             if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
                 throw new IOException("Missing explicit recoverable-VM acknowledgement or expected system-disk identity.");
@@ -381,6 +382,23 @@ public static class VerificationWorker
                 ReportFailures(checks, Console.Error);
                 return checks.All(check => check.Result == "PASS") ? 0 : 1;
             }
+            if (job.Operation == "system-paging-recognition")
+            {
+                // No cache configuration, workload file or raw write: only an observe-only reference range set,
+                // cleared on exit, and bounded private-memory pressure to exercise the pagefile.
+                using var recognitionDevice = new CacheDevice(target.Device, writable: true);
+                var recognitionBefore = recognitionDevice.GetWriteCacheState();
+                if (recognitionBefore.DeviceBytes != (ulong)target.Bytes || recognitionBefore.Faulted || recognitionBefore.LastError != 0)
+                    throw new IOException("System-disk driver identity/state is not healthy enough for the recognition check.");
+                var recognitionChecks = PagingRecognitionScenarios.Run(target, recognitionDevice);
+                var recognitionAfter = recognitionDevice.GetWriteCacheState();
+                if (recognitionAfter.Faulted || recognitionAfter.Errors != recognitionBefore.Errors ||
+                    recognitionAfter.Enabled != recognitionBefore.Enabled || recognitionAfter.BudgetBytes != recognitionBefore.BudgetBytes)
+                    throw new IOException("The system-disk cache state changed during the recognition check.");
+                RunStorage.AtomicJson(job.Reply, recognitionChecks);
+                ReportFailures(recognitionChecks, Console.Error);
+                return recognitionChecks.All(check => check.Result is "PASS" or "SKIP") ? 0 : 1;
+            }
             if (job.Operation != "system-preflight")
             {
                 if (string.IsNullOrWhiteSpace(job.OraclePath))
@@ -471,6 +489,11 @@ public static class VerificationWorker
                 device.Control(WriteCacheAction.LabDelay, value: 0);
                 if (device.GetDiagnostics().LabGate is not null)
                     device.Control(WriteCacheAction.LabGate, value: 0);
+                if (device.GetDiagnostics().PagingAdmission is not null)
+                {
+                    device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
+                    device.SetSpecialRanges([], SpecialRangeKind.Reference);
+                }
                 // Only ordering-faults deliberately raises the lifetime error count through the driver
                 // lab gate, and each of its stages recovers with Retry. Accept that count only when the
                 // cache is currently healthy, and record exactly what was accepted. Every other suite

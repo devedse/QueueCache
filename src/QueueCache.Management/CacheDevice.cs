@@ -18,6 +18,7 @@ public sealed class CacheDevice : IDisposable
     public const uint ReadWriteStateIoctl = (0x8844u << 16) | (0xD14u << 2);
     public const uint OptionsIoctl = (0x8844u << 16) | (3u << 14) | (0xD15u << 2);
     public const uint PerformanceIoctl = (0x8844u << 16) | (0xD16u << 2);
+    public const uint SpecialRangesIoctl = (0x8844u << 16) | (3u << 14) | (0xD17u << 2);
     private readonly SafeFileHandle handle;
 
     public CacheDevice(string device, bool writable = false)
@@ -52,7 +53,7 @@ public sealed class CacheDevice : IDisposable
 
     public CacheDiagnostics GetDiagnostics()
     {
-        var data = new byte[CacheDiagnostics.LabGateWireSize];
+        var data = new byte[CacheDiagnostics.PagingAdmissionWireSize];
         if (!Native.DeviceIoControl(handle, DiagnosticsIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache diagnostics unavailable (requires matching new driver).");
         if (returned > data.Length)
@@ -108,6 +109,15 @@ public sealed class CacheDevice : IDisposable
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"Cache {action} failed. Inspect cache-status; dirty buffers may be retained.");
         if (returned != 0)
             throw new InvalidDataException("Unexpected cache control response.");
+    }
+    /// <summary>T085: replace one driver range set (see <see cref="SpecialRangeKind"/>); an empty list clears it.</summary>
+    public void SetSpecialRanges(IReadOnlyList<DiskRange> ranges, SpecialRangeKind kind)
+    {
+        var data = SpecialRangeMap.Encode(ranges, kind);
+        if (!Native.DeviceIoControlCommand(handle, SpecialRangesIoctl, data, (uint)data.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Special-file range map update failed.");
+        if (returned != 0)
+            throw new InvalidDataException("Unexpected special-range response.");
     }
     public void SetOptions(CacheOptions options)
     {

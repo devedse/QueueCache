@@ -55,11 +55,13 @@ constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool, bool)
     return writeLimit;
 }
 // IRP_PAGING_IO also marks filesystem cache and mapped-file traffic, not only
-// pagefile contents. Avoid new RAM admission for these writes, but the caller
+// pagefile contents. T085: cache a paging-marked request only when a current
+// special-file map proves it is outside pagefile/swapfile/hiberfil/dump ranges.
+// Otherwise it takes the ordered direct path, where the caller
 // must reconcile every overlapping cached/in-flight version before forwarding.
-constexpr bool QcShouldCacheDataIo(bool pagingIo)
+constexpr bool QcShouldCacheDataIo(bool pagingIo, bool applicationPaging)
 {
-    return !pagingIo;
+    return !pagingIo || applicationPaging;
 }
 constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool healthy, bool gone)
 {

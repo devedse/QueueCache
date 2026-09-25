@@ -17,7 +17,24 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 39)
+## Suites (plan version 42)
+
+Plan 42 (T085, see [design](T085_APPLICATION_CACHING_DESIGN.md)):
+- `app-write-profile` now also requires every application write mode to admit at
+  least 90% of its bytes to RAM, and a 1 GiB Configure to add at most 10% of the
+  budget to kernel nonpaged pool (page-backed cache memory). Older drivers
+  report SKIP.
+- `paging-coherence` and `ordering-faults` mark their owned block force-direct
+  where they verify the direct paging path, because ordinary mapped writes are
+  now admitted.
+- New guarded `system-paging-recognition` (C:, same opt-in arguments as
+  `system-preflight`): no cache configuration, workload file or raw write. It
+  sends observe-only paging-file extents, applies bounded private-memory pressure
+  (capped by commit headroom), and requires zero reference misses. If no
+  paging-file I/O occurs, the recognition check is SKIP (unexercised).
+Plan 41 added `app-write-profile` (measurement). Plan 40 added `ordering-faults`.
+
+Plan 39
 
 Plan 39 adds three stages to `paging-coherence` (needs the plan-39 driver, Diagnostics V9):
 

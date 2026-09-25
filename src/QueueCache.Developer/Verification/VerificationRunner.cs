@@ -63,7 +63,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private static string ErrorDetail(string error) => error.Length > 4096 ? error[..4096] + " [truncated; see raw stderr]" : error.Trim();
     private string LeaseDirectory => leaseDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QueueCache", "Verification");
     private static bool IsSystemSuite(string suite) => suite is
-        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image";
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
     private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + target.Device;
@@ -286,7 +286,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 else
                     storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, Oracle = storage.PathFor("oracle.json") });
             }
-            else if (options.Suite is not ("system-preflight" or "system-post-restart"))
+            else if (options.Suite is not ("system-preflight" or "system-post-restart" or "system-paging-recognition"))
             {
                 workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = true });
@@ -294,7 +294,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
-                    if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-image-baseline" or "system-active-image")
+                    if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-image-baseline" or "system-active-image" or "system-paging-recognition")
                     {
                         var imageArtifacts = test.Operation == "system-active-image"
                             ? SystemImageArtifacts(workDirectory!, test.Id)
@@ -316,7 +316,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                                     Options = new(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true)
                                 }
                                 : null
-                        }, deadline.Token, test.Operation is "system-image-baseline" or "system-active-image" ? 900 : test.Operation == "system-file-create" ? 300 : 120);
+                        }, deadline.Token, test.Operation is "system-image-baseline" or "system-active-image" ? 900 : test.Operation is "system-file-create" or "system-paging-recognition" ? 300 : 120);
                         if (test.Operation != "system-preflight")
                             caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(systemReply, deadline.Token))
                                 ?? throw new InvalidDataException("Missing system-file checks.");
