@@ -19,7 +19,13 @@ public static class AppWriteProfileScenarios
     private const int FileBytes = 256 * MiB;
 
     internal sealed record Counters(ulong Accepted, ulong PagingWriteBytes, ulong PagingForwardedWrites,
-        ulong ForwardedWrites, ulong GeneratedWrites);
+        ulong ForwardedWrites, ulong GeneratedWrites, ulong PagingAdmittedBytes = 0);
+
+    /// <summary>Bytes handed to the disk stack between two samples. An admitted paging write is counted both as
+    /// accepted and as a paging write, so it must not count twice.</summary>
+    internal static ulong Arrived(Counters before, Counters after) =>
+        (after.Accepted - before.Accepted) - (after.PagingAdmittedBytes - before.PagingAdmittedBytes) +
+        (after.PagingWriteBytes - before.PagingWriteBytes);
 
     internal static Counters Read(CacheDevice device)
     {
@@ -27,8 +33,9 @@ public static class AppWriteProfileScenarios
         var diagnostics = device.GetDiagnostics();
         var io = diagnostics.PagingIo ?? throw new NotSupportedException("Requires Diagnostics V5 paging counters.");
         var sources = diagnostics.LowerSources ?? throw new NotSupportedException("Requires Diagnostics V8 source attribution.");
+        // Drivers before Diagnostics V10 never admit paging writes, so their admitted paging bytes are truly zero.
         return new(state.AcceptedBytes, io.WriteBytes, sources.PagingForwardedWrites, sources.ForwardedWrites,
-            sources.GeneratedWrites);
+            sources.GeneratedWrites, diagnostics.PagingAdmission?.AdmittedBytes ?? 0);
     }
 
     /// <summary>Plain-language summary of one mode's counter deltas.</summary>
@@ -159,8 +166,7 @@ public static class AppWriteProfileScenarios
             do
             {
                 after = Read(device);
-                var arrived = (after.Accepted - before.Accepted) + (after.PagingWriteBytes - before.PagingWriteBytes);
-                if (arrived >= FileBytes)
+                if (Arrived(before, after) >= FileBytes)
                     break;
                 Thread.Sleep(100);
             } while (settle.Elapsed < TimeSpan.FromSeconds(60));

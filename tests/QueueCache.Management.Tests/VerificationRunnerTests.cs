@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 42, "application paging admission and page-backed memory contract version");
+        Check(VerificationPlan.Version == 43, "application write arrival counts admitted paging bytes once");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -57,6 +57,10 @@ internal static class VerificationRunnerTests
             profileBefore, profileBefore with { PagingWriteBytes = 256UL << 20, PagingForwardedWrites = 64 });
         Check(profileText.Contains("RAM-admitted 0.0 MiB") && profileText.Contains("paging-marked writes 256.0 MiB") &&
             profileText.Contains("512 MiB/s"), "application write profile reports admitted versus forwarded bytes");
+        var admittedPaging = profileBefore with { Accepted = 128UL << 20, PagingWriteBytes = 128UL << 20,
+            PagingAdmittedBytes = 128UL << 20 };
+        Check(QueueCache.Operations.AppWriteProfileScenarios.Arrived(profileBefore, admittedPaging) == 128UL << 20,
+            "admitted paging writes are not counted twice while waiting for a file to arrive");
         Check(VerificationPlan.Integrity(new VerificationOptions("C:", "system-paging-recognition"))
             .SequenceEqual([new IntegrityCase("system-paging-recognition", "system-paging-recognition")]),
             "paging recognition is one guarded system case");
