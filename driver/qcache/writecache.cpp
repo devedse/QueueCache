@@ -1535,9 +1535,9 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     auto offset = stack->Parameters.Write.ByteOffset;
     const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
     AcquireCache(c);
-    if (c->Gone || c->Suspended || irp->Cancel)
+    if (c->Gone || irp->Cancel)
     {
-        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Suspended ? STATUS_DEVICE_NOT_READY : STATUS_CANCELLED;
+        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : STATUS_CANCELLED;
         ReleaseCache(c);
         return error;
     }
@@ -1798,9 +1798,9 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     auto end = start + length;
     AcquireCache(c);
-    if (c->Gone || c->Suspended || irp->Cancel)
+    if (c->Gone || irp->Cancel)
     {
-        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Suspended ? STATUS_DEVICE_NOT_READY : STATUS_CANCELLED;
+        auto error = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : STATUS_CANCELLED;
         ReleaseCache(c);
         return error;
     }
@@ -2229,7 +2229,6 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     AcquireCache(c);
     c->State.DeviceBytes = deviceBytes;
     Publish(c);
-    bool suspended = c->Suspended != FALSE;
     ReleaseCache(c);
     if (c->Gone)
     {
@@ -2345,8 +2344,11 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             stack->Parameters.UsageNotification.InPath, status);
         return status;
     }
-    if (suspended)
-        return STATUS_DEVICE_NOT_READY;
+    // Suspended (after shutdown or leaving D0) only blocks re-enabling the cache.
+    // Windows still pages after IRP_MJ_SHUTDOWN (exiting processes fault in
+    // kernel code), so requests continue: a successful barrier left the cache
+    // disabled and empty, which forwards them; a failed one keeps its dirty data
+    // authoritative. Failing them here caused bugcheck 0x7A during restart.
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
         stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES)
     {
