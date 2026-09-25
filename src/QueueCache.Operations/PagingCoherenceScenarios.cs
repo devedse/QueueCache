@@ -95,9 +95,8 @@ public static class PagingCoherenceScenarios
         if (device.GetDiagnostics().PagingRoute is null)
             throw new NotSupportedException("Mixed paging/file check requires routed paging Diagnostics V7.");
         Directory.CreateDirectory(workDirectory);
-        var path = Path.Combine(workDirectory, "mapped-coherence.bin");
-        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            file.SetLength(FileBytes);
+        // Fully written before caching starts, so no NTFS zero-fill is queued ahead of the owned writes.
+        var path = OrderingFaultScenarios.CreateOwned(workDirectory, "mapped-coherence.bin");
         ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Idle)
@@ -173,9 +172,8 @@ public static class PagingCoherenceScenarios
         const ulong holdMs = 2000;
         if (device.GetDiagnostics().LabGate is null)
             throw new NotSupportedException("Gated ordering requires Diagnostics V9 (plan-39 driver).");
-        var path = Path.Combine(workDirectory, "gated-submitted-overlap.bin");
-        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            file.SetLength(FileBytes);
+        // Fully written before caching starts, so no NTFS zero-fill is queued ahead of the owned writes.
+        var path = OrderingFaultScenarios.CreateOwned(workDirectory, "gated-submitted-overlap.bin");
         ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 1, RetainWrites: false)
@@ -340,9 +338,8 @@ public static class PagingCoherenceScenarios
     {
         const int patchOffset = Offset + 512;
         const int patchBytes = SparseBytes;
-        var path = Path.Combine(workDirectory, "inflight-mapped-overlap.bin");
-        using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            file.SetLength(FileBytes);
+        // Fully written before caching starts, so no NTFS zero-fill is queued ahead of the owned writes.
+        var path = OrderingFaultScenarios.CreateOwned(workDirectory, "inflight-mapped-overlap.bin");
         ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 1, RetainWrites: false)

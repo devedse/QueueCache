@@ -17,7 +17,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 44)
+## Suites (plan version 45)
+
+Plan 45: `paging-coherence` writes each owned 8 MiB file completely before
+configuring the cache, as `ordering-faults` does. Since T085 the NTFS zero-fill of
+a length-only file is admitted and drained ahead of the owned sparse write (a
+256 KiB batch was in flight when plan 44 timed out on 0.4.111.1).
 
 Plan 44: `paging-coherence`'s observed overlap stage accepts admitted 4 KiB NTFS
 metadata pages in flight beside the owned 1,536-byte sparse write (the in-flight

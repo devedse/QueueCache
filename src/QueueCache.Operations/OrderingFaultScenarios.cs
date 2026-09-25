@@ -81,11 +81,12 @@ public static class OrderingFaultScenarios
             Options = new CacheOptions(Drain: drain, MaxDirtyAgeMs: 3600000, Parallelism: 1, RetainWrites: false)
         }, true);
 
-    private static string CreateOwned(string workDirectory, string name)
+    internal static string CreateOwned(string workDirectory, string name)
     {
         // Write the whole file once so its valid data length covers every owned range. Otherwise NTFS
         // zero-fills the gap before a later write with a paging write, and the paging fence then
-        // (correctly) drains the owned version early, defeating the arranged order.
+        // (correctly) drains the owned version early, defeating the arranged order. Since T085 that
+        // zero-fill is also admitted and drained ahead of the owned write. Used by paging-coherence too.
         var path = Path.Combine(workDirectory, name);
         var zeros = new byte[MiB];
         using (var file = new AlignedFile(path, MiB, create: true))
