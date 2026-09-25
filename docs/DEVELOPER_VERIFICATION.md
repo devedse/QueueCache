@@ -17,7 +17,13 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 45)
+## Suites (plan version 46)
+
+Plan 46: `system-paging-recognition` reads an in-use paging file's layout from its
+NTFS file record (file ID from the directory listing, `FSCTL_GET_NTFS_FILE_RECORD`
+on the volume). NTFS refuses every open of such a file, even attribute-only
+(plan 45 failed with error 32). A layout continued in an attribute list is
+refused rather than reported partially.
 
 Plan 45: `paging-coherence` writes each owned 8 MiB file completely before
 configuring the cache, as `ordering-faults` does. Since T085 the NTFS zero-fill of

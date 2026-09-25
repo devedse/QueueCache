@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 45, "paging-coherence files are fully written before caching starts");
+        Check(VerificationPlan.Version == 46, "in-use paging file layout is read from its NTFS record");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -61,6 +61,39 @@ internal static class VerificationRunnerTests
             PagingAdmittedBytes = 128UL << 20 };
         Check(QueueCache.Operations.AppWriteProfileScenarios.Arrived(profileBefore, admittedPaging) == 128UL << 20,
             "admitted paging writes are not counted twice while waiting for a file to arrive");
+        static byte[] NtfsRecord(long highestVcn)
+        {
+            var record = new byte[1024];
+            BitConverter.GetBytes(0x454C4946u).CopyTo(record, 0);
+            BitConverter.GetBytes((ushort)0x30).CopyTo(record, 4);
+            BitConverter.GetBytes((ushort)3).CopyTo(record, 6);
+            BitConverter.GetBytes((ushort)0x38).CopyTo(record, 0x14);
+            // Update sequence 0x0007; the real tail bytes of both sectors live in the array.
+            BitConverter.GetBytes((ushort)7).CopyTo(record, 0x30);
+            record[0x32] = 0xAB; record[0x33] = 0xCD; record[0x34] = 0x12; record[0x35] = 0x34;
+            BitConverter.GetBytes((ushort)7).CopyTo(record, 510);
+            BitConverter.GetBytes((ushort)7).CopyTo(record, 1022);
+            BitConverter.GetBytes(0x80u).CopyTo(record, 0x38);
+            BitConverter.GetBytes(0x50).CopyTo(record, 0x3C);
+            record[0x40] = 1;
+            BitConverter.GetBytes(highestVcn).CopyTo(record, 0x38 + 0x18);
+            BitConverter.GetBytes((ushort)0x40).CopyTo(record, 0x38 + 0x20);
+            // 16 clusters at LCN 0x1000, 8 sparse clusters, 4 clusters at LCN 0x1000 - 0x10.
+            byte[] pairs = [0x31, 0x10, 0x00, 0x10, 0x00, 0x01, 0x08, 0x21, 0x04, 0xF0, 0xFF, 0x00];
+            pairs.CopyTo(record, 0x38 + 0x40);
+            BitConverter.GetBytes(0xFFFFFFFFu).CopyTo(record, 0x38 + 0x50);
+            return record;
+        }
+        var ntfsRecord = NtfsRecord(0x1B);
+        var dataRuns = QueueCache.Operations.SpecialFileMap.DataRuns(ntfsRecord);
+        Check(dataRuns.SequenceEqual([(0x1000L, 0x10L), (0xFF0L, 4L)]) && ntfsRecord[510] == 0xAB && ntfsRecord[1023] == 0x34,
+            "in-use paging file layout is decoded from its NTFS record with fixups, sparse and negative runs");
+        try
+        {
+            QueueCache.Operations.SpecialFileMap.DataRuns(NtfsRecord(0x30));
+            throw new Exception("Partial NTFS layout accepted.");
+        }
+        catch (NotSupportedException) { }
         Check(VerificationPlan.Integrity(new VerificationOptions("C:", "system-paging-recognition"))
             .SequenceEqual([new IntegrityCase("system-paging-recognition", "system-paging-recognition")]),
             "paging recognition is one guarded system case");
