@@ -62,8 +62,17 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
 
     private static string ErrorDetail(string error) => error.Length > 4096 ? error[..4096] + " [truncated; see raw stderr]" : error.Trim();
     private string LeaseDirectory => leaseDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "QueueCache", "Verification");
+    // T080: the baseline oracle is not "oracle.json", so system restoration never compares the edited image with it.
+    public const string AppSessionOracleFile = "baseline-oracle.json";
+    public const string AppSessionDoneFile = "operator-done";
+    public const int AppSessionSeconds = 1800;
+    /// <summary>Fast, Deferred with a 10-minute dirty age so a saved edit is normally still in RAM while it is reopened.</summary>
+    public static CacheConfiguration AppSessionConfiguration(int budgetMiB) => new(budgetMiB, CachePreset.Fast)
+    {
+        Options = new(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 600000, RetainWrites: true, PromoteOnRead: true)
+    };
     private static bool IsSystemSuite(string suite) => suite is
-        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition";
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
     private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + target.Device;
@@ -192,6 +201,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             Log($"Preparation flush deadline: {options.PreparationFlushSeconds}s; measurement windows and independent restoration deadline unchanged.");
         else
             Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast and Strict cases with independent restoration." :
+                options.Suite == "system-app-session" ? $"Operator application session on C:; runtime-only Fast cache, waiting up to {AppSessionSeconds / 60} minutes for {storage.PathFor(AppSessionDoneFile)}, then drain/release and byte comparison. Instructions: {storage.PathFor("operator-instructions.txt")}" :
                 options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
@@ -237,7 +247,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 ownsSystemLease = systemLease.WaitOne(0);
                 if (!ownsSystemLease)
                     throw new IOException("Another guarded system-disk verification owns this physical disk.");
-                if (options.Suite == "system-active-image")
+                if (options.Suite is "system-active-image" or "system-app-session")
                 {
                     await Worker(Job("system-capture") with
                     {
@@ -270,10 +280,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image")
+            if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
-                if (options.Suite == "system-active-image")
+                if (options.Suite == "system-app-session")
+                    storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, BaselineOracle = storage.PathFor(AppSessionOracleFile) });
+                else if (options.Suite == "system-active-image")
                     storage.Write("workloads.json", new
                     {
                         Retained = true,
@@ -294,6 +306,23 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
+                    if (test.Operation == "system-app-session")
+                    {
+                        var sessionReply = await Worker(Job(test.Operation) with
+                        {
+                            SystemInstance = options.SystemInstance,
+                            SystemBytes = options.SystemBytes,
+                            RecoverableVm = options.RecoverableVm,
+                            WorkDirectory = workDirectory,
+                            OraclePath = storage.PathFor(AppSessionOracleFile),
+                            StopFile = storage.PathFor(AppSessionDoneFile),
+                            Seconds = AppSessionSeconds,
+                            Configuration = AppSessionConfiguration(options.BudgetMiB)
+                        }, deadline.Token, AppSessionSeconds + 900);
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(sessionReply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing application-session checks.");
+                        return null;
+                    }
                     if (test.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or "system-image-baseline" or "system-active-image" or "system-paging-recognition")
                     {
                         var imageArtifacts = test.Operation == "system-active-image"

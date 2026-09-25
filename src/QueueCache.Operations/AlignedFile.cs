@@ -12,15 +12,20 @@ internal sealed class AlignedFile : IDisposable
     private readonly IntPtr memory;
     private readonly int capacity;
     private readonly int alignment;
-    public AlignedFile(string path, int capacity, bool create, int alignment = 4096)
+    /// <param name="sharedReadOnly">Open an existing file for reading only, sharing it with applications that
+    /// still hold it open.</param>
+    public AlignedFile(string path, int capacity, bool create, int alignment = 4096, bool sharedReadOnly = false)
     {
         if (alignment is not (512 or 4096))
             throw new ArgumentOutOfRangeException(nameof(alignment));
+        if (sharedReadOnly && create)
+            throw new ArgumentException("A shared read-only handle cannot create a file.");
         this.alignment = alignment;
         if (capacity <= 0 || capacity % 4096 != 0)
             throw new ArgumentException("Transfer buffer must be 4 KiB aligned.");
         this.capacity = capacity;
-        handle = CreateFileW(path, 0xC0000000, 0, IntPtr.Zero, create ? 1u : 3u, 0x20000000, IntPtr.Zero);
+        handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly ? 7u : 0u, IntPtr.Zero,
+            create ? 1u : 3u, 0x20000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
@@ -52,6 +57,15 @@ internal sealed class AlignedFile : IDisposable
         if (count != data.Length)
             throw new IOException("Short unbuffered read.");
         Marshal.Copy(memory, data, 0, data.Length);
+    }
+    /// <summary>Reads up to data.Length bytes; fewer only at end of file.</summary>
+    public int ReadUpTo(long offset, byte[] data)
+    {
+        Seek(offset, data.Length);
+        if (!ReadFile(handle, memory, (uint)data.Length, out var count, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        Marshal.Copy(memory, data, 0, (int)count);
+        return (int)count;
     }
     private void Seek(long offset, int length)
     {

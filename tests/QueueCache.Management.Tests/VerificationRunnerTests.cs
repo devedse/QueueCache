@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 46, "in-use paging file layout is read from its NTFS record");
+        Check(VerificationPlan.Version == 47, "operator application session suite");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -249,6 +249,41 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(imageBaseline);
         Check(VerificationPlan.Integrity(imageBaseline).SequenceEqual(new IntegrityCase[] { new("system-image-baseline", "system-image-baseline") }),
             "uncached system-image baseline is a separate bounded case");
+        var appSession = preflight with { Suite = "system-app-session", BudgetMiB = 1024 };
+        VerificationPlan.Validate(appSession);
+        Check(VerificationPlan.Integrity(appSession).SequenceEqual(new IntegrityCase[] { new("system-app-session", "system-app-session") }),
+            "operator application session is one guarded case");
+        Reject(() => VerificationPlan.Validate(appSession with { BudgetMiB = 512 }));
+        Reject(() => VerificationPlan.Validate(appSession with { RecoverableVm = false }));
+        Check(VerificationWorker.AllowsSystemUsagePaths("system-app-session"), "application session accepts reconciled usage paths");
+        var sessionConfig = VerificationRunner.AppSessionConfiguration(1024);
+        Check(sessionConfig.Preset == QueueCache.Operations.CachePreset.Fast &&
+            sessionConfig.Options.Drain == QueueCache.Management.DrainAlgorithm.Deferred && sessionConfig.Options.MaxDirtyAgeMs == 600000 &&
+            VerificationRunner.AppSessionOracleFile != "oracle.json",
+            "application session keeps edits in RAM and never lets restoration compare the edited image with the baseline");
+        var session = new QueueCache.Operations.AppSessionObservation(true, 120, TimeSpan.FromMinutes(2), true, false, 0,
+            300UL << 20, 400UL << 20, 280UL << 20, 2, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var baselineHash = new string('A', 64);
+        (string, long) edited = (new string('B', 64), 274000000L);
+        Check(QueueCache.Operations.AppSessionScenarios.Evaluate(session, baselineHash, edited, edited).All(check => check.Result == "PASS"),
+            "edited image identical before and after drain passes");
+        foreach (var (observed, live, released) in new[]
+        {
+            (session with { OperatorDone = false }, edited, edited),
+            (session with { AlwaysEnabled = false }, edited, edited),
+            (session with { ErrorsDelta = 1 }, edited, edited),
+            (session, (baselineHash, 274000000L), (baselineHash, 274000000L)),
+            (session, edited, (new string('C', 64), 274000000L)),
+            (session, edited, (edited.Item1, 274000512L))
+        })
+        {
+            try
+            {
+                QueueCache.Operations.AppSessionScenarios.Evaluate(observed, baselineHash, live, released);
+                throw new Exception("Incomplete or mismatched application session accepted.");
+            }
+            catch (IOException) { }
+        }
         Check(VerificationWorker.AllowsSystemUsagePaths("system-capture") &&
             VerificationWorker.AllowsSystemUsagePaths("system-active-image") &&
             VerificationWorker.AllowsSystemUsagePaths("system-restore") &&

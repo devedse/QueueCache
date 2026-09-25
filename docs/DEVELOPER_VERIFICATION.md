@@ -17,7 +17,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 46)
+## Suites (plan version 47)
+
+Plan 47 adds the guarded operator suite `system-app-session` (T080/T086). It needs
+a person at the VM desktop; the runner never drives Paint or Photos itself.
+
+```powershell
+qcache developer verify C: --suite system-app-session --budget-mib 1024 --recoverable-vm --system-instance <exact-PnP-ID> --system-bytes <exact-bytes> --output Q:\QueueCache-App-Results
+# Follow <run>\operator-instructions.txt, then create <run>\operator-done.
+```
 
 Plan 46: `system-paging-recognition` reads an in-use paging file's layout from its
 NTFS file record (file ID from the directory listing, `FSCTL_GET_NTFS_FILE_RECORD`
@@ -167,6 +175,7 @@ Preserve prior raw results and their scope.
 | `system-post-restart` | Separate read-only unbuffered comparison of the owned C: file against `--oracle` from a prior `system-files` run on another physical disk. The operator performs any approved normal reboot separately. No workload write or cache configuration. It cannot be called a dirty-cache restart when caching was off. |
 | `system-image-baseline` | Matching uncached 349 MiB BMP I/O baseline on C:. It requires the cache to remain disabled/released, records the post-file-flush driver state, and compares every byte with the off-target oracle. Existing paging/hibernation/dump registrations are permitted because this case remains pass-through and performs no cache control. Plan 26's active case separately accepts reconciled paging-only registrations. It is still an automated I/O analogue rather than Paint/Photos. |
 | `system-active-image` | Two guarded active-C: cases for a recoverable VM: normal public Apply with Fast/Idle, then Strict/Idle, each using a runtime-only 256..512 MiB cache and deterministic 349 MiB BMP in a unique owned directory. The off-target oracle is written first, followed by application-flush, immediate-read, administrative-flush, full-byte and clean runtime-release boundaries. Reconciled paging/hibernation/dump registrations are accepted. Restoration retains the exclusive system-disk lease and final image evidence. It never creates a saved profile and does not itself launch Paint or Photos. |
+| `system-app-session` | Guarded operator session on C: (same opt-in arguments, `--budget-mib` 1024..2048, C: disabled/released with no saved C: profile). Writes and verifies the deterministic 349 MiB BMP while uncached, applies a runtime-only Fast/Deferred cache (10-minute dirty age), writes `operator-instructions.txt`, then samples cache state and file metadata every second (`*.samples.jsonl`) until `operator-done` exists or 30 minutes pass. The operator edits and saves the image in Paint and reopens it in Photos. The saved bytes are hashed through unbuffered reads while the cache is active, the cache is flushed, disabled and released, and the bytes read back must match. An unchanged image, missing completion, cache fault or mismatch fails. The baseline oracle is `baseline-oracle.json`, so restoration never compares the edited image with it. |
 | `policies` | Sector regressions with diagnostics-V2 zero-lower-attempt admission proof; a 60-second fitting hot-set test of serialized foreground writes and cached reads while Idle draining progresses; then six cache configurations, retained-data checks and disabled-cache byte oracles. Restores runtime configuration and requires the attribution driver. |
 | `pressure` | Focused opt-in trigger and capacity checks on new files: Deferred first-dirty age under repeated overwrites, Idle last-write timing and an isolated Balanced high-watermark boundary; Automatic and Fixed 50/100 capacity backpressure; Fixed 0 ordered quota fallback; final disabled-cache byte oracles. Uses lower-write-attempt counters to distinguish eligibility/start from completion, a temporary 64 MiB cache, controlled 25 ms lower-write delay and an 80 MiB capacity file. No DiskSpd. Not included in `full`. |
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |

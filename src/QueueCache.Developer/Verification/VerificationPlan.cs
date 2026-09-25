@@ -25,7 +25,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 46;
+    public const int Version = 47;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
@@ -37,6 +37,7 @@ public static class VerificationPlan
         "system-image-baseline",
         "system-active-image",
         "system-paging-recognition",
+        "system-app-session",
         "policies",
         "paging-coherence",
         "ordering-faults",
@@ -86,6 +87,7 @@ public static class VerificationPlan
             new("system-active-image-strict", "system-active-image")
         ],
         "system-paging-recognition" => [new("system-paging-recognition", "system-paging-recognition")],
+        "system-app-session" => [new("system-app-session", "system-app-session")],
         "policies" => [new("policy-integrity", "policies")],
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],

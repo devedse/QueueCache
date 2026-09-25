@@ -7,7 +7,7 @@ public static class SystemPreflightGuard
 {
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition"))
+        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session"))
         {
             if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm || options.OraclePath is not null)
                 throw new ArgumentException("System-disk opt-in arguments are only valid for guarded system suites.");
@@ -23,6 +23,9 @@ public static class SystemPreflightGuard
             throw new ArgumentException("--oracle is required only for system-post-restart.");
         if (options.Suite == "system-active-image" && options.BudgetMiB is < 256 or > 512)
             throw new ArgumentException("system-active-image requires a conservative --budget-mib between 256 and 512.");
+        // The saved 349 MiB image must fit the write quota (half the budget by default).
+        if (options.Suite == "system-app-session" && options.BudgetMiB is < 1024 or > 2048)
+            throw new ArgumentException("system-app-session requires --budget-mib between 1024 and 2048.");
     }
 
     public static void ValidateTargets(DiskTarget target, DiskTarget output,

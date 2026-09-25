@@ -52,7 +52,7 @@ public static class VerificationWorker
         results.Any(result => result.Id.StartsWith("system-active-image-", StringComparison.Ordinal) &&
                               result.Status == "PASS");
     public static bool AllowsSystemUsagePaths(string operation) =>
-        operation is "system-capture" or "system-active-image" or "system-restore" or
+        operation is "system-capture" or "system-active-image" or "system-restore" or "system-app-session" or
             "system-file-create" or "system-file-verify";
     public static void ValidateSystemUsageDiagnostics(CacheStatistics statistics, CacheDiagnostics diagnostics)
     {
@@ -199,7 +199,7 @@ public static class VerificationWorker
         else
             target = await DiskTarget.InspectAsync(job.Volume);
         if (job.Operation is "system-preflight" or "system-file-create" or "system-file-verify" or
-            "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore" or
+            "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore" or "system-app-session" or
             "system-paging-recognition")
         {
             if (!job.RecoverableVm || string.IsNullOrWhiteSpace(job.SystemInstance) || job.SystemBytes is null or <= 0)
@@ -209,9 +209,9 @@ public static class VerificationWorker
             target.ValidateCurrent();
             output.ValidateCurrent();
             SystemPreflightGuard.ValidateTargets(target, output, job.SystemInstance, job.SystemBytes.Value);
-            if (job.Operation is "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore")
+            if (job.Operation is "system-capture" or "system-image-baseline" or "system-active-image" or "system-restore" or "system-app-session")
             {
-                if (job.Operation is "system-image-baseline" or "system-active-image")
+                if (job.Operation is "system-image-baseline" or "system-active-image" or "system-app-session")
                 {
                     if (string.IsNullOrWhiteSpace(job.OraclePath))
                         throw new IOException("Missing off-target system-image oracle path.");
@@ -322,6 +322,44 @@ public static class VerificationWorker
                     RunStorage.AtomicJson(job.Reply, baselineChecks);
                     ReportFailures(baselineChecks, Console.Error);
                     return baselineChecks.All(check => check.Result == "PASS") ? 0 : 1;
+                }
+                if (job.Operation == "system-app-session")
+                {
+                    if (string.IsNullOrWhiteSpace(job.WorkDirectory) || string.IsNullOrWhiteSpace(job.OraclePath) ||
+                        job.Configuration is null || string.IsNullOrWhiteSpace(job.StopFile) || job.Seconds <= 0)
+                        throw new IOException("Missing application-session workload, oracle, configuration or completion file.");
+                    if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
+                        throw new IOException("The application session must start from the captured disabled/released state.");
+                    // Baseline written and verified while C: is uncached, so the session starts from known disk bytes.
+                    var sessionChecks = new List<CheckResult>();
+                    sessionChecks.AddRange(SystemImageScenarios.Create(target, job.WorkDirectory, job.OraclePath));
+                    var baseline = SystemImageScenarios.ReadOracle(job.OraclePath);
+                    sessionChecks.AddRange(SystemImageScenarios.Verify(target, baseline));
+                    var sessionActive = ConfigurationManager.Apply(target, job.Configuration, true);
+                    RunStorage.AtomicJson(job.Reply + ".enabled.json", sessionActive);
+                    RunStorage.AtomicJson(job.Reply + ".enabled-diagnostics.json", systemDevice.GetDiagnostics());
+                    var instructions = AppSessionScenarios.Instructions(baseline.FilePath, job.StopFile);
+                    await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(job.StopFile)!, "operator-instructions.txt"), instructions);
+                    Console.Error.WriteLine(instructions);
+                    var session = AppSessionScenarios.Observe(baseline.FilePath, job.StopFile,
+                        TimeSpan.FromSeconds(job.Seconds), systemDevice.GetWriteCacheState, job.Reply + ".samples.jsonl");
+                    RunStorage.AtomicJson(job.Reply + ".session.json", session);
+                    RunStorage.AtomicJson(job.Reply + ".operator-done.json", systemDevice.GetWriteCacheState());
+                    RunStorage.AtomicJson(job.Reply + ".operator-done-diagnostics.json", systemDevice.GetDiagnostics());
+                    var live = session.OperatorDone ? AppSessionScenarios.UnbufferedHash(baseline.FilePath) : default;
+                    systemDevice.Control(WriteCacheAction.Flush);
+                    systemDevice.Control(WriteCacheAction.Disable);
+                    systemDevice.Control(WriteCacheAction.Release);
+                    var sessionReleased = systemDevice.GetWriteCacheState();
+                    RunStorage.AtomicJson(job.Reply + ".released.json", sessionReleased);
+                    if (sessionReleased.Enabled || sessionReleased.BudgetBytes != 0 || sessionReleased.DirtyBytes != 0 ||
+                        sessionReleased.InFlightBytes != 0 || sessionReleased.Faulted || sessionReleased.LastError != 0)
+                        throw new IOException("The application session did not return C: to a disabled/released state.");
+                    var releasedBytes = session.OperatorDone ? AppSessionScenarios.UnbufferedHash(baseline.FilePath) : default;
+                    sessionChecks.AddRange(AppSessionScenarios.Evaluate(session, baseline.ExpectedSha256, live, releasedBytes));
+                    RunStorage.AtomicJson(job.Reply, sessionChecks);
+                    ReportFailures(sessionChecks, Console.Error);
+                    return sessionChecks.All(check => check.Result == "PASS") ? 0 : 1;
                 }
                 if (string.IsNullOrWhiteSpace(job.WorkDirectory) || string.IsNullOrWhiteSpace(job.OraclePath) ||
                     job.Configuration is null)
