@@ -563,6 +563,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, pagingChecks);
                 ReportFailures(pagingChecks, Console.Error);
                 return pagingChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "app-write-profile":
+                var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, profileChecks);
+                ReportFailures(profileChecks, Console.Error);
+                return profileChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);

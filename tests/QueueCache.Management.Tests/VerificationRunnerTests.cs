@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 40, "fault/short/cancel ordering contract version");
+        Check(VerificationPlan.Version == 41, "application write profile contract version");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -50,6 +50,13 @@ internal static class VerificationRunnerTests
         }
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "ordering-faults"))
             .SequenceEqual([new IntegrityCase("ordering-faults", "ordering-faults")]), "fault ordering is one maintained non-OS case");
+        Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "app-write-profile"))
+            .SequenceEqual([new IntegrityCase("app-write-profile", "app-write-profile")]), "application write profile is one non-OS case");
+        var profileBefore = new QueueCache.Operations.AppWriteProfileScenarios.Counters(0, 0, 0, 0, 0);
+        var profileText = QueueCache.Operations.AppWriteProfileScenarios.Describe("buffered-close", 500, 1200,
+            profileBefore, profileBefore with { PagingWriteBytes = 256UL << 20, PagingForwardedWrites = 64 });
+        Check(profileText.Contains("RAM-admitted 0.0 MiB") && profileText.Contains("paging-marked writes 256.0 MiB") &&
+            profileText.Contains("512 MiB/s"), "application write profile reports admitted versus forwarded bytes");
         var failedGate = new QueueCache.Management.CacheLabGate(3, 1, 1, 2, 4, 3, 0, 0);
         Check(QueueCache.Operations.OrderingFaultScenarios.VerifyFailedOldDrain(failedGate, true, true, 4096)
             .Contains("never submitted"), "failed old drain stops the waiting paging write before submission");
