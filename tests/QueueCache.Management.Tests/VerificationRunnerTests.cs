@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 43, "application write arrival counts admitted paging bytes once");
+        Check(VerificationPlan.Version == 44, "paging overlap tolerates admitted metadata pages in flight");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -148,9 +148,11 @@ internal static class VerificationRunnerTests
         var overlapAfter = overlapBefore with { WriteRequests = 1, WriteCompletions = 1, OverlapWaits = 1 };
         Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyObservedOverlap(overlapBefore, overlapAfter, 1536)
             .Contains("isolated 1536-byte older write"), "mixed-I/O case requires observed sparse in-flight payload");
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyObservedOverlap(overlapBefore, overlapAfter, 1536 + 8192)
+            .Contains("9728 bytes in flight"), "admitted 4 KiB metadata pages may share the sparse in-flight interval");
         foreach (var (observed, route) in new[]
         {
-            (0UL, overlapAfter), (4096UL, overlapAfter), (1536UL, overlapBefore),
+            (0UL, overlapAfter), (4096UL, overlapAfter), (2048UL, overlapAfter), (1536UL, overlapBefore),
             (1536UL, overlapAfter with { WriteCompletions = 0 }),
             (1536UL, overlapAfter with { WriteFailures = 1 }),
             (1536UL, overlapAfter with { OverlapWaits = 0 })

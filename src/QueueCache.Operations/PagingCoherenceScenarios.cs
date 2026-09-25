@@ -14,15 +14,20 @@ public static class PagingCoherenceScenarios
     private const int Offset = 4 * MiB;
     private const int SparseBytes = 3 * 512;
 
+    /// <summary>The owned sparse payload is in flight. Since T085 NTFS metadata write-back is admitted too and
+    /// may share the interval, but it moves whole 4 KiB pages; only the owned write leaves a 1,536-byte remainder.
+    /// </summary>
+    internal static bool SparseInFlight(ulong inFlight) => inFlight % 4096 == SparseBytes;
+
     internal static string VerifyObservedOverlap(CachePagingRoute before, CachePagingRoute after,
         ulong observedInFlight)
     {
-        if (observedInFlight != SparseBytes || after.WriteRequests <= before.WriteRequests ||
+        if (!SparseInFlight(observedInFlight) || after.WriteRequests <= before.WriteRequests ||
             after.WriteCompletions < before.WriteCompletions ||
             after.WriteCompletions - before.WriteCompletions != after.WriteRequests - before.WriteRequests ||
             after.WriteFailures != before.WriteFailures || after.OverlapWaits <= before.OverlapWaits)
             throw new IOException("The mapped overwrite did not produce a successful observed paging/older-drain overlap.");
-        return $"Observed an isolated {SparseBytes}-byte older write in flight, " +
+        return $"Observed an isolated {SparseBytes}-byte older write in flight ({observedInFlight} bytes in flight in total), " +
             $"then {after.WriteRequests - before.WriteRequests} successful routed paging write(s) " +
             $"and {after.OverlapWaits - before.OverlapWaits} overlap wait(s). " +
             "Newest active and released-cache bytes, including untouched guards, matched. " +
@@ -357,15 +362,16 @@ public static class PagingCoherenceScenarios
             using (var file = new AlignedFile(path, 4096, create: false, alignment: 512))
             {
                 file.Write(patchOffset, a);
-                // A 1,536-byte in-flight transfer isolates this sparse payload
+                // A 1,536-byte in-flight remainder isolates this sparse payload
                 // from ordinary 4 KiB NTFS metadata writes. A timeout is an
                 // incomplete observation, never an inferred overlap pass.
                 if (!SpinWait.SpinUntil(() =>
                     {
                         observedInFlight = device.GetWriteCacheState().InFlightBytes;
-                        return observedInFlight == patchBytes;
+                        return SparseInFlight(observedInFlight);
                     }, 8000))
-                    throw new IOException("The owned sparse write did not enter an isolated in-flight interval.");
+                    throw new IOException(
+                        $"The owned sparse write did not enter an isolated in-flight interval (last in flight: {observedInFlight} bytes).");
             }
             before = device.GetDiagnostics().PagingRoute ??
                 throw new NotSupportedException("Forced overlap requires Diagnostics V7.");

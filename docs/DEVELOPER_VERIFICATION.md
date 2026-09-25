@@ -17,7 +17,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 43)
+## Suites (plan version 44)
+
+Plan 44: `paging-coherence`'s observed overlap stage accepts admitted 4 KiB NTFS
+metadata pages in flight beside the owned 1,536-byte sparse write (the in-flight
+remainder modulo 4 KiB must be 1,536). Since T085 that metadata write-back is
+admitted, so the plan-43 exact-equality wait timed out on 0.4.111.1.
 
 Plan 43: `app-write-profile` waits until each file has arrived counting an admitted
 paging write once. It is both accepted and a paging write; plan 42 counted it
