@@ -82,8 +82,10 @@ controls and fences), up to four drainers, and one paging-read thread.
   pinned. The drainer holds no lock while it sleeps (at most 5 s). It is refused
   on disks with paging/hibernation/dump paths and is never armed by product code.
 - T085 (plan 42): a paging-marked write is admitted like any write when its
-  request carries a file object that `FsRtlIsPagingFile` says is not a paging
-  file. The check runs at PASSIVE in the request worker, and the request must not
+  originating file object (current stack, else the request's original file
+  object, else the split request's master) is not a paging file per
+  `FsRtlIsPagingFile`. Plan-42 0.4.110.1 used only the current stack location,
+  found none below the volume and admitted nothing. The check runs at PASSIVE in the request worker, and the request must not
   touch a force-direct range. Paging-file, unknown-origin and force-direct
   requests keep the ordered direct path above. An unmappable buffer also falls
   back to it. Dispatch counts recognition evidence for every paging request.

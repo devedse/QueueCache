@@ -28,9 +28,16 @@ disk is cached.
 ## Design
 
 1. **Per-request recognition, no layout map.** Each request from the file system
-   carries the file object it belongs to. A paging-marked request is application
-   traffic, eligible for normal RAM admission, when all of these hold:
-   - its file object is present;
+   still identifies the file it belongs to. Below the volume the filter's own
+   stack location has no file object (plan-42 VM evidence: every paging request
+   counted `NoFileObject`, nothing admitted). The file is found, in order, in the
+   current stack location, the request's original file object (the file system
+   passes its paging request down), or, for a request the file system split, the
+   master request's original file object or file-system stack location. Each stays
+   referenced while the request is outstanding; a pointer that is not a file
+   object counts as unknown. A paging-marked request is application traffic,
+   eligible for normal RAM admission, when all of these hold:
+   - its originating file object is found;
    - the check runs at PASSIVE/APC level (the documented contract of
      `FsRtlIsPagingFile`);
    - `FsRtlIsPagingFile(fileObject)` is false;

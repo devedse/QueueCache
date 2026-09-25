@@ -228,6 +228,26 @@ static void RecordMaximum(volatile LONG64* target, ULONG value)
         current = observed;
     }
 }
+// T085. The file object a paging request belongs to. Below the volume the
+// current stack location carries none: the file system passes its own paging IRP
+// down (OriginalFileObject is the file the memory or cache manager wrote) or
+// splits it into associated IRPs whose master still holds the file system's
+// stack location. Each source stays referenced while this request is outstanding.
+// Anything that is not a file object is unknown, which keeps the direct path.
+static PFILE_OBJECT RequestFileObject(PIRP irp)
+{
+    auto fileObject = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    if (!fileObject)
+        fileObject = irp->Tail.Overlay.OriginalFileObject;
+    if (!fileObject && (irp->Flags & IRP_ASSOCIATED_IRP) && irp->AssociatedIrp.MasterIrp)
+    {
+        const auto master = irp->AssociatedIrp.MasterIrp;
+        fileObject = master->Tail.Overlay.OriginalFileObject;
+        if (!fileObject && master->CurrentLocation <= master->StackCount)
+            fileObject = IoGetCurrentIrpStackLocation(master)->FileObject;
+    }
+    return fileObject && fileObject->Type == IO_TYPE_FILE ? fileObject : nullptr;
+}
 void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
 {
     if (!(irp->Flags & IRP_PAGING_IO))
@@ -256,7 +276,7 @@ void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
     // T085 recognition evidence, counted for every paging request (cache active or
     // not). A reference miss is a request inside a known paging-file extent that
     // per-request recognition would have treated as application traffic.
-    auto fileObject = stack->FileObject;
+    auto fileObject = RequestFileObject(irp);
     if (!fileObject)
         InterlockedIncrement64(&c->PagingNoFileObject);
     else if (KeGetCurrentIrql() > APC_LEVEL)
@@ -553,13 +573,14 @@ static bool RangesOverlap(const QC_SPECIAL_RANGE* ranges, ULONG count, LONGLONG 
 }
 // T085. True when a paging-marked request is ordinary application traffic
 // (file-cache write-back or a mapped file) and may use RAM admission. The
-// request's file object must be present and must not be a paging file; the
+// request's originating file object (RequestFileObject) must be present and
+// must not be a paging file; the
 // check runs at PASSIVE/APC_LEVEL only (FsRtlIsPagingFile's contract). Growth
 // of a paging file keeps its file object, so no layout map is needed. Unknown
 // origin, high IRQL, a paging file or a forced-direct range: ordered direct path.
 static bool ApplicationPaging(QC_CACHE* c, PIRP irp, LONGLONG first, LONGLONG end)
 {
-    auto fileObject = IoGetCurrentIrpStackLocation(irp)->FileObject;
+    auto fileObject = RequestFileObject(irp);
     if (!fileObject || KeGetCurrentIrql() > APC_LEVEL || FsRtlIsPagingFile(fileObject))
         return false;
     KIRQL irql;
