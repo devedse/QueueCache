@@ -53,9 +53,21 @@ then Driver Verifier, because it can invalidate paths we consider finished.
    - Done when: pass A has no Verifier bugcheck and pass B's failures are all
      reported cleanly with correct bytes.
    - Pass A DONE on 0.4.128.1 (after it found the shutdown deadlock on
-     0.4.125.1). Pass B in progress.
+     0.4.125.1).
+   - Pass B PARTIAL: at 6% injection every `Configure` in `policies`,
+     `pressure`, `paging-coherence` and `ordering-faults` failed cleanly
+     (Win32 1450, cache untouched, restoration clean, no bugcheck; 16 deliberate
+     failures). `quick` completed three times with injection active. Live-I/O
+     allocation failures (`LowerIo`'s IRP build, request MDL mapping) were not
+     attributably hit; that still needs a targeted T053 case (for example a lab
+     fault on those two call sites) rather than random injection.
 3. **Power transitions (A09, T072).** Sleep/resume, and Strict-mode restart.
-   Hibernate/Fast Startup need a VM that supports them.
+   The current VM offers no sleep state at all (`powercfg /a`: S1-S3, S0 low
+   power idle, hibernate and Fast Startup unavailable; firmware and the display
+   adapter). Sleep/resume and hibernate need the owner to enable S3/S4 on the
+   hypervisor side.
+   - Strict restart DONE on 0.4.128.1 under Driver Verifier: 10/10 saved-profile
+     cycles, every byte matched.
    - Done when: each transition passes a byte oracle with the cache active.
 4. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
    - Cancel an in-flight paging request.
