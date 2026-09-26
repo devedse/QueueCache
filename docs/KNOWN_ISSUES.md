@@ -9,12 +9,12 @@ VM-verified. Ordinary application writes (buffered, flushed and memory-mapped) a
 cached; paging-file traffic is recognised per request and never cached. Cache
 memory is page-backed, not nonpaged pool. C: active restarts passed once with a
 runtime-only profile and four times with a saved profile; a real Paint/Photos
-session passed its post-drain byte check. The shutdown hang (below) is diagnosed;
-its fix awaits VM verification. The
+session passed its post-drain byte check. The saved-profile shutdown hang (below)
+was a deadlock, fixed and soak-verified on 0.4.125.1. The
 historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
 describe their original scope.
 
-## Diagnosed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.124.1)
+## Fixed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.124.1)
 
 On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
 83 MB dirty after a bounded memory-pressure run) stayed on "Restarting" for over
@@ -32,11 +32,13 @@ answered ping but not SSH. An NMI kernel dump shows a deadlock:
 
 Memory pressure is what pages the ACPI handler out, hence the intermittency. The
 same pattern could occur whenever Windows adds or removes a pagefile, hive or dump
-path while C: routing is active. Fix (source, not yet VM-verified): the worker now
+path while C: routing is active. Fixed in 0.4.125.1 (`42b5ddd`): the worker now
 services queued paging reads while it waits on a forwarded PnP or shutdown request
 (`QcServiceReadsDuringLowerWait`). Power requests are excluded because a paging
-disk holds I/O until D0. The dump and symbols are kept off the VM
-(`QueueCache-Evidence/hang-20260926-cycle3`, SHA-256 `02D6A68E...5181`).
+disk holds I/O until D0. The same saved-profile soak then passed 20 of 20 cycles
+(see the tracker's T081 row). The crash lost that cycle's dirty Fast data as
+expected; `chkdsk C: /scan` found no problems. The dump and symbols are kept off
+the VM (`QueueCache-Evidence/hang-20260926-cycle3`, SHA-256 `02D6A68E...5181`).
 
 ## Fixed: bugcheck 0x7A while restarting with dirty C: data (0.4.111.1 and earlier)
 
