@@ -24,10 +24,11 @@ tracker IDs it closes and when it counts as done.
 Order matters: the hang first, because everything after restarts machines;
 then Driver Verifier, because it can invalidate paths we consider finished.
 
-1. **Shutdown hang (A09): diagnosed; second fix pending.** The 0.4.125.1 fix
-   passed 20/20 soak cycles but was insufficient: under Driver Verifier the
-   first restart hung the same way (the fault is inside the worker's own
-   `IoCallDriver`). The second fix forwards PnP/shutdown from a work item. A
+1. **Shutdown hang (A09): DONE 2026-09-26.** The 0.4.125.1 fix passed 20/20
+   soak cycles but was insufficient: under Driver Verifier the first restart
+   hung the same way (the fault is inside the worker's own `IoCallDriver`). The
+   0.4.128.1 fix forwards PnP/shutdown from a work item and passed 20/20 cycles
+   under Driver Verifier. A
    host-driven saved-profile soak reproduced it on cycle 3; the NMI kernel dump
    showed the request worker waiting on a forwarded paging usage notification
    while a pagefile read it needed sat in its own queue (see KNOWN_ISSUES).
@@ -51,6 +52,8 @@ then Driver Verifier, because it can invalidate paths we consider finished.
      the expected outcome to inspect.
    - Done when: pass A has no Verifier bugcheck and pass B's failures are all
      reported cleanly with correct bytes.
+   - Pass A DONE on 0.4.128.1 (after it found the shutdown deadlock on
+     0.4.125.1). Pass B in progress.
 3. **Power transitions (A09, T072).** Sleep/resume, and Strict-mode restart.
    Hibernate/Fast Startup need a VM that supports them.
    - Done when: each transition passes a byte oracle with the cache active.

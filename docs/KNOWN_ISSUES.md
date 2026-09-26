@@ -10,12 +10,11 @@ cached; paging-file traffic is recognised per request and never cached. Cache
 memory is page-backed, not nonpaged pool. C: active restarts passed once with a
 runtime-only profile and four times with a saved profile; a real Paint/Photos
 session passed its post-drain byte check. The saved-profile shutdown hang (below)
-is a diagnosed deadlock; its second fix awaits VM verification under Driver
-Verifier. The
+was a deadlock, fixed in 0.4.128.1 and verified under Driver Verifier. The
 historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
 describe their original scope.
 
-## Diagnosed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.125.1)
+## Fixed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.125.1)
 
 On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
 83 MB dirty after a bounded memory-pressure run) stayed on "Restarting" for over
@@ -45,10 +44,12 @@ passed only because ACPI's handler stayed resident. With Driver Verifier (whose
 IRQL checking trims pageable memory) the first restart hung again and Verifier
 bugchecked 0xC4/0x115 ("shutdown did not finish"); the dump shows the identical
 stack (`QueueCache-Evidence/verifier-20260926-c4`, SHA-256 `7F05D86B...564B`).
-Second fix (source, not yet VM-verified): PnP and shutdown requests are forwarded
-from a preallocated work item (`QcForwardOffWorker`) while the worker services
-queued paging reads until the lower completion. Power stays inline because a paging
-disk holds I/O until D0. Other controls forwarded inline by the worker (media-
+Second fix, 0.4.128.1 (`19b6192`): PnP and shutdown requests are forwarded from a
+preallocated work item (`QcForwardOffWorker`) while the worker services queued
+paging reads until the lower completion. Power stays inline because a paging disk
+holds I/O until D0. Under the same Driver Verifier checks it passed 20 of 20
+saved-profile restart cycles (94.8-133.9 MiB dirty, every byte matched, no
+bugcheck). Other controls forwarded inline by the worker (media-
 changing IOCTLs) could in principle hit the same pattern if a lower handler pages;
 none has been observed.
 
