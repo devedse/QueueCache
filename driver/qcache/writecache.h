@@ -105,6 +105,16 @@ struct QC_DIAGNOSTICS
     ULONGLONG PagingAdmittedWrites, PagingAdmittedBytes, PagingDirectWrites;
     ULONGLONG PagingFileRequests, PagingNoFileObject, PagingHighIrql, PagingReferenceMisses;
     ULONGLONG ForceDirectRanges, ReferenceRanges;
+    // V11: Shutdown diagnostics breadcrumbs for hang analysis.
+    // Timestamps are KeQueryPerformanceCounter ticks (QPC).
+    ULONGLONG ShutdownBarrierEntryTick;     // When barrier started
+    ULONGLONG ShutdownDrainStartTick;       // When drain loop started
+    ULONGLONG ShutdownDrainLastProgressTick; // Last time dirty bytes changed
+    ULONGLONG ShutdownDrainStartBytes;      // Dirty bytes when drain started
+    ULONGLONG ShutdownDrainLastBytes;       // Last observed dirty bytes in loop
+    ULONGLONG ShutdownLowerFlushStartTick;  // When lower device flush started
+    ULONGLONG ShutdownLowerFlushEndTick;    // When lower device flush completed
+    ULONGLONG ShutdownDrainIterations;      // Number of drain loop iterations
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -115,8 +125,11 @@ static constexpr ULONG QcDiagnosticsV6Size = 528;
 static constexpr ULONG QcDiagnosticsV7Size = 584;
 static constexpr ULONG QcDiagnosticsV8Size = 672;
 static constexpr ULONG QcDiagnosticsV9Size = 736;
-static_assert(sizeof(QC_DIAGNOSTICS) == 808);
+static constexpr ULONG QcDiagnosticsV10Size = 808;
+static constexpr ULONG QcDiagnosticsV11Size = 872;
+static_assert(sizeof(QC_DIAGNOSTICS) == QcDiagnosticsV11Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingAdmittedWrites) == QcDiagnosticsV9Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ShutdownBarrierEntryTick) == QcDiagnosticsV10Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LabGateState) == QcDiagnosticsV8Size);
 // LabGateState: 0 disarmed, 1 armed, 2 holding a submitted overlapping drain, 3 released.
 enum : ULONG
