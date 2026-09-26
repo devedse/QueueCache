@@ -23,16 +23,17 @@ tracker IDs it closes and when it counts as done.
 
 Order matters: the open hang first, because everything after restarts machines.
 
-1. **Shutdown hang (open, A09).** One saved-profile restart hung on
-   "Restarting" (1 of 6). The VM now writes a kernel dump on NMI.
-   - Add shutdown-phase breadcrumbs to diagnostics (barrier start, drain
-     progress, lower flush, D3) so a dump shows where it stopped.
-   - Bound the shutdown drain wait. If the disk stops making progress, report
-     and continue instead of waiting forever.
-   - Soak it: run unattended restart cycles (at least 20) with a saved C:
-     profile. The restarts are driven from outside the VM, never by the runner.
-   - Done when: the cause is known and fixed, or 20+ clean cycles pass with the
-     bound in place.
+1. **Shutdown hang (A09): diagnosed 2026-09-26, fix pending VM proof.** A
+   host-driven saved-profile soak reproduced it on cycle 3; the NMI kernel dump
+   showed the request worker waiting on a forwarded paging usage notification
+   while a pagefile read it needed sat in its own queue (see KNOWN_ISSUES).
+   Breadcrumbs and a bounded drain were not needed: the kernel dump showed every
+   thread, and a bound that gave up on unwritten Fast data would break
+   normal-restart persistence.
+   - Install the fix and repeat 20 unattended saved-profile cycles
+     (`system-files`, `system-paging-recognition`, host-driven restart,
+     `system-post-restart`).
+   - Done when: 20 consecutive cycles pass on the fixed driver.
 2. **Power transitions (A09, T072).** Sleep/resume, and Strict-mode restart.
    Hibernate/Fast Startup need a VM that supports them.
    - Done when: each transition passes a byte oracle with the cache active.

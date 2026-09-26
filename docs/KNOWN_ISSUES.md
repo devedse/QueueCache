@@ -9,21 +9,34 @@ VM-verified. Ordinary application writes (buffered, flushed and memory-mapped) a
 cached; paging-file traffic is recognised per request and never cached. Cache
 memory is page-backed, not nonpaged pool. C: active restarts passed once with a
 runtime-only profile and four times with a saved profile; a real Paint/Photos
-session passed its post-drain byte check. One shutdown hang (below) is open. The
+session passed its post-drain byte check. The shutdown hang (below) is diagnosed;
+its fix awaits VM verification. The
 historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
 describe their original scope.
 
-## Open: one shutdown hang with a saved C: profile (0.4.117.1)
+## Diagnosed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.124.1)
 
 On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
 83 MB dirty after a bounded memory-pressure run) stayed on "Restarting" for over
-20 minutes; the owner reset the VM. No dump exists, and every C: write since the
-previous boot was lost, including the event log and the saved-profile change
-(expected for Fast mode on a hard reset). `chkdsk C: /scan` found no problems. The
-same sequence then restarted cleanly four times. The cause is unknown: it may be
-QueueCache's shutdown barrier or unrelated. The VM now writes a kernel memory dump
-and crashes on NMI (`CrashDumpEnabled=2`, `NMICrashDump=1`); if it recurs, inject
-an NMI from the hypervisor before resetting.
+20 minutes and was reset without a dump. On 2026-09-26 the same cycle hung again
+on 0.4.124.1 (third restart of a saved-profile soak, 208.8 MiB dirty); the VM
+answered ping but not SSH. An NMI kernel dump shows a deadlock:
+
+- Shutdown (`CmShutdownSystem2` -> `PiPagePathSetState`) sends a paging-path
+  `IRP_MN_DEVICE_USAGE_NOTIFICATION` down the C: stack.
+- C:'s single request worker forwards it (`Process` -> `OriginalIo`) and waits.
+- Below it, `ACPI!ACPIFilterIrpDeviceUsageNotification` is paged out; the fault
+  needs a paging read from the C: pagefile (through the compressed store).
+- That read is queued behind the same worker. `OriginalIo` only serviced queued
+  paging reads while waiting on a forwarded read, so nothing progressed.
+
+Memory pressure is what pages the ACPI handler out, hence the intermittency. The
+same pattern could occur whenever Windows adds or removes a pagefile, hive or dump
+path while C: routing is active. Fix (source, not yet VM-verified): the worker now
+services queued paging reads while it waits on a forwarded PnP or shutdown request
+(`QcServiceReadsDuringLowerWait`). Power requests are excluded because a paging
+disk holds I/O until D0. The dump and symbols are kept off the VM
+(`QueueCache-Evidence/hang-20260926-cycle3`, SHA-256 `02D6A68E...5181`).
 
 ## Fixed: bugcheck 0x7A while restarting with dirty C: data (0.4.111.1 and earlier)
 

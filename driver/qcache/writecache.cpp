@@ -502,7 +502,7 @@ static NTSTATUS RetainCompletion(PDEVICE_OBJECT, PIRP, PVOID event)
 }
 static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
 {
-    const bool read = IoGetCurrentIrpStackLocation(irp)->MajorFunction == IRP_MJ_READ;
+    const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoCopyCurrentIrpStackLocationToNext(irp);
@@ -518,10 +518,10 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
             // The service lane can complete cached hits or one independent
             // paging-marked miss. A nested lower wait cannot recurse again.
             if (allowReadService && c->ServiceReads && c->RequestAvailable &&
-                (read || c->RangeDrain))
+                QcServiceReadsDuringLowerWait(major, c->RangeDrain != FALSE))
             {
-                // Null means the active request is a read. Do not inspect an IRP
-                // whose current stack location belongs to the pending lower I/O.
+                // Null: the active request is a read or has no data range. Do not inspect
+                // an IRP whose current stack location belongs to the pending lower I/O.
                 if (c->ServiceReads(c->ServiceContext, nullptr))
                     continue;
                 PVOID objects[] = {&completed, c->RequestAvailable};

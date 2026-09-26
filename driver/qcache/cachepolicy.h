@@ -67,6 +67,12 @@ constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool health
 {
     return wasEnabled && hasCapacity && healthy && !gone;
 }
+// Lower drivers may page in their PnP/shutdown handlers (ACPI's usage-notification handler
+// faulted on the C: pagefile at shutdown). Not power: a paging disk holds I/O until D0.
+constexpr bool QcServiceReadsDuringLowerWait(UCHAR major, bool rangeDrain)
+{
+    return major == IRP_MJ_READ || major == IRP_MJ_PNP || major == IRP_MJ_SHUTDOWN || rangeDrain;
+}
 // Protect resident read demand up to half the payload, borrowing unused space.
 // A large atomic request may reduce protection so it can eventually be admitted.
 constexpr ULONG QcProtectedReadSlots(ULONG capacity, ULONG residentReads, ULONG requestSlots)

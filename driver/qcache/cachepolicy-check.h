@@ -118,3 +118,10 @@ constexpr bool WriteWakeChecks()
     return true;
 }
 static_assert(WriteWakeChecks(), "Foreground drain wake regression");
+
+static_assert(QcServiceReadsDuringLowerWait(IRP_MJ_READ, false) && QcServiceReadsDuringLowerWait(IRP_MJ_PNP, false) &&
+                  QcServiceReadsDuringLowerWait(IRP_MJ_SHUTDOWN, false) && QcServiceReadsDuringLowerWait(IRP_MJ_WRITE, true) &&
+                  !QcServiceReadsDuringLowerWait(IRP_MJ_WRITE, false) && !QcServiceReadsDuringLowerWait(IRP_MJ_POWER, false) &&
+                  !QcServiceReadsDuringLowerWait(IRP_MJ_FLUSH_BUFFERS, false) &&
+                  !QcServiceReadsDuringLowerWait(IRP_MJ_DEVICE_CONTROL, false),
+              "Paging reads must progress while the worker forwards a range-less PnP/shutdown request");
