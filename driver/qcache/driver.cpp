@@ -1095,7 +1095,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     // All harness code/data is nonpageable; do not advertise pageable power dispatch.
     device->Characteristics |= ext->Lower->Characteristics;
 #if QCACHE_CACHE_DRIVER
-    status = QcCacheInitialize(&ext->Cache, ext->Lower);
+    status = QcCacheInitialize(&ext->Cache, device, ext->Lower);
     if (NT_SUCCESS(status))
         status = IoRegisterLastChanceShutdownNotification(device);
     if (!NT_SUCCESS(status))

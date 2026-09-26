@@ -500,6 +500,19 @@ static NTSTATUS RetainCompletion(PDEVICE_OBJECT, PIRP, PVOID event)
     KeSetEvent(static_cast<PKEVENT>(event), IO_NO_INCREMENT, FALSE);
     return STATUS_MORE_PROCESSING_REQUIRED;
 }
+struct QC_LOWER_CALL
+{
+    PDEVICE_OBJECT Lower;
+    PIRP Irp;
+    KEVENT Returned;
+};
+static IO_WORKITEM_ROUTINE CallLower;
+static void CallLower(PDEVICE_OBJECT, PVOID context)
+{
+    auto call = static_cast<QC_LOWER_CALL*>(context);
+    IoCallDriver(call->Lower, call->Irp);
+    KeSetEvent(&call->Returned, IO_NO_INCREMENT, FALSE);
+}
 static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
 {
     const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
@@ -508,7 +521,20 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
     IoCopyCurrentIrpStackLocationToNext(irp);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
     QcCacheRecordLowerAttempt(c, IoGetCurrentIrpStackLocation(irp)->MajorFunction, irp);
-    auto status = IoCallDriver(c->Lower, irp);
+    // Lower drivers can page-fault synchronously inside IoCallDriver on this thread;
+    // the page-in then queues behind this worker. Call from a work item and keep
+    // servicing paging reads below until the lower completion.
+    QC_LOWER_CALL call{c->Lower, irp};
+    const bool offWorker = allowReadService && c->LowerCallItem && QcForwardOffWorker(major);
+    NTSTATUS status;
+    if (offWorker)
+    {
+        KeInitializeEvent(&call.Returned, NotificationEvent, FALSE);
+        IoQueueWorkItem(c->LowerCallItem, CallLower, DelayedWorkQueue, &call);
+        status = STATUS_PENDING;
+    }
+    else
+        status = IoCallDriver(c->Lower, irp);
     if (status == STATUS_PENDING)
     {
         while (!KeReadStateEvent(&completed))
@@ -536,6 +562,9 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
                 KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
         }
     }
+    // The work item (and the stack context it uses) must be idle before reuse.
+    if (offWorker)
+        KeWaitForSingleObject(&call.Returned, Executive, KernelMode, FALSE, nullptr);
     return irp->IoStatus.Status;
 }
 static bool RangeOverlaps(LONGLONG first, LONGLONG end, LONGLONG block)
@@ -970,10 +999,12 @@ static void Drainer(PVOID context)
     }
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
-NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT lower)
+NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lower)
 {
     RtlZeroMemory(c, sizeof(*c));
     c->Lower = lower;
+    // Failing attach on the boot disk would stop Windows; forward inline instead.
+    c->LowerCallItem = IoAllocateWorkItem(self);
     c->Head = c->Tail = c->FreeHead = NoSlot;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     LARGE_INTEGER frequency;
@@ -1186,6 +1217,11 @@ void QcCacheDestroy(QC_CACHE* c)
                    c->State.DirtyBytes,
                    c->State.LastError);
     FreeSlots(c); // Surprise removal cannot promise volatile data survival.
+    if (c->LowerCallItem)
+    {
+        IoFreeWorkItem(c->LowerCallItem);
+        c->LowerCallItem = nullptr;
+    }
 }
 static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
 {

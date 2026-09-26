@@ -24,8 +24,10 @@ tracker IDs it closes and when it counts as done.
 Order matters: the hang first, because everything after restarts machines;
 then Driver Verifier, because it can invalidate paths we consider finished.
 
-1. **Shutdown hang (A09): DONE 2026-09-26.** Fixed in 0.4.125.1; 20/20
-   saved-profile soak cycles passed. A
+1. **Shutdown hang (A09): diagnosed; second fix pending.** The 0.4.125.1 fix
+   passed 20/20 soak cycles but was insufficient: under Driver Verifier the
+   first restart hung the same way (the fault is inside the worker's own
+   `IoCallDriver`). The second fix forwards PnP/shutdown from a work item. A
    host-driven saved-profile soak reproduced it on cycle 3; the NMI kernel dump
    showed the request worker waiting on a forwarded paging usage notification
    while a pagefile read it needed sat in its own queue (see KNOWN_ISSUES).

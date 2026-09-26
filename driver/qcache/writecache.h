@@ -229,6 +229,7 @@ struct QC_DRAIN_WORKER
 struct QC_CACHE
 {
     PDEVICE_OBJECT Lower;
+    PIO_WORKITEM LowerCallItem; // Null: forward inline (allocation failed at attach).
     KMUTEX Mutex;
     KSPIN_LOCK SnapshotLock;
     PKSPIN_LOCK RoutingLock; // QueueLock: makes usage reservation and Enable atomic.
@@ -330,7 +331,7 @@ FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
             stack->Parameters.UsageNotification.Type == DeviceUsageTypeHibernation ||
             stack->Parameters.UsageNotification.Type == DeviceUsageTypeDumpFile);
 }
-NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT lower);
+NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT self, PDEVICE_OBJECT lower);
 void QcCacheDestroy(QC_CACHE* cache);
 void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);

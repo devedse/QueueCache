@@ -67,11 +67,16 @@ constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool health
 {
     return wasEnabled && hasCapacity && healthy && !gone;
 }
-// Lower drivers may page in their PnP/shutdown handlers (ACPI's usage-notification handler
-// faulted on the C: pagefile at shutdown). Not power: a paging disk holds I/O until D0.
+// Lower drivers may page-fault in their PnP/shutdown handlers (ACPI's usage-notification
+// handler faulted on the C: pagefile at shutdown), so those are called off the worker
+// thread while it services paging reads. Not power: a paging disk holds I/O until D0.
+constexpr bool QcForwardOffWorker(UCHAR major)
+{
+    return major == IRP_MJ_PNP || major == IRP_MJ_SHUTDOWN;
+}
 constexpr bool QcServiceReadsDuringLowerWait(UCHAR major, bool rangeDrain)
 {
-    return major == IRP_MJ_READ || major == IRP_MJ_PNP || major == IRP_MJ_SHUTDOWN || rangeDrain;
+    return major == IRP_MJ_READ || QcForwardOffWorker(major) || rangeDrain;
 }
 // Protect resident read demand up to half the payload, borrowing unused space.
 // A large atomic request may reduce protection so it can eventually be admitted.

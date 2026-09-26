@@ -10,11 +10,12 @@ cached; paging-file traffic is recognised per request and never cached. Cache
 memory is page-backed, not nonpaged pool. C: active restarts passed once with a
 runtime-only profile and four times with a saved profile; a real Paint/Photos
 session passed its post-drain byte check. The saved-profile shutdown hang (below)
-was a deadlock, fixed and soak-verified on 0.4.125.1. The
+is a diagnosed deadlock; its second fix awaits VM verification under Driver
+Verifier. The
 historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
 describe their original scope.
 
-## Fixed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.124.1)
+## Diagnosed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.125.1)
 
 On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
 83 MB dirty after a bounded memory-pressure run) stayed on "Restarting" for over
@@ -27,18 +28,29 @@ answered ping but not SSH. An NMI kernel dump shows a deadlock:
 - C:'s single request worker forwards it (`Process` -> `OriginalIo`) and waits.
 - Below it, `ACPI!ACPIFilterIrpDeviceUsageNotification` is paged out; the fault
   needs a paging read from the C: pagefile (through the compressed store).
-- That read is queued behind the same worker. `OriginalIo` only serviced queued
-  paging reads while waiting on a forwarded read, so nothing progressed.
+- That read is queued behind the same worker, which is itself the thread blocked
+  in the fault: the lower drivers run synchronously inside the worker's
+  `IoCallDriver` (`OriginalIo+0x98`), so nothing progressed.
 
 Memory pressure is what pages the ACPI handler out, hence the intermittency. The
 same pattern could occur whenever Windows adds or removes a pagefile, hive or dump
-path while C: routing is active. Fixed in 0.4.125.1 (`42b5ddd`): the worker now
-services queued paging reads while it waits on a forwarded PnP or shutdown request
-(`QcServiceReadsDuringLowerWait`). Power requests are excluded because a paging
-disk holds I/O until D0. The same saved-profile soak then passed 20 of 20 cycles
-(see the tracker's T081 row). The crash lost that cycle's dirty Fast data as
-expected; `chkdsk C: /scan` found no problems. The dump and symbols are kept off
-the VM (`QueueCache-Evidence/hang-20260926-cycle3`, SHA-256 `02D6A68E...5181`).
+path while C: routing is active. The crash lost that cycle's dirty Fast data as
+expected; `chkdsk C: /scan` found no problems. Dumps and symbols are kept off the
+VM (`QueueCache-Evidence/hang-20260926-cycle3`, SHA-256 `02D6A68E...5181`).
+
+The first fix in 0.4.125.1 (`42b5ddd`) was insufficient: it serviced paging reads
+in `OriginalIo`'s wait loop, but that loop is only reached after `IoCallDriver`
+returns, and here the fault happens inside the call. Its 20/20 saved-profile soak
+passed only because ACPI's handler stayed resident. With Driver Verifier (whose
+IRQL checking trims pageable memory) the first restart hung again and Verifier
+bugchecked 0xC4/0x115 ("shutdown did not finish"); the dump shows the identical
+stack (`QueueCache-Evidence/verifier-20260926-c4`, SHA-256 `7F05D86B...564B`).
+Second fix (source, not yet VM-verified): PnP and shutdown requests are forwarded
+from a preallocated work item (`QcForwardOffWorker`) while the worker services
+queued paging reads until the lower completion. Power stays inline because a paging
+disk holds I/O until D0. Other controls forwarded inline by the worker (media-
+changing IOCTLs) could in principle hit the same pattern if a lower handler pages;
+none has been observed.
 
 ## Fixed: bugcheck 0x7A while restarting with dirty C: data (0.4.111.1 and earlier)
 
