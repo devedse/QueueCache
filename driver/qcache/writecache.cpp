@@ -109,7 +109,7 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.Instance = c->Instance;
     c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
     c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    c->Diagnostics.Version = 11;
+    c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 3;
@@ -1115,43 +1115,15 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
         else if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
             c->Diagnostics.LastCode = code ? code : stack->Parameters.DeviceIoControl.IoControlCode;
     }
-    // Shutdown breadcrumb: record barrier entry
-    const bool isShutdown = reason == QcShutdownBarrier || reason == QcPowerBarrier;
-    if (isShutdown)
-        c->Diagnostics.ShutdownBarrierEntryTick = KeQueryPerformanceCounter(nullptr).QuadPart;
-
     if (disable)
         c->Enabled = FALSE;
     c->Barrier = TRUE;
     c->Performance.Phase = QcDrainPhase;
     Publish(c);
-
-    // Shutdown breadcrumb: record drain start
-    if (isShutdown)
-    {
-        c->Diagnostics.ShutdownDrainStartTick = KeQueryPerformanceCounter(nullptr).QuadPart;
-        c->Diagnostics.ShutdownDrainStartBytes = c->State.DirtyBytes;
-        c->Diagnostics.ShutdownDrainLastBytes = c->State.DirtyBytes;
-        c->Diagnostics.ShutdownDrainLastProgressTick = c->Diagnostics.ShutdownDrainStartTick;
-        c->Diagnostics.ShutdownDrainIterations = 0;
-    }
-
     while (c->State.DirtyBytes && NT_SUCCESS(c->State.LastError) && !c->Gone)
     {
         KeClearEvent(&c->Changed);
         WakeDrainers(c);
-
-        // Shutdown breadcrumb: track iterations and progress
-        if (isShutdown)
-        {
-            ++c->Diagnostics.ShutdownDrainIterations;
-            if (c->State.DirtyBytes != c->Diagnostics.ShutdownDrainLastBytes)
-            {
-                c->Diagnostics.ShutdownDrainLastProgressTick = KeQueryPerformanceCounter(nullptr).QuadPart;
-                c->Diagnostics.ShutdownDrainLastBytes = c->State.DirtyBytes;
-            }
-        }
-
         ReleaseCache(c);
         WaitForCacheProgress(c, nullptr);
         AcquireCache(c);
@@ -1162,20 +1134,10 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
     bool inject = c->InjectFault == 3;
     if (inject)
         c->InjectFault = 0;
-
-    // Shutdown breadcrumb: record lower flush start
-    if (isShutdown)
-        c->Diagnostics.ShutdownLowerFlushStartTick = KeQueryPerformanceCounter(nullptr).QuadPart;
-
     ReleaseCache(c);
     if (NT_SUCCESS(status))
         status = inject ? STATUS_IO_DEVICE_ERROR : LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
     AcquireCache(c);
-
-    // Shutdown breadcrumb: record lower flush completion
-    if (isShutdown)
-        c->Diagnostics.ShutdownLowerFlushEndTick = KeQueryPerformanceCounter(nullptr).QuadPart;
-
     if (NT_SUCCESS(status))
         ++c->State.Flushes;
     else if (NT_SUCCESS(c->State.LastError))
