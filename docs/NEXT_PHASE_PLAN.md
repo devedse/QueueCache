@@ -21,7 +21,8 @@ tracker IDs it closes and when it counts as done.
 
 ## Phase 1: stabilise (finish A06a-A10)
 
-Order matters: the open hang first, because everything after restarts machines.
+Order matters: the hang first, because everything after restarts machines;
+then Driver Verifier, because it can invalidate paths we consider finished.
 
 1. **Shutdown hang (A09): DONE 2026-09-26.** Fixed in 0.4.125.1; 20/20
    saved-profile soak cycles passed. A
@@ -34,16 +35,30 @@ Order matters: the open hang first, because everything after restarts machines.
    - Each cycle ran `system-files`, `system-paging-recognition`, a host-driven
      restart and `system-post-restart`. Reuse the same cycle for the power and
      Strict work below.
-2. **Power transitions (A09, T072).** Sleep/resume, and Strict-mode restart.
+2. **Driver Verifier (A06a/T053, A07-A09).** Before new lifecycle work, rerun
+   existing evidence with Windows Driver Verifier on the QueueCache driver so
+   IRP, IRQL, pool and kernel-API violations bugcheck at the fault (0xC4).
+   - Enable `verifier /standard` for the installed driver file (its name
+     changes with every build) plus `/bootmode resetonbootfail`, because C: is
+     the boot disk.
+   - Pass A: `quick`, `policies`, `pressure`, `paging-coherence` and
+     `ordering-faults` on Q:, then the 20-cycle saved-profile restart soak on C:.
+   - Pass B: add low-resources simulation (random allocation failures) and
+     rerun the Q: suites; this is the T053 allocation-failure evidence. Byte
+     errors or unexplained faults fail; cleanly reported allocation failures are
+     the expected outcome to inspect.
+   - Done when: pass A has no Verifier bugcheck and pass B's failures are all
+     reported cleanly with correct bytes.
+3. **Power transitions (A09, T072).** Sleep/resume, and Strict-mode restart.
    Hibernate/Fast Startup need a VM that supports them.
    - Done when: each transition passes a byte oracle with the cache active.
-3. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
+4. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
    - Cancel an in-flight paging request.
    - Inject a fault on a direct paging write.
    - Allocation failure under memory pressure.
    - Races between Release/Remove and I/O.
    - Done when: each is a maintained `qcache developer verify` case that passes.
-4. **Offline recovery and Retry UI (A10, T054).**
+5. **Offline recovery and Retry UI (A10, T054).**
    - Real Safe Mode/offline recovery of a machine whose cache cannot start.
    - A Retry button in the desktop app for a faulted cache.
    - Done when: recovery is exercised on the VM from a genuinely unbootable
@@ -51,24 +66,27 @@ Order matters: the open hang first, because everything after restarts machines.
 
 ## Phase 2: performance (A11)
 
-5. **Drain tuning (T050).** Use `drain-decision` results to choose batch size and
+6. **Drain tuning (T050).** Use `drain-decision` results to choose batch size and
    parallelism defaults. Remember that NTFS metadata and zero-fill write-back now
    share drain intervals.
-6. **Keep read misses in RAM.** Paging read misses (what apps read from disk) are
+7. **Keep read misses in RAM.** Paging read misses (what apps read from disk) are
    not kept yet. Retain them as clean entries so the next read is served from
    RAM.
-7. **Shrink the cache under memory pressure.** The budget is fixed today. Give
+8. **Shrink the cache under memory pressure.** The budget is fixed today. Give
    memory back when Windows runs low, without dropping dirty data.
-8. **Final measurement matrix.**
+9. **Final measurement matrix.**
    - `write-performance` (72 cases), `full`, `app-write-profile` timings, and
      CrystalDiskMark with the same DiskSpd binary.
    - Before/after tables for the release notes.
 
 ## Phase 3: release readiness (A12-A16)
 
-9. Private-alpha freeze and reporting handoff (A12).
-10. Support contract and safety gaps (A13), signing/servicing/security (A14).
-11. Endurance and environment matrix (A15), release process (A16).
+10. Private-alpha freeze and reporting handoff (A12).
+11. Support contract and safety gaps (A13), signing/servicing/security (A14).
+    Add static analysis (CodeQL driver queries, which production driver signing
+    expects, and/or SDV) to CI.
+12. Endurance and environment matrix (A15) with Driver Verifier enabled,
+    release process (A16).
 
 ## Test VM notes
 
