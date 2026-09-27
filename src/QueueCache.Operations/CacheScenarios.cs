@@ -28,6 +28,7 @@ public static class CacheScenarios
         {
             SectorScenarios.Run(target, device, directory, results, progress, token);
             RunSustainedForeground(target, device, directory, results, progress, token);
+            RunParallelCopies(target, device, directory, results, progress, token);
             for (int scenario = 0; scenario < cases.Length; scenario++)
             {
                 token.ThrowIfCancellationRequested();
@@ -110,6 +111,142 @@ public static class CacheScenarios
         }
         return results;
     }, token);
+
+    private static byte[] ParallelPattern(int writer, int pass, int block)
+    {
+        var data = new byte[ParallelBlockBytes];
+        new Random(unchecked(200_003 + writer * 1_000_003 + pass * 10_007 + block)).NextBytes(data);
+        return data;
+    }
+
+    private const int ParallelBlockBytes = 1 << 20, ParallelBlocks = 8, ParallelWriters = 4, ParallelReaders = 2;
+
+    /// <summary>Large (1 MiB) reads and writes from several threads, so the worker hands their copies to the
+    /// offloaded-request threads while write-back runs. Every read-back after a write and every concurrent read
+    /// must return one whole written version of its block; the disk must hold each block's last version.</summary>
+    private static void RunParallelCopies(DiskTarget target, CacheDevice device, string directory,
+        List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
+    {
+        const string label = "parallel-copies";
+        const int durationSeconds = 20;
+        progress?.Report($"{label}: {durationSeconds}s of 1 MiB writes/read-backs on {ParallelWriters} threads with {ParallelReaders} concurrent readers");
+        ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 2)
+        }, true);
+        var paths = Enumerable.Range(0, ParallelWriters).Select(writer => Path.Combine(directory, $"parallel-{writer}.bin")).ToArray();
+        for (var writer = 0; writer < ParallelWriters; writer++)
+            using (var file = new AlignedFile(paths[writer], ParallelBlockBytes, create: true))
+                for (var block = 0; block < ParallelBlocks; block++)
+                    file.Write((long)block * ParallelBlockBytes, ParallelPattern(writer, 0, block));
+        var passes = new int[ParallelWriters, ParallelBlocks];
+        var before = device.GetDiagnostics();
+        long writes = 0, reads = 0, readBackMismatches = 0, concurrentMismatches = 0;
+        Exception? loadError = null;
+        var deadline = Stopwatch.StartNew();
+        var handles = paths.Select(path => new AlignedFile(path, ParallelBlockBytes, create: false, shareRead: true)).ToArray();
+        try
+        {
+            var writers = Enumerable.Range(0, ParallelWriters).Select(writer => Task.Run(() =>
+            {
+                try
+                {
+                    var actual = new byte[ParallelBlockBytes];
+                    for (var pass = 1; deadline.Elapsed < TimeSpan.FromSeconds(durationSeconds) && !token.IsCancellationRequested; pass++)
+                        for (var block = 0; block < ParallelBlocks; block++)
+                        {
+                            var data = ParallelPattern(writer, pass, block);
+                            handles[writer].Write((long)block * ParallelBlockBytes, data);
+                            Volatile.Write(ref passes[writer, block], pass);
+                            Interlocked.Increment(ref writes);
+                            handles[writer].Read((long)block * ParallelBlockBytes, actual);
+                            if (!actual.AsSpan().SequenceEqual(data))
+                                Interlocked.Increment(ref readBackMismatches);
+                        }
+                }
+                catch (Exception exception) { loadError ??= exception; }
+            })).ToArray();
+            var readers = Enumerable.Range(0, ParallelReaders).Select(reader => Task.Run(() =>
+            {
+                try
+                {
+                    var files = paths.Select(path => new AlignedFile(path, ParallelBlockBytes, create: false, sharedReadOnly: true)).ToArray();
+                    try
+                    {
+                        var random = new Random(200_017 + reader);
+                        var actual = new byte[ParallelBlockBytes];
+                        while (writers.Any(task => !task.IsCompleted))
+                        {
+                            var writer = random.Next(ParallelWriters);
+                            var block = random.Next(ParallelBlocks);
+                            var first = Volatile.Read(ref passes[writer, block]);
+                            files[writer].Read((long)block * ParallelBlockBytes, actual);
+                            var last = Volatile.Read(ref passes[writer, block]);
+                            var whole = false;
+                            for (var candidate = Math.Max(0, first - 1); candidate <= last + 1 && !whole; candidate++)
+                                whole = actual.AsSpan().SequenceEqual(ParallelPattern(writer, candidate, block));
+                            if (!whole)
+                                Interlocked.Increment(ref concurrentMismatches);
+                            Interlocked.Increment(ref reads);
+                        }
+                    }
+                    finally
+                    {
+                        foreach (var file in files)
+                            file.Dispose();
+                    }
+                }
+                catch (Exception exception) { loadError ??= exception; }
+            })).ToArray();
+            if (!Task.WaitAll([.. writers, .. readers], TimeSpan.FromMinutes(5)))
+                throw new IOException($"{label}: the concurrent load did not finish within 5 minutes.");
+        }
+        finally
+        {
+            foreach (var handle in handles)
+                handle.Dispose();
+        }
+        if (loadError is not null)
+            throw new IOException($"{label}: the concurrent load failed.", loadError);
+        var after = device.GetDiagnostics();
+        var state = device.GetWriteCacheState();
+        device.Control(WriteCacheAction.Disable);
+        var persisted = true;
+        var readBack = new byte[ParallelBlockBytes];
+        for (var writer = 0; writer < ParallelWriters && persisted; writer++)
+            using (var file = new AlignedFile(paths[writer], ParallelBlockBytes, create: false, sharedReadOnly: true))
+                for (var block = 0; block < ParallelBlocks && persisted; block++)
+                {
+                    file.Read((long)block * ParallelBlockBytes, readBack);
+                    persisted = readBack.AsSpan().SequenceEqual(ParallelPattern(writer, passes[writer, block], block));
+                }
+        results.Add(VerifyParallelCopies(label, writes, reads, readBackMismatches, concurrentMismatches,
+            before.CopyOffloadReads is null || after.CopyOffloadReads is null ? null : after.CopyOffloadReads - before.CopyOffloadReads,
+            before.CopyOffloadWrites is null || after.CopyOffloadWrites is null ? null : after.CopyOffloadWrites - before.CopyOffloadWrites,
+            state.LastError, persisted));
+    }
+
+    internal static CheckResult VerifyParallelCopies(string label, long writes, long reads, long readBackMismatches,
+        long concurrentMismatches, ulong? offloadedReads, ulong? offloadedWrites, int lastError, bool persisted)
+    {
+        if (readBackMismatches != 0 || concurrentMismatches != 0)
+            throw new IOException(FormattableString.Invariant(
+                $"{label}: {readBackMismatches} read-backs and {concurrentMismatches} concurrent reads did not return one whole written version ({writes} writes, {reads} reads)"));
+        if (lastError != 0)
+            throw new IOException(FormattableString.Invariant($"{label}: the cache faulted (0x{lastError:X8})"));
+        if (!persisted)
+            throw new IOException($"{label}: after Disable the disk did not hold every block's last written version");
+        if (writes == 0 || reads == 0)
+            throw new IOException($"{label}: the load made no progress");
+        var offloads = offloadedReads is null || offloadedWrites is null
+            ? "offloaded-copy counters unavailable (driver older than diagnostics V16)"
+            : offloadedReads == 0 || offloadedWrites == 0
+                ? throw new IOException(FormattableString.Invariant(
+                    $"{label}: no large copies were offloaded (reads {offloadedReads}, writes {offloadedWrites})"))
+                : FormattableString.Invariant($"offloaded copies: {offloadedReads} reads, {offloadedWrites} writes");
+        return new(label, "PASS", FormattableString.Invariant(
+            $"{writes} 1 MiB writes with read-back and {reads} concurrent 1 MiB reads each returned one whole version; {offloads}; last versions persisted after Disable."));
+    }
 
     private static void RunSustainedForeground(DiskTarget target, CacheDevice device, string directory,
         List<CheckResult> results, IProgress<string>? progress, CancellationToken token)

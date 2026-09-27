@@ -26,7 +26,27 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 58, "foreground-background requires caller-thread service");
+        Check(VerificationPlan.Version == 59, "policies adds parallel-copies");
+        Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 3, 4, 0, true).Result == "PASS",
+            "parallel-copies accepts whole versions and offloaded copies");
+        Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, null, null, 0, true).Detail.Contains("unavailable"),
+            "parallel-copies reports an older driver instead of zero");
+        foreach (var bad in new Action[]
+        {
+            () => QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 1, 0, 3, 4, 0, true),
+            () => QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 1, 3, 4, 0, true),
+            () => QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 3, 4, 0, false),
+            () => QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 0, 4, 0, true),
+            () => QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 3, 4, unchecked((int)0xC0000185), true)
+        })
+        {
+            try
+            {
+                bad();
+                Check(false, "parallel-copies rejects a mismatch, a fault, a lost version or no offload");
+            }
+            catch (IOException) { }
+        }
         Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(null, null, 100).Contains("unavailable"),
             "caller-path check reports an older driver instead of zero");
         Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(10, 10, 0), new(60, 55, 1), 100).Contains("95 of 100"),

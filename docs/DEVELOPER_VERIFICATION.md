@@ -17,7 +17,16 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 58)
+## Suites (plan version 59)
+
+Plan 59 adds `policies/parallel-copies` (256 MiB Fast, Eager, parallelism 2): for
+20 s four threads each rewrite their own 8 MiB file in 1 MiB blocks and read each
+block straight back, while two threads read random blocks of those files. Every
+read-back and every concurrent read must return one whole written version, the
+cache must not fault, and after Disable the disk must hold each block's last
+version. With Diagnostics V16 the offloaded read and write copy counts must both
+rise (large requests from several threads go to the worker, which hands their
+copies to the offloaded-request threads); older drivers report them unavailable.
 
 Plan 58 adds a caller-thread check to `policies`' `foreground-background` case.
 With Diagnostics V14, at least 90% of its serialized 64 KiB write/read pairs
