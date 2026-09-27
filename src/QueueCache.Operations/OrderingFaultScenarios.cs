@@ -9,7 +9,8 @@ namespace QueueCache.Operations;
 /// T083 failure/cancellation orders on a validated disposable non-OS volume: a failed old drain while a
 /// newer paging write waits, a short last sparse segment, and cancellation of a capacity-blocked write.
 /// T053 lower-IRP allocation failure: a transient failure retries without faulting; exhaustion faults
-/// with the dirty version retained.
+/// with the dirty version retained. T083 failed direct paging write: the error reaches the application,
+/// the cache stays healthy and a later save succeeds.
 /// Each stage restores a healthy cache (Retry) itself; faults are driver lab hooks, never raw disk writes.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -22,7 +23,7 @@ public static class OrderingFaultScenarios
     private const ulong GateFail = 1, GateShort = 2;
     // Driver lab faults and limits (writecache.h): 8 fails three IRP builds on one drain batch,
     // 9 fails every build until cleared; a drain faults after 250 consecutive failed builds.
-    private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9;
+    private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9, FaultDirectWrite = 10;
     private const ulong SimulatedAllocationFailures = 3, AllocationAttempts = 250;
     private const uint InsufficientResources = 0xC000009A;
 
@@ -38,6 +39,22 @@ public static class OrderingFaultScenarios
             throw new IOException($"A transient allocation failure failed the flush or faulted the cache (0x{lastError:X8}).");
         return $"{retries} failed lower IRP build(s) were retried before submission; the flush barrier " +
             "succeeded and the cache stayed healthy.";
+    }
+
+    /// <summary>A failed direct paging write must reach the application without faulting the cache.</summary>
+    internal static string VerifyDirectWriteFailure(bool flushFailed, int lastError, ulong? directBefore,
+        ulong? directAfter)
+    {
+        if (directBefore is null || directAfter is null)
+            throw new NotSupportedException("Direct paging write evidence requires Diagnostics V10.");
+        if (directAfter.Value <= directBefore.Value)
+            throw new IOException("No direct paging write was recorded; the forced direct path was not exercised.");
+        if (!flushFailed)
+            throw new IOException("The mapped flush reported success although its direct paging write failed: false success.");
+        if (lastError != 0)
+            throw new IOException($"A failed direct paging write faulted the cache (0x{lastError:X8}); it owns no cached data.");
+        return $"The forced direct paging write failed ({directAfter - directBefore} direct write(s)); the mapped " +
+            "flush reported the error and the cache stayed healthy.";
     }
 
     /// <summary>A lasting allocation failure must fault the cache with the dirty version retained, not hang.</summary>
@@ -112,7 +129,8 @@ public static class OrderingFaultScenarios
             RunShortSparse(target, device, workDirectory),
             RunCancelledBlockedWrite(target, device, workDirectory),
             RunAllocationRetry(target, device, workDirectory),
-            RunAllocationExhaustion(target, device, workDirectory)
+            RunAllocationExhaustion(target, device, workDirectory),
+            RunDirectWriteFailure(target, device, workDirectory)
         ];
     }
 
@@ -444,5 +462,58 @@ public static class OrderingFaultScenarios
         if (!actual.AsSpan().SequenceEqual(data))
             throw new IOException($"{label}: after Retry the owned 1 MiB did not match after release.");
         return new(label, "PASS", evidence + " Retry drained it and the owned 1 MiB matched after release.");
+    }
+
+    private static void MappedSave(string path, byte[] data)
+    {
+        using var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.ReadWrite);
+        using var view = map.CreateViewAccessor(0, FileBytes, MemoryMappedFileAccess.ReadWrite);
+        view.WriteArray(Offset, data, 0, data.Length);
+        view.Flush();
+    }
+
+    private static CheckResult RunDirectWriteFailure(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const string label = "ordering-faults/direct-paging-write-failure";
+        var path = CreateOwned(workDirectory, "direct-write-failure.bin");
+        ApplyEager(target, 64);
+        var failed = new byte[BlockBytes];
+        var saved = new byte[BlockBytes];
+        new Random(104947).NextBytes(failed);
+        new Random(104953).NextBytes(saved);
+        var gateOffset = GateOffset(path, target);
+        device.SetSpecialRanges([new DiskRange(gateOffset, BlockBytes)], SpecialRangeKind.ForceDirect);
+        var directBefore = device.GetDiagnostics().PagingAdmission?.DirectWrites;
+        var flushFailed = false;
+        string evidence;
+        try
+        {
+            device.Control(WriteCacheAction.LabFault, value: FaultDirectWrite);
+            try
+            {
+                MappedSave(path, failed);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Win32Exception)
+            {
+                flushFailed = true;
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabFault, value: 0);
+            }
+            evidence = VerifyDirectWriteFailure(flushFailed, device.GetWriteCacheState().LastError, directBefore,
+                device.GetDiagnostics().PagingAdmission?.DirectWrites);
+            MappedSave(path, saved);
+        }
+        finally
+        {
+            Recover(device, label);
+        }
+        var actual = new byte[BlockBytes];
+        ReleaseAndRead(device, path, Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(saved))
+            throw new IOException($"{label}: the later successful save was not the released-cache media.");
+        return new(label, "PASS", evidence + " A later mapped save succeeded and matched after release. The forced " +
+            "write did reach the disk, so this does not prove the failed range's clean view was dropped.");
     }
 }

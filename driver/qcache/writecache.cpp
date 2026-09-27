@@ -1439,7 +1439,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             c->DelayMs = static_cast<ULONG>(command.Value);
         break;
     case QcLabFault:
-        if (command.Value > 9)
+        if (command.Value > 10)
             status = STATUS_INVALID_PARAMETER;
         else
             c->InjectFault = static_cast<ULONG>(command.Value);
@@ -1562,9 +1562,26 @@ static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG l
     // Do not use stale clean data while the direct request owns this range.
     InvalidateCleanRange(c, first, length);
     c->RangeForward = TRUE;
+    // Lab fault 10 applies only to a force-direct range, which only verification sets.
+    bool injectFailure = false;
+    if (c->InjectFault == 10)
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&c->RangeLock, &irql);
+        injectFailure = RangesOverlap(c->ForceDirect, c->ForceDirectCount, first, end);
+        KeReleaseSpinLock(&c->RangeLock, irql);
+        if (injectFailure)
+            c->InjectFault = 0;
+    }
     ReleaseCache(c);
     const bool gateSubmit = gateRecord && RecordLabSequence(c, &c->LabGateDirectSubmitSeq);
     auto status = OriginalIo(c, irp);
+    // Lab-only: the direct write reached the disk but is reported as failed.
+    if (injectFailure && NT_SUCCESS(status))
+    {
+        status = STATUS_IO_DEVICE_ERROR;
+        irp->IoStatus.Information = 0;
+    }
     if (gateSubmit)
         RecordLabSequence(c, &c->LabGateDirectDoneSeq);
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length)

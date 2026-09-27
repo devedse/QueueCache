@@ -28,7 +28,7 @@ internal static class LegacyCommands
           qcache start <device> <budget MiB>  (configure and enable; e.g. 4096 = 4 GiB)
           qcache enable|flush|disable|retry <device>
           qcache lab-delay <device> <0..2000 ms>
-          qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted>
+          qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted|10=direct paging write error>
         Write-cache controls require the explicit lab write-cache build and elevation.
         Configure only while disabled and clean. Abrupt failure loses volatile dirty data.
         Unsafe-defer acknowledges OS flush/write-through before persistence. Manual flush/disable still drain.
@@ -102,7 +102,7 @@ internal static class LegacyCommands
                     throw new ArgumentException("Expected a non-negative integer.");
                 if (configure && (amount < 1 || amount > 131072))
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
-                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 9)
+                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 10)
                     throw new ArgumentException("Lab hook value is outside its range.");
                 using var device = new CacheDevice(args[1], writable: true);
                 device.Control(configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,

@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 48, "ordering-faults adds lower IRP allocation retry and exhaustion");
+        Check(VerificationPlan.Version == 49, "ordering-faults adds a failed direct paging write");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -184,6 +184,22 @@ internal static class VerificationRunnerTests
             throw new Exception("Missing V11 diagnostics produced a verdict.");
         }
         catch (NotSupportedException) { }
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyDirectWriteFailure(true, 0, 4, 5)
+            .Contains("stayed healthy"), "a failed direct paging write reaches the application without a cache fault");
+        foreach (var (flushFailed, error, after) in new (bool, int, ulong?)[]
+        {
+            (true, 0, 4),                                   // direct path not exercised
+            (false, 0, 5),                                  // false success
+            (true, unchecked((int)0xC0000185), 5),          // cache faulted
+        })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyDirectWriteFailure(flushFailed, error, 4, after);
+                throw new Exception("An unsafe direct paging write failure was accepted.");
+            }
+            catch (IOException) { }
+        }
         const int insufficient = unchecked((int)0xC000009A);
         Check(QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationExhaustion(0, 249, true, insufficient, 1 << 20, 1 << 20, 5.1)
             .Contains("STATUS_INSUFFICIENT_RESOURCES"), "exhausted IRP allocation faults with the dirty version retained");
