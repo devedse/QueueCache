@@ -958,6 +958,7 @@ internal static class VerificationRunnerTests
         Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
             healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
             "restoration compares option values rather than object identity");
+        ApplyRollbackChecks(healthy, Check);
         var reads = 0;
         var settled = QueueCache.Operations.ConfigurationManager.WaitForHealthyState(
             () => ++reads < 3 ? draining : healthy, healthy);
@@ -1213,5 +1214,104 @@ internal static class VerificationRunnerTests
                 false, "[]", DateTimeOffset.UtcNow, Environment.MachineName);
         RunStorage.AtomicJson(job.Reply, reply);
         return 0;
+    }
+
+    private sealed class FakeCacheControl(QueueCache.Management.WriteCacheState state) : QueueCache.Operations.ICacheControl
+    {
+        public QueueCache.Management.WriteCacheState State = state;
+        public readonly List<string> Calls = [];
+        public Func<QueueCache.Management.WriteCacheAction, ulong, bool> Fails = (_, _) => false;
+        public QueueCache.Management.WriteCacheState GetWriteCacheState() => State;
+        public void SetOptions(QueueCache.Management.CacheOptions options)
+        {
+            Calls.Add("Options");
+            State = State with { Options = options };
+        }
+        public void Control(QueueCache.Management.WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0)
+        {
+            Calls.Add(action.ToString());
+            if (action == QueueCache.Management.WriteCacheAction.Configure)
+                State = State with { BudgetBytes = 0, ReservedBytes = 0, PayloadCapacity = 0 }; // Old memory freed first.
+            if (Fails(action, budgetBytes))
+                throw new IOException($"{action} failed");
+            State = action switch
+            {
+                QueueCache.Management.WriteCacheAction.Disable => State with { Flags = State.Flags & ~1u },
+                QueueCache.Management.WriteCacheAction.Enable when State.BudgetBytes == 0 => throw new IOException("no budget"),
+                QueueCache.Management.WriteCacheAction.Enable => State with { Flags = State.Flags | 1u },
+                QueueCache.Management.WriteCacheAction.FlushPolicy => State with { Flags = value == 1 ? State.Flags | 32u : State.Flags & ~32u },
+                QueueCache.Management.WriteCacheAction.Configure => State with { BudgetBytes = budgetBytes, ReservedBytes = budgetBytes, PayloadCapacity = budgetBytes },
+                QueueCache.Management.WriteCacheAction.Release => State with { Flags = State.Flags & ~1u, BudgetBytes = 0, ReservedBytes = 0, PayloadCapacity = 0 },
+                _ => State
+            };
+        }
+    }
+
+    private static void ApplyRollbackChecks(QueueCache.Management.WriteCacheState healthy, Action<bool, string> Check)
+    {
+        const ulong MiB = 1 << 20;
+        var active = healthy with
+        {
+            Flags = 1u | 32u, BudgetBytes = 1024 * MiB, ReservedBytes = 1024 * MiB, PayloadCapacity = 1024 * MiB,
+            Options = new QueueCache.Management.CacheOptions()
+        };
+        var bigger = new QueueCache.Operations.CacheConfiguration(2048, QueueCache.Operations.CachePreset.Strict)
+        {
+            Options = new QueueCache.Management.CacheOptions(Drain: QueueCache.Management.DrainAlgorithm.Eager)
+        };
+        var fake = new FakeCacheControl(active);
+        var applied = QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, bigger, settleTimeout: TimeSpan.Zero);
+        Check(applied.BudgetBytes == 2048 * MiB && !applied.UnsafeDefer && applied.Enabled && applied.Options == bigger.Options,
+            "a settings change applies completely");
+
+        fake = new FakeCacheControl(active) { Fails = (action, budget) => action == QueueCache.Management.WriteCacheAction.Configure && budget == 2048 * MiB };
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, bigger, settleTimeout: TimeSpan.Zero);
+            throw new Exception("A failed resize was reported as applied.");
+        }
+        catch (QueueCache.Operations.ConfigurationNotAppliedException failure)
+        {
+            Check(failure.PreviousSettingsRestored && failure.Message.Contains("previous settings were restored") &&
+                fake.State.Enabled && fake.State.BudgetBytes == 1024 * MiB && fake.State.UnsafeDefer &&
+                fake.State.Options == active.Options, "a failed resize restores the previous size, preset, options and state");
+        }
+
+        fake = new FakeCacheControl(active) { Fails = (action, _) => action == QueueCache.Management.WriteCacheAction.Configure };
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, bigger, settleTimeout: TimeSpan.Zero);
+            throw new Exception("A failed resize with a failed rollback was reported as applied.");
+        }
+        catch (QueueCache.Operations.ConfigurationNotAppliedException failure)
+        {
+            Check(!failure.PreviousSettingsRestored && failure.Message.Contains("could not be restored") &&
+                failure.Message.Contains("The cache is now: disabled, 0 MiB"), "a failed rollback states exactly what is left");
+        }
+
+        fake = new FakeCacheControl(active) { Fails = (action, _) => action == QueueCache.Management.WriteCacheAction.Disable };
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, bigger, settleTimeout: TimeSpan.Zero);
+            throw new Exception("A failed drain was reported as applied.");
+        }
+        catch (QueueCache.Operations.ConfigurationNotAppliedException failure)
+        {
+            Check(failure.PreviousSettingsRestored && fake.Calls.SequenceEqual(["Disable"]) && fake.State == active,
+                "a cache that cannot be emptied is left untouched");
+        }
+
+        var unconfigured = healthy with { Options = new QueueCache.Management.CacheOptions() };
+        fake = new FakeCacheControl(unconfigured) { Fails = (action, _) => action == QueueCache.Management.WriteCacheAction.Enable };
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.ApplySteps(fake, unconfigured, bigger, settleTimeout: TimeSpan.Zero);
+            throw new Exception("A failed enable was reported as applied.");
+        }
+        catch (QueueCache.Operations.ConfigurationNotAppliedException failure)
+        {
+            Check(failure.PreviousSettingsRestored && fake.State.BudgetBytes == 0 && !fake.State.Enabled &&
+                fake.Calls.Contains("Release"), "rolling back to 'never configured' releases the new memory");
+        }
     }
 }

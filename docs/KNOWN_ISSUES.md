@@ -65,8 +65,7 @@ re-enabling the cache; requests keep flowing to the disk.
 ## Application caching scope (T085)
 
 Paging-marked writes are admitted when their originating file object is not a
-paging file. Remaining limits: read misses are not retained as clean entries, the
-budget does not shrink under system memory pressure, and NTFS metadata/zero-fill
+paging file. Remaining limits: read misses are not retained as clean entries, and NTFS metadata/zero-fill
 write-back is admitted like any other write, so the cache shares drain intervals
 with it.
 
@@ -213,15 +212,17 @@ without the filter, so it cannot prove partial-range behavior. Unknown or
 media-changing controls retain conservative ordering and invalidation. Malformed,
 overlapping and failed TRIM requests remain open work.
 
-## Configuration changes are not transactional
+## Configuration changes apply completely or restore the previous settings
 
-Apply drains and disables before changing the preset, budget and policy. If a later
-step fails, it reports failure and does not pretend to roll back atomically. A
-failed resize can therefore leave the cache disabled. Saved profiles are updated
-only after a successful apply and are identity/size checked during restore.
-
-Live cutoff flush, policy change and resize semantics are planned work. Current
-operators should use the supported task commands and inspect state after failures.
+Apply drains and disables before changing the preset, budget and policy. If the
+drain fails nothing else is touched and the change is reported as not applied.
+If a later step fails (most likely the new memory allocation, because the driver
+frees the old cache first), the previous preset, options, budget and on/off state
+are put back and the error says "previous settings restored". If even that fails,
+the error states the cache's resulting state. Saved profiles are updated only after
+a successful apply and are identity/size checked during restore. Host contract
+tests cover each failure point with a fake device; the rollback has not been
+forced on the VM.
 
 ## Performance acceptance is incomplete
 

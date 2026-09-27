@@ -100,8 +100,9 @@ then Driver Verifier, because it can invalidate paths we consider finished.
 7. **Keep read misses in RAM.** Paging read misses (what apps read from disk) are
    not kept yet. Retain them as clean entries so the next read is served from
    RAM.
-8. **Shrink the cache under memory pressure.** The budget is fixed today. Give
-   memory back when Windows runs low, without dropping dirty data.
+8. **Fixed cache reservation (decided 2026-09-27).** The budget stays reserved
+   once applied; there is no shrinking under memory pressure. Apply keeps
+   refusing budgets that would leave less than 2 GiB or 25% of RAM free.
 9. **Final measurement matrix.**
    - `write-performance` (72 cases), `full`, `app-write-profile` timings, and
      CrystalDiskMark with the same DiskSpd binary.

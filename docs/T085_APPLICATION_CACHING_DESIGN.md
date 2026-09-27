@@ -85,7 +85,6 @@ disk is cached.
 
 - Paging *reads* are served from RAM when resident, but read misses are still not
   retained as new clean cache entries.
-- The cache does not yet shrink under system memory pressure; the budget stays
-  fixed.
+- The budget stays fixed once applied (by design, decided 2026-09-27).
 - Active C: caching of application traffic still needs the T081 pressure and
   restart checks.
