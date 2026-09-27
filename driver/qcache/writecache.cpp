@@ -2034,7 +2034,44 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         irp->IoStatus.Information = length;
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
         status = STATUS_DEVICE_DATA_ERROR;
-    if (NT_SUCCESS(status))
+    if (NT_SUCCESS(status) && pinned)
+    {
+        // A pinned version is immutable and stays allocated (writers create a new
+        // version; eviction, retirement and trim skip it), so its buffer and valid
+        // mask are stable: copy the whole range with one Mutex release instead of
+        // one per 64 blocks, which convoyed parallel offloaded reads on Mutex.
+        ULONGLONG hitBytes = 0, missBytes = 0;
+        ReleaseCache(c);
+        for (auto block = firstBlock; block < end; block += Chunk)
+        {
+            const auto index = pinned[(block - firstBlock) / Chunk];
+            const auto from = max(start, block);
+            const auto to = min(end, block + Chunk);
+            const auto bytes = static_cast<ULONG>(to - from);
+            if (index == NoSlot)
+            {
+                missBytes += bytes;
+                continue;
+            }
+            const auto buffer = c->Slots[index].Buffer;
+            const auto valid = c->Slots[index].ValidSectors;
+            const auto hits = valid == 255 ? bytes :
+                QcValidBytes(valid & QcSectorMask(static_cast<ULONG>(from - block), bytes));
+            hitBytes += hits;
+            missBytes += bytes - hits;
+            if (valid == 255)
+                RtlCopyMemory(target + (from - start), buffer + (from - block), static_cast<SIZE_T>(bytes));
+            else
+                for (auto sector = from; sector < to; sector += 512)
+                    if (valid & (1UL << ((sector - block) / 512)))
+                        RtlCopyMemory(target + (sector - start), buffer + (sector - block), 512);
+        }
+        AcquireCache(c);
+        c->ReadHitBytes += hitBytes;
+        c->State.CacheReadBytes += hitBytes;
+        c->ReadMissBytes += missBytes;
+    }
+    else if (NT_SUCCESS(status))
     {
         for (auto block = start / Chunk * Chunk; block < end;)
         {
@@ -2155,7 +2192,10 @@ bool QcCacheTryCallerPath(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS*
         !c->SectorBytes || offset % c->SectorBytes || length % c->SectorBytes)
         return false;
     irp->IoStatus.Information = 0;
-    *status = read ? Read(c, irp, true, false, nullptr, true) : Write(c, irp, true);
+    // Pin scratch lets a read hit copy without retaking Mutex (dispatch checked the stack).
+    ULONG pins[QcPagingPinBlocks];
+    const bool pinScratch = (offset + length - offset / Chunk * Chunk + Chunk - 1) / Chunk <= QcPagingPinBlocks;
+    *status = read ? Read(c, irp, true, false, pinScratch ? pins : nullptr, true) : Write(c, irp, true);
     if (*status == (read ? STATUS_NOT_FOUND : QcCallerPathDeclined))
     {
         InterlockedIncrement64(&c->CallerPathDeclined);

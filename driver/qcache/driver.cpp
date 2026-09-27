@@ -1029,11 +1029,12 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     {
 #if QCACHE_CACHE_DRIVER
         // The caller path waits for the cache mutex and copies on this thread:
-        // PASSIVE_LEVEL, a locked buffer and enough stack for the cache code.
+        // PASSIVE_LEVEL, a locked buffer and enough stack for the cache code
+        // (including a 1 KiB pin scratch in QcCacheTryCallerPath).
         const bool callerCandidate =
             (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
             ext->Cache.CallerPath && !(irp->Flags & IRP_PAGING_IO) && irp->MdlAddress &&
-            KeGetCurrentIrql() == PASSIVE_LEVEL && IoGetRemainingStackSize() >= 8192;
+            KeGetCurrentIrql() == PASSIVE_LEVEL && IoGetRemainingStackSize() >= 10240;
 #endif
         KIRQL irql;
         KeAcquireSpinLock(&ext->QueueLock, &irql);
