@@ -1,5 +1,8 @@
 # RAM cache policies
 
+Fast mode is the optimized, recommended mode; Strict mode is supported for
+correctness but is not tuned for speed (owner decision, 2026-09-27).
+
 Current implementation boundary (2026-09-25): RAM admission applies to eligible
 writes, including ordinary application file-cache write-back and memory-mapped
 writes (paging-marked requests whose originating file is not a paging file).

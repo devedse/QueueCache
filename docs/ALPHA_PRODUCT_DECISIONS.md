@@ -95,6 +95,14 @@ the wrong disk; they are not product activation restrictions.
 
 ## Current priorities and deferred work
 
+**Fast mode is the product focus (owner decision, 2026-09-27).** Performance work
+optimizes Fast mode only. Strict mode stays correct and supported, but is not a
+performance target: a change that helps Fast mode is acceptable even if Strict
+gains nothing. Also decided on 2026-09-27: the cache budget stays reserved once
+applied (no shrinking under memory pressure); sleep/resume, hibernate, offline
+recovery and disk hot-unplug testing are postponed in favour of normal-use
+correctness and speed.
+
 Planning revision 5 and the [implementation review](IMPLEMENTATION_REVIEW_20260924.md)
 set the immediate order. A successful normal app save/open is valuable evidence;
 it does not establish RAM admission or complete C: lifecycle support. All paging-
@@ -102,8 +110,8 @@ marked traffic currently avoids new admission/retention, including some ordinary
 application data. Finish that product contract through T085 after progress is
 sound; do not redefine the intended benefit around a convenient test workload.
 
-- Defer TRIM investigation and range-aware TRIM optimization for now. Do not
-  remove conservative correctness handling or imply that TRIM was validated.
+- Range-aware TRIM is being implemented (2026-09-27); VM validation waits for a
+  TRIM-capable (discard-enabled) test disk. Do not imply TRIM was validated.
 - A02 fixed runner restoration ordering and located most observed drain time in
   lower-I/O waits. This is not proof that hardware is the unavoidable limit.
   A06a/T050 compares request shape and existing concurrency before selecting a
