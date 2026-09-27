@@ -271,7 +271,10 @@ struct QC_CACHE
 {
     PDEVICE_OBJECT Lower;
     PIO_WORKITEM LowerCallItem; // Null: forward inline (allocation failed at attach).
-    KMUTEX Mutex;
+    // "Mutex" in comments: exclusive push lock, never taken recursively or held across
+    // a wait or I/O. A KMUTEX handed ownership to the next waiter, which convoyed
+    // parallel readers behind thread wake-ups (9.7 s of waits for 0.7 s held).
+    EX_PUSH_LOCK Mutex;
     KSPIN_LOCK SnapshotLock;
     PKSPIN_LOCK RoutingLock; // QueueLock: makes usage reservation and Enable atomic.
     QC_STATE State, Snapshot;

@@ -45,7 +45,8 @@ static ULONGLONG Tick()
 static void AcquireCache(QC_CACHE* c)
 {
     const auto start = c->Timing ? Tick() : 0;
-    KeWaitForSingleObject(&c->Mutex, Executive, KernelMode, FALSE, nullptr);
+    KeEnterCriticalRegion();
+    ExAcquirePushLockExclusiveEx(&c->Mutex, EX_DEFAULT_PUSH_LOCK_FLAGS);
     c->LockStarted = c->Timing ? Tick() : 0;
     if (start && c->LockStarted)
     {
@@ -63,7 +64,8 @@ static void ReleaseCache(QC_CACHE* c)
         c->Performance.LockHoldTicks += held;
         c->Performance.MaxLockHoldTicks = max(c->Performance.MaxLockHoldTicks, held);
     }
-    KeReleaseMutex(&c->Mutex, FALSE);
+    ExReleasePushLockExclusiveEx(&c->Mutex, EX_DEFAULT_PUSH_LOCK_FLAGS);
+    KeLeaveCriticalRegion();
 }
 static void WakeDrainers(QC_CACHE* c)
 {
@@ -1069,7 +1071,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
         ObDereferenceObject(current);
         current = next;
     }
-    KeInitializeMutex(&c->Mutex, 0);
+    ExInitializePushLock(&c->Mutex);
     KeInitializeSpinLock(&c->SnapshotLock);
     KeInitializeEvent(&c->Wake, NotificationEvent, FALSE);
     KeInitializeEvent(&c->Changed, NotificationEvent, FALSE);
