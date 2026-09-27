@@ -79,9 +79,9 @@ then Driver Verifier, because it can invalidate paths we consider finished.
      0.4.131.1): transient failures retry, exhaustion faults after a bound,
      both covered by `ordering-faults` under Driver Verifier. Request MDL
      mapping failure remains.
-   - Races between Release/Remove and I/O. In progress (plan 51):
-     `ordering-faults/release-under-load`. Physical removal needs a hypervisor
-     hot-unplug.
+   - Races between Release/Remove and I/O. Release DONE (plan 52):
+     `ordering-faults/release-under-load` passes under Driver Verifier.
+     Physical removal needs a hypervisor hot-unplug.
    - Done when: each is a maintained `qcache developer verify` case that passes.
 5. **Offline recovery and Retry UI (A10, T054).**
    - Real Safe Mode/offline recovery of a machine whose cache cannot start.
