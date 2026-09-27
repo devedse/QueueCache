@@ -105,6 +105,8 @@ struct QC_DIAGNOSTICS
     ULONGLONG PagingAdmittedWrites, PagingAdmittedBytes, PagingDirectWrites;
     ULONGLONG PagingFileRequests, PagingNoFileObject, PagingHighIrql, PagingReferenceMisses;
     ULONGLONG ForceDirectRanges, ReferenceRanges;
+    // V11: lower IRP builds that failed and were retried before submission.
+    ULONGLONG LowerAllocationRetries;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -115,7 +117,9 @@ static constexpr ULONG QcDiagnosticsV6Size = 528;
 static constexpr ULONG QcDiagnosticsV7Size = 584;
 static constexpr ULONG QcDiagnosticsV8Size = 672;
 static constexpr ULONG QcDiagnosticsV9Size = 736;
-static_assert(sizeof(QC_DIAGNOSTICS) == 808);
+static constexpr ULONG QcDiagnosticsV10Size = 808;
+static_assert(sizeof(QC_DIAGNOSTICS) == 816);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerAllocationRetries) == QcDiagnosticsV10Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingAdmittedWrites) == QcDiagnosticsV9Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LabGateState) == QcDiagnosticsV8Size);
 // LabGateState: 0 disarmed, 1 armed, 2 holding a submitted overlapping drain, 3 released.
@@ -127,6 +131,11 @@ enum : ULONG
     QcLabGateReleased
 };
 static constexpr ULONG QcLabGateMaxHoldMs = 5000, QcLabGateMaxBytes = 1024 * 1024;
+// About 5 s of consecutive failed lower IRP builds before a drain/flush faults the cache.
+static constexpr ULONG QcLowerAllocationAttempts = 250, QcLowerAllocationBackoffMs = 20;
+// Lab fault 8 simulates this many failed builds on one drain batch; 9 fails every build until cleared.
+static constexpr ULONG QcLabAllocationFailures = 3;
+static_assert(QcLabAllocationFailures < QcLowerAllocationAttempts);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOffloadedReads) == QcDiagnosticsV7Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerReadAttempts) == QcDiagnosticsV1Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LastReason) == 176);
@@ -290,6 +299,7 @@ struct QC_CACHE
     volatile LONG64 PagingOffloadedReads, PagingOffloadCompletions, PagingOffloadFailures;
     volatile LONG64 PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
     volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
+    volatile LONG64 LowerAllocationRetries;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only PagingThread executes.

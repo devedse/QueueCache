@@ -17,7 +17,18 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 47)
+## Suites (plan version 48)
+
+Plan 48 (T053) adds two `ordering-faults` stages for lower IRP allocation failure,
+using new driver lab faults (Diagnostics V11 `LowerAllocationRetries`):
+
+- `drain-allocation-retry`: lab fault 8 fails three lower IRP builds on one drain
+  batch. The flush must succeed with at least three recorded retries and no fault;
+  the owned 1 MiB must match after release.
+- `drain-allocation-exhaustion-faults`: lab fault 9 fails every build until
+  cleared. After about 5 s (250 attempts) the flush must fail with
+  `STATUS_INSUFFICIENT_RESOURCES`, the cache must fault with the owned version
+  still dirty, and Retry must drain it to matching bytes.
 
 Plan 47 adds the guarded operator suite `system-app-session` (T080/T086). It needs
 a person at the VM desktop; the runner never drives Paint or Photos itself.

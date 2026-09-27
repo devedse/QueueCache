@@ -8,6 +8,8 @@ namespace QueueCache.Operations;
 /// <summary>
 /// T083 failure/cancellation orders on a validated disposable non-OS volume: a failed old drain while a
 /// newer paging write waits, a short last sparse segment, and cancellation of a capacity-blocked write.
+/// T053 lower-IRP allocation failure: a transient failure retries without faulting; exhaustion faults
+/// with the dirty version retained.
 /// Each stage restores a healthy cache (Retry) itself; faults are driver lab hooks, never raw disk writes.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -18,6 +20,43 @@ public static class OrderingFaultScenarios
     private const int Offset = 4 * MiB;
     private const int BlockBytes = 4096;
     private const ulong GateFail = 1, GateShort = 2;
+    // Driver lab faults and limits (writecache.h): 8 fails three IRP builds on one drain batch,
+    // 9 fails every build until cleared; a drain faults after 250 consecutive failed builds.
+    private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9;
+    private const ulong SimulatedAllocationFailures = 3, AllocationAttempts = 250;
+    private const uint InsufficientResources = 0xC000009A;
+
+    /// <summary>A transient lower-IRP allocation failure must be retried: the flush succeeds, the cache stays healthy.</summary>
+    internal static string VerifyAllocationRetry(ulong? before, ulong? after, bool flushSucceeded, int lastError)
+    {
+        if (before is null || after is null)
+            throw new NotSupportedException("Allocation retry evidence requires Diagnostics V11.");
+        var retries = after.Value - before.Value;
+        if (retries < SimulatedAllocationFailures)
+            throw new IOException($"Only {retries} lower IRP build retries were recorded; the simulated failure was not exercised.");
+        if (!flushSucceeded || lastError != 0)
+            throw new IOException($"A transient allocation failure failed the flush or faulted the cache (0x{lastError:X8}).");
+        return $"{retries} failed lower IRP build(s) were retried before submission; the flush barrier " +
+            "succeeded and the cache stayed healthy.";
+    }
+
+    /// <summary>A lasting allocation failure must fault the cache with the dirty version retained, not hang.</summary>
+    internal static string VerifyAllocationExhaustion(ulong? before, ulong? after, bool flushFailed, int lastError,
+        ulong dirtyBytes, ulong ownedBytes, double seconds)
+    {
+        if (before is null || after is null)
+            throw new NotSupportedException("Allocation exhaustion evidence requires Diagnostics V11.");
+        var retries = after.Value - before.Value;
+        if (retries < AllocationAttempts - 1)
+            throw new IOException($"Only {retries} lower IRP build retries before the fault; the bound was not reached.");
+        if (!flushFailed || unchecked((uint)lastError) != InsufficientResources)
+            throw new IOException($"Exhausted allocation did not fail the flush with STATUS_INSUFFICIENT_RESOURCES " +
+                $"(flush failed {flushFailed}, last error 0x{lastError:X8}).");
+        if (dirtyBytes < ownedBytes)
+            throw new IOException($"Expected the {ownedBytes}-byte owned version to stay dirty, found {dirtyBytes}.");
+        return $"After {retries} retried IRP builds ({seconds:F1} s) the flush failed and the cache faulted with " +
+            $"STATUS_INSUFFICIENT_RESOURCES; {dirtyBytes} dirty bytes (including the owned {ownedBytes}) were retained.";
+    }
 
     /// <summary>A failed old drain must stop the newer overlapping paging write before submission.</summary>
     internal static string VerifyFailedOldDrain(CacheLabGate? gate, bool directFailed, bool faulted, ulong dirtyBytes)
@@ -71,7 +110,9 @@ public static class OrderingFaultScenarios
         [
             RunFailedOldDrain(target, device, workDirectory),
             RunShortSparse(target, device, workDirectory),
-            RunCancelledBlockedWrite(target, device, workDirectory)
+            RunCancelledBlockedWrite(target, device, workDirectory),
+            RunAllocationRetry(target, device, workDirectory),
+            RunAllocationExhaustion(target, device, workDirectory)
         ];
     }
 
@@ -315,5 +356,93 @@ public static class OrderingFaultScenarios
         return new(label, "PASS", detail + $"the capacity-blocked write {cancelledBlock} was cancelled " +
             "(ERROR_OPERATION_ABORTED), was not admitted (its range and all later blocks kept the baseline after release), " +
             "and the cache stayed healthy.");
+    }
+
+    private static (string Path, byte[] Data) WriteDeferred(DiskTarget target, CacheDevice device, string workDirectory,
+        string name, int seed, string label)
+    {
+        var path = CreateOwned(workDirectory, name);
+        ApplyEager(target, 64, DrainAlgorithm.Deferred);
+        var data = new byte[MiB];
+        new Random(seed).NextBytes(data);
+        using (var file = new AlignedFile(path, MiB, create: false))
+            file.Write(Offset, data);
+        var admitted = device.GetWriteCacheState();
+        if (admitted.DirtyBytes < MiB)
+            throw new IOException($"{label}: the owned 1 MiB was not held dirty ({admitted.DirtyBytes} dirty bytes).");
+        return (path, data);
+    }
+
+    private static CheckResult RunAllocationRetry(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const string label = "ordering-faults/drain-allocation-retry";
+        var (path, data) = WriteDeferred(target, device, workDirectory, "allocation-retry.bin", 104917, label);
+        var before = device.GetDiagnostics().LowerAllocationRetries;
+        var flushSucceeded = true;
+        device.Control(WriteCacheAction.LabFault, value: FaultTransientAllocation);
+        try
+        {
+            device.Control(WriteCacheAction.Flush);
+        }
+        catch (Win32Exception)
+        {
+            flushSucceeded = false;
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabFault, value: 0);
+        }
+        var state = device.GetWriteCacheState();
+        string evidence;
+        try
+        {
+            evidence = VerifyAllocationRetry(before, device.GetDiagnostics().LowerAllocationRetries, flushSucceeded,
+                state.LastError);
+        }
+        finally
+        {
+            Recover(device, label);
+        }
+        var actual = new byte[MiB];
+        ReleaseAndRead(device, path, Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(data))
+            throw new IOException($"{label}: the owned 1 MiB did not match after release.");
+        return new(label, "PASS", evidence + " The owned 1 MiB matched after release.");
+    }
+
+    private static CheckResult RunAllocationExhaustion(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const string label = "ordering-faults/drain-allocation-exhaustion-faults";
+        var (path, data) = WriteDeferred(target, device, workDirectory, "allocation-exhaustion.bin", 104933, label);
+        var before = device.GetDiagnostics().LowerAllocationRetries;
+        var flushFailed = false;
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        string evidence;
+        device.Control(WriteCacheAction.LabFault, value: FaultExhaustedAllocation);
+        try
+        {
+            try
+            {
+                device.Control(WriteCacheAction.Flush);
+            }
+            catch (Win32Exception)
+            {
+                flushFailed = true;
+            }
+            timer.Stop();
+            var state = device.GetWriteCacheState();
+            evidence = VerifyAllocationExhaustion(before, device.GetDiagnostics().LowerAllocationRetries, flushFailed,
+                state.LastError, state.DirtyBytes, MiB, timer.Elapsed.TotalSeconds);
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabFault, value: 0);
+            Recover(device, label);
+        }
+        var actual = new byte[MiB];
+        ReleaseAndRead(device, path, Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(data))
+            throw new IOException($"{label}: after Retry the owned 1 MiB did not match after release.");
+        return new(label, "PASS", evidence + " Retry drained it and the owned 1 MiB matched after release.");
     }
 }

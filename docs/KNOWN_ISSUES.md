@@ -198,6 +198,10 @@ newly retained. The following remain incomplete:
 - multi-disk memory pressure and starvation;
 - all fault-injection points across every parallelism/retention combination.
 
+Since plan 48 a lower IRP that cannot be allocated for a drain or barrier flush is
+retried for about 5 s before it faults the cache; earlier builds faulted on the
+first failure, so brief memory pressure could leave a cache faulted until Retry.
+
 These are verification gaps, not permission to relax capacity backpressure,
 ordering, failure propagation or explicit durability.
 

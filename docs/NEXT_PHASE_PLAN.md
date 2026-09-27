@@ -72,7 +72,9 @@ then Driver Verifier, because it can invalidate paths we consider finished.
 4. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
    - Cancel an in-flight paging request.
    - Inject a fault on a direct paging write.
-   - Allocation failure under memory pressure.
+   - Allocation failure under memory pressure. In progress (plan 48): a failed
+     lower IRP build no longer faults the cache at once; `ordering-faults`
+     covers the transient retry and the bounded exhaustion fault.
    - Races between Release/Remove and I/O.
    - Done when: each is a maintained `qcache developer verify` case that passes.
 5. **Offline recovery and Retry UI (A10, T054).**

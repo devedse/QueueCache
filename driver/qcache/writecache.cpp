@@ -147,6 +147,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     KeAcquireSpinLock(&c->SnapshotLock, &irql);
     *output = c->DiagnosticsSnapshot;
     output->LowerGeneratedWrites = InterlockedCompareExchange64(&c->LowerGeneratedWrites, 0, 0);
+    output->LowerAllocationRetries = InterlockedCompareExchange64(&c->LowerAllocationRetries, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -422,15 +423,29 @@ static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IO_STATUS_BLOCK iosb = {}; // Lives until the entire lower completion is observed.
-    auto irp = IoBuildSynchronousFsdRequest(major,
-                                            c->Lower,
-                                            slot ? slot->Buffer : nullptr,
-                                            slot ? slot->Length : 0,
-                                            slot ? &slot->Offset : nullptr,
-                                            &completed,
-                                            &iosb);
-    if (!irp)
-        return STATUS_INSUFFICIENT_RESOURCES;
+    // A failed IRP build is transient memory pressure and nothing reached the disk,
+    // so retry briefly instead of faulting the cache; a lasting shortage still faults.
+    PIRP irp = nullptr;
+    for (ULONG attempt = 0;; ++attempt)
+    {
+        const bool simulated = (inject == 8 && attempt < QcLabAllocationFailures) || c->InjectFault == 9;
+        if (!simulated)
+            irp = IoBuildSynchronousFsdRequest(major,
+                                               c->Lower,
+                                               slot ? slot->Buffer : nullptr,
+                                               slot ? slot->Length : 0,
+                                               slot ? &slot->Offset : nullptr,
+                                               &completed,
+                                               &iosb);
+        if (irp)
+            break;
+        if (attempt + 1 >= QcLowerAllocationAttempts)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        InterlockedIncrement64(&c->LowerAllocationRetries);
+        LARGE_INTEGER interval;
+        interval.QuadPart = -10000LL * QcLowerAllocationBackoffMs;
+        KeDelayExecutionThread(KernelMode, FALSE, &interval);
+    }
     if (major == IRP_MJ_WRITE)
         irp->Flags |= IRP_WRITE_OPERATION | IRP_NOCACHE;
     if (inject == 4 || inject == 5)
@@ -878,7 +893,8 @@ static void Drainer(PVOID context)
             InterlockedIncrement64(&c->LabGateHits);
         }
         auto delay = c->DelayMs;
-        auto inject = c->InjectFault == 1 || c->InjectFault == 2 || c->InjectFault == 4 || c->InjectFault == 5
+        auto inject = c->InjectFault == 1 || c->InjectFault == 2 || c->InjectFault == 4 || c->InjectFault == 5 ||
+                              c->InjectFault == 8
                           ? c->InjectFault
                           : 0;
         if (inject)
@@ -1423,7 +1439,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             c->DelayMs = static_cast<ULONG>(command.Value);
         break;
     case QcLabFault:
-        if (command.Value > 7)
+        if (command.Value > 9)
             status = STATUS_INVALID_PARAMETER;
         else
             c->InjectFault = static_cast<ULONG>(command.Value);

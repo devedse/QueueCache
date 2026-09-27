@@ -307,6 +307,18 @@ Check(CacheDiagnostics.Decode(admissionBytes).PagingAdmission == new CachePaging
     CacheDiagnostics.Decode(admissionBytes).LabGate == labGate.LabGate, "V10 paging admission offsets and V9 prefix");
 BinaryPrimitives.WriteUInt64LittleEndian(admissionBytes.AsSpan(CacheDiagnostics.LabGateWireSize + 64), 257);
 Reject(() => CacheDiagnostics.Decode(admissionBytes), "range set larger than the driver table");
+BinaryPrimitives.WriteUInt64LittleEndian(admissionBytes.AsSpan(CacheDiagnostics.LabGateWireSize + 64), 5);
+Check(CacheDiagnostics.Decode(admissionBytes).LowerAllocationRetries is null, "V10 allocation retries are unavailable, not zero");
+var retryBytes = new byte[CacheDiagnostics.AllocationRetryWireSize];
+admissionBytes.CopyTo(retryBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(retryBytes, 11);
+BinaryPrimitives.WriteUInt32LittleEndian(retryBytes.AsSpan(4), CacheDiagnostics.AllocationRetryWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(retryBytes.AsSpan(CacheDiagnostics.PagingAdmissionWireSize), 3);
+var retries = CacheDiagnostics.Decode(retryBytes);
+Check(retries.LowerAllocationRetries == 3 &&
+    retries.PagingAdmission == new CachePagingAdmission(31, 32, 33, 34, 35, 36, 0, 2, 5), "V11 allocation retries and V10 prefix");
+BinaryPrimitives.WriteUInt32LittleEndian(retryBytes, 10);
+Reject(() => CacheDiagnostics.Decode(retryBytes), "V10 cannot claim V11 length");
 var normalized = SpecialRangeMap.Normalize([new DiskRange(8192 + 100, 50), new DiskRange(4096, 4096), new DiskRange(1 << 20, 1)]);
 Check(normalized.SequenceEqual([new DiskRange(4096, 8192), new DiskRange(1 << 20, 4096)]),
     "special ranges round outward to cache blocks and merge adjacent ranges");

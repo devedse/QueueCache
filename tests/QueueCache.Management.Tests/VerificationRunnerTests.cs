@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 47, "operator application session suite");
+        Check(VerificationPlan.Version == 48, "ordering-faults adds lower IRP allocation retry and exhaustion");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -159,6 +159,46 @@ internal static class VerificationRunnerTests
             {
                 QueueCache.Operations.OrderingFaultScenarios.VerifyShortSparse(shortGate, flushFailed, faulted, dirty, 2048);
                 throw new Exception("Unsafe short sparse completion accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationRetry(10, 13, true, 0)
+            .Contains("3 failed lower IRP build(s) were retried"), "transient IRP allocation failure is retried without a fault");
+        foreach (var (before, after, flushOk, error) in new (ulong?, ulong?, bool, int)[]
+        {
+            (10, 11, true, 0),                              // simulated failures not exercised
+            (10, 13, false, 0),                             // flush failed
+            (10, 13, true, unchecked((int)0xC000009A)),     // cache faulted
+        })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationRetry(before, after, flushOk, error);
+                throw new Exception("A failed transient allocation retry was accepted.");
+            }
+            catch (IOException) { }
+        }
+        try
+        {
+            QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationRetry(null, 3, true, 0);
+            throw new Exception("Missing V11 diagnostics produced a verdict.");
+        }
+        catch (NotSupportedException) { }
+        const int insufficient = unchecked((int)0xC000009A);
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationExhaustion(0, 249, true, insufficient, 1 << 20, 1 << 20, 5.1)
+            .Contains("STATUS_INSUFFICIENT_RESOURCES"), "exhausted IRP allocation faults with the dirty version retained");
+        foreach (var (after, flushFailed, error, dirty) in new (ulong?, bool, int, ulong)[]
+        {
+            (100, true, insufficient, 1UL << 20),           // bound not reached
+            (249, false, insufficient, 1UL << 20),          // false success
+            (249, true, unchecked((int)0xC0000185), 1UL << 20), // wrong error
+            (249, true, insufficient, 4096UL),              // owned version lost
+        })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationExhaustion(0, after, flushFailed, error, dirty, 1 << 20, 5.1);
+                throw new Exception("Unsafe allocation exhaustion accepted.");
             }
             catch (IOException) { }
         }
