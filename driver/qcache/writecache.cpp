@@ -157,6 +157,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->CallerPathWrites = InterlockedCompareExchange64(&c->CallerPathWrites, 0, 0);
     output->CallerPathDeclined = InterlockedCompareExchange64(&c->CallerPathDeclined, 0, 0);
     output->CopyOffloadReads = InterlockedCompareExchange64(&c->CopyOffloadReads, 0, 0);
+    output->CopyOffloadWrites = InterlockedCompareExchange64(&c->CopyOffloadWrites, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -719,13 +720,14 @@ static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
             return index;
     return NoSlot;
 }
-static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end)
+// writesOnly: only offloaded write copies (whose blocks are still Filling).
+static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool writesOnly = false)
 {
     bool overlap = false;
     KIRQL irql;
     KeAcquireSpinLock(&c->PagingLock, &irql);
     for (const auto& read : c->PagingReads)
-        if (read.Irp && read.Start < end && read.End > first)
+        if (read.Irp && (!writesOnly || read.Write) && read.Start < end && read.End > first)
         {
             overlap = true;
             break;
@@ -739,17 +741,18 @@ static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end)
 // the blocked range, so the overlapping set only shrinks. A full wait (no range)
 // never services, so it cannot be extended indefinitely by new offloads.
 static void WaitForPagingReads(QC_CACHE* c, LONGLONG first, LONGLONG end, PIRP blockedWrite,
-                               volatile LONG64* counter)
+                               volatile LONG64* counter, bool writesOnly = false)
 {
     bool counted = false;
     for (;;)
     {
         KeClearEvent(&c->PagingDone);
-        if (!PagingReadsOverlap(c, first, end))
+        if (!PagingReadsOverlap(c, first, end, writesOnly))
             return;
         if (!counted)
         {
-            InterlockedIncrement64(counter);
+            if (counter)
+                InterlockedIncrement64(counter);
             counted = true;
         }
         if (blockedWrite && c->ServiceReads && c->ServiceReads(c->ServiceContext, blockedWrite))
@@ -1643,6 +1646,10 @@ static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG l
 }
 // Returned by a caller-thread attempt before it changes anything.
 static constexpr NTSTATUS QcCallerPathDeclined = STATUS_RETRY;
+// Returned by Write when an offloaded-request thread now owns the IRP (payload copy).
+static constexpr NTSTATUS QcWriteTransferred = STATUS_PENDING;
+static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length, const ULONG* slots,
+                            bool writeThrough, bool pagingIo);
 // callerPath: QcCacheTryCallerPath. Anything that would wait, forward to the
 // disk or take a barrier returns QcCallerPathDeclined before any change.
 static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
@@ -1869,6 +1876,44 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         if (blocks == 1)
             admittedSlot = index;
     }
+    // A large write's copy can run on an offloaded-request thread, in parallel with
+    // other copies. Its entry keeps the range owned until FinishWrite: overlapping
+    // writes and reads wait for it (their Filling blocks are not readable) and
+    // controls wait for every entry, exactly as for offloaded reads.
+    if (!callerPath && !pagingIo && length >= QcCopyOffloadMinBytes && blocks <= QcPagingPinBlocks &&
+        c->ReadThreads[0].Thread && c->CompleteRequest)
+    {
+        KIRQL irql;
+        KeAcquireSpinLock(&c->PagingLock, &irql);
+        QC_PAGING_READ* entry = nullptr;
+        if (!c->PagingStop)
+            for (auto& candidate : c->PagingReads)
+                if (!candidate.Irp)
+                {
+                    entry = &candidate;
+                    break;
+                }
+        if (entry)
+        {
+            entry->Irp = irp;
+            entry->Start = offset.QuadPart;
+            entry->End = end;
+            entry->Sequence = ++c->PagingSequence;
+            entry->Started = FALSE;
+            entry->Write = TRUE;
+            entry->WriteThrough = writeThrough;
+            entry->Source = source;
+            RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
+        }
+        KeReleaseSpinLock(&c->PagingLock, irql);
+        if (entry)
+        {
+            ReleaseCache(c);
+            InterlockedIncrement64(&c->CopyOffloadWrites);
+            KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+            return QcWriteTransferred; // The thread owns irp; do not touch it again.
+        }
+    }
     // No other foreground request runs during publication. Filling prevents
     // drain selection; bounded pointer batches allow payload copies unlocked.
     for (auto block = firstBlock; block < end;)
@@ -1889,10 +1934,21 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         AcquireCache(c);
         block += count * Chunk;
     }
+    return FinishWrite(c, irp, offset.QuadPart, length, admittedSlot != NoSlot ? &admittedSlot : nullptr,
+                       writeThrough, pagingIo);
+}
+// Publishes a copied write: its sectors become valid and its blocks stop Filling.
+// slots: one index per block, or null to look up the (newest, Filling) versions.
+// Caller holds Mutex; it is released on return.
+static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length, const ULONG* slots,
+                            bool writeThrough, bool pagingIo)
+{
+    const auto firstBlock = offset / Chunk * Chunk;
+    const auto end = offset + length;
     for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto slot = &c->Slots[admittedSlot != NoSlot ? admittedSlot : FindSlot(c, block)];
-        const auto from = max(block, offset.QuadPart);
+        auto slot = &c->Slots[slots ? slots[(block - firstBlock) / Chunk] : FindSlot(c, block)];
+        const auto from = max(block, offset);
         const auto to = min(block + Chunk, end);
         const auto added = QcSectorMask(static_cast<ULONG>(from - block), static_cast<ULONG>(to - from));
         c->State.DirtyBytes += QcValidBytes(added & ~slot->ValidSectors);
@@ -2218,8 +2274,9 @@ bool QcCacheTryPagingReadProgress(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, N
         (c->SectorBytes && (offset % c->SectorBytes || length % c->SectorBytes)))
         return false;
     AcquireCache(c);
-    const bool overlapsActiveWrite = c->RangeDrain &&
-        offset < c->RangeEnd && offset + length > c->RangeStart;
+    const bool overlapsActiveWrite = (c->RangeDrain &&
+        offset < c->RangeEnd && offset + length > c->RangeStart) ||
+        PagingReadsOverlap(c, offset, offset + length, true); // Filling blocks of a write copy.
     ReleaseCache(c);
     if (overlapsActiveWrite)
         return false;
@@ -2277,7 +2334,7 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     const bool refused = c->OffloadBlocked || c->Stop || c->Gone || !c->Enabled ||
         (c->RangeDrain && start < c->RangeEnd && end > c->RangeStart) ||
         (c->ActiveWrite && start < c->ActiveWriteEnd && end > c->ActiveWriteStart) ||
-        FullyResident(c, start, end) == pagingIo;
+        FullyResident(c, start, end) == pagingIo || PagingReadsOverlap(c, start, end, true);
     ReleaseCache(c);
     if (refused)
         return false;
@@ -2298,6 +2355,8 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         entry->End = end;
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
+        entry->Write = entry->WriteThrough = FALSE;
+        entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
     KeReleaseSpinLock(&c->PagingLock, irql);
@@ -2313,6 +2372,31 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         InterlockedIncrement64(&c->CopyOffloadReads);
     KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
     return true;
+}
+// Payload copy of a write admitted by the request worker (Write). Its blocks are
+// the newest, Filling versions: nothing can replace them while the entry exists.
+static NTSTATUS CopyOffloadedWrite(QC_CACHE* c, const QC_PAGING_READ* entry, ULONG* slots)
+{
+    const auto offset = entry->Start;
+    const auto end = entry->End;
+    const auto firstBlock = offset / Chunk * Chunk;
+    AcquireCache(c);
+    for (auto block = firstBlock; block < end; block += Chunk)
+        slots[(block - firstBlock) / Chunk] = FindSlot(c, block);
+    ReleaseCache(c);
+    for (auto block = firstBlock; block < end; block += Chunk)
+    {
+        const auto from = max(block, offset);
+        const auto to = min(block + Chunk, end);
+        RtlCopyMemory(c->Slots[slots[(block - firstBlock) / Chunk]].Buffer + (from - block),
+                      entry->Source + (from - offset), static_cast<SIZE_T>(to - from));
+    }
+    AcquireCache(c);
+    auto status = FinishWrite(c, entry->Irp, offset, static_cast<ULONG>(end - offset), slots,
+                              entry->WriteThrough != FALSE, false);
+    // Barriers and direct paging writes wait on Changed for Filling blocks.
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    return status;
 }
 // QcReadThreads per disk. Each executes the oldest waiting offloaded read; reads
 // never order against each other, only against the writes and controls that wait
@@ -2353,7 +2437,8 @@ static void PagingReader(PVOID context)
         }
         auto irp = next->Irp;
         const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
-        auto status = Read(c, irp, false, false, reader->Pins);
+        auto status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
+                                  : Read(c, irp, false, false, reader->Pins);
         if (pagingIo)
         {
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
@@ -2771,6 +2856,13 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
             *transferred = true;
             return STATUS_PENDING;
         }
+        // An older write whose copy is still offloaded owns Filling blocks in this
+        // range; this read must return its data, so wait until it is published.
+        const auto first = stack->Parameters.Read.ByteOffset.QuadPart;
+        const auto length = stack->Parameters.Read.Length;
+        if (first >= 0 && length)
+            WaitForPagingReads(c, first, first > MAXLONGLONG - static_cast<LONGLONG>(length) ? MAXLONGLONG : first + length,
+                               nullptr, nullptr, true);
         return Process(c, irp, deviceBytes);
     }
     if (major == IRP_MJ_WRITE)
@@ -2790,6 +2882,8 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         AcquireCache(c);
         c->ActiveWrite = FALSE;
         ReleaseCache(c);
+        // Write offloaded its payload copy: the thread completes irp.
+        *transferred = status == QcWriteTransferred;
         return status;
     }
     const bool control = major == IRP_MJ_DEVICE_CONTROL || major == IRP_MJ_INTERNAL_DEVICE_CONTROL;

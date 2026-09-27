@@ -352,6 +352,14 @@ BinaryPrimitives.WriteUInt32LittleEndian(copyBytes.AsSpan(4), CacheDiagnostics.C
 BinaryPrimitives.WriteUInt64LittleEndian(copyBytes.AsSpan(CacheDiagnostics.CallerPathWireSize), 21);
 var copies = CacheDiagnostics.Decode(copyBytes);
 Check(copies.CopyOffloadReads == 21 && copies.CallerPath == new CacheCallerPath(11, 12, 13), "V15 copy offloads and V14 prefix");
+Check(copies.CopyOffloadWrites is null, "V15 write copy offloads are unavailable, not zero");
+var writeCopyBytes = new byte[CacheDiagnostics.WriteOffloadWireSize];
+copyBytes.CopyTo(writeCopyBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(writeCopyBytes, 16);
+BinaryPrimitives.WriteUInt32LittleEndian(writeCopyBytes.AsSpan(4), CacheDiagnostics.WriteOffloadWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(writeCopyBytes.AsSpan(CacheDiagnostics.CopyOffloadWireSize), 22);
+var writeCopies = CacheDiagnostics.Decode(writeCopyBytes);
+Check(writeCopies.CopyOffloadWrites == 22 && writeCopies.CopyOffloadReads == 21, "V16 write copy offloads and V15 prefix");
 var between = new byte[CacheDiagnostics.ReadFillWireSize + 8];
 fillBytes.CopyTo(between, 0);
 BinaryPrimitives.WriteUInt32LittleEndian(between.AsSpan(4), (uint)between.Length);

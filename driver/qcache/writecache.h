@@ -116,6 +116,8 @@ struct QC_DIAGNOSTICS
     ULONGLONG CallerPathReads, CallerPathWrites, CallerPathDeclined;
     // V15: large RAM-hit reads handed to the offloaded-read threads for a parallel copy.
     ULONGLONG CopyOffloadReads;
+    // V16: large fitting writes whose payload copy was handed to those threads.
+    ULONGLONG CopyOffloadWrites;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -131,7 +133,9 @@ static constexpr ULONG QcDiagnosticsV11Size = 816;
 static constexpr ULONG QcDiagnosticsV12Size = 824;
 static constexpr ULONG QcDiagnosticsV13Size = 840;
 static constexpr ULONG QcDiagnosticsV14Size = 864;
-static_assert(sizeof(QC_DIAGNOSTICS) == 872);
+static constexpr ULONG QcDiagnosticsV15Size = 872;
+static_assert(sizeof(QC_DIAGNOSTICS) == 880);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadWrites) == QcDiagnosticsV15Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadReads) == QcDiagnosticsV14Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerPathReads) == QcDiagnosticsV13Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadFills) == QcDiagnosticsV12Size);
@@ -243,12 +247,16 @@ struct QC_CACHE;
 // forwarded, the IRP's Tail/DriverContext belong to the lower stack.
 static constexpr ULONG QcPagingReadSlots = 64;
 static constexpr ULONG QcPagingPinBlocks = 256; // 1 MiB of 4 KiB cache blocks.
+// An offloaded request: a read, or the payload copy of a large write whose
+// blocks the request worker already admitted (and marked Filling).
 struct QC_PAGING_READ
 {
     PIRP Irp; // Null when free.
     LONGLONG Start, End;
     ULONGLONG Sequence;
     BOOLEAN Started;
+    BOOLEAN Write, WriteThrough;
+    PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER
 {
@@ -256,9 +264,9 @@ struct QC_DRAIN_WORKER
     ULONG Number;
     HANDLE Thread;
 };
-// Offloaded-read executors: paging reads that need the disk, and large reads
-// served entirely from RAM (QcCopyOffloadMinBytes) so their copies run in
-// parallel instead of one after another on the request worker.
+// Offloaded-request executors: paging reads that need the disk, and large reads
+// served entirely from RAM and large fitting writes (QcCopyOffloadMinBytes), so
+// their copies run in parallel instead of one after another on the request worker.
 static constexpr ULONG QcReadThreads = 3;
 static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
 struct QC_READ_THREAD
@@ -338,7 +346,7 @@ struct QC_CACHE
     volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
     ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
-    volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads;
+    volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only ReadThreads execute.
