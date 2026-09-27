@@ -17,7 +17,16 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 57)
+## Suites (plan version 58)
+
+Plan 58 adds a caller-thread check to `policies`' `foreground-background` case.
+With Diagnostics V14, at least 90% of its serialized 64 KiB write/read pairs
+(fitting writes and RAM read hits on an otherwise idle disk) must be counted as
+served on the calling thread (`CallerPath.Reads + Writes`); the PASS text reports
+served and declined counts. Every 1024th candidate is deliberately sent to the
+request worker, and other disk activity can only add to the device-wide counts.
+Older drivers report the counters as unavailable and the check is omitted. The
+existing persisted-bytes oracle after Disable still checks every block.
 
 Plan 57 corrects `policies`' 60-second hot-set check. It required zero lower
 reads on the whole device, which background activity (indexing, scanning of the

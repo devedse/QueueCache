@@ -185,7 +185,9 @@ public static class CacheScenarios
         }
 
         var after = device.GetWriteCacheState();
-        var attemptsAfter = device.GetDiagnostics().Attribution!;
+        var diagnosticsAfterWindow = device.GetDiagnostics();
+        var attemptsAfter = diagnosticsAfterWindow.Attribution!;
+        var callerEvidence = VerifyCallerPath(diagnosticsBefore.CallerPath, diagnosticsAfterWindow.CallerPath, (ulong)sequence * 2);
         if (after.AcceptedBytes <= before.AcceptedBytes || after.DrainedBytes <= before.DrainedBytes ||
             attemptsAfter.LowerWriteAttempts <= attemptsAfterAdmission!.LowerWriteAttempts)
             throw new IOException(label + ": foreground or background made no measurable progress");
@@ -231,7 +233,22 @@ public static class CacheScenarios
             $"{after.ReadHitBytes - before.ReadHitBytes} bytes; capacity-wait delta {after.ThrottleWaits - before.ThrottleWaits}; " +
             $"peak dirty {peakDirty}/{before.PayloadCapacity} bytes; lower-write attempts delta " +
             $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}; device-wide lower reads from other " +
-            $"activity {otherLowerReads} with zero evictions. Persisted bytes verified after Disable."));
+            $"activity {otherLowerReads} with zero evictions; {callerEvidence}. Persisted bytes verified after Disable."));
         results.Add(SectorScenarios.AdmissionCheck(label + "/first-fitting-write-zero-lower-io", admissionEvidence));
     }
+    /// <summary>Diagnostics V14: serialized fitting writes and RAM read hits on an otherwise idle
+    /// disk are served on the caller's thread. Every 1024th candidate probes the request worker and
+    /// other disk activity can add requests, so at least 90% of the owned requests must be counted.</summary>
+    internal static string VerifyCallerPath(CacheCallerPath? before, CacheCallerPath? after, ulong ownedRequests)
+    {
+        if (before is null || after is null)
+            return "caller-path counters unavailable (driver older than diagnostics V14)";
+        var served = after.Reads - before.Reads + (after.Writes - before.Writes);
+        var declined = after.Declined - before.Declined;
+        if (served * 10 < ownedRequests * 9)
+            throw new IOException(FormattableString.Invariant(
+                $"foreground-background: only {served} of {ownedRequests} idle-disk requests were served on the caller's thread ({declined} declined)"));
+        return FormattableString.Invariant($"caller-thread requests {served} of {ownedRequests} ({declined} declined)");
+    }
+
 }

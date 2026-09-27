@@ -26,7 +26,17 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 57, "hot-set reads tolerate unrelated device reads only without evictions");
+        Check(VerificationPlan.Version == 58, "foreground-background requires caller-thread service");
+        Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(null, null, 100).Contains("unavailable"),
+            "caller-path check reports an older driver instead of zero");
+        Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(10, 10, 0), new(60, 55, 1), 100).Contains("95 of 100"),
+            "caller-path check accepts probes");
+        try
+        {
+            QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(40, 40, 20), 100);
+            Check(false, "caller-path check rejects worker-only service");
+        }
+        catch (IOException) { }
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
