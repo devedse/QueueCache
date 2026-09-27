@@ -71,8 +71,8 @@ then Driver Verifier, because it can invalidate paths we consider finished.
    - Done when: each transition passes a byte oracle with the cache active.
 4. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
    - Cancel an in-flight paging request.
-   - Inject a fault on a direct paging write. In progress (plan 49): lab fault
-     10 and `ordering-faults/direct-paging-write-failure`.
+   - Inject a fault on a direct paging write. DONE (plan 50): lab fault 10 and
+     `ordering-faults/direct-paging-write-failure` pass under Driver Verifier.
    - Allocation failure under memory pressure. Lower IRP builds DONE (plan 48,
      0.4.131.1): transient failures retry, exhaustion faults after a bound,
      both covered by `ordering-faults` under Driver Verifier. Request MDL
