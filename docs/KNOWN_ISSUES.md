@@ -65,7 +65,7 @@ re-enabling the cache; requests keep flowing to the disk.
 ## Application caching scope (T085)
 
 Paging-marked writes are admitted when their originating file object is not a
-paging file. Remaining limits: read misses are not retained as clean entries, and NTFS metadata/zero-fill
+paging file. Since plan 56 application paging read misses are kept as clean entries too. Remaining limit: NTFS metadata/zero-fill
 write-back is admitted like any other write, so the cache shares drain intervals
 with it.
 
@@ -187,8 +187,9 @@ overwrite/retention cases have passed on the current test VM. Plan 35-37's
 aggregate paging-count exception does not prove zero lower I/O for the owned
 write; T084 replaces that attribution. Since T085, application paging writes
 (file-cache write-back and mapped files) use RAM admission; paging-file and
-unknown-origin requests keep ordered lower I/O. Paging read misses are still not
-newly retained. The following remain incomplete:
+unknown-origin requests keep ordered lower I/O; since plan 55 recognised paging-file
+I/O bypasses the worker entirely. Since plan 56 application paging read misses are
+retained. The following remain incomplete:
 
 - bounded allocation-failure, cancellation and teardown races;
 - oversized and quota-boundary requests under concurrency;

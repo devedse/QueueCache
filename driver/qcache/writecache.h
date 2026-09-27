@@ -109,6 +109,8 @@ struct QC_DIAGNOSTICS
     ULONGLONG LowerAllocationRetries;
     // V12: recognised paging-file requests forwarded from dispatch, bypassing the worker.
     ULONGLONG PagingFileBypasses;
+    // V13: read misses kept as clean cache blocks (all reads / application paging reads).
+    ULONGLONG ReadFills, PagingReadFills;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -121,7 +123,9 @@ static constexpr ULONG QcDiagnosticsV8Size = 672;
 static constexpr ULONG QcDiagnosticsV9Size = 736;
 static constexpr ULONG QcDiagnosticsV10Size = 808;
 static constexpr ULONG QcDiagnosticsV11Size = 816;
-static_assert(sizeof(QC_DIAGNOSTICS) == 824);
+static constexpr ULONG QcDiagnosticsV12Size = 824;
+static_assert(sizeof(QC_DIAGNOSTICS) == 840);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadFills) == QcDiagnosticsV12Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingFileBypasses) == QcDiagnosticsV11Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerAllocationRetries) == QcDiagnosticsV10Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingAdmittedWrites) == QcDiagnosticsV9Size);
@@ -303,7 +307,8 @@ struct QC_CACHE
     volatile LONG64 PagingOffloadedReads, PagingOffloadCompletions, PagingOffloadFailures;
     volatile LONG64 PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
     volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
-    volatile LONG64 LowerAllocationRetries, PagingFileBypasses;
+    volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
+    ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only PagingThread executes.

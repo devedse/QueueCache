@@ -61,6 +61,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int PagingAdmissionWireSize = 808;
     public const int AllocationRetryWireSize = 816;
     public const int PagingBypassWireSize = 824;
+    public const int ReadFillWireSize = 840;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -75,6 +76,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public ulong? LowerAllocationRetries { get; init; }
     /// <summary>V12: recognised paging-file requests forwarded straight to the disk from dispatch.</summary>
     public ulong? PagingFileBypasses { get; init; }
+    /// <summary>V13: read misses kept as clean blocks: all reads, and application paging reads.</summary>
+    public ulong? ReadFills { get; init; }
+    public ulong? PagingReadFills { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -91,6 +95,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingAdmissionWireSize => 10u,
             AllocationRetryWireSize => 11u,
             PagingBypassWireSize => 12u,
+            ReadFillWireSize => 13u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -199,6 +204,12 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
         ulong? pagingBypasses = bytes.Length >= PagingBypassWireSize
             ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[AllocationRetryWireSize..])
             : null;
+        ulong? readFills = null, pagingReadFills = null;
+        if (bytes.Length >= ReadFillWireSize)
+        {
+            readFills = BinaryPrimitives.ReadUInt64LittleEndian(bytes[PagingBypassWireSize..]);
+            pagingReadFills = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingBypassWireSize + 8)..]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -212,7 +223,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             LabGate = labGate,
             PagingAdmission = pagingAdmission,
             LowerAllocationRetries = allocationRetries,
-            PagingFileBypasses = pagingBypasses
+            PagingFileBypasses = pagingBypasses,
+            ReadFills = readFills,
+            PagingReadFills = pagingReadFills
         };
     }
 }

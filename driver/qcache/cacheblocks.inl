@@ -180,6 +180,27 @@ static bool ReadRoom(QC_CACHE* c)
         return false;
     return true;
 }
+// Scan resistance (bimodal insertion): a block read once goes to the eviction end of
+// its clean list, so a one-off large read evicts itself first; a later hit (TouchClean)
+// makes it recent. One fill in 16 stays recent so a large working set still settles.
+static void DemoteReadFill(QC_CACHE* c, ULONG i)
+{
+    if (++c->ReadFillsSinceRecent % 16 == 0)
+        return;
+    auto s = &c->Slots[i];
+    const ULONG pool = s->ReadClass ? 1 : 0;
+    Unlink(c, i);
+    s->QueuePrevious = NoSlot;
+    s->QueueNext = c->CleanHead[pool];
+    if (s->QueueNext != NoSlot)
+        c->Slots[s->QueueNext].QueuePrevious = i;
+    else
+        c->CleanTail[pool] = i;
+    c->CleanHead[pool] = i;
+    ++c->CleanCount[pool];
+    c->CleanValidBytes[pool] += QcValidBytes(s->ValidSectors);
+    s->DirtySince = 0; // Oldest, so the cross-pool eviction choice prefers it too.
+}
 static void TouchClean(QC_CACHE* c, ULONG i)
 {
     auto slot = &c->Slots[i];

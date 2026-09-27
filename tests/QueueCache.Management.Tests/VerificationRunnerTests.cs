@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 55, "paging recognition proves paging-file I/O bypasses the worker");
+        Check(VerificationPlan.Version == 56, "paging-coherence proves mapped read misses are kept");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -256,6 +256,19 @@ internal static class VerificationRunnerTests
             {
                 QueueCache.Operations.OrderingFaultScenarios.VerifyAllocationExhaustion(0, after, flushFailed, error, dirty, 1 << 20, 5.1);
                 throw new Exception("Unsafe allocation exhaustion accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, 2058, 8 << 20, 8 << 20, true).Result == "PASS",
+            "a mapped read miss is kept and a re-read hits RAM");
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(null, null, 0, 8 << 20, true).Result == "SKIP",
+            "older drivers leave read retention unproven");
+        foreach (var (after, hits, match) in new (ulong?, ulong, bool)[] { (100, 8UL << 20, true), (2058, 1UL << 20, true), (2058, 8UL << 20, false) })
+        {
+            try
+            {
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, after, hits, 8 << 20, match);
+                throw new Exception("Missing read retention was accepted.");
             }
             catch (IOException) { }
         }

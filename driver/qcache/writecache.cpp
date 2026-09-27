@@ -149,6 +149,8 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LowerGeneratedWrites = InterlockedCompareExchange64(&c->LowerGeneratedWrites, 0, 0);
     output->LowerAllocationRetries = InterlockedCompareExchange64(&c->LowerAllocationRetries, 0, 0);
     output->PagingFileBypasses = InterlockedCompareExchange64(&c->PagingFileBypasses, 0, 0);
+    output->ReadFills = InterlockedCompareExchange64(&c->ReadFills, 0, 0);
+    output->PagingReadFills = InterlockedCompareExchange64(&c->PagingReadFills, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1877,6 +1879,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     auto length = stack->Parameters.Read.Length;
     auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     auto end = start + length;
+    const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+    // Application paging reads (file-cache and mapped-file misses) are kept like any
+    // read; paging-file and unknown-origin reads never are. Classified before the mutex.
+    const bool retainPaging = pagingIo && !hitOnly && length && ApplicationPaging(c, irp, start, end);
     AcquireCache(c);
     if (c->Gone || irp->Cancel)
     {
@@ -1890,8 +1896,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         irp->IoStatus.Information = 0;
         return STATUS_SUCCESS;
     }
-    const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
-    if (pagingIo && !ResidentRange(c, start, end))
+    const bool resident = !pagingIo || ResidentRange(c, start, end);
+    if (pagingIo && !resident && (!retainPaging || !c->Enabled))
     {
         // No cached version exists to overlay. Avoid RAM retention and mapping.
         // The request worker may service independent reads during this wait;
@@ -1916,6 +1922,9 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         if (irp->Flags & IRP_PAGING_IO)
             InterlockedIncrement64(&c->PagingMapFailures);
         ReleaseCache(c);
+        // Nothing cached to overlay: the uncached read is correct, just not retained.
+        if (pagingIo && !resident)
+            return OriginalIo(c, irp, allowReadService);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     bool full = true;
@@ -2021,7 +2030,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 TouchClean(c, index);
                 continue;
             }
-            if (!pagingIo && block >= start && block + Chunk <= end && ReadRoom(c))
+            if ((!pagingIo || retainPaging) && block >= start && block + Chunk <= end && ReadRoom(c))
             {
                 index = AllocateSlot(c, false, true);
                 auto fill = &c->Slots[index];
@@ -2031,6 +2040,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 c->CleanValidBytes[1] += Chunk; // AllocateSlot linked it with an empty mask.
                 RtlCopyMemory(fill->Buffer, target + (block - start), Chunk);
                 IndexSlot(c, index);
+                DemoteReadFill(c, index);
+                InterlockedIncrement64(pagingIo ? &c->PagingReadFills : &c->ReadFills);
             }
         }
         if (hitOnly)

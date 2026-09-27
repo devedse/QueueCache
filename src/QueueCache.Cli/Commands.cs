@@ -65,7 +65,7 @@ internal static class Commands
         var age = new Option<int>("--max-dirty-age-ms") { DefaultValueFactory = _ => 5000, Description = "Balanced/Idle/Deferred: first-dirty age trigger, 10..3600000 ms (one hour). Not a durability deadline. Deferred ignores watermarks and idle." };
         var idle = new Option<int>("--idle-ms") { DefaultValueFactory = _ => 250, Description = "Idle only: drain after this long without a newly cached write." };
         var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 256, Description = "All algorithms: maximum adjacent-write gather size per lower write." };
-        var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 1, Description = "All algorithms: maximum simultaneous lower writes." };
+        var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 2, Description = "All algorithms: maximum simultaneous lower writes." };
         foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel })
             apply.Options.Add(option);
         apply.SetAction(async (p, token) =>

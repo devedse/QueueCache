@@ -97,7 +97,7 @@ then Driver Verifier, because it can invalidate paths we consider finished.
 6. **Drain tuning (T050).** Use `drain-decision` results to choose batch size and
    parallelism defaults. Remember that NTFS metadata and zero-fill write-back now
    share drain intervals.
-7. **Keep read misses in RAM.** Paging read misses (what apps read from disk) are
+7. **Keep read misses in RAM. Implemented in plan 56 (application paging reads plus scan-resistant insertion); VM proof pending.** Paging read misses (what apps read from disk) are
    not kept yet. Retain them as clean entries so the next read is served from
    RAM.
 8. **Fixed cache reservation (decided 2026-09-27).** The budget stays reserved

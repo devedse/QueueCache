@@ -57,7 +57,7 @@ var alphaDefault = new CacheConfiguration();
 alphaDefault.Validate(true);
 Check(alphaDefault.Preset == CachePreset.Fast && alphaDefault.Enabled && alphaDefault.Options == new CacheOptions(
     Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
-    IdleMs: 250, BatchKiB: 256, Parallelism: 1), "new task uses explicit Fast/Idle alpha defaults");
+    IdleMs: 250, BatchKiB: 256, Parallelism: 2), "new task uses explicit Fast/Idle alpha defaults");
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
     foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
         foreach (var share in new[] { 0, 50, 100 })
@@ -325,6 +325,15 @@ BinaryPrimitives.WriteUInt32LittleEndian(bypassBytes.AsSpan(4), CacheDiagnostics
 BinaryPrimitives.WriteUInt64LittleEndian(bypassBytes.AsSpan(CacheDiagnostics.AllocationRetryWireSize), 42);
 var bypass = CacheDiagnostics.Decode(bypassBytes);
 Check(bypass.PagingFileBypasses == 42 && bypass.LowerAllocationRetries == 3, "V12 paging-file bypasses and V11 prefix");
+Check(bypass.ReadFills is null && bypass.PagingReadFills is null, "V12 read fills are unavailable, not zero");
+var fillBytes = new byte[CacheDiagnostics.ReadFillWireSize];
+bypassBytes.CopyTo(fillBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(fillBytes, 13);
+BinaryPrimitives.WriteUInt32LittleEndian(fillBytes.AsSpan(4), CacheDiagnostics.ReadFillWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(fillBytes.AsSpan(CacheDiagnostics.PagingBypassWireSize), 7);
+BinaryPrimitives.WriteUInt64LittleEndian(fillBytes.AsSpan(CacheDiagnostics.PagingBypassWireSize + 8), 5);
+var fills = CacheDiagnostics.Decode(fillBytes);
+Check(fills.ReadFills == 7 && fills.PagingReadFills == 5 && fills.PagingFileBypasses == 42, "V13 read fills and V12 prefix");
 BinaryPrimitives.WriteUInt32LittleEndian(retryBytes, 10);
 Reject(() => CacheDiagnostics.Decode(retryBytes), "V10 cannot claim V11 length");
 var normalized = SpecialRangeMap.Normalize([new DiskRange(8192 + 100, 50), new DiskRange(4096, 4096), new DiskRange(1 << 20, 1)]);

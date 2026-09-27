@@ -148,6 +148,7 @@ public static class PagingCoherenceScenarios
         var overlapCheck = RunObservedPagingOverlap(target, device, workDirectory);
         var gatedChecks = RunGatedSubmittedOverlap(target, device, workDirectory);
         var blockedPageIn = RunCapacityBlockedPageIn(target, device, workDirectory);
+        var readRetention = RunMappedReadRetention(target, device, workDirectory);
         return
         [
             new("paging-coherence/mapped-after-cache", "PASS", "Mapped read matched the accepted unbuffered write."),
@@ -159,8 +160,80 @@ public static class PagingCoherenceScenarios
                 "These counters are device-wide across all processes; zero overlap does not prove the forced drainer order."),
             overlapCheck,
             .. gatedChecks,
-            blockedPageIn
+            blockedPageIn,
+            readRetention
         ];
+    }
+
+    /// <summary>N2: an application paging read miss must be kept, so a later read is served from RAM.</summary>
+    internal static CheckResult VerifyMappedReadRetention(ulong? fillsBefore, ulong? fillsAfter, ulong hitBytes,
+        long fileBytes, bool bytesMatch)
+    {
+        const string label = "paging-coherence/mapped-read-retained";
+        if (fillsBefore is null || fillsAfter is null)
+            return new(label, "SKIP", "The loaded driver does not keep paging read misses (Diagnostics V13).");
+        if (!bytesMatch)
+            throw new IOException("Bytes read after the mapped read did not match the file.");
+        var blocks = fileBytes / 4096;
+        var filled = fillsAfter.Value - fillsBefore.Value;
+        if (filled < (ulong)(blocks * 9 / 10))
+            throw new IOException($"Only {filled} of {blocks} blocks read through a mapping were kept in RAM.");
+        if (hitBytes < (ulong)(fileBytes * 9 / 10))
+            throw new IOException($"A second (unbuffered) read hit only {hitBytes} of {fileBytes} bytes in RAM.");
+        return new(label, "PASS", $"A mapped read of a {fileBytes >> 20} MiB file kept {filled} of {blocks} blocks " +
+            $"(device-wide paging read fills); an unbuffered re-read hit {hitBytes} bytes in RAM and matched.");
+    }
+
+    private static CheckResult RunMappedReadRetention(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const long fileBytes = 8 * MiB;
+        // Written unbuffered while caching is released: nothing is in RAM, not even Windows' cache.
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        device.Control(WriteCacheAction.Release);
+        var path = Path.Combine(workDirectory, "mapped-read-retention.bin");
+        var expected = new byte[fileBytes];
+        new Random(105071).NextBytes(expected);
+        using (var file = new AlignedFile(path, (int)MiB, create: true))
+            for (long offset = 0; offset < fileBytes; offset += MiB)
+                file.Write(offset, expected.AsSpan((int)offset, (int)MiB).ToArray());
+        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Idle, MaxDirtyAgeMs: 3600000)
+        }, true);
+        try
+        {
+            var before = device.GetDiagnostics();
+            var hitsBefore = device.GetWriteCacheState().ReadHitBytes;
+            using (var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.Read))
+            using (var view = map.CreateViewAccessor(0, fileBytes, MemoryMappedFileAccess.Read))
+            {
+                var mapped = new byte[fileBytes];
+                view.ReadArray(0, mapped, 0, mapped.Length);
+                if (!mapped.AsSpan().SequenceEqual(expected))
+                    throw new IOException("The mapped read did not return the file's bytes.");
+            }
+            var after = device.GetDiagnostics();
+            var actual = new byte[fileBytes];
+            using (var file = new AlignedFile(path, (int)MiB, create: false, sharedReadOnly: true))
+            {
+                var chunk = new byte[MiB];
+                for (long offset = 0; offset < fileBytes; offset += MiB)
+                {
+                    file.Read(offset, chunk);
+                    chunk.CopyTo(actual, offset);
+                }
+            }
+            var hitBytes = device.GetWriteCacheState().ReadHitBytes - hitsBefore;
+            return VerifyMappedReadRetention(before.PagingReadFills, after.PagingReadFills, hitBytes, fileBytes,
+                actual.AsSpan().SequenceEqual(expected));
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.Flush);
+            device.Control(WriteCacheAction.Disable);
+            device.Control(WriteCacheAction.Release);
+        }
     }
 
     // T083: hold an old overlapping drain after its real lower write completed; a newer mapped (paging)

@@ -21,6 +21,8 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 | Retain writes (default) | Successful background writes become clean cached blocks instead of immediately being discarded. |
 | Promote on read (default) | Reading a retained clean write moves it into the read quota without copying its payload. Dirty writes remain in the write quota until drained. |
 | Discard drained | Release successful writes immediately. Read misses can still populate the read quota. |
+| Read misses (since plan 56) | Every read that misses the cache is kept as a clean read block when a full 4 KiB block was read: unbuffered reads and application paging reads (Windows file-cache refills and mapped files). Paging-file and unknown-origin reads are never kept. |
+| Scan resistance (since plan 56) | A block read from disk once enters its clean list at the eviction end; only a later hit moves it to the recent end. One fill in 16 enters as recent so a large working set can still settle. A one-off large read (a copy, a scan) therefore mostly evicts its own blocks instead of the data you use repeatedly. |
 
 **Clear read cache** (`qcache policy drop-clean Q:`, or the card button) releases clean read and retained-write blocks on demand. It is not a flush: pending writes, in-flight writes and draining are untouched, and it never discards data the disk has not accepted. New drivers advertise this control with state flag 1024; the button stays hidden otherwise.
 
@@ -54,7 +56,7 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes. `--drain-parallelism 1..4` bounds concurrent writes; overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. The default remains one 256 KiB gather stream.
+Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes. `--drain-parallelism 1..4` (default 2 since plan 56; 1 before) bounds concurrent writes; overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. The default remains one 256 KiB gather stream.
 
 ## CLI examples
 
