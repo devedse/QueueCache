@@ -1,6 +1,27 @@
 # Write performance: implementation and verification sequence
 
 Current execution/status source: [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
+
+## Current baseline: 0.4.148.1, 2026-09-27
+
+`write-performance` on installed 0.4.148.1 (`97b8f4f`), Driver Verifier off,
+Microsoft DiskSpd 2.3 (`amd64\diskspd.exe`, SHA-256 `DD4E57E1...FAEA2`), 2048 MiB
+budget, three repeats, Q: (`QueueCache-Verify-20260927-173048-4b4a8a48...`,
+72/72 COMPLETED). Medians, detailed timing off:
+
+| Workload | Off | Eager | Idle | Idle vs Off | Write p99 Off -> Idle |
+|---|---:|---:|---:|---:|---|
+| Random 4 KiB Q1 | 1,081 IOPS | 19,446 IOPS | 19,359 IOPS | ~18x | 2.48 -> 0.12 ms |
+| Random 4 KiB Q32 | 1,794 IOPS | 34,066 IOPS | 34,400 IOPS | ~19x | 84.4 -> 1.32 ms |
+| Sequential 1 MiB Q1 | 113 MB/s | 4.84 GB/s | 4.84 GB/s | ~43x | 12.8 -> 0.32 ms |
+| Sequential 1 MiB Q8 | 246 MB/s | 7.87 GB/s | 7.92 GB/s | ~32x | 67.2 -> 1.67 ms |
+
+Detailed timing changes results by at most a few percent. This uses a different
+DiskSpd binary from every earlier row on this page (CrystalDiskMark's DiskSpd
+2.2), so it is a new baseline, not a before/after comparison. Earlier builds
+measured random Q32 up to about 74,500 IOPS with the CDM binary; whether the gap
+is the binary, the VM or a regression needs the old build measured with this
+binary.
 The original de76288 / 0.4.37.1 baseline is historical. The fresh 2026-09-19
 baseline on e8b37be / 0.4.40.1 stopped during case 4's explicit dirty-data drain;
 three measured rows are not an accepted 72-case baseline. Restoration succeeded.

@@ -1,11 +1,24 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-25. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-27. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**Current status, 2026-09-25 (installed 0.4.117.1, tools plan 47).** T082-T086 are
+**Current status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
+Fast mode is the product focus. On 2026-09-26/27: the saved-profile shutdown
+deadlock was fixed and soaked under Driver Verifier; Driver Verifier passes found no
+other violation; a failed lower IRP allocation no longer faults the cache; settings
+changes apply fully or restore the previous settings; paging-file I/O bypasses the
+worker; application read misses are kept with scan-resistant insertion; TRIM is
+range-aware (not VM-verified: no discard-capable disk); status output separates
+live values from totals; default drain parallelism is 2. On 0.4.148.1 under Driver
+Verifier every maintained suite (`quick`, `policies`, `pressure`,
+`paging-coherence`, `ordering-faults`, `app-write-profile`) and a 10-cycle
+saved-profile restart soak pass; 0.4.146.1 passed the 20-cycle soak. See
+"Normal-use batch, 2026-09-27" below and NEXT_PHASE_PLAN.md.
+
+**Previous status, 2026-09-25 (installed 0.4.117.1, tools plan 47).** T082-T086 are
 implemented and VM-verified: paging-read offload, submitted-order and fault orders,
 lower-attempt attribution, application paging admission with per-request paging-file
 recognition, page-backed cache memory, C: active restarts (one runtime-only, four
@@ -234,17 +247,30 @@ pagefile saved-startup regression without the earlier process corruption.
 | A04 / T012-T015 | TRUE | One current driver/build path; obsolete implementation removed. | Native/CI builds and installed-build quick/policy regression passed. |
 | A05 / T016-T018 | TRUE, scoped | Developer CLI consolidation and independent recovery implementation. | Host packaging checks and a copied-hive recovery dry run passed; actual offline/Safe Mode recovery remains T054/A10. |
 | A06 / T019-T022 | TRUE, scoped | Existing secondary-disk scenarios and repaired coalescing oracle used. | Quick/policy and lower-write/lower-flush failure recovery passed on 0.4.57.1. T022's changed-path condition was not general lifetime qualification. |
-| A06a / T049-T054, T069 | PARTIAL | T049 ledger, plan-14 pressure proof and plan-16 T050 `drain-decision` contract implemented; T051/T069 are complete. Plan-17 `policies` adds an observed in-flight replacement regression. Recovery now validates all recorded disk keys before any restore action. | Installed 0.4.64.1 pressure, 0.4.67.1 drain comparison and 0.4.69.1 observed-overlap policy run passed. Copied-hive recovery dry run passed, but T050 tuning, controlled T052-T053, and actual T054 offline/Safe Mode recovery remain. Driver Verifier pass A (standard checks) on installed 0.4.125.1: `quick`, `policies`, `pressure`, `paging-coherence` and `ordering-faults` all PASS with no violation, 36 tracked pool allocations and none leaked (`QueueCache-Verify-20260926-202542-7168260b...` through `...-202807-fed1a464...`); the C: restart soak then exposed the shutdown deadlock (T081). Repeated on the fixed 0.4.128.1: all five suites PASS (`...-220920-6aa3c8b4...` through `...-221143-a67e726b...`) and 20/20 restart cycles. Pass B (Verifier randomized low resources, 6%): every `Configure` in `policies`/`pressure`/`paging-coherence`/`ordering-faults` failed cleanly with Win32 1450 and an untouched, error-free cache (16 deliberate failures, 16 runs, restoration clean, no bugcheck); `quick` completed three times under injection. Live-I/O allocation failure was not attributably covered by random injection. **T053 drain allocation VERIFIED on installed 0.4.131.1** (`8c8fde0`, driver SHA-256 `C932AABF...A741`, Driver Verifier standard): a failed lower IRP build used to fault the cache immediately; `LowerIo` now retries it (20 ms back-off, 250 attempts) and only then faults. Plan-48 `ordering-faults` (`QueueCache-Verify-20260927-064009-c7035a7f...`): all five stages PASS; lab fault 8 was retried 3 times with a successful flush and no fault; lab fault 9 faulted with `STATUS_INSUFFICIENT_RESOURCES` after 249 retries (7.9 s under Verifier) with the owned 1 MiB retained and drained by Retry; bytes matched after release. `quick`, `policies`, `pressure` and `paging-coherence` PASS on the same build. **T053 release race VERIFIED** (plans 51/52, driver 0.4.133.1 with 0.4.137.1 tools, Driver Verifier standard): `ordering-faults/release-under-load` passed twice (`QueueCache-Verify-20260927-115811-febeefc6...`, `...-115833-12bfbbc7...`): 12 and 11 apply/flush/disable/release cycles (alternating Eager/Idle and retention) during 5 unbuffered write passes; all 2010 and 2122 concurrent reads were whole written versions, the released file matched the last pass, no fault, no pool leak. Plan 51's first run stopped on a test sharing violation (fixed in 52). **T053 paging write map failure VERIFIED** (plans 53/54, driver 0.4.139.1 `b488840` SHA-256 `6A0E6F8B...59F0` with 0.4.140.1 tools, Driver Verifier standard): lab fault 11 makes one paging write unmappable; it fell back to the ordered direct path (1 map failure, 1 forwarded paging write), the save succeeded, no fault, bytes matched after release, in two runs (`QueueCache-Verify-20260927-122220-10425273...`, `...-122242-dcf1b96e...`; all eight `ordering-faults` stages PASS) plus `quick`, `policies`, `paging-coherence`, `pressure`. Plan 53's run stopped on a wrong evidence counter (fixed in 54). Non-paging map failure fails only that request with `STATUS_INSUFFICIENT_RESOURCES` (by review). Still open for T053: physical device removal (needs a hypervisor hot-unplug). |
-| A07 / T023-T027, T067-T068, T070-T077, T082/T085 | PARTIAL, near complete | Paging coherence, normal C: activation, T082 paging-read offload and T085 application paging admission with per-request paging-file recognition are installed (0.4.117.1). | VM-verified: forced page-in behind a capacity-blocked writer, `app-write-profile` 256/256 MiB admitted in every mode, C: recognition with zero reference misses under pressure. Remaining: paging reads over 1 MiB/full table stay synchronous, read misses are not retained (the budget stays fixed by design, 2026-09-27). Historical BSOD cause unknown. |
-| A08 / T028-T031, T078-T079, T083-T084 | PARTIAL, near complete | Per-case/final image oracles, the lab range gate (V9) and lower-attempt source attribution (V8) are installed. | Verified: exact submitted-order sequence, failed/short/cancelled fault orders (`ordering-faults` x5 plus regressions), 13 zero-lower-I/O checks attributed, and a failed direct paging write (plan 50). In-flight paging cancellation is recorded as not reachable (see T083). Remaining: paging-role transitions. |
-| A09 / T032-T037, T073-T074, T080-T081, T086 | TRUE, scoped (one open issue) | Saved C: profile restore, active dirty restarts and an operator application session are verified on 0.4.117.1. | T081: 1 runtime-only and 4 saved-profile restart cycles with 83-137 MB dirty, memory pressure beyond available RAM, every byte matched, cache restored at boot. T080/T086: Paint save held in RAM while Photos opened it, identical after drain. Saved-profile shutdown hang reproduced and diagnosed from an NMI dump (usage-notification/paging-read deadlock); the first fix was insufficient (Driver Verifier reproduced it); the second fix (0.4.128.1) passed 20/20 cycles under Driver Verifier. Strict restart passed 10/10. Sleep/resume and hibernate/Fast Startup untested: this VM offers no sleep state. |
-| A10 / T038-T041 | PARTIAL | Setup/recovery foundations and documentation cleanup exist. The recovery script now prevalidates every recorded disk key and labels `-WhatIf` honestly. | Installed 0.4.70.1 script successfully changed a disposable SYSTEM-hive copy, not the live registry. Real offline/Safe Mode boot recovery, full servicing/failure matrix and final product docs remain. |
-| A11 / T042-T045 | PARTIAL | Measurement tools and historical evidence exist. | Final-candidate matched/full matrix and bounded endurance pending. |
+| A06a / T049-T054, T069 | PARTIAL (T054 postponed by owner) | T050 decided: default parallelism 2 (plan 56). T053: lower IRP allocation retry (0.4.131.1), release-under-load race, paging-write map-failure fallback, direct-write failure; in-flight paging cancellation recorded as not reachable. Driver Verifier standard passes on every suite. | VERIFIED on 0.4.131.1-0.4.148.1 under Driver Verifier (plans 48-57). Open: T052 exact flush-cutoff ordering under concurrency; physical device removal (hot-unplug) and T054 offline/Safe Mode recovery postponed by owner (2026-09-27). |
+| A07 / T023-T027, T067-T068, T070-T077, T082/T085 | TRUE, scoped | Paging coherence, normal C: activation, paging-read offload, application paging admission, page-backed memory, shutdown deadlock fix (work-item lower calls), paging-file I/O bypassing the worker (plan 55), application read-miss retention with scan-resistant insertion (plan 56). | VERIFIED on 0.4.146.1/0.4.148.1: 20-cycle and 10-cycle Driver Verifier restart soaks, every recognised paging-file request bypassed the worker, mapped read misses kept (2016/2048 blocks) and re-read from RAM. Remaining limits: application paging reads over 1 MiB or with a full 64-entry table stay synchronous; the pre-alpha Paint/Photos BSOD is recorded as possibly fixed. |
+| A08 / T028-T031, T078-T079, T083-T084 | TRUE, scoped | Per-case/final image oracles, lab range gate (V9), lower-attempt attribution (V8), lab faults 8-11 and Diagnostics V11-V13. | `ordering-faults` (8 stages) and `paging-coherence` PASS under Driver Verifier on 0.4.148.1. Remaining: paging-role transitions (adding/removing a pagefile while active). |
+| A09 / T032-T037, T073-T074, T080-T081, T086 | TRUE, scoped | Saved C: profile restore, active dirty restarts, operator application session, shutdown deadlock fixed (0.4.128.1). | 20/20 (0.4.128.1, 0.4.146.1) and 10/10 (0.4.148.1) saved-profile restart soaks under Driver Verifier; Strict restart 10/10. Sleep/resume and hibernate postponed by owner (the VM offers no sleep state). |
+| A10 / T038-T041 | PARTIAL | Settings changes now apply fully or restore the previous settings (fake-device contract tests). Setup/recovery foundations and documentation exist. | Rollback not forced on the VM. Offline/Safe Mode recovery postponed by owner. Remaining: install/upgrade/uninstall failure matrix and final user docs. |
+| A11 / T042-T045 | PARTIAL | New baselines with Microsoft DiskSpd 2.3 on 0.4.148.1: 72-case `write-performance`, `drain-decision`, `app-write-profile`. | Idle vs Off: random Q1 ~18x, Q32 ~19x, sequential Q1 ~43x, Q8 ~32x. Remaining: measure read-retention benefit, explain the random Q32 gap to historical CDM runs, `full` matrix, bounded endurance. |
 | A12 / T046-T048 | FALSE | Private-alpha freeze and reporting handoff pending. | Participant release approval not recorded. |
 | A13 / T055-T057 | FALSE | Production support contract and safety gap closure planned. | Support scope can be designed during A07; qualification pending. |
 | A14 / T058-T060 | FALSE | Security, distribution/signing and production servicing planned. | Actual trust/privilege/servicing evidence pending. |
 | A15 / T061-T063 | FALSE | Environment/endurance/final performance qualification planned. | Frozen-candidate support matrix and long-run evidence pending. |
 | A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
+
+### Normal-use batch, 2026-09-27
+
+| Item | Implementation | Verification |
+|---|---|---|
+| N1 settings apply | Apply completes or restores the previous preset, options, size and state; the error says exactly what is left if even that fails (`3b33de7`). | Fake-device contract tests for every failure point (CI). Not forced on the VM. |
+| N2 read caching | Application paging read misses kept like unbuffered ones; paging-file and unknown-origin reads never; bimodal (scan-resistant) insertion; Diagnostics V13 fill counters (plan 56, `0f49f7c`). | VERIFIED on 0.4.148.1 under Driver Verifier: `paging-coherence/mapped-read-retained` 2016/2048 blocks kept, re-read 98% from RAM. Speed benefit on real workloads not yet measured. |
+| N3 fixed reservation | Design decision recorded: no shrinking. | n/a |
+| N4 drain defaults | Default parallelism 2 (plan 56). Bounded flush dropped after analysis. | Two `drain-decision` runs (0.4.139.1, 0.4.148.1). |
+| N5 paging-file I/O | Recognised paging-file requests forwarded from dispatch, bypassing the worker; Diagnostics V12 counter (plan 55, `8833f67`/`cb29d5a`). | VERIFIED on 0.4.146.1: every recognised request bypassed the worker in all 20 Driver Verifier soak cycles. |
+| N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | Compile-time mask checks only. The VM has no TRIM-capable disk. |
+| N7 special requests | Pass-through after shutdown/power-down (existing), work-item lower calls for PnP/shutdown/disk controls, plus N5. | Driver Verifier soaks above. |
+| N8 status display | CLI and desktop label live values vs totals since boot; stale desktop data greyed out (existing). | Desktop fixture tests pass; desktop visuals not checked on the VM. |
 
 ### Revision 4 implementation queue: 2026-09-24 review correction
 
@@ -975,8 +1001,20 @@ as 11,600-27,700 single-block batches), so its duration follows the foreground
 write rate rather than the 256 MiB it was asked to persist (drained in 2.5-4 s in
 the read cases). Parallelism 2 shortens the payload drain by about a third versus
 1; 4 adds lower-I/O queueing (about double the lower-I/O time) without being
-faster on this VM. Proposed: bound a flush to data written before it, and a
-parallelism-2 default. Decision pending owner review.
+faster on this VM. Owner decision (2026-09-27): Fast mode is the focus. Bounding
+a flush was dropped: the worker admits no writes during a barrier, and the extra
+data came from Windows' own file cache (DiskSpd was not run with `-Su`). Default
+parallelism changed to 2 in plan 56.
+
+Repeat on installed 0.4.148.1 (`97b8f4f`, `QueueCache-Verify-20260927-172014-d9482a17...`,
+24/24, Driver Verifier off, same DiskSpd): fitting writes during the flush
+3,906 / 6,673 / 8,295 IOPS at p1/p2/p4 (control 23,685); flush 28.7 / 7.5 / 6.7 s
+(p4 ranged 5.5-16.9 s); cold reads 2,630 / 2,262 / 2,406 IOPS (control 3,158),
+flush 3.7 / 2.7 / 2.5 s. Parallelism 2 was the most consistent. Plan-57
+`app-write-profile` on the same build (`...-181437-35acd310...`): 256/256 MiB
+admitted in every mode; buffered flush 107 ms, mapped flush 184 ms (uncached
+before T085: 9.1 s and 3.7 s); a 1 GiB cache added 21.1 MiB of nonpaged pool.
+Write matrix: see WRITE_PERFORMANCE_TRAJECTORY.md (new baseline, 2026-09-27).
 
 ### A06a T052 and A07 T026 source checkpoint: 2026-09-22
 

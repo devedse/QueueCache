@@ -4,15 +4,14 @@ This file describes the current QueueCache implementation. Removed historical
 engine defects remain available in Git history and must not be reported as current
 bugs without a reproduction on the current driver.
 
-Current status (2026-09-25, installed 0.4.117.1): T082-T086 are implemented and
-VM-verified. Ordinary application writes (buffered, flushed and memory-mapped) are
-cached; paging-file traffic is recognised per request and never cached. Cache
-memory is page-backed, not nonpaged pool. C: active restarts passed once with a
-runtime-only profile and four times with a saved profile; a real Paint/Photos
-session passed its post-drain byte check. The saved-profile shutdown hang (below)
-was a deadlock, fixed in 0.4.128.1 and verified under Driver Verifier. The
-historical pre-A01 BSOD remains undiagnosed. The older version checkpoints below
-describe their original scope.
+Current status (2026-09-27, installed 0.4.148.1): every maintained suite and a
+10-cycle saved-profile C: restart soak pass under Driver Verifier. Fixed this
+phase: a shutdown deadlock, cache faults on transient allocation failure, and
+settings changes that could leave the cache disabled. The pre-alpha Paint/Photos
+BSOD and the 0.4.83.1 application crashes are recorded as possibly fixed (not
+reproduced since the fixes that plausibly addressed them). TRIM handling is
+range-aware but not VM-verified. The older version checkpoints below describe
+their original scope.
 
 ## Fixed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.125.1)
 
