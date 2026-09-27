@@ -17,11 +17,17 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 53)
+## Suites (plan version 54)
+
+Plan 54 corrects plan 53's map-failure evidence: the fallback is recorded as a
+paging map failure plus a forwarded original paging write (V8
+`LowerSources.PagingForwardedWrites`), not as a classification-time direct
+write. The plan-53 run (`...-121443-e0d0bc4a...` on 0.4.139.1) recorded the map
+failure and a successful save but stopped on that wrong counter.
 
 Plan 53 (T053) adds `ordering-faults/paging-write-map-failure`: lab fault 11
 makes the next paging write's buffer unmappable. The write must fall back to the
-ordered direct path (paging map-failure and direct-write counters rise), the
+ordered direct path (paging map-failure and forwarded paging-write counters rise), the
 mapped save must succeed, the cache must stay healthy and the block must match
 after release. Fault 11 only affects paging writes, whose fallback cannot fail
 them, so an unrelated paging write that takes it is harmless.

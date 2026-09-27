@@ -80,19 +80,21 @@ public static class OrderingFaultScenarios
     }
 
     /// <summary>An unmappable application paging write must still complete through the direct path.</summary>
+    // The fallback is counted as a map failure and reaches the disk as a forwarded original paging write
+    // (V8 source attribution); it is not a classification-time direct write.
     internal static string VerifyPagingMapFallback(bool saved, int lastError, ulong? mapBefore, ulong? mapAfter,
         ulong? directBefore, ulong? directAfter)
     {
         if (mapBefore is null || mapAfter is null || directBefore is null || directAfter is null)
-            throw new NotSupportedException("Map-failure evidence requires Diagnostics V10.");
+            throw new NotSupportedException("Map-failure evidence requires Diagnostics V8.");
         if (mapAfter.Value <= mapBefore.Value)
             throw new IOException("No paging map failure was recorded; the simulated failure was not exercised.");
         if (directAfter.Value <= directBefore.Value)
-            throw new IOException("The unmappable paging write did not take the ordered direct path.");
+            throw new IOException("The unmappable paging write was not forwarded to the disk as an original paging write.");
         if (!saved || lastError != 0)
             throw new IOException($"The mapped save failed or the cache faulted (saved {saved}, 0x{lastError:X8}).");
         return $"{mapAfter - mapBefore} paging write map failure(s) fell back to the ordered direct path " +
-            $"({directAfter - directBefore} direct write(s)); the mapped save succeeded and the cache stayed healthy. " +
+            $"({directAfter - directBefore} forwarded paging write(s)); the mapped save succeeded and the cache stayed healthy. " +
             "Counters are device-wide.";
     }
 
@@ -702,7 +704,7 @@ public static class OrderingFaultScenarios
             var after = device.GetDiagnostics();
             evidence = VerifyPagingMapFallback(saved, device.GetWriteCacheState().LastError,
                 before.PagingProgress?.MapFailures, after.PagingProgress?.MapFailures,
-                before.PagingAdmission?.DirectWrites, after.PagingAdmission?.DirectWrites);
+                before.LowerSources?.PagingForwardedWrites, after.LowerSources?.PagingForwardedWrites);
         }
         finally
         {
