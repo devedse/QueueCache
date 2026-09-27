@@ -17,7 +17,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 51)
+## Suites (plan version 52)
+
+Plan 52 opens `release-under-load`'s final read-back through a shared read-only
+handle; plan 51's exclusive open failed with a sharing violation while the
+writer handle was still open (`...-115059-1b0c9b68...`, INCOMPLETE, no cache
+fault).
 
 Plan 51 (T053) adds `ordering-faults/release-under-load`: an unbuffered writer
 rewrites a 32 MiB owned file in passes of seeded 64 KiB blocks while a second

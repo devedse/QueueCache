@@ -643,7 +643,8 @@ public static class OrderingFaultScenarios
         var finalPass = Volatile.Read(ref pass);
         var finalMatches = true;
         var readBack = new byte[ReleaseBlockBytes];
-        using (var file = new AlignedFile(path, ReleaseBlockBytes, create: false))
+        // The writer handle stays open until this method returns; read through a shared read-only handle.
+        using (var file = new AlignedFile(path, ReleaseBlockBytes, create: false, sharedReadOnly: true))
             for (var block = 0; block < blocks && finalMatches; block++)
             {
                 file.Read((long)block * ReleaseBlockBytes, readBack);
