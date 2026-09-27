@@ -34,25 +34,26 @@ public static class PagingRecognitionScenarios
         if (misses != 0)
             throw new IOException("Paging-file requests were not recognised and would have been cached. " + evidence);
         // V12: every recognised paging-file request must have gone straight to the disk from dispatch.
-        CheckResult bypass;
+        // Older drivers do not report bypasses; the check is then omitted, not claimed.
+        CheckResult? bypass = null;
         if (bypassBefore is null || bypassAfter is null)
-            bypass = new("system-paging/paging-file-io-bypasses-worker", "SKIP",
-                "The loaded driver does not report paging-file bypasses (Diagnostics V12).");
+        {
+        }
         else if (bypassAfter.Value - bypassBefore.Value != recognised)
             throw new IOException(FormattableString.Invariant(
                 $"{bypassAfter.Value - bypassBefore.Value} paging-file requests bypassed the worker, expected {recognised}. ") + evidence);
         else
             bypass = new("system-paging/paging-file-io-bypasses-worker", recognised > 0 ? "PASS" : "SKIP",
                 FormattableString.Invariant($"All {recognised} recognised paging-file requests were forwarded straight to the disk."));
-        return
+        CheckResult[] checks =
         [
-            bypass,
             new("system-paging/no-unrecognised-paging-file-requests", "PASS",
                 evidence + " No request inside a paging-file extent was classified as application traffic."),
             new("system-paging/paging-file-requests-recognised", recognised > 0 ? "PASS" : "SKIP",
                 evidence + (recognised > 0 ? " Paging-file I/O was observed and recognised."
                     : " No paging-file I/O occurred, so recognition itself was not exercised."))
         ];
+        return bypass is null ? checks : [bypass, .. checks];
     }
 
     public static IReadOnlyList<CheckResult> Run(DiskTarget target, CacheDevice device)

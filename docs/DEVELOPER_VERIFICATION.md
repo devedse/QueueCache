@@ -22,7 +22,7 @@ different disk so telemetry writes do not contaminate the workload.
 Plan 55 adds `system-paging/paging-file-io-bypasses-worker` to
 `system-paging-recognition`: with Diagnostics V12 every recognised paging-file
 request must also be counted as forwarded straight to the disk from dispatch
-(`PagingFileBypasses`). Older drivers report SKIP.
+(`PagingFileBypasses`). With older drivers the check is omitted.
 
 Plan 54 corrects plan 53's map-failure evidence: the fallback is recorded as a
 paging map failure plus a forwarded original paging write (V8
