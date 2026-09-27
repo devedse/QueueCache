@@ -44,6 +44,12 @@ constexpr LONG QcDefaultCallerPath = 1;
 // so the worker again overlaps its work with the caller's submissions; with one
 // outstanding request it completes and the caller path resumes (about 1% cost).
 constexpr ULONG QcCallerPathProbeInterval = 1024;
+// A candidate that finds another request queued or in progress means several are
+// outstanding. The worker then overlaps with the submitting threads, which is
+// faster than doing the work on them, and it can briefly empty its queue while
+// they reap completions. So keep using the worker for this many further
+// candidates, restarting the count each time one finds it busy again.
+constexpr ULONG QcCallerPathWorkerWindow = 256;
 constexpr bool QcValidOptions(const QC_OPTIONS& o)
 {
     return o.Version == 1 && o.Size == sizeof(o) && o.Allocation <= QcFixed && o.WritePercent <= 100 &&

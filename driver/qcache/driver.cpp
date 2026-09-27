@@ -40,6 +40,7 @@ struct QC_EXTENSION
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
     BOOLEAN CallerActive; // QueueLock: a caller-thread request owns the cache (counted in DirectCount).
     ULONG CallerStreak;   // QueueLock: caller-path requests since the last probe via the worker.
+    ULONG WorkerWindow;   // QueueLock: candidates still routed to the worker (QcCallerPathWorkerWindow).
 #endif
 };
 static WCHAR ExpectedDriverKey[512];
@@ -1053,12 +1054,24 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         // worker or on another caller thread. The worker takes the next request
         // only after DirectIdle, so this request is the sole foreground owner, and
         // every later arrival queues (or waits its turn) behind it.
-        bool caller = !direct && !ext->Closing && callerCandidate && !ext->PendingControls &&
-                      IsListEmpty(&ext->Pending) && !ext->ActiveSince && !ext->CallerActive;
-        if (caller && ++ext->CallerStreak >= QcCallerPathProbeInterval)
+        bool caller = !direct && !ext->Closing && callerCandidate;
+        if (caller)
         {
-            ext->CallerStreak = 0;
-            caller = false; // Probe: see QcCallerPathProbeInterval.
+            if (ext->PendingControls || !IsListEmpty(&ext->Pending) || ext->ActiveSince || ext->CallerActive)
+            {
+                ext->WorkerWindow = QcCallerPathWorkerWindow;
+                caller = false;
+            }
+            else if (ext->WorkerWindow)
+            {
+                --ext->WorkerWindow;
+                caller = false;
+            }
+            else if (++ext->CallerStreak >= QcCallerPathProbeInterval)
+            {
+                ext->CallerStreak = 0;
+                caller = false; // Probe: see QcCallerPathProbeInterval.
+            }
         }
         if (caller)
             ext->CallerActive = TRUE;
