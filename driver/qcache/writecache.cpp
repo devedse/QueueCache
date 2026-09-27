@@ -798,7 +798,18 @@ static void Drainer(PVOID context)
             ReleaseCache(c);
             break;
         }
-        if (worker->Number >= c->Options.Parallelism || c->State.DirtyBytes == 0 || c->TrimPaused ||
+        if (worker->Number >= c->Options.Parallelism)
+        {
+            // Unused drainer. It must not clear Wake: that re-armed the shared event
+            // for every cached write, whose signal then woke this thread to contend
+            // for Mutex (about one wake-up per write while the others drained).
+            ReleaseCache(c);
+            LARGE_INTEGER interval;
+            interval.QuadPart = -1000000; // Parallelism changes only at a disabled boundary.
+            KeWaitForSingleObject(&c->Stopping, Executive, KernelMode, FALSE, &interval);
+            continue;
+        }
+        if (c->State.DirtyBytes == 0 || c->TrimPaused ||
             !NT_SUCCESS(c->State.LastError) || c->Gone)
         {
             KeClearEvent(&c->Wake);
@@ -1061,6 +1072,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     KeInitializeSpinLock(&c->SnapshotLock);
     KeInitializeEvent(&c->Wake, NotificationEvent, FALSE);
     KeInitializeEvent(&c->Changed, NotificationEvent, FALSE);
+    KeInitializeEvent(&c->Stopping, NotificationEvent, FALSE);
     KeInitializeSpinLock(&c->PagingLock);
     KeInitializeSpinLock(&c->RangeLock);
     KeInitializeEvent(&c->PagingWork, SynchronizationEvent, FALSE);
@@ -1218,6 +1230,7 @@ void QcCacheDestroy(QC_CACHE* c)
     AcquireCache(c);
     c->Stop = TRUE;
     WakeDrainers(c);
+    KeSetEvent(&c->Stopping, IO_NO_INCREMENT, FALSE);
     ReleaseCache(c);
     if (c->PagingThread)
     {
@@ -2443,10 +2456,14 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     irp->IoStatus.Information = 0;
-    AcquireCache(c);
-    c->State.DeviceBytes = deviceBytes;
-    Publish(c);
-    ReleaseCache(c);
+    if (c->State.DeviceBytes != deviceBytes)
+    {
+        // Unchanged for nearly every request: skip the mutex and snapshot copy then.
+        AcquireCache(c);
+        c->State.DeviceBytes = deviceBytes;
+        Publish(c);
+        ReleaseCache(c);
+    }
     if (c->Gone)
     {
         const auto status = STATUS_DEVICE_NOT_CONNECTED;

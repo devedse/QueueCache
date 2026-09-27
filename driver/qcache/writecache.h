@@ -283,6 +283,7 @@ struct QC_CACHE
     PVOID ServiceContext;
     PKEVENT RequestAvailable;
     KEVENT Wake, Changed;
+    KEVENT Stopping; // Set once by QcCacheDestroy; drainers above Parallelism wait on it, never on Wake.
     QC_DRAIN_WORKER Workers[4];
     QC_SLOT* Slots;
     // One MDL per 256 KiB payload slab: physical pages from the memory manager
