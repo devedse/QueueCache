@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 52, "release-under-load reads its final bytes through a shared handle");
+        Check(VerificationPlan.Version == 53, "ordering-faults adds the paging write map-failure fallback");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -210,6 +210,23 @@ internal static class VerificationRunnerTests
             {
                 QueueCache.Operations.OrderingFaultScenarios.VerifyReleaseUnderLoad("r", 12, 5, 900, mismatches, final);
                 throw new Exception("A torn or stale block under the lifecycle race was accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyPagingMapFallback(true, 0, 1, 2, 7, 8)
+            .Contains("fell back to the ordered direct path"), "an unmappable paging write completes on the direct path");
+        foreach (var (saved, error, mapAfter, directAfter) in new (bool, int, ulong?, ulong?)[]
+        {
+            (true, 0, 1, 8),                                // map failure not exercised
+            (true, 0, 2, 7),                                // no direct fallback
+            (false, 0, 2, 8),                               // save failed
+            (true, unchecked((int)0xC000009A), 2, 8),       // cache faulted
+        })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyPagingMapFallback(saved, error, 1, mapAfter, 7, directAfter);
+                throw new Exception("A failed paging map fallback was accepted.");
             }
             catch (IOException) { }
         }

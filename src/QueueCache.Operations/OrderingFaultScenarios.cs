@@ -11,7 +11,8 @@ namespace QueueCache.Operations;
 /// T053 lower-IRP allocation failure: a transient failure retries without faulting; exhaustion faults
 /// with the dirty version retained. T083 failed direct paging write: the error reaches the application,
 /// the cache stays healthy and a later save succeeds. T053 release race: the cache is repeatedly applied,
-/// flushed, disabled and released under concurrent unbuffered writes and reads.
+/// flushed, disabled and released under concurrent unbuffered writes and reads. T053 map failure: an
+/// application paging write whose buffer cannot be mapped falls back to the ordered direct path.
 /// Each stage restores a healthy cache (Retry) itself; faults are driver lab hooks, never raw disk writes.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -24,7 +25,8 @@ public static class OrderingFaultScenarios
     private const ulong GateFail = 1, GateShort = 2;
     // Driver lab faults and limits (writecache.h): 8 fails three IRP builds on one drain batch,
     // 9 fails every build until cleared; a drain faults after 250 consecutive failed builds.
-    private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9, FaultDirectWrite = 10;
+    private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9, FaultDirectWrite = 10,
+        FaultPagingMap = 11;
     private const ulong SimulatedAllocationFailures = 3, AllocationAttempts = 250;
     private const uint InsufficientResources = 0xC000009A;
     private const int ReleaseCyclesRequired = 10, ReleaseFileBytes = 32 * MiB, ReleaseBlockBytes = 64 * 1024,
@@ -75,6 +77,23 @@ public static class OrderingFaultScenarios
         return cycles < ReleaseCyclesRequired
             ? new(label, "SKIP", detail + $" Fewer than {ReleaseCyclesRequired} cycles overlapped the load; the race is unexercised.")
             : new(label, "PASS", detail);
+    }
+
+    /// <summary>An unmappable application paging write must still complete through the direct path.</summary>
+    internal static string VerifyPagingMapFallback(bool saved, int lastError, ulong? mapBefore, ulong? mapAfter,
+        ulong? directBefore, ulong? directAfter)
+    {
+        if (mapBefore is null || mapAfter is null || directBefore is null || directAfter is null)
+            throw new NotSupportedException("Map-failure evidence requires Diagnostics V10.");
+        if (mapAfter.Value <= mapBefore.Value)
+            throw new IOException("No paging map failure was recorded; the simulated failure was not exercised.");
+        if (directAfter.Value <= directBefore.Value)
+            throw new IOException("The unmappable paging write did not take the ordered direct path.");
+        if (!saved || lastError != 0)
+            throw new IOException($"The mapped save failed or the cache faulted (saved {saved}, 0x{lastError:X8}).");
+        return $"{mapAfter - mapBefore} paging write map failure(s) fell back to the ordered direct path " +
+            $"({directAfter - directBefore} direct write(s)); the mapped save succeeded and the cache stayed healthy. " +
+            "Counters are device-wide.";
     }
 
     /// <summary>A lasting allocation failure must fault the cache with the dirty version retained, not hang.</summary>
@@ -151,7 +170,8 @@ public static class OrderingFaultScenarios
             RunAllocationRetry(target, device, workDirectory),
             RunAllocationExhaustion(target, device, workDirectory),
             RunDirectWriteFailure(target, device, workDirectory),
-            RunReleaseUnderLoad(target, device, workDirectory)
+            RunReleaseUnderLoad(target, device, workDirectory),
+            RunPagingMapFailure(target, device, workDirectory)
         ];
     }
 
@@ -652,5 +672,46 @@ public static class OrderingFaultScenarios
             }
         return VerifyReleaseUnderLoad(label, Volatile.Read(ref cycles), finalPass, Interlocked.Read(ref reads),
             Volatile.Read(ref mismatches), finalMatches);
+    }
+
+    private static CheckResult RunPagingMapFailure(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const string label = "ordering-faults/paging-write-map-failure";
+        var path = CreateOwned(workDirectory, "paging-map-failure.bin");
+        ApplyEager(target, 64);
+        var data = new byte[BlockBytes];
+        new Random(105059).NextBytes(data);
+        var before = device.GetDiagnostics();
+        var saved = false;
+        string evidence;
+        try
+        {
+            device.Control(WriteCacheAction.LabFault, value: FaultPagingMap);
+            try
+            {
+                MappedSave(path, data);
+                saved = true;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Win32Exception)
+            {
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabFault, value: 0);
+            }
+            var after = device.GetDiagnostics();
+            evidence = VerifyPagingMapFallback(saved, device.GetWriteCacheState().LastError,
+                before.PagingProgress?.MapFailures, after.PagingProgress?.MapFailures,
+                before.PagingAdmission?.DirectWrites, after.PagingAdmission?.DirectWrites);
+        }
+        finally
+        {
+            Recover(device, label);
+        }
+        var actual = new byte[BlockBytes];
+        ReleaseAndRead(device, path, Offset, actual);
+        if (!actual.AsSpan().SequenceEqual(data))
+            throw new IOException($"{label}: the saved block did not match after release.");
+        return new(label, "PASS", evidence + " The saved block matched after release.");
     }
 }

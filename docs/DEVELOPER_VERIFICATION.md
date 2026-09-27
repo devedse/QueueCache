@@ -17,7 +17,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 52)
+## Suites (plan version 53)
+
+Plan 53 (T053) adds `ordering-faults/paging-write-map-failure`: lab fault 11
+makes the next paging write's buffer unmappable. The write must fall back to the
+ordered direct path (paging map-failure and direct-write counters rise), the
+mapped save must succeed, the cache must stay healthy and the block must match
+after release. Fault 11 only affects paging writes, whose fallback cannot fail
+them, so an unrelated paging write that takes it is harmless.
 
 Plan 52 opens `release-under-load`'s final read-back through a shared read-only
 handle; plan 51's exclusive open failed with a sharing violation while the

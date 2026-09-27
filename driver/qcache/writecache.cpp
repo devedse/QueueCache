@@ -1439,7 +1439,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             c->DelayMs = static_cast<ULONG>(command.Value);
         break;
     case QcLabFault:
-        if (command.Value > 10)
+        if (command.Value > 11)
             status = STATUS_INVALID_PARAMETER;
         else
             c->InjectFault = static_cast<ULONG>(command.Value);
@@ -1658,7 +1658,11 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         ReleaseCache(c);
         return NT_SUCCESS(status) ? OriginalIo(c, irp) : status;
     }
-    auto source = Map(irp);
+    // Lab fault 11: the next paging write's buffer cannot be mapped (fallback proof only).
+    const bool mapFault = pagingIo && c->InjectFault == 11;
+    if (mapFault)
+        c->InjectFault = 0;
+    auto source = mapFault ? nullptr : Map(irp);
     if (!source)
     {
         if (pagingIo)
