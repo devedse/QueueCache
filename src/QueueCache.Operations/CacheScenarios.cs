@@ -189,8 +189,20 @@ public static class CacheScenarios
         if (after.AcceptedBytes <= before.AcceptedBytes || after.DrainedBytes <= before.DrainedBytes ||
             attemptsAfter.LowerWriteAttempts <= attemptsAfterAdmission!.LowerWriteAttempts)
             throw new IOException(label + ": foreground or background made no measurable progress");
-        if (after.ReadHitBytes - before.ReadHitBytes < readBytes || attemptsAfter.LowerReadAttempts != attemptsBefore.LowerReadAttempts)
-            throw new IOException(label + ": a known-current cached read missed RAM");
+        // Lower-read counters are device-wide: other activity on the disk (indexing, scanning)
+        // can read it during the window. The owned blocks are dirty or retained and dirty data
+        // is never evicted, so with zero evictions an owned read cannot have missed.
+        var otherLowerReads = attemptsAfter.LowerReadAttempts - attemptsBefore.LowerReadAttempts;
+        if (after.ReadHitBytes - before.ReadHitBytes < readBytes || (otherLowerReads != 0 && after.Evictions != before.Evictions))
+        {
+            var diagnosticsAfter = device.GetDiagnostics();
+            throw new IOException(label + ": a known-current cached read missed RAM " + FormattableString.Invariant(
+                $"(hit {after.ReadHitBytes - before.ReadHitBytes} of {readBytes} bytes; lower reads +{attemptsAfter.LowerReadAttempts - attemptsBefore.LowerReadAttempts}") +
+                FormattableString.Invariant($", paging-forwarded +{(diagnosticsAfter.LowerSources?.PagingForwardedReads ?? 0) - (diagnosticsBefore.LowerSources?.PagingForwardedReads ?? 0)}") +
+                FormattableString.Invariant($", other +{(diagnosticsAfter.LowerSources?.OtherReads ?? 0) - (diagnosticsBefore.LowerSources?.OtherReads ?? 0)}") +
+                FormattableString.Invariant($"; fills +{(diagnosticsAfter.ReadFills ?? 0) - (diagnosticsBefore.ReadFills ?? 0)}/+{(diagnosticsAfter.PagingReadFills ?? 0) - (diagnosticsBefore.PagingReadFills ?? 0)}") +
+                FormattableString.Invariant($"; evictions +{after.Evictions - before.Evictions})."));
+        }
         if (after.ThrottleWaits != before.ThrottleWaits)
             throw new IOException(label + ": fitting foreground writes waited for capacity");
         if (peakDirty >= before.PayloadCapacity || after.LastError != 0 || after.Errors != before.Errors)
@@ -218,7 +230,8 @@ public static class CacheScenarios
             $"{after.AcceptedBytes - before.AcceptedBytes}/{after.DrainedBytes - before.DrainedBytes} bytes; read-hit delta " +
             $"{after.ReadHitBytes - before.ReadHitBytes} bytes; capacity-wait delta {after.ThrottleWaits - before.ThrottleWaits}; " +
             $"peak dirty {peakDirty}/{before.PayloadCapacity} bytes; lower-write attempts delta " +
-            $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}. Persisted bytes verified after Disable."));
+            $"{attemptsAfter.LowerWriteAttempts - attemptsAfterAdmission.LowerWriteAttempts}; device-wide lower reads from other " +
+            $"activity {otherLowerReads} with zero evictions. Persisted bytes verified after Disable."));
         results.Add(SectorScenarios.AdmissionCheck(label + "/first-fitting-write-zero-lower-io", admissionEvidence));
     }
 }

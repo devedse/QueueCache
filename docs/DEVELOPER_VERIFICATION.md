@@ -17,7 +17,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 56)
+## Suites (plan version 57)
+
+Plan 57 corrects `policies`' 60-second hot-set check. It required zero lower
+reads on the whole device, which background activity (indexing, scanning of the
+day's test files) broke on 0.4.148.1 (`...-165751-aa5944de...`, and 1 of 3 reruns:
+every owned read hit RAM, 7 unrelated lower reads, 0 evictions). The owned blocks
+are dirty or retained and dirty data is never evicted, so unrelated lower reads
+are now tolerated only when no block was evicted during the window; hit bytes must
+still cover every owned read, and the failure message reports every counter.
 
 Plan 56 adds `paging-coherence/mapped-read-retained`: an 8 MiB file written while
 caching is released is read through a mapping (application paging reads), then
