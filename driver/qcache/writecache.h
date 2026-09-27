@@ -109,7 +109,8 @@ struct QC_DIAGNOSTICS
     ULONGLONG LowerAllocationRetries;
     // V12: recognised paging-file requests forwarded from dispatch, bypassing the worker.
     ULONGLONG PagingFileBypasses;
-    // V13: read misses kept as clean cache blocks (all reads / application paging reads).
+    // V13: read misses kept as clean cache blocks (all reads / application paging reads;
+    // the second stays zero since paging read misses are no longer kept, see V17).
     ULONGLONG ReadFills, PagingReadFills;
     // V14: requests served on the caller's thread without the request worker, and
     // caller-thread attempts that handed the request to the worker unchanged.
@@ -118,6 +119,9 @@ struct QC_DIAGNOSTICS
     ULONGLONG CopyOffloadReads;
     // V16: large fitting writes whose payload copy was handed to those threads.
     ULONGLONG CopyOffloadWrites;
+    // V17: read misses whose buffer repeats a physical page (never kept): paging
+    // reads (the memory manager's dummy page) and skipped ordinary read fills.
+    ULONGLONG PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -134,7 +138,9 @@ static constexpr ULONG QcDiagnosticsV12Size = 824;
 static constexpr ULONG QcDiagnosticsV13Size = 840;
 static constexpr ULONG QcDiagnosticsV14Size = 864;
 static constexpr ULONG QcDiagnosticsV15Size = 872;
-static_assert(sizeof(QC_DIAGNOSTICS) == 880);
+static constexpr ULONG QcDiagnosticsV16Size = 880;
+static_assert(sizeof(QC_DIAGNOSTICS) == 896);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadsRepeatedPages) == QcDiagnosticsV16Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadWrites) == QcDiagnosticsV15Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadReads) == QcDiagnosticsV14Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerPathReads) == QcDiagnosticsV13Size);
@@ -347,6 +353,7 @@ struct QC_CACHE
     ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
+    volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only ReadThreads execute.

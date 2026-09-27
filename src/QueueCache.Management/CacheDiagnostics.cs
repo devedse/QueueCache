@@ -65,6 +65,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int CallerPathWireSize = 864;
     public const int CopyOffloadWireSize = 872;
     public const int WriteOffloadWireSize = 880;
+    public const int RepeatedPageWireSize = 896;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -88,6 +89,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public ulong? CopyOffloadReads { get; init; }
     /// <summary>V16: large fitting writes whose payload copy ran on those threads.</summary>
     public ulong? CopyOffloadWrites { get; init; }
+    /// <summary>V17: paging reads whose buffer repeated a physical page (the memory manager's dummy page).</summary>
+    public ulong? PagingReadsRepeatedPages { get; init; }
+    /// <summary>V17: ordinary read misses not kept because their buffer repeated a physical page.</summary>
+    public ulong? ReadFillsSkippedRepeatedPages { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -108,6 +113,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CallerPathWireSize => 14u,
             CopyOffloadWireSize => 15u,
             WriteOffloadWireSize => 16u,
+            RepeatedPageWireSize => 17u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -233,6 +239,12 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
         ulong? copyOffloadWrites = bytes.Length >= WriteOffloadWireSize
             ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[CopyOffloadWireSize..])
             : null;
+        ulong? pagingRepeated = null, fillsSkippedRepeated = null;
+        if (bytes.Length >= RepeatedPageWireSize)
+        {
+            pagingRepeated = BinaryPrimitives.ReadUInt64LittleEndian(bytes[WriteOffloadWireSize..]);
+            fillsSkippedRepeated = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(WriteOffloadWireSize + 8)..]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -251,7 +263,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingReadFills = pagingReadFills,
             CallerPath = callerPath,
             CopyOffloadReads = copyOffloadReads,
-            CopyOffloadWrites = copyOffloadWrites
+            CopyOffloadWrites = copyOffloadWrites,
+            PagingReadsRepeatedPages = pagingRepeated,
+            ReadFillsSkippedRepeatedPages = fillsSkippedRepeated
         };
     }
 }

@@ -158,6 +158,8 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->CallerPathDeclined = InterlockedCompareExchange64(&c->CallerPathDeclined, 0, 0);
     output->CopyOffloadReads = InterlockedCompareExchange64(&c->CopyOffloadReads, 0, 0);
     output->CopyOffloadWrites = InterlockedCompareExchange64(&c->CopyOffloadWrites, 0, 0);
+    output->PagingReadsRepeatedPages = InterlockedCompareExchange64(&c->PagingReadsRepeatedPages, 0, 0);
+    output->ReadFillsSkippedRepeatedPages = InterlockedCompareExchange64(&c->ReadFillsSkippedRepeatedPages, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1986,6 +1988,28 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
 // may add a clean read-fill or a newer version for these blocks. It therefore
 // overlays and unpins exactly the versions it pinned; FindSlot could name a slot
 // this read never pinned. Writes overlapping it wait (WaitForPagingReads).
+// True when no physical page occurs twice in the request's buffer. Only then is
+// every block of a completed read a copy of that block's disk data. A page can
+// occur twice when a user buffer maps it at two addresses, and in the memory
+// manager's clustered page-ins, which point every already-resident page of the
+// cluster at one shared dummy page that concurrent reads overwrite. Copying such
+// a position into the cache kept another block's data (0.4.148.1-0.4.162.1:
+// corrupted executable pages on C:). Bounded quadratic scan; misses only.
+static bool DistinctPages(PIRP irp)
+{
+    auto mdl = irp->MdlAddress;
+    if (!mdl || mdl->Next)
+        return false;
+    const auto pages = MmGetMdlPfnArray(mdl);
+    const auto count = ADDRESS_AND_SIZE_TO_SPAN_PAGES(MmGetMdlVirtualAddress(mdl), MmGetMdlByteCount(mdl));
+    if (count > QcPagingPinBlocks + 1)
+        return false;
+    for (ULONG i = 1; i < count; ++i)
+        for (ULONG j = 0; j < i; ++j)
+            if (pages[i] == pages[j])
+                return false;
+    return true;
+}
 // callerPath (with hitOnly): QcCacheTryCallerPath; the read-service counters
 // stay the worker's, and a mapping failure declines instead of failing.
 static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true,
@@ -1996,9 +2020,6 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     auto end = start + length;
     const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
-    // Application paging reads (file-cache and mapped-file misses) are kept like any
-    // read; paging-file and unknown-origin reads never are. Classified before the mutex.
-    const bool retainPaging = pagingIo && !hitOnly && length && ApplicationPaging(c, irp, start, end);
     AcquireCache(c);
     if (c->Gone || irp->Cancel)
     {
@@ -2013,13 +2034,18 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         return STATUS_SUCCESS;
     }
     const bool resident = !pagingIo || ResidentRange(c, start, end);
-    if (pagingIo && !resident && (!retainPaging || !c->Enabled))
+    if (pagingIo && !resident)
     {
-        // No cached version exists to overlay. Avoid RAM retention and mapping.
-        // The request worker may service independent reads during this wait;
-        // offloaded-read threads and nested service never do (allowReadService).
+        // No cached version exists to overlay. Paging read misses are never kept:
+        // a clustered page-in's buffer can repeat the shared dummy page (see
+        // DistinctPages). The request worker may service independent reads during
+        // this wait; offloaded-read threads and nested service never do.
         ReleaseCache(c);
-        return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, allowReadService);
+        if (hitOnly)
+            return STATUS_NOT_FOUND;
+        if (!DistinctPages(irp))
+            InterlockedIncrement64(&c->PagingReadsRepeatedPages); // Evidence only.
+        return OriginalIo(c, irp, allowReadService);
     }
     if (!NT_SUCCESS(c->State.LastError))
     {
@@ -2177,6 +2203,13 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     if (NT_SUCCESS(status))
     {
+        // Keep a miss only from a non-paging read whose buffer repeats no page.
+        bool fillable = !full && !pagingIo;
+        if (!full && !DistinctPages(irp))
+        {
+            fillable = false;
+            InterlockedIncrement64(pagingIo ? &c->PagingReadsRepeatedPages : &c->ReadFillsSkippedRepeatedPages);
+        }
         for (auto block = firstBlock; block < end; block += Chunk)
         {
             auto index = FindSlot(c, block);
@@ -2189,7 +2222,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 TouchClean(c, index);
                 continue;
             }
-            if ((!pagingIo || retainPaging) && block >= start && block + Chunk <= end && ReadRoom(c))
+            if (fillable && block >= start && block + Chunk <= end && ReadRoom(c))
             {
                 index = AllocateSlot(c, false, true);
                 auto fill = &c->Slots[index];
@@ -2200,7 +2233,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 RtlCopyMemory(fill->Buffer, target + (block - start), Chunk);
                 IndexSlot(c, index);
                 DemoteReadFill(c, index);
-                InterlockedIncrement64(pagingIo ? &c->PagingReadFills : &c->ReadFills);
+                InterlockedIncrement64(&c->ReadFills);
             }
         }
         if (hitOnly && !callerPath)

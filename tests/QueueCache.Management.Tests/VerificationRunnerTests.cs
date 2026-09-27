@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 59, "policies adds parallel-copies");
+        Check(VerificationPlan.Version == 60, "paging read misses are no longer kept");
         Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 3, 4, 0, true).Result == "PASS",
             "parallel-copies accepts whole versions and offloaded copies");
         Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, null, null, 0, true).Detail.Contains("unavailable"),
@@ -289,16 +289,16 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
-        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, 2058, 8 << 20, 8 << 20, true).Result == "PASS",
-            "a mapped read miss is kept and a re-read hits RAM");
-        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(null, null, 0, 8 << 20, true).Result == "SKIP",
-            "older drivers leave read retention unproven");
-        foreach (var (after, hits, match) in new (ulong?, ulong, bool)[] { (100, 8UL << 20, true), (2058, 1UL << 20, true), (2058, 8UL << 20, false) })
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, 10, 0, 8 << 20, true, 3).Result == "PASS",
+            "a mapped read miss is not kept and a re-read matches");
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(null, null, 0, 8 << 20, true).Detail.Contains("unavailable"),
+            "older drivers report the fill counters as unavailable");
+        foreach (var (after, match) in new (ulong?, bool)[] { (11, true), (2058, true), (10, false) })
         {
             try
             {
-                QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, after, hits, 8 << 20, match);
-                throw new Exception("Missing read retention was accepted.");
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, after, 0, 8 << 20, match);
+                throw new Exception("A kept paging read miss or mismatched bytes were accepted.");
             }
             catch (IOException) { }
         }

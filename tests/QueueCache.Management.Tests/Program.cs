@@ -360,6 +360,16 @@ BinaryPrimitives.WriteUInt32LittleEndian(writeCopyBytes.AsSpan(4), CacheDiagnost
 BinaryPrimitives.WriteUInt64LittleEndian(writeCopyBytes.AsSpan(CacheDiagnostics.CopyOffloadWireSize), 22);
 var writeCopies = CacheDiagnostics.Decode(writeCopyBytes);
 Check(writeCopies.CopyOffloadWrites == 22 && writeCopies.CopyOffloadReads == 21, "V16 write copy offloads and V15 prefix");
+Check(writeCopies.PagingReadsRepeatedPages is null, "V16 repeated-page counters are unavailable, not zero");
+var repeatedBytes = new byte[CacheDiagnostics.RepeatedPageWireSize];
+writeCopyBytes.CopyTo(repeatedBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(repeatedBytes, 17);
+BinaryPrimitives.WriteUInt32LittleEndian(repeatedBytes.AsSpan(4), CacheDiagnostics.RepeatedPageWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(repeatedBytes.AsSpan(CacheDiagnostics.WriteOffloadWireSize), 31);
+BinaryPrimitives.WriteUInt64LittleEndian(repeatedBytes.AsSpan(CacheDiagnostics.WriteOffloadWireSize + 8), 32);
+var repeated = CacheDiagnostics.Decode(repeatedBytes);
+Check(repeated.PagingReadsRepeatedPages == 31 && repeated.ReadFillsSkippedRepeatedPages == 32 && repeated.CopyOffloadWrites == 22,
+    "V17 repeated-page counters and V16 prefix");
 var between = new byte[CacheDiagnostics.ReadFillWireSize + 8];
 fillBytes.CopyTo(between, 0);
 BinaryPrimitives.WriteUInt32LittleEndian(between.AsSpan(4), (uint)between.Length);

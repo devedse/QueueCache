@@ -165,23 +165,23 @@ public static class PagingCoherenceScenarios
         ];
     }
 
-    /// <summary>N2: an application paging read miss must be kept, so a later read is served from RAM.</summary>
+    /// <summary>Paging read misses are never kept (since plan 60): a clustered page-in's buffer can repeat the
+    /// memory manager's shared dummy page, whose contents belong to another block. A mapped read and a later
+    /// unbuffered read must both return the file's bytes, and no paging read fill may be recorded.</summary>
     internal static CheckResult VerifyMappedReadRetention(ulong? fillsBefore, ulong? fillsAfter, ulong hitBytes,
-        long fileBytes, bool bytesMatch)
+        long fileBytes, bool bytesMatch, ulong? repeatedPageReads = null)
     {
-        const string label = "paging-coherence/mapped-read-retained";
-        if (fillsBefore is null || fillsAfter is null)
-            return new(label, "SKIP", "The loaded driver does not keep paging read misses (Diagnostics V13).");
+        const string label = "paging-coherence/mapped-read-not-kept";
         if (!bytesMatch)
             throw new IOException("Bytes read after the mapped read did not match the file.");
-        var blocks = fileBytes / 4096;
+        if (fillsBefore is null || fillsAfter is null)
+            return new(label, "PASS", "Mapped and unbuffered reads matched; paging read fill counters unavailable (driver older than Diagnostics V13).");
         var filled = fillsAfter.Value - fillsBefore.Value;
-        if (filled < (ulong)(blocks * 9 / 10))
-            throw new IOException($"Only {filled} of {blocks} blocks read through a mapping were kept in RAM.");
-        if (hitBytes < (ulong)(fileBytes * 9 / 10))
-            throw new IOException($"A second (unbuffered) read hit only {hitBytes} of {fileBytes} bytes in RAM.");
-        return new(label, "PASS", $"A mapped read of a {fileBytes >> 20} MiB file kept {filled} of {blocks} blocks " +
-            $"(device-wide paging read fills); an unbuffered re-read hit {hitBytes} bytes in RAM and matched.");
+        if (filled != 0)
+            throw new IOException($"{filled} blocks read through a mapping were kept in RAM; paging read misses must not be kept.");
+        return new(label, "PASS", $"A mapped read of a {fileBytes >> 20} MiB file kept no blocks; an unbuffered re-read " +
+            $"matched ({hitBytes} bytes from RAM)" + (repeatedPageReads is { } repeated
+                ? $"; paging reads with a repeated page during the check: {repeated}." : "."));
     }
 
     private static CheckResult RunMappedReadRetention(DiskTarget target, CacheDevice device, string workDirectory)
@@ -226,7 +226,9 @@ public static class PagingCoherenceScenarios
             }
             var hitBytes = device.GetWriteCacheState().ReadHitBytes - hitsBefore;
             return VerifyMappedReadRetention(before.PagingReadFills, after.PagingReadFills, hitBytes, fileBytes,
-                actual.AsSpan().SequenceEqual(expected));
+                actual.AsSpan().SequenceEqual(expected),
+                before.PagingReadsRepeatedPages is null || after.PagingReadsRepeatedPages is null
+                    ? null : after.PagingReadsRepeatedPages - before.PagingReadsRepeatedPages);
         }
         finally
         {
