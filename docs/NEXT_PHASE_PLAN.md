@@ -78,9 +78,10 @@ then Driver Verifier, because it can invalidate paths we consider finished.
    - Allocation failure under memory pressure. Lower IRP builds DONE (plan 48,
      0.4.131.1): transient failures retry, exhaustion faults after a bound,
      both covered by `ordering-faults` under Driver Verifier. Request buffer
-     mapping failure: paging writes fall back to the direct path (plan 53,
-     `paging-write-map-failure`); other requests fail that one request with
-     `STATUS_INSUFFICIENT_RESOURCES` without faulting the cache (by review).
+     mapping failure DONE: paging writes fall back to the direct path (plan 54,
+     `paging-write-map-failure`, verified under Driver Verifier); other
+     requests fail that one request with `STATUS_INSUFFICIENT_RESOURCES`
+     without faulting the cache (by review).
    - Races between Release/Remove and I/O. Release DONE (plan 52):
      `ordering-faults/release-under-load` passes under Driver Verifier.
      Physical removal needs a hypervisor hot-unplug.
