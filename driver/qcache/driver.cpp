@@ -39,6 +39,7 @@ struct QC_EXTENSION
     bool ReadSelectionAllowsFlush;             // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
     BOOLEAN CallerActive; // QueueLock: a caller-thread request owns the cache (counted in DirectCount).
+    ULONG CallerStreak;   // QueueLock: caller-path requests since the last probe via the worker.
 #endif
 };
 static WCHAR ExpectedDriverKey[512];
@@ -1052,8 +1053,13 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         // worker or on another caller thread. The worker takes the next request
         // only after DirectIdle, so this request is the sole foreground owner, and
         // every later arrival queues (or waits its turn) behind it.
-        const bool caller = !direct && !ext->Closing && callerCandidate && !ext->PendingControls &&
-                            IsListEmpty(&ext->Pending) && !ext->ActiveSince && !ext->CallerActive;
+        bool caller = !direct && !ext->Closing && callerCandidate && !ext->PendingControls &&
+                      IsListEmpty(&ext->Pending) && !ext->ActiveSince && !ext->CallerActive;
+        if (caller && ++ext->CallerStreak >= QcCallerPathProbeInterval)
+        {
+            ext->CallerStreak = 0;
+            caller = false; // Probe: see QcCallerPathProbeInterval.
+        }
         if (caller)
             ext->CallerActive = TRUE;
 #else

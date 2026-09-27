@@ -39,6 +39,11 @@ constexpr QC_OPTIONS QcDefaultOptions()
 // QcCallerPath default: serve RAM hits and fitting writes on the calling thread
 // when the device has no other request queued or active.
 constexpr LONG QcDefaultCallerPath = 1;
+// Every Nth caller-path candidate is queued instead. With several requests
+// outstanding (queue depth > 1) later arrivals then find it queued and follow it,
+// so the worker again overlaps its work with the caller's submissions; with one
+// outstanding request it completes and the caller path resumes (about 1% cost).
+constexpr ULONG QcCallerPathProbeInterval = 1024;
 constexpr bool QcValidOptions(const QC_OPTIONS& o)
 {
     return o.Version == 1 && o.Size == sizeof(o) && o.Allocation <= QcFixed && o.WritePercent <= 100 &&
