@@ -50,6 +50,11 @@ constexpr ULONG QcCallerPathProbeInterval = 1024;
 // they reap completions. So keep using the worker for this many further
 // candidates, restarting the count each time one finds it busy again.
 constexpr ULONG QcCallerPathWorkerWindow = 256;
+// An idle request worker polls this long for the next request before sleeping.
+// A wake-up costs about 11 us on the test VM, several times a 4 KiB request's
+// work, so a worker slightly faster than its submitters otherwise slept and woke
+// once per request. Only spent right after processing a request.
+constexpr ULONG QcWorkerSpinMicroseconds = 30;
 constexpr bool QcValidOptions(const QC_OPTIONS& o)
 {
     return o.Version == 1 && o.Size == sizeof(o) && o.Allocation <= QcFixed && o.WritePercent <= 100 &&

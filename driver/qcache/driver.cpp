@@ -526,6 +526,7 @@ static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
 static void RequestWorker(PVOID context)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
+    bool spin = false;
     for (;;)
     {
         auto irp = IoCsqRemoveNextIrp(&ext->Csq, nullptr);
@@ -552,6 +553,7 @@ static void RequestWorker(PVOID context)
                 KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
                 ext->ActiveSince = 0;
                 KeReleaseSpinLock(&ext->QueueLock, activeIrql);
+                spin = true;
                 continue;
             }
             auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -575,7 +577,25 @@ static void RequestWorker(PVOID context)
             KeReleaseSpinLock(&ext->QueueLock, activeIrql);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             Complete(irp, status, bytes);
+            spin = true;
             continue;
+        }
+        if (spin)
+        {
+            // Just finished a request: poll briefly before paying for a sleep and
+            // wake-up (QcWorkerSpinMicroseconds). Unlocked reads; the locked idle
+            // check below remains authoritative.
+            spin = false;
+            LARGE_INTEGER frequency;
+            const auto start = KeQueryPerformanceCounter(&frequency).QuadPart;
+            const auto limit = frequency.QuadPart * QcWorkerSpinMicroseconds / 1000000;
+            bool arrived = false;
+            while (!(arrived = ReadNoFence64(reinterpret_cast<volatile LONG64*>(&ext->QueueDepth)) != 0) &&
+                   !*static_cast<volatile BOOLEAN*>(&ext->Closing) && KeQueryPerformanceCounter(nullptr).QuadPart - start < limit)
+                for (ULONG i = 0; i < 64; ++i)
+                    YieldProcessor();
+            if (arrived)
+                continue;
         }
         // Clear/check under insertion's lock: no lost wakeup if a request races idle.
         KIRQL irql;
