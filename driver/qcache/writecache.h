@@ -111,6 +111,9 @@ struct QC_DIAGNOSTICS
     ULONGLONG PagingFileBypasses;
     // V13: read misses kept as clean cache blocks (all reads / application paging reads).
     ULONGLONG ReadFills, PagingReadFills;
+    // V14: requests served on the caller's thread without the request worker, and
+    // caller-thread attempts that handed the request to the worker unchanged.
+    ULONGLONG CallerPathReads, CallerPathWrites, CallerPathDeclined;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -124,7 +127,9 @@ static constexpr ULONG QcDiagnosticsV9Size = 736;
 static constexpr ULONG QcDiagnosticsV10Size = 808;
 static constexpr ULONG QcDiagnosticsV11Size = 816;
 static constexpr ULONG QcDiagnosticsV12Size = 824;
-static_assert(sizeof(QC_DIAGNOSTICS) == 840);
+static constexpr ULONG QcDiagnosticsV13Size = 840;
+static_assert(sizeof(QC_DIAGNOSTICS) == 864);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerPathReads) == QcDiagnosticsV13Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadFills) == QcDiagnosticsV12Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingFileBypasses) == QcDiagnosticsV11Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerAllocationRetries) == QcDiagnosticsV10Size);
@@ -210,7 +215,11 @@ enum : ULONG
     // Mode 1/2: the held batch's real lower write reports failure/short transfer
     // (last run of a sparse version) and faults the cache as a real error would.
     // Value 0 disarms. Refused on any disk hosting a paging/hibernation/dump path.
-    QcLabGate
+    QcLabGate,
+    // Value 0: every read/write goes through the request worker. Value 1: when no
+    // other request is queued or active, RAM hits and fitting writes are served on
+    // the calling thread (see QcCacheTryCallerPath). Runtime only; not persisted.
+    QcCallerPath
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {
@@ -309,6 +318,8 @@ struct QC_CACHE
     volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
     volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
     ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
+    volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
+    volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only PagingThread executes.
@@ -366,6 +377,10 @@ bool QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
+// Dispatch only, at PASSIVE_LEVEL, while no other foreground request can run (the
+// request worker waits for DirectIdle before processing). True: *status is final
+// and the caller completes irp. False: nothing changed; queue irp for the worker.
+bool QcCacheTryCallerPath(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 // Request worker only. True: the paging thread now owns and will complete irp.
 bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);

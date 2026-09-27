@@ -173,5 +173,7 @@ public enum WriteCacheAction : uint
     PerformanceTiming, EnablePaging,
     /// <summary>Lab only: budgetBytes = range start, value = holdMs &lt;&lt; 32 | rangeBytes; value 0 disarms.
     /// The driver refuses it on disks hosting paging/hibernation/dump paths.</summary>
-    LabGate
+    LabGate,
+    /// <summary>Value 1: serve RAM hits and fitting writes on the caller's thread when the disk is otherwise idle; 0: always use the request worker.</summary>
+    CallerPath
 }

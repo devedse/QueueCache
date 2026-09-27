@@ -18,16 +18,21 @@ internal static class DeveloperCommands
         var performance = new Command("performance", "Read queue/phase and lifetime performance counters as JSON. Detailed timing is opt-in.");
         var perfDevice = new Argument<string>("device");
         var timing = new Option<bool?>("--timing") { Description = "Enable/disable detailed driver timing; omitted leaves it unchanged." };
+        var callerPath = new Option<bool?>("--caller-path") { Description = "Serve RAM hits and fitting writes on the calling thread when the disk is otherwise idle (default on); omitted leaves it unchanged. Not persisted." };
         performance.Arguments.Add(perfDevice);
         performance.Options.Add(timing);
+        performance.Options.Add(callerPath);
         performance.SetAction(p =>
         {
             var enabled = p.GetValue(timing);
-            using var device = new CacheDevice(p.GetValue(perfDevice)!, enabled is not null);
+            var caller = p.GetValue(callerPath);
+            using var device = new CacheDevice(p.GetValue(perfDevice)!, enabled is not null || caller is not null);
             if (!device.GetWriteCacheState().SupportsPerformance)
                 throw new NotSupportedException("Install the performance-telemetry driver first.");
             if (enabled is not null)
                 device.Control(WriteCacheAction.PerformanceTiming, value: enabled.Value ? 1UL : 0UL);
+            if (caller is not null)
+                device.Control(WriteCacheAction.CallerPath, value: caller.Value ? 1UL : 0UL);
             Console.WriteLine(JsonSerializer.Serialize(device.GetPerformance(), new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         });

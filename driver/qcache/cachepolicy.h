@@ -36,6 +36,9 @@ constexpr QC_OPTIONS QcDefaultOptions()
     return {
         1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcIdle, 40, 80, 5000, 250, 256, 2};
 }
+// QcCallerPath default: serve RAM hits and fitting writes on the calling thread
+// when the device has no other request queued or active.
+constexpr LONG QcDefaultCallerPath = 1;
 constexpr bool QcValidOptions(const QC_OPTIONS& o)
 {
     return o.Version == 1 && o.Size == sizeof(o) && o.Allocation <= QcFixed && o.WritePercent <= 100 &&

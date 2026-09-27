@@ -38,6 +38,7 @@ struct QC_EXTENSION
     QcReadSelection<LIST_ENTRY> ReadSelection; // QueueLock; see readselection.h.
     bool ReadSelectionAllowsFlush;             // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
+    BOOLEAN CallerActive; // QueueLock: a caller-thread request owns the cache (counted in DirectCount).
 #endif
 };
 static WCHAR ExpectedDriverKey[512];
@@ -601,6 +602,8 @@ static void RequestWorker(PVOID context)
             KeWaitForSingleObject(&ext->WorkAvailable, Executive, KernelMode, FALSE, nullptr);
     }
 #if QCACHE_CACHE_DRIVER
+    // Closing stops new caller-thread requests; one already running still owns the cache.
+    KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
     QcCacheWaitPagingReads(&ext->Cache);
     QcCacheBarrier(&ext->Cache, TRUE, QcRemoveBarrier);
 #endif
@@ -861,6 +864,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV13Size ? QcDiagnosticsV13Size :
                 outputLength >= QcDiagnosticsV12Size ? QcDiagnosticsV12Size :
                 outputLength >= QcDiagnosticsV11Size ? QcDiagnosticsV11Size :
                 outputLength >= QcDiagnosticsV10Size ? QcDiagnosticsV10Size :
@@ -877,7 +881,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 :
                 returned == QcDiagnosticsV7Size ? 7 : returned == QcDiagnosticsV8Size ? 8 : returned == QcDiagnosticsV9Size ? 9 :
                 returned == QcDiagnosticsV10Size ? 10 : returned == QcDiagnosticsV11Size ? 11 :
-                returned == QcDiagnosticsV12Size ? 12 : 13;
+                returned == QcDiagnosticsV12Size ? 12 : returned == QcDiagnosticsV13Size ? 13 : 14;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1019,6 +1023,14 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     // atomically switches subsequent traffic to the ordered worker.
     if (stack->MajorFunction != IRP_MJ_PNP)
     {
+#if QCACHE_CACHE_DRIVER
+        // The caller path waits for the cache mutex and copies on this thread:
+        // PASSIVE_LEVEL, a locked buffer and enough stack for the cache code.
+        const bool callerCandidate =
+            (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
+            ext->Cache.CallerPath && !(irp->Flags & IRP_PAGING_IO) && irp->MdlAddress &&
+            KeGetCurrentIrql() == PASSIVE_LEVEL && IoGetRemainingStackSize() >= 8192;
+#endif
         KIRQL irql;
         KeAcquireSpinLock(&ext->QueueLock, &irql);
 #if QCACHE_CACHE_DRIVER
@@ -1035,9 +1047,41 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             ++ext->PendingControls;
         }
         const bool direct = !ext->Routing && !ext->Closing;
-        if (direct && ++ext->DirectCount == 1)
+#if QCACHE_CACHE_DRIVER
+        // Caller-thread path: only when no request is queued, being processed by the
+        // worker or on another caller thread. The worker takes the next request
+        // only after DirectIdle, so this request is the sole foreground owner, and
+        // every later arrival queues (or waits its turn) behind it.
+        const bool caller = !direct && !ext->Closing && callerCandidate && !ext->PendingControls &&
+                            IsListEmpty(&ext->Pending) && !ext->ActiveSince && !ext->CallerActive;
+        if (caller)
+            ext->CallerActive = TRUE;
+#else
+        const bool caller = false;
+#endif
+        if ((direct || caller) && ++ext->DirectCount == 1)
             KeClearEvent(&ext->DirectIdle);
         KeReleaseSpinLock(&ext->QueueLock, irql);
+#if QCACHE_CACHE_DRIVER
+        if (caller)
+        {
+            NTSTATUS callerStatus;
+            const bool served = QcCacheTryCallerPath(&ext->Cache, irp,
+                InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0), &callerStatus);
+            KeAcquireSpinLock(&ext->QueueLock, &irql);
+            ext->CallerActive = FALSE;
+            if (--ext->DirectCount == 0)
+                KeSetEvent(&ext->DirectIdle, IO_NO_INCREMENT, FALSE);
+            KeReleaseSpinLock(&ext->QueueLock, irql);
+            if (served)
+            {
+                auto bytes = NT_SUCCESS(callerStatus) ? irp->IoStatus.Information : 0;
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, callerStatus, bytes);
+            }
+            // Declined unchanged: the ordered worker path below handles it.
+        }
+#endif
         if (direct)
         {
             IoCopyCurrentIrpStackLocationToNext(irp);

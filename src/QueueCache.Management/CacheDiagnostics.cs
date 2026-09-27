@@ -62,6 +62,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int AllocationRetryWireSize = 816;
     public const int PagingBypassWireSize = 824;
     public const int ReadFillWireSize = 840;
+    public const int CallerPathWireSize = 864;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -79,6 +80,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V13: read misses kept as clean blocks: all reads, and application paging reads.</summary>
     public ulong? ReadFills { get; init; }
     public ulong? PagingReadFills { get; init; }
+    /// <summary>V14: reads/writes served on the caller's thread, and attempts handed to the request worker.</summary>
+    public CacheCallerPath? CallerPath { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -96,6 +99,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             AllocationRetryWireSize => 11u,
             PagingBypassWireSize => 12u,
             ReadFillWireSize => 13u,
+            CallerPathWireSize => 14u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -210,6 +214,11 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             readFills = BinaryPrimitives.ReadUInt64LittleEndian(bytes[PagingBypassWireSize..]);
             pagingReadFills = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(PagingBypassWireSize + 8)..]);
         }
+        CacheCallerPath? callerPath = bytes.Length >= CallerPathWireSize
+            ? new(BinaryPrimitives.ReadUInt64LittleEndian(bytes[ReadFillWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadFillWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadFillWireSize + 16)..]))
+            : null;
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -225,7 +234,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             LowerAllocationRetries = allocationRetries,
             PagingFileBypasses = pagingBypasses,
             ReadFills = readFills,
-            PagingReadFills = pagingReadFills
+            PagingReadFills = pagingReadFills,
+            CallerPath = callerPath
         };
     }
 }
+/// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
+public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);

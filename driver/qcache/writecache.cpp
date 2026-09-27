@@ -151,6 +151,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->PagingFileBypasses = InterlockedCompareExchange64(&c->PagingFileBypasses, 0, 0);
     output->ReadFills = InterlockedCompareExchange64(&c->ReadFills, 0, 0);
     output->PagingReadFills = InterlockedCompareExchange64(&c->PagingReadFills, 0, 0);
+    output->CallerPathReads = InterlockedCompareExchange64(&c->CallerPathReads, 0, 0);
+    output->CallerPathWrites = InterlockedCompareExchange64(&c->CallerPathWrites, 0, 0);
+    output->CallerPathDeclined = InterlockedCompareExchange64(&c->CallerPathDeclined, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1036,6 +1039,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;
     c->Options = QcDefaultOptions();
+    c->CallerPath = QcDefaultCallerPath;
     c->Instance = InterlockedIncrement64(&NextInstance);
     GlobalLimit = MemoryLimit();
     // A disk-class upper filter can accidentally be installed ABOVE partmgr.
@@ -1433,6 +1437,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         else
             c->Timing = static_cast<LONG>(command.Value);
         break;
+    case QcCallerPath:
+        if (command.Value > 1 || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            InterlockedExchange(&c->CallerPath, static_cast<LONG>(command.Value));
+        break;
     case QcDropClean:
         // Release clean read/retained-write blocks on request. Dirty and in-flight payload
         // is untouched: this is not a flush and never discards data the disk has not taken.
@@ -1606,7 +1616,11 @@ static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG l
     ReleaseCache(c);
     return status;
 }
-static NTSTATUS Write(QC_CACHE* c, PIRP irp)
+// Returned by a caller-thread attempt before it changes anything.
+static constexpr NTSTATUS QcCallerPathDeclined = STATUS_RETRY;
+// callerPath: QcCacheTryCallerPath. Anything that would wait, forward to the
+// disk or take a barrier returns QcCallerPathDeclined before any change.
+static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Write.Length;
@@ -1643,6 +1657,14 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     const auto blocks = static_cast<ULONG>((end - firstBlock + Chunk - 1) / Chunk);
     auto needed = blocks;
     const bool writeThrough = (stack->Flags & SL_WRITE_THROUGH) != 0;
+    // No offload can start while a caller-thread request runs (only the worker
+    // offloads), so an in-flight offloaded read is the only overlap to exclude.
+    if (callerPath && (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c) ||
+                       PagingReadsOverlap(c, offset.QuadPart, end)))
+    {
+        ReleaseCache(c);
+        return QcCallerPathDeclined;
+    }
     if (writeThrough)
     {
         ++c->Diagnostics.WriteThroughWrites;
@@ -1674,6 +1696,11 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
     auto source = mapFault ? nullptr : Map(irp);
     if (!source)
     {
+        if (callerPath)
+        {
+            ReleaseCache(c);
+            return QcCallerPathDeclined;
+        }
         if (pagingIo)
         {
             // Under memory pressure an application paging write must still make
@@ -1714,6 +1741,12 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
         if ((needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= admissionLimit) ||
             !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
             break;
+        if (callerPath)
+        {
+            // Only clean blocks were evicted; the worker waits for capacity.
+            ReleaseCache(c);
+            return QcCallerPathDeclined;
+        }
         c->WriterWaiting = TRUE;
         ++c->State.ThrottleWaits;
         ++c->Performance.CapacityWaits;
@@ -1872,8 +1905,10 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp)
 // may add a clean read-fill or a newer version for these blocks. It therefore
 // overlays and unpins exactly the versions it pinned; FindSlot could name a slot
 // this read never pinned. Writes overlapping it wait (WaitForPagingReads).
+// callerPath (with hitOnly): QcCacheTryCallerPath; the read-service counters
+// stay the worker's, and a mapping failure declines instead of failing.
 static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true,
-                     ULONG* pinned = nullptr)
+                     ULONG* pinned = nullptr, bool callerPath = false)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Read.Length;
@@ -1919,6 +1954,11 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     auto target = Map(irp);
     if (!target)
     {
+        if (callerPath)
+        {
+            ReleaseCache(c);
+            return STATUS_NOT_FOUND;
+        }
         if (irp->Flags & IRP_PAGING_IO)
             InterlockedIncrement64(&c->PagingMapFailures);
         ReleaseCache(c);
@@ -1942,7 +1982,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     if (hitOnly && !full)
     {
-        ++c->Performance.BypassMisses;
+        if (!callerPath)
+            ++c->Performance.BypassMisses;
         Publish(c);
         ReleaseCache(c);
         return STATUS_NOT_FOUND;
@@ -2044,7 +2085,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 InterlockedIncrement64(pagingIo ? &c->PagingReadFills : &c->ReadFills);
             }
         }
-        if (hitOnly)
+        if (hitOnly && !callerPath)
             ++c->Performance.BypassReads;
     }
     Publish(c);
@@ -2070,6 +2111,35 @@ bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* st
             ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
     }
     return *status != STATUS_NOT_FOUND;
+}
+// Serves a RAM read hit or a write that fits on the dispatching thread, saving
+// the queue hand-off, the worker wake-up and the cross-thread completion. Only
+// dispatch calls it, and only when nothing else is queued or active: the worker
+// waits for DirectIdle, so this is the sole foreground owner, exactly like the
+// worker (drainers and in-flight offloaded paging reads continue as usual).
+// Paging I/O, write-through in Strict mode, misses, mapping failures and capacity
+// waits decline unchanged so the worker applies its normal ordered path. A
+// faulted, removed or cancelled cache returns the status the worker would.
+bool QcCacheTryCallerPath(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    const bool read = stack->MajorFunction == IRP_MJ_READ;
+    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    const auto length = stack->Parameters.Read.Length;
+    if ((!read && stack->MajorFunction != IRP_MJ_WRITE) || (irp->Flags & IRP_PAGING_IO) || !c->Enabled ||
+        !length || deviceBytes <= 0 || offset < 0 || offset > deviceBytes ||
+        length > static_cast<ULONGLONG>(deviceBytes - offset) ||
+        !c->SectorBytes || offset % c->SectorBytes || length % c->SectorBytes)
+        return false;
+    irp->IoStatus.Information = 0;
+    *status = read ? Read(c, irp, true, false, nullptr, true) : Write(c, irp, true);
+    if (*status == (read ? STATUS_NOT_FOUND : QcCallerPathDeclined))
+    {
+        InterlockedIncrement64(&c->CallerPathDeclined);
+        return false;
+    }
+    InterlockedIncrement64(read ? &c->CallerPathReads : &c->CallerPathWrites);
+    return true;
 }
 bool QcCacheTryPagingReadProgress(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)
 {
