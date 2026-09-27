@@ -685,8 +685,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     auto stack = IoGetCurrentIrpStackLocation(irp);
 #if QCACHE_CACHE_DRIVER
     // Record paging traffic before routing selection, including disabled pass-through.
-    // This is observation only and must not alter completion, ordering or admission.
-    QcCacheRecordPagingIo(&ext->Cache, irp);
+    const bool pagingFile = QcCacheRecordPagingIo(&ext->Cache, irp);
 #endif
     if (stack->MajorFunction == IRP_MJ_PNP)
     {
@@ -862,6 +861,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV11Size ? QcDiagnosticsV11Size :
                 outputLength >= QcDiagnosticsV10Size ? QcDiagnosticsV10Size :
                 outputLength >= QcDiagnosticsV9Size ? QcDiagnosticsV9Size :
                 outputLength >= QcDiagnosticsV8Size ? QcDiagnosticsV8Size :
@@ -875,7 +875,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV3Size ? 3 : returned == QcDiagnosticsV4Size ? 4 :
                 returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 :
                 returned == QcDiagnosticsV7Size ? 7 : returned == QcDiagnosticsV8Size ? 8 : returned == QcDiagnosticsV9Size ? 9 :
-                returned == QcDiagnosticsV10Size ? 10 : 11;
+                returned == QcDiagnosticsV10Size ? 10 : returned == QcDiagnosticsV11Size ? 11 : 12;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1001,6 +1001,17 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         // must not hold up subsequent cache admission behind DirectIdle.
         return Forward(ext, irp);
     }
+#if QCACHE_CACHE_DRIVER
+    // Paging-file blocks are never cached (registration drains and drops clean data,
+    // and paging-file writes are never admitted), so this I/O needs no ordering
+    // against the cache. Forwarding it here means a page-in never waits behind the
+    // worker, whatever the worker is blocked on. No DirectCount, like observations.
+    if (pagingFile)
+    {
+        InterlockedIncrement64(&ext->Cache.PagingFileBypasses);
+        return Forward(ext, irp);
+    }
+#endif
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
     // requests which must retain the original caller context. A control request
     // atomically switches subsequent traffic to the ordered worker.

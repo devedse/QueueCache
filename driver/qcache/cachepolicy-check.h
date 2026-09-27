@@ -123,9 +123,10 @@ static_assert(QcServiceReadsDuringLowerWait(IRP_MJ_READ, false) && QcServiceRead
                   QcServiceReadsDuringLowerWait(IRP_MJ_SHUTDOWN, false) && QcServiceReadsDuringLowerWait(IRP_MJ_WRITE, true) &&
                   !QcServiceReadsDuringLowerWait(IRP_MJ_WRITE, false) && !QcServiceReadsDuringLowerWait(IRP_MJ_POWER, false) &&
                   !QcServiceReadsDuringLowerWait(IRP_MJ_FLUSH_BUFFERS, false) &&
-                  !QcServiceReadsDuringLowerWait(IRP_MJ_DEVICE_CONTROL, false),
-              "Paging reads must progress while the worker forwards a range-less PnP/shutdown request");
+                  QcServiceReadsDuringLowerWait(IRP_MJ_DEVICE_CONTROL, false),
+              "Paging reads must progress while the worker forwards a range-less PnP/shutdown/control request");
 static_assert(QcForwardOffWorker(IRP_MJ_PNP) && QcForwardOffWorker(IRP_MJ_SHUTDOWN) &&
+                  QcForwardOffWorker(IRP_MJ_DEVICE_CONTROL) && QcForwardOffWorker(IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
                   !QcForwardOffWorker(IRP_MJ_POWER) && !QcForwardOffWorker(IRP_MJ_READ) &&
                   !QcForwardOffWorker(IRP_MJ_WRITE) && !QcForwardOffWorker(IRP_MJ_FLUSH_BUFFERS),
-              "Only range-less PnP/shutdown requests are called from the lower-call work item");
+              "Only range-less PnP/shutdown/control requests are called from the lower-call work item");

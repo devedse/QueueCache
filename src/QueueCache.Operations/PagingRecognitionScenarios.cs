@@ -18,7 +18,7 @@ public static class PagingRecognitionScenarios
     private const long MiB = 1 << 20;
 
     internal static IReadOnlyList<CheckResult> Evaluate(CachePagingAdmission before, CachePagingAdmission after,
-        CachePagingIo ioBefore, CachePagingIo ioAfter, string pressure)
+        CachePagingIo ioBefore, CachePagingIo ioAfter, string pressure, ulong? bypassBefore = null, ulong? bypassAfter = null)
     {
         if (after.ReferenceMisses < before.ReferenceMisses || after.PagingFileRequests < before.PagingFileRequests)
             throw new IOException("Paging recognition counters regressed.");
@@ -33,8 +33,20 @@ public static class PagingRecognitionScenarios
             FormattableString.Invariant($"without file object {noFile}; above APC_LEVEL {highIrql}; reference misses {misses}.");
         if (misses != 0)
             throw new IOException("Paging-file requests were not recognised and would have been cached. " + evidence);
+        // V12: every recognised paging-file request must have gone straight to the disk from dispatch.
+        CheckResult bypass;
+        if (bypassBefore is null || bypassAfter is null)
+            bypass = new("system-paging/paging-file-io-bypasses-worker", "SKIP",
+                "The loaded driver does not report paging-file bypasses (Diagnostics V12).");
+        else if (bypassAfter.Value - bypassBefore.Value != recognised)
+            throw new IOException(FormattableString.Invariant(
+                $"{bypassAfter.Value - bypassBefore.Value} paging-file requests bypassed the worker, expected {recognised}. ") + evidence);
+        else
+            bypass = new("system-paging/paging-file-io-bypasses-worker", recognised > 0 ? "PASS" : "SKIP",
+                FormattableString.Invariant($"All {recognised} recognised paging-file requests were forwarded straight to the disk."));
         return
         [
+            bypass,
             new("system-paging/no-unrecognised-paging-file-requests", "PASS",
                 evidence + " No request inside a paging-file extent was classified as application traffic."),
             new("system-paging/paging-file-requests-recognised", recognised > 0 ? "PASS" : "SKIP",
@@ -59,7 +71,8 @@ public static class PagingRecognitionScenarios
             var diagnosticsAfter = device.GetDiagnostics();
             return Evaluate(diagnosticsBefore.PagingAdmission!, diagnosticsAfter.PagingAdmission!,
                 diagnosticsBefore.PagingIo!, diagnosticsAfter.PagingIo!,
-                $"Reference: {map.Ranges.Count} range(s) of {string.Join(", ", map.Files)}. {pressure}");
+                $"Reference: {map.Ranges.Count} range(s) of {string.Join(", ", map.Files)}. {pressure}",
+                diagnosticsBefore.PagingFileBypasses, diagnosticsAfter.PagingFileBypasses);
         }
         finally
         {

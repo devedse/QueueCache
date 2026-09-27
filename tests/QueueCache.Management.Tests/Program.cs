@@ -317,6 +317,14 @@ BinaryPrimitives.WriteUInt64LittleEndian(retryBytes.AsSpan(CacheDiagnostics.Pagi
 var retries = CacheDiagnostics.Decode(retryBytes);
 Check(retries.LowerAllocationRetries == 3 &&
     retries.PagingAdmission == new CachePagingAdmission(31, 32, 33, 34, 35, 36, 0, 2, 5), "V11 allocation retries and V10 prefix");
+Check(retries.PagingFileBypasses is null, "V11 paging-file bypasses are unavailable, not zero");
+var bypassBytes = new byte[CacheDiagnostics.PagingBypassWireSize];
+retryBytes.CopyTo(bypassBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(bypassBytes, 12);
+BinaryPrimitives.WriteUInt32LittleEndian(bypassBytes.AsSpan(4), CacheDiagnostics.PagingBypassWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(bypassBytes.AsSpan(CacheDiagnostics.AllocationRetryWireSize), 42);
+var bypass = CacheDiagnostics.Decode(bypassBytes);
+Check(bypass.PagingFileBypasses == 42 && bypass.LowerAllocationRetries == 3, "V12 paging-file bypasses and V11 prefix");
 BinaryPrimitives.WriteUInt32LittleEndian(retryBytes, 10);
 Reject(() => CacheDiagnostics.Decode(retryBytes), "V10 cannot claim V11 length");
 var normalized = SpecialRangeMap.Normalize([new DiskRange(8192 + 100, 50), new DiskRange(4096, 4096), new DiskRange(1 << 20, 1)]);

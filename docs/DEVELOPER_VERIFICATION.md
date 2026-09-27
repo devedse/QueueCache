@@ -17,7 +17,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 54)
+## Suites (plan version 55)
+
+Plan 55 adds `system-paging/paging-file-io-bypasses-worker` to
+`system-paging-recognition`: with Diagnostics V12 every recognised paging-file
+request must also be counted as forwarded straight to the disk from dispatch
+(`PagingFileBypasses`). Older drivers report SKIP.
 
 Plan 54 corrects plan 53's map-failure evidence: the fallback is recorded as a
 paging map failure plus a forwarded original paging write (V8

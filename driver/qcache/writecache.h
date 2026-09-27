@@ -107,6 +107,8 @@ struct QC_DIAGNOSTICS
     ULONGLONG ForceDirectRanges, ReferenceRanges;
     // V11: lower IRP builds that failed and were retried before submission.
     ULONGLONG LowerAllocationRetries;
+    // V12: recognised paging-file requests forwarded from dispatch, bypassing the worker.
+    ULONGLONG PagingFileBypasses;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -118,7 +120,9 @@ static constexpr ULONG QcDiagnosticsV7Size = 584;
 static constexpr ULONG QcDiagnosticsV8Size = 672;
 static constexpr ULONG QcDiagnosticsV9Size = 736;
 static constexpr ULONG QcDiagnosticsV10Size = 808;
-static_assert(sizeof(QC_DIAGNOSTICS) == 816);
+static constexpr ULONG QcDiagnosticsV11Size = 816;
+static_assert(sizeof(QC_DIAGNOSTICS) == 824);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingFileBypasses) == QcDiagnosticsV11Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LowerAllocationRetries) == QcDiagnosticsV10Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingAdmittedWrites) == QcDiagnosticsV9Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LabGateState) == QcDiagnosticsV8Size);
@@ -299,7 +303,7 @@ struct QC_CACHE
     volatile LONG64 PagingOffloadedReads, PagingOffloadCompletions, PagingOffloadFailures;
     volatile LONG64 PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
     volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
-    volatile LONG64 LowerAllocationRetries;
+    volatile LONG64 LowerAllocationRetries, PagingFileBypasses;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only PagingThread executes.
@@ -353,7 +357,7 @@ void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE t
                                ULONGLONG processId);
 void QcCacheRecordUsageCompletion(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
                                   NTSTATUS status);
-void QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
+bool QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);

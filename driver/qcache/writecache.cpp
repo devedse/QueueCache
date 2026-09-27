@@ -148,6 +148,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     *output = c->DiagnosticsSnapshot;
     output->LowerGeneratedWrites = InterlockedCompareExchange64(&c->LowerGeneratedWrites, 0, 0);
     output->LowerAllocationRetries = InterlockedCompareExchange64(&c->LowerAllocationRetries, 0, 0);
+    output->PagingFileBypasses = InterlockedCompareExchange64(&c->PagingFileBypasses, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -249,10 +250,11 @@ static PFILE_OBJECT RequestFileObject(PIRP irp)
     }
     return fileObject && fileObject->Type == IO_TYPE_FILE ? fileObject : nullptr;
 }
-void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
+// Returns true for a request recognised as paging-file I/O.
+bool QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
 {
     if (!(irp->Flags & IRP_PAGING_IO))
-        return;
+        return false;
     auto stack = IoGetCurrentIrpStackLocation(irp);
     ULONG length;
     LONGLONG offset;
@@ -273,17 +275,21 @@ void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
         RecordMaximum(&c->PagingMaxWriteLength, length);
     }
     else
-        return;
+        return false;
     // T085 recognition evidence, counted for every paging request (cache active or
     // not). A reference miss is a request inside a known paging-file extent that
     // per-request recognition would have treated as application traffic.
     auto fileObject = RequestFileObject(irp);
+    bool pagingFile = false;
     if (!fileObject)
         InterlockedIncrement64(&c->PagingNoFileObject);
     else if (KeGetCurrentIrql() > APC_LEVEL)
         InterlockedIncrement64(&c->PagingHighIrql);
     else if (FsRtlIsPagingFile(fileObject))
+    {
         InterlockedIncrement64(&c->PagingFileRequests);
+        pagingFile = true;
+    }
     else
     {
         KIRQL irql;
@@ -299,6 +305,7 @@ void QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
     InterlockedExchange64(&c->PagingLastOffset, offset);
     InterlockedExchange64(&c->PagingLastLength, length);
     InterlockedExchange64(&c->PagingLastProcessId, reinterpret_cast<LONGLONG>(PsGetCurrentProcessId()));
+    return pagingFile;
 }
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
 {

@@ -60,6 +60,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int LabGateWireSize = 736;
     public const int PagingAdmissionWireSize = 808;
     public const int AllocationRetryWireSize = 816;
+    public const int PagingBypassWireSize = 824;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -72,6 +73,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CachePagingAdmission? PagingAdmission { get; init; }
     /// <summary>V11: failed lower IRP builds retried before submission (transient memory pressure).</summary>
     public ulong? LowerAllocationRetries { get; init; }
+    /// <summary>V12: recognised paging-file requests forwarded straight to the disk from dispatch.</summary>
+    public ulong? PagingFileBypasses { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -87,6 +90,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             LabGateWireSize => 9u,
             PagingAdmissionWireSize => 10u,
             AllocationRetryWireSize => 11u,
+            PagingBypassWireSize => 12u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -192,6 +196,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
         ulong? allocationRetries = bytes.Length >= AllocationRetryWireSize
             ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[PagingAdmissionWireSize..])
             : null;
+        ulong? pagingBypasses = bytes.Length >= PagingBypassWireSize
+            ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[AllocationRetryWireSize..])
+            : null;
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -204,7 +211,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             LowerSources = lowerSources,
             LabGate = labGate,
             PagingAdmission = pagingAdmission,
-            LowerAllocationRetries = allocationRetries
+            LowerAllocationRetries = allocationRetries,
+            PagingFileBypasses = pagingBypasses
         };
     }
 }

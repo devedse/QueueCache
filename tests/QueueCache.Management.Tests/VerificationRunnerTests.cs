@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 54, "map-failure fallback is attributed as a forwarded paging write");
+        Check(VerificationPlan.Version == 55, "paging recognition proves paging-file I/O bypasses the worker");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -124,6 +124,17 @@ internal static class VerificationRunnerTests
         Check(recognised.All(check => check.Result == "PASS"), "recognised paging-file I/O without misses passes");
         Check(QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore, recognitionBefore, ioBefore, ioBefore, "idle")
             .Any(check => check.Result == "SKIP"), "no paging-file I/O leaves recognition unexercised");
+        Check(QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore,
+                recognitionBefore with { PagingFileRequests = recognitionBefore.PagingFileRequests + 9 }, ioBefore, ioBefore, "p", 100, 109)
+            .Any(check => check.Name == "system-paging/paging-file-io-bypasses-worker" && check.Result == "PASS"),
+            "every recognised paging-file request bypassed the worker");
+        try
+        {
+            QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore,
+                recognitionBefore with { PagingFileRequests = recognitionBefore.PagingFileRequests + 9 }, ioBefore, ioBefore, "p", 100, 105);
+            throw new Exception("Recognised paging-file I/O that went through the worker was accepted.");
+        }
+        catch (IOException) { }
         try
         {
             QueueCache.Operations.PagingRecognitionScenarios.Evaluate(recognitionBefore,
