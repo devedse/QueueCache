@@ -114,6 +114,8 @@ struct QC_DIAGNOSTICS
     // V14: requests served on the caller's thread without the request worker, and
     // caller-thread attempts that handed the request to the worker unchanged.
     ULONGLONG CallerPathReads, CallerPathWrites, CallerPathDeclined;
+    // V15: large RAM-hit reads handed to the offloaded-read threads for a parallel copy.
+    ULONGLONG CopyOffloadReads;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -128,7 +130,9 @@ static constexpr ULONG QcDiagnosticsV10Size = 808;
 static constexpr ULONG QcDiagnosticsV11Size = 816;
 static constexpr ULONG QcDiagnosticsV12Size = 824;
 static constexpr ULONG QcDiagnosticsV13Size = 840;
-static_assert(sizeof(QC_DIAGNOSTICS) == 864);
+static constexpr ULONG QcDiagnosticsV14Size = 864;
+static_assert(sizeof(QC_DIAGNOSTICS) == 872);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadReads) == QcDiagnosticsV14Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerPathReads) == QcDiagnosticsV13Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadFills) == QcDiagnosticsV12Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingFileBypasses) == QcDiagnosticsV11Size);
@@ -252,6 +256,17 @@ struct QC_DRAIN_WORKER
     ULONG Number;
     HANDLE Thread;
 };
+// Offloaded-read executors: paging reads that need the disk, and large reads
+// served entirely from RAM (QcCopyOffloadMinBytes) so their copies run in
+// parallel instead of one after another on the request worker.
+static constexpr ULONG QcReadThreads = 3;
+static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
+struct QC_READ_THREAD
+{
+    QC_CACHE* Cache;
+    HANDLE Thread;
+    ULONG Pins[QcPagingPinBlocks]; // This thread only.
+};
 struct QC_CACHE
 {
     PDEVICE_OBJECT Lower;
@@ -320,10 +335,10 @@ struct QC_CACHE
     volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
     ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
-    volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined;
+    volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
-    // PagingStop. Only the request worker inserts; only PagingThread executes.
+    // PagingStop. Only the request worker inserts; only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
     // paging thread waits only for Mutex and lower completion, never the worker.
     KSPIN_LOCK PagingLock;
@@ -332,8 +347,7 @@ struct QC_CACHE
     ULONGLONG PagingSequence;
     BOOLEAN PagingStop;
     KEVENT PagingWork, PagingDone;
-    HANDLE PagingThread;
-    ULONG PagingPins[QcPagingPinBlocks]; // Paging thread only.
+    QC_READ_THREAD ReadThreads[QcReadThreads];
     // Mutex. Set by the request worker: OffloadBlocked around requests that may
     // retire pinned slots or change power/media state; ActiveWrite while a write
     // (including its barrier/fence waits) owns [ActiveWriteStart, ActiveWriteEnd).
@@ -383,7 +397,7 @@ bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS
 // and the caller completes irp. False: nothing changed; queue irp for the worker.
 bool QcCacheTryCallerPath(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
-// Request worker only. True: the paging thread now owns and will complete irp.
+// Request worker only. True: an offloaded-read thread now owns and will complete irp.
 bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
 bool QcCachePagingReadsOutstanding(QC_CACHE* cache);
 void QcCacheWaitPagingReads(QC_CACHE* cache);

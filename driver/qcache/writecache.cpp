@@ -154,6 +154,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->CallerPathReads = InterlockedCompareExchange64(&c->CallerPathReads, 0, 0);
     output->CallerPathWrites = InterlockedCompareExchange64(&c->CallerPathWrites, 0, 0);
     output->CallerPathDeclined = InterlockedCompareExchange64(&c->CallerPathDeclined, 0, 0);
+    output->CopyOffloadReads = InterlockedCompareExchange64(&c->CopyOffloadReads, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1080,13 +1081,17 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     Publish(c);
     OBJECT_ATTRIBUTES attrs;
     InitializeObjectAttributes(&attrs, nullptr, OBJ_KERNEL_HANDLE, nullptr, nullptr);
-    auto pagingStatus =
-        PsCreateSystemThread(&c->PagingThread, THREAD_ALL_ACCESS, &attrs, nullptr, nullptr, PagingReader, c);
-    if (!NT_SUCCESS(pagingStatus))
+    for (auto& reader : c->ReadThreads)
     {
-        c->PagingThread = nullptr;
-        QcCacheDestroy(c);
-        return pagingStatus;
+        reader.Cache = c;
+        auto readerStatus =
+            PsCreateSystemThread(&reader.Thread, THREAD_ALL_ACCESS, &attrs, nullptr, nullptr, PagingReader, &reader);
+        if (!NT_SUCCESS(readerStatus))
+        {
+            reader.Thread = nullptr;
+            QcCacheDestroy(c);
+            return readerStatus;
+        }
     }
     for (ULONG i = 0; i < RTL_NUMBER_OF(c->Workers); ++i)
     {
@@ -1232,7 +1237,7 @@ void QcCacheDestroy(QC_CACHE* c)
     WakeDrainers(c);
     KeSetEvent(&c->Stopping, IO_NO_INCREMENT, FALSE);
     ReleaseCache(c);
-    if (c->PagingThread)
+    if (c->ReadThreads[0].Thread)
     {
         // Remove-lock drain already completed every offloaded IRP; the thread
         // still finishes any queued entry before it observes PagingStop.
@@ -1240,10 +1245,15 @@ void QcCacheDestroy(QC_CACHE* c)
         KeAcquireSpinLock(&c->PagingLock, &irql);
         c->PagingStop = TRUE;
         KeReleaseSpinLock(&c->PagingLock, irql);
+        // PagingWork wakes one thread; each stopping thread passes it on.
         KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
-        ZwWaitForSingleObject(c->PagingThread, FALSE, nullptr);
-        ZwClose(c->PagingThread);
-        c->PagingThread = nullptr;
+        for (auto& reader : c->ReadThreads)
+            if (reader.Thread)
+            {
+                ZwWaitForSingleObject(reader.Thread, FALSE, nullptr);
+                ZwClose(reader.Thread);
+                reader.Thread = nullptr;
+            }
     }
     for (auto& worker : c->Workers)
         if (worker.Thread)
@@ -1913,7 +1923,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
 }
 // Foreground admission remains single-owner. Pins protect exact cached versions
 // from drainer retirement while lower reads and payload copies run without Mutex.
-// pinned: the paging thread's scratch (QcPagingPinBlocks entries, range already
+// pinned: an offloaded-read thread's scratch (QcPagingPinBlocks entries, range already
 // bounded). An offloaded read runs concurrently with the request worker, which
 // may add a clean read-fill or a newer version for these blocks. It therefore
 // overlays and unpins exactly the versions it pinned; FindSlot could name a slot
@@ -1949,7 +1959,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     {
         // No cached version exists to overlay. Avoid RAM retention and mapping.
         // The request worker may service independent reads during this wait;
-        // the paging thread and nested service never do (allowReadService).
+        // offloaded-read threads and nested service never do (allowReadService).
         ReleaseCache(c);
         return hitOnly ? STATUS_NOT_FOUND : OriginalIo(c, irp, allowReadService);
     }
@@ -2202,8 +2212,9 @@ static bool FullyResident(QC_CACHE* c, LONGLONG start, LONGLONG end)
 bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
-    if (stack->MajorFunction != IRP_MJ_READ || !(irp->Flags & IRP_PAGING_IO) || !c->PagingThread ||
-        !c->CompleteRequest)
+    const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+    if (stack->MajorFunction != IRP_MJ_READ || !c->ReadThreads[0].Thread || !c->CompleteRequest ||
+        (!pagingIo && stack->Parameters.Read.Length < QcCopyOffloadMinBytes))
         return false;
     const auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     const auto length = stack->Parameters.Read.Length;
@@ -2217,11 +2228,14 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         return false;
     // Only the request worker sets these fields and offloads, so the decision
     // cannot race a new fence, active write or blocking request.
+    // A paging read is offloaded for its disk wait: a RAM hit completes faster on
+    // the worker. A large ordinary read is offloaded only as a RAM hit, so several
+    // copies run at once; a miss keeps the worker's ordered path and read fill.
     AcquireCache(c);
-    const bool refused = c->OffloadBlocked || c->Stop || c->Gone ||
+    const bool refused = c->OffloadBlocked || c->Stop || c->Gone || !c->Enabled ||
         (c->RangeDrain && start < c->RangeEnd && end > c->RangeStart) ||
         (c->ActiveWrite && start < c->ActiveWriteEnd && end > c->ActiveWriteStart) ||
-        FullyResident(c, start, end); // A RAM hit completes faster on the worker.
+        FullyResident(c, start, end) == pagingIo;
     ReleaseCache(c);
     if (refused)
         return false;
@@ -2247,30 +2261,47 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     KeReleaseSpinLock(&c->PagingLock, irql);
     if (!entry)
         return false; // Table full: the caller keeps its existing ordered path.
-    // The paging thread owns irp from here; do not touch it again.
-    InterlockedIncrement64(&c->PagingOffloadedReads);
-    InterlockedIncrement64(&c->PagingRoutedReadRequests);
+    // An offloaded-read thread owns irp from here; do not touch it again.
+    if (pagingIo)
+    {
+        InterlockedIncrement64(&c->PagingOffloadedReads);
+        InterlockedIncrement64(&c->PagingRoutedReadRequests);
+    }
+    else
+        InterlockedIncrement64(&c->CopyOffloadReads);
     KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
     return true;
 }
-// One per disk. Executes offloaded paging reads oldest-first. It depends only on
-// Mutex (never held across waits) and lower completion. It never runs the read
-// service, never waits for the request worker and never admits cached writes.
+// QcReadThreads per disk. Each executes the oldest waiting offloaded read; reads
+// never order against each other, only against the writes and controls that wait
+// for them. It depends only on Mutex (never held across waits) and lower
+// completion. It never runs the read service, never waits for the request worker
+// and never admits cached writes.
 static void PagingReader(PVOID context)
 {
-    auto c = static_cast<QC_CACHE*>(context);
+    auto reader = static_cast<QC_READ_THREAD*>(context);
+    auto c = reader->Cache;
     for (;;)
     {
         QC_PAGING_READ* next = nullptr;
+        ULONG waiting = 0;
         KIRQL irql;
         KeAcquireSpinLock(&c->PagingLock, &irql);
         for (auto& read : c->PagingReads)
-            if (read.Irp && !read.Started && (!next || read.Sequence < next->Sequence))
-                next = &read;
+            if (read.Irp && !read.Started)
+            {
+                ++waiting;
+                if (!next || read.Sequence < next->Sequence)
+                    next = &read;
+            }
         if (next)
             next->Started = TRUE;
         const bool stop = c->PagingStop && !next;
         KeReleaseSpinLock(&c->PagingLock, irql);
+        // PagingWork wakes one thread (and repeated signals coalesce): pass it on
+        // while other reads wait, and when stopping so every thread exits.
+        if (stop || waiting > 1)
+            KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
         if (stop)
             break;
         if (!next)
@@ -2279,9 +2310,13 @@ static void PagingReader(PVOID context)
             continue;
         }
         auto irp = next->Irp;
-        auto status = Read(c, irp, false, false, c->PagingPins);
-        InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
-        InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+        const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+        auto status = Read(c, irp, false, false, reader->Pins);
+        if (pagingIo)
+        {
+            InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
+            InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
+        }
         c->CompleteRequest(c->ServiceContext, irp, status);
         KeAcquireSpinLock(&c->PagingLock, &irql);
         next->Irp = nullptr;
@@ -2671,9 +2706,10 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         return status;
     return OriginalIo(c, irp);
 }
-// Request-worker entry point. Offloaded paging reads run concurrently with the
-// worker, so every request class states what it must not overlap:
-// - paging read needing lower I/O: handed to the paging thread (never waits here);
+// Request-worker entry point. Offloaded reads run concurrently with the worker,
+// so every request class states what it must not overlap:
+// - paging read needing lower I/O, or a large read fully in RAM: handed to the
+//   offloaded-read threads (never waits here);
 // - write: waits only for offloaded reads overlapping its range, servicing
 //   independent reads meanwhile; ActiveWrite keeps new offloads out of its range;
 // - flush and read-only/observation controls: no slot retirement, no wait;
@@ -2688,7 +2724,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
     const auto major = stack->MajorFunction;
     if (major == IRP_MJ_READ)
     {
-        if ((irp->Flags & IRP_PAGING_IO) && QcCacheOffloadPagingRead(c, irp, deviceBytes))
+        if (QcCacheOffloadPagingRead(c, irp, deviceBytes))
         {
             *transferred = true;
             return STATUS_PENDING;

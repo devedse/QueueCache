@@ -466,7 +466,7 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
         const auto deviceBytes = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
         if (QcCacheOffloadPagingRead(&ext->Cache, read, deviceBytes))
         {
-            // The independent paging thread owns and completes this read; this
+            // An offloaded-read thread owns and completes this read; this
             // lane does not wait for its lower I/O. Do not touch it again.
             if (diagnostics)
                 Increment(&ext->Cache.Performance.ServiceReadCompletions);
@@ -548,7 +548,7 @@ static void RequestWorker(PVOID context)
                                          &transferred);
             if (transferred)
             {
-                // The paging thread completes it and releases its remove lock.
+                // An offloaded-read thread completes it and releases its remove lock.
                 KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
                 ext->ActiveSince = 0;
                 KeReleaseSpinLock(&ext->QueueLock, activeIrql);
@@ -866,6 +866,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV14Size ? QcDiagnosticsV14Size :
                 outputLength >= QcDiagnosticsV13Size ? QcDiagnosticsV13Size :
                 outputLength >= QcDiagnosticsV12Size ? QcDiagnosticsV12Size :
                 outputLength >= QcDiagnosticsV11Size ? QcDiagnosticsV11Size :
@@ -883,7 +884,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV5Size ? 5 : returned == QcDiagnosticsV6Size ? 6 :
                 returned == QcDiagnosticsV7Size ? 7 : returned == QcDiagnosticsV8Size ? 8 : returned == QcDiagnosticsV9Size ? 9 :
                 returned == QcDiagnosticsV10Size ? 10 : returned == QcDiagnosticsV11Size ? 11 :
-                returned == QcDiagnosticsV12Size ? 12 : returned == QcDiagnosticsV13Size ? 13 : 14;
+                returned == QcDiagnosticsV12Size ? 12 : returned == QcDiagnosticsV13Size ? 13 :
+                returned == QcDiagnosticsV14Size ? 14 : 15;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1057,7 +1059,10 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         bool caller = !direct && !ext->Closing && callerCandidate;
         if (caller)
         {
-            if (ext->PendingControls || !IsListEmpty(&ext->Pending) || ext->ActiveSince || ext->CallerActive)
+            // Offloaded reads still copying also mean several requests are outstanding
+            // (a heuristic, so the unlocked read of PagingQueued is sufficient).
+            if (ext->PendingControls || !IsListEmpty(&ext->Pending) || ext->ActiveSince || ext->CallerActive ||
+                ReadNoFence(reinterpret_cast<volatile LONG*>(&ext->Cache.PagingQueued)))
             {
                 ext->WorkerWindow = QcCallerPathWorkerWindow;
                 caller = false;
