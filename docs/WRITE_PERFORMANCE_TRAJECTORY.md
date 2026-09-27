@@ -2,6 +2,24 @@
 
 Current execution/status source: [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
+## CrystalDiskMark SEQ1M Q8T1 and the single-worker ceiling, 2026-09-27
+
+Measured with CrystalDiskMark 9.0.3's DiskSpd (SHA-256 `7281BF6D...1079`) using
+its SEQ1M Q8T1 shape (1 GiB file created once, unbuffered 1 MiB, 8 in flight,
+5 s runs, best of three), Q: 2 GiB Fast/Idle, Driver Verifier off. A bisect over
+releases 0.4.51.1-0.4.151.1 found no regression: every build measured about
+14.9-15.2 GB/s read and 14.4-14.6 GB/s write (0.4.151.1 with the owner's saved
+profile: 14,953 / 14,413 MB/s). Two things produced lower numbers: standard
+Driver Verifier left enabled (about 6 GB/s), and a cache filled with stale
+blocks from deleted test files, which this TRIM-less disk cannot release (about
+10.5 GB/s).
+
+More application threads do not raise throughput: T1/T2/T4 at Q8 gave
+14.7/13.4/12.3 GB/s read and 14.1/13.5/13.4 GB/s write on the 4-vCPU VM. Every
+request's data copy runs on the single request worker, so large transfers are
+capped near one core's memory-copy speed. Exceeding it needs data copies that run
+in parallel (see NEXT_PHASE_PLAN).
+
 ## Current baseline: 0.4.148.1, 2026-09-27
 
 `write-performance` on installed 0.4.148.1 (`97b8f4f`), Driver Verifier off,

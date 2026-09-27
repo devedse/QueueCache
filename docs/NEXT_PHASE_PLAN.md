@@ -40,33 +40,41 @@ focus; Strict stays correct but is not tuned (owner decision, 2026-09-27).
 
 ## Phase 2: Fast-mode performance
 
-4. **Random Q32 gap.** Earlier builds reached about 74,500 IOPS at Q32 with
+4. **Parallel data copies (top priority for speed).** CrystalDiskMark SEQ1M Q8T1
+   reaches about 15 GB/s on every build since 0.4.51.1, and more application
+   threads do not raise it: the single request worker performs every copy. Keep
+   the worker for ordering and slot bookkeeping, but run the RAM copies of
+   independent requests (read hits and fitting writes) in parallel, on the
+   calling thread or a small copy pool, with slots pinned or marked filling
+   while copied. Target: scale with cores, beyond 15 GB/s on SEQ1M Q8T1.
+   Also release cache space held by deleted files' data on disks without TRIM.
+5. **Random Q32 gap.** Earlier builds reached about 74,500 IOPS at Q32 with
    CrystalDiskMark's DiskSpd; 0.4.148.1 measured 34,400 with Microsoft's. Measure
    an older build with the same binary to separate binary/VM effects from a
    regression, then profile the request worker's per-request cost.
-5. **Request-path cost.** If the worker is the limit, serve RAM read hits and
+6. **Request-path cost.** If the worker is the limit, serve RAM read hits and
    fitting writes without a queue round-trip where ordering allows, keeping every
    existing ordering and coherence test green.
-6. **Drain shape.** Larger batches (512 KiB-1 MiB) and disk-order batching when a
+7. **Drain shape.** Larger batches (512 KiB-1 MiB) and disk-order batching when a
    backlog builds, measured with `drain-decision` and `write-performance`; confirm
    on a physical NVMe or HDD before changing defaults.
-7. **Optional: warm start.** Remember the hot read set at shutdown and reload it
+8. **Optional: warm start.** Remember the hot read set at shutdown and reload it
    in the background after boot.
 
 ## Phase 3: remaining normal-use robustness
 
-8. Adding or removing a pagefile while the cache is active (paging-role
+9. Adding or removing a pagefile while the cache is active (paging-role
    transitions, A08).
-9. Exact flush cutoff under concurrent writers (T052).
-10. Installer, upgrade and uninstall failure matrix and final user documentation
+10. Exact flush cutoff under concurrent writers (T052).
+11. Installer, upgrade and uninstall failure matrix and final user documentation
     (A10).
 
 ## Phase 4: release readiness (A12-A16)
 
-11. Private-alpha freeze and reporting handoff (A12).
-12. Support contract and safety gaps (A13); signing, servicing and security,
+12. Private-alpha freeze and reporting handoff (A12).
+13. Support contract and safety gaps (A13); signing, servicing and security,
     including CodeQL/SDV in CI (A14).
-13. Endurance and environment matrix with Driver Verifier enabled (A15); release
+14. Endurance and environment matrix with Driver Verifier enabled (A15); release
     process (A16).
 
 ## Test VM notes
