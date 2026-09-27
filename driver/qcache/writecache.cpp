@@ -2208,8 +2208,40 @@ static void PagingReader(PVOID context)
     }
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
-// Only optimized, bounded, full-cache-block TRIM ranges are handled here. Any
-// unfamiliar flags/parameters/alignment use the existing ordered drain/pass-through.
+static void SortTrimRanges(DEVICE_DATA_SET_RANGE* ranges, ULONG count)
+{
+    // Heap sort by start offset: bounded work for any range count, no allocation.
+    auto sift = [ranges](ULONG root, ULONG size) {
+        for (;;)
+        {
+            auto child = root * 2 + 1;
+            if (child >= size)
+                return;
+            if (child + 1 < size && ranges[child + 1].StartingOffset > ranges[child].StartingOffset)
+                ++child;
+            if (ranges[root].StartingOffset >= ranges[child].StartingOffset)
+                return;
+            auto swap = ranges[root];
+            ranges[root] = ranges[child];
+            ranges[child] = swap;
+            root = child;
+        }
+    };
+    for (auto i = count / 2; i-- > 0;)
+        sift(i, count);
+    for (auto end = count; end-- > 1;)
+    {
+        auto swap = ranges[0];
+        ranges[0] = ranges[end];
+        ranges[end] = swap;
+        sift(0, end);
+    }
+}
+// TRIM: the file system declares these sectors free. Cached writes for them are
+// dropped instead of written (they would overwrite what the disk now treats as
+// unallocated), clean copies are dropped, and only already-issued writes are awaited.
+// Any number of sector-aligned ranges is handled; only unknown flags or malformed
+// input take the conservative ordered path.
 static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* result)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -2224,29 +2256,34 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         input->DataSetRangesLength > length - input->DataSetRangesOffset || !input->DataSetRangesLength ||
         input->DataSetRangesLength % sizeof(DEVICE_DATA_SET_RANGE))
         return false;
-    auto count = input->DataSetRangesLength / sizeof(DEVICE_DATA_SET_RANGE);
-    DEVICE_DATA_SET_RANGE ranges[128];
-    if (count > RTL_NUMBER_OF(ranges))
-        return false;
+    const ULONG count = input->DataSetRangesLength / sizeof(DEVICE_DATA_SET_RANGE);
+    DEVICE_DATA_SET_RANGE local[128];
+    auto ranges = local;
+    if (count > RTL_NUMBER_OF(local))
+    {
+        ranges = static_cast<DEVICE_DATA_SET_RANGE*>(
+            ExAllocatePool2(POOL_FLAG_NON_PAGED, static_cast<SIZE_T>(count) * sizeof(DEVICE_DATA_SET_RANGE), Tag));
+        if (!ranges)
+            return false;
+    }
     RtlCopyMemory(ranges,
                   static_cast<PUCHAR>(irp->AssociatedIrp.SystemBuffer) + input->DataSetRangesOffset,
                   input->DataSetRangesLength);
+    const LONGLONG sector = c->SectorBytes ? c->SectorBytes : 512;
     for (ULONG i = 0; i < count; ++i)
     {
-        auto range = ranges[i];
+        const auto& range = ranges[i];
         if (range.StartingOffset < 0 || range.StartingOffset > deviceBytes || !range.LengthInBytes ||
             range.LengthInBytes > static_cast<ULONGLONG>(deviceBytes - range.StartingOffset) ||
-            range.StartingOffset % Chunk || range.LengthInBytes % Chunk)
-            return false;
-        ULONG j = i;
-        while (j && ranges[j - 1].StartingOffset > range.StartingOffset)
+            range.StartingOffset % sector || range.LengthInBytes % sector)
         {
-            ranges[j] = ranges[j - 1];
-            --j;
+            if (ranges != local)
+                ExFreePoolWithTag(ranges, Tag);
+            return false;
         }
-        ranges[j] = range;
     }
-    // Merge overlap/adjacency so the binary-search membership check is unambiguous.
+    SortTrimRanges(ranges, count);
+    // Merge overlap/adjacency so each block's covering ranges are contiguous in the array.
     ULONG merged = 0;
     for (ULONG i = 0; i < count; ++i)
     {
@@ -2281,26 +2318,43 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         ++c->TrimRequests;
         for (ULONG i = 0; i < c->Capacity; ++i)
         {
-            if (!c->Slots[i].Length)
+            auto slot = &c->Slots[i];
+            if (!slot->Length)
                 continue;
-            auto offset = c->Slots[i].Offset.QuadPart;
+            const auto block = slot->Offset.QuadPart;
+            // First range starting at or beyond this block's end; earlier ones may cover it.
             ULONG low = 0, high = merged;
             while (low < high)
             {
                 auto mid = low + (high - low) / 2;
-                if (ranges[mid].StartingOffset <= offset)
+                if (ranges[mid].StartingOffset < block + Chunk)
                     low = mid + 1;
                 else
                     high = mid;
             }
-            if (low && offset - ranges[low - 1].StartingOffset < static_cast<LONGLONG>(ranges[low - 1].LengthInBytes))
+            unsigned mask = 0;
+            for (auto j = low; j-- > 0;)
             {
-                if (c->Slots[i].Dirty)
-                {
-                    c->DiscardedBytes += QcValidBytes(c->Slots[i].ValidSectors);
-                    c->State.DirtyBytes -= QcValidBytes(c->Slots[i].ValidSectors);
-                    --c->DirtySlots;
-                }
+                if (ranges[j].StartingOffset + static_cast<LONGLONG>(ranges[j].LengthInBytes) <= block)
+                    break;
+                mask |= QcTrimMask(block, ranges[j].StartingOffset, ranges[j].LengthInBytes);
+            }
+            if (!mask)
+                continue;
+            if (!slot->Dirty)
+            {
+                RetireSlot(c, i);
+                continue;
+            }
+            const auto trimmed = slot->ValidSectors & mask;
+            if (!trimmed)
+                continue;
+            c->DiscardedBytes += QcValidBytes(trimmed);
+            c->State.DirtyBytes -= QcValidBytes(trimmed);
+            slot->ValidSectors &= ~mask;
+            if (!slot->ValidSectors)
+            {
+                --c->DirtySlots;
                 RetireSlot(c, i);
             }
         }
@@ -2310,6 +2364,8 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
     WakeDrainers(c);
     ReleaseCache(c);
+    if (ranges != local)
+        ExFreePoolWithTag(ranges, Tag);
     *result = status;
     return true;
 }

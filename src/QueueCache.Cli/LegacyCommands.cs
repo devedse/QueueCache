@@ -141,7 +141,7 @@ internal static class LegacyCommands
                         var now = clock.Elapsed.TotalSeconds;
                         var seconds = now - previousTime;
                         var rates = CacheTelemetry.Between(previousCache, current, TimeSpan.FromSeconds(seconds));
-                        Console.WriteLine(FormattableString.Invariant($"{DateTime.Now:HH:mm:ss} {RenderCache(current)} | Accepted {rates.AcceptedMiBPerSecond:F1} Drained {rates.DrainedMiBPerSecond:F1} MiB/s | New waits {rates.NewThrottleWaits}{(rates.CountersReset ? " COUNTERS RESET" : "")}"));
+                        Console.WriteLine(FormattableString.Invariant($"{DateTime.Now:HH:mm:ss} {RenderCache(current, compact: true)} | Accepted {rates.AcceptedMiBPerSecond:F1} Drained {rates.DrainedMiBPerSecond:F1} MiB/s | New waits {rates.NewThrottleWaits}{(rates.CountersReset ? " COUNTERS RESET" : "")}"));
                         previousCache = current;
                         previousTime = now;
                     }
@@ -184,10 +184,22 @@ internal static class LegacyCommands
             $"[{bucket}] Queue memory {stats.QueueMemoryBytes / 1048576.0:F1}/{stats.MaxQueueBytes / 1048576.0:F1} MiB | Items {stats.QueueItems} | Enabled {stats.Enabled} | Error 0x{stats.LastError:X8}");
     }
 
-    static string RenderCache(WriteCacheState s)
+    static string Size(ulong bytes) => bytes >= 1UL << 30
+        ? string.Create(CultureInfo.InvariantCulture, $"{bytes / 1073741824.0:F2} GiB")
+        : string.Create(CultureInfo.InvariantCulture, $"{bytes / 1048576.0:F1} MiB");
+
+    // Live values and totals are labelled separately; the driver's totals count from when it loaded (boot).
+    static string RenderCache(WriteCacheState s, bool compact = false)
     {
-        var filled = s.PayloadCapacity == 0 ? 0 : (int)Math.Clamp(Math.Round(20.0 * s.DirtyBytes / s.PayloadCapacity), 0, 20);
-        return string.Create(CultureInfo.InvariantCulture,
-            $"[{new string('#', filled)}{new string('-', 20 - filled)}] Dirty {s.DirtyBytes / 1048576.0:F2}/{s.PayloadCapacity / 1048576.0:F2} MiB | In flight {s.InFlightBytes / 1048576.0:F2} | Reserved {s.ReservedBytes / 1048576.0:F2}/{s.BudgetBytes / 1048576.0:F2} | {s.FlushPolicy} State {s.RuntimeStatus} Barrier {s.Draining} | Error 0x{s.LastError:X8} | Throttle waits {s.ThrottleWaits} | Coalesced {s.CoalescedBytes / 1048576.0:F1} MiB | Read hits {s.ReadHitPercent:F1}% | Clean R/W {s.CleanReadBytes / 1048576.0:F1}/{s.CleanWriteBytes / 1048576.0:F1} MiB | Instance {s.Instance}/{s.Generation}");
+        var head = $"{s.RuntimeStatus} ({(s.UnsafeDefer ? "Fast" : "Strict")}), {Size(s.BudgetBytes)} reserved" +
+            (s.LastError != 0 ? string.Create(CultureInfo.InvariantCulture, $", error 0x{s.LastError:X8}") : "");
+        var now = $"dirty {Size(s.DirtyBytes)} of {Size(s.PayloadCapacity)}, being written {Size(s.InFlightBytes)}, " +
+            $"cached reads {Size(s.CleanReadBytes)}, cached writes {Size(s.CleanWriteBytes)}";
+        var total = string.Create(CultureInfo.InvariantCulture, $"read hits {s.ReadHitPercent:F1}% ") +
+            $"({Size(s.ReadHitBytes)} from RAM), writes merged in RAM {Size(s.CoalescedBytes)}, " +
+            $"waits for cache space {s.ThrottleWaits}, errors {s.Errors}";
+        return compact
+            ? $"{head} | now: {now} | since boot: {total}"
+            : $"{head}{Environment.NewLine}  Now:                   {now}{Environment.NewLine}  Since Windows started: {total}";
     }
 }

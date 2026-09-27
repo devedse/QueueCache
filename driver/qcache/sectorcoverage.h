@@ -36,3 +36,17 @@ static_assert(QcSectorMask(3584, 512) == 128);
 static_assert(QcSectorMask(512, 1024) == 6);
 static_assert(QcCovers(6, 512, 1024));
 static_assert(!QcCovers(6, 0, 1024));
+// Sectors of the 4 KiB block at blockStart that a sector-aligned TRIM range covers.
+constexpr unsigned QcTrimMask(long long blockStart, long long rangeStart, unsigned long long rangeLength)
+{
+    const long long rangeEnd = rangeStart + static_cast<long long>(rangeLength);
+    const long long from = rangeStart > blockStart ? rangeStart : blockStart;
+    const long long to = rangeEnd < blockStart + 4096 ? rangeEnd : blockStart + 4096;
+    return to <= from ? 0u : QcSectorMask(static_cast<unsigned>(from - blockStart), static_cast<unsigned>(to - from));
+}
+static_assert(QcTrimMask(8192, 8192, 4096) == 255);
+static_assert(QcTrimMask(8192, 0, 1 << 20) == 255);
+static_assert(QcTrimMask(8192, 8192 + 1024, 1024) == 0x0C);
+static_assert(QcTrimMask(8192, 8192 + 3584, 4096) == 0x80);
+static_assert(QcTrimMask(8192, 4096, 4608) == 0x01);
+static_assert(QcTrimMask(8192, 12288, 512) == 0 && QcTrimMask(8192, 0, 8192) == 0);

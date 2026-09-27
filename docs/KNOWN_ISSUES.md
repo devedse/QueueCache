@@ -205,13 +205,17 @@ first failure, so brief memory pressure could leave a cache faulted until Retry.
 These are verification gaps, not permission to relax capacity backpressure,
 ordering, failure propagation or explicit durability.
 
-## TRIM support is conservative
+## TRIM is range-aware but not yet VM-verified
 
-Range-aware TRIM retirement is not complete. The maintained file-only comparison
-currently observes unsupported file TRIM (Win32 326) on the test VM with and
-without the filter, so it cannot prove partial-range behavior. Unknown or
-media-changing controls retain conservative ordering and invalidation. Malformed,
-overlapping and failed TRIM requests remain open work.
+Since 2026-09-27 (after 0.4.139.1) any number of sector-aligned TRIM ranges is
+handled without emptying the cache: in-flight writes are awaited, the TRIM is
+forwarded, and on success cached data inside the ranges is dropped. Unwritten
+data for trimmed sectors is discarded rather than written (it would overwrite
+space the file system has freed); a partly trimmed unwritten block keeps its
+other sectors. Only unknown flags or malformed input use the conservative
+write-out-and-invalidate path. A failed TRIM keeps all cached data. The test VM's
+disks do not support TRIM (file TRIM returns Win32 326), so this needs a
+discard-enabled test disk before it can be called verified.
 
 ## Configuration changes apply completely or restore the previous settings
 

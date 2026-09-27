@@ -73,6 +73,17 @@ Use `--discard-drained` or `--no-promotion` to disable those retention behaviour
 
 `developer cache-scenarios` temporarily applies several 64 MiB configurations, writes new files, checks RAM hits and compares bytes with caching disabled, then restores runtime settings. It leaves files for inspection and does not modify saved profiles. It is not an exhaustive correctness or lifecycle certification.
 
+## Status output
+
+`qcache policy status` (and `cache-status`) prints three labelled lines: the
+state line (status, mode, reserved RAM, any error), **Now** (dirty data, data
+being written, cached reads and writes) and **Since Windows started** (read hit
+rate and bytes served from RAM, writes merged in RAM, waits for cache space,
+errors). The driver's totals count from when it loaded, which is at boot; they
+are not reset when settings change. `qcache watch` prints the same on one line;
+`--json` gives every field. The desktop card uses the same "In RAM now" and
+"Since Windows started" split and greys out when its data is stale.
+
 ## Memory and confirmed state
 
 The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include all active disk budgets in experiment planning. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Cache payload is preallocated physical pages (not kernel nonpaged pool); only bookkeeping uses nonpaged pool. It does not shrink automatically under later Windows memory pressure.

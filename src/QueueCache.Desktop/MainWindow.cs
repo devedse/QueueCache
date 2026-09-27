@@ -208,7 +208,9 @@ public sealed class MainWindow : Window
             card.Activity.IsVisible = exists;
             card.Badge.Text = state.RuntimeStatus;
             card.Description.Text = exists ? $"{state.BudgetBytes / 1048576:0} MiB RAM cache · {(state.UnsafeDefer ? "Fast" : "Strict")} · {state.Options?.Allocation.ToString() ?? "Legacy"} · {state.Options?.Drain.ToString() ?? "Eager"}" : "Ready for a cache. Choose a memory budget to get started.";
-            card.Residency.Text = $"Read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · Retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · Free {state.FreeBytes / 1048576.0:0.0} MiB\nRead hits {state.ReadHitPercent:0.0}% · Evicted blocks {state.Evictions:N0} · Oldest pending write {state.OldestDirtyMs / 1000.0:0.0}s · Reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s · Driver instance {state.Instance}, revision {state.Generation}";
+            // Amounts are live; hits and evictions are driver totals since Windows started.
+            card.Residency.Text = $"In RAM now: read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · free {state.FreeBytes / 1048576.0:0.0} MiB · oldest unwritten data {state.OldestDirtyMs / 1000.0:0.0}s · reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s\n" +
+                $"Since Windows started: read hits {state.ReadHitPercent:0.0}% ({state.ReadHitBytes / 1073741824.0:0.00} GiB from RAM) · evicted blocks {state.Evictions:N0}";
             card.History.Add(rates?.AcceptedMiBPerSecond ?? 0, rates?.DrainedMiBPerSecond ?? 0, rates?.ReadMiBPerSecond ?? 0, rates?.CountersReset ?? true);
             card.Bucket.Update(state.CleanReadBytes, state.CleanWriteBytes, state.DirtyBytes, state.PayloadCapacity);
             // Cached reads: clean read-fill blocks plus retained drained writes, both readable from RAM.
