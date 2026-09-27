@@ -956,6 +956,28 @@ focused discriminating request-shape/concurrency check only if needed. Any
 performance-affecting driver edit requires the fresh 72-case baseline and
 focused before/after regression. This does not advance C: readiness.
 
+### T050 re-measurement on 0.4.139.1: 2026-09-27
+
+Plan-54 `drain-decision` (`QueueCache-Verify-20260927-145101-97fadb3f...`,
+24/24 COMPLETED, Driver Verifier off, Microsoft DiskSpd 2.3 SHA-256
+`DD4E57E1...FAEA2`, Q: 1 GiB budget, 256 MiB seeded payload). Medians of three:
+
+| Workload during an explicit flush | Control IOPS | p1 | p2 | p4 |
+|---|---:|---:|---:|---:|
+| Fitting random 4 KiB writes (IOPS) | 22,194 | 1,460 | 4,173 | 2,790 |
+| Flush seconds (writes) | - | 15.9 | 15.9 | 15.3 |
+| Cold random reads (IOPS) | 3,096 | 2,416 | 2,200 | 2,407 |
+| Flush seconds (reads) | - | 3.9 | 2.5 | 2.5 |
+
+Finding: the flush barrier waits until *all* dirty data is drained, including
+random 4 KiB writes admitted after the flush started (46-145 MiB extra, drained
+as 11,600-27,700 single-block batches), so its duration follows the foreground
+write rate rather than the 256 MiB it was asked to persist (drained in 2.5-4 s in
+the read cases). Parallelism 2 shortens the payload drain by about a third versus
+1; 4 adds lower-I/O queueing (about double the lower-I/O time) without being
+faster on this VM. Proposed: bound a flush to data written before it, and a
+parallelism-2 default. Decision pending owner review.
+
 ### A06a T052 and A07 T026 source checkpoint: 2026-09-22
 
 Plan 17 adds a bounded `policies` observation of a same-range 512-byte overwrite
