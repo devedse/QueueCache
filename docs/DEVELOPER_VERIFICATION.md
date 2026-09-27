@@ -26,7 +26,7 @@ using new driver lab faults (Diagnostics V11 `LowerAllocationRetries`):
   batch. The flush must succeed with at least three recorded retries and no fault;
   the owned 1 MiB must match after release.
 - `drain-allocation-exhaustion-faults`: lab fault 9 fails every build until
-  cleared. After about 5 s (250 attempts) the flush must fail with
+  cleared. After 250 attempts (about 5 s; 7.9 s under Driver Verifier) the flush must fail with
   `STATUS_INSUFFICIENT_RESOURCES`, the cache must fault with the owned version
   still dirty, and Retry must drain it to matching bytes.
 
