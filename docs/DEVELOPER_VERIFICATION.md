@@ -17,7 +17,16 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 50)
+## Suites (plan version 51)
+
+Plan 51 (T053) adds `ordering-faults/release-under-load`: an unbuffered writer
+rewrites a 32 MiB owned file in passes of seeded 64 KiB blocks while a second
+read-only handle checks random blocks, and the cache is repeatedly applied
+(alternating Eager/Idle and write retention), flushed, disabled and released.
+Every concurrent read must be a whole previous-or-current version, the cache must
+not fault, and the released file must equal the last pass. Fewer than 10
+lifecycle cycles during the load is SKIP (unexercised). Physical device removal
+still needs a hypervisor hot-unplug and is not covered.
 
 Plan 50 fixes a race in plan 48/49's allocation stages: they run Deferred, so
 NTFS metadata admitted after the recovery Retry legitimately stayed dirty and

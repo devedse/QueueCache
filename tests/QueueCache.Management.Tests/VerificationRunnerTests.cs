@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 50, "ordering-faults Deferred-stage recovery tolerates later metadata");
+        Check(VerificationPlan.Version == 51, "ordering-faults adds the cache lifecycle race under load");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");
@@ -197,6 +197,19 @@ internal static class VerificationRunnerTests
             {
                 QueueCache.Operations.OrderingFaultScenarios.VerifyDirectWriteFailure(flushFailed, error, 4, after);
                 throw new Exception("An unsafe direct paging write failure was accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyReleaseUnderLoad("r", 12, 5, 900, 0, true).Result == "PASS",
+            "cache lifecycle under load with whole versions and final media passes");
+        Check(QueueCache.Operations.OrderingFaultScenarios.VerifyReleaseUnderLoad("r", 4, 40, 900, 0, true).Result == "SKIP",
+            "too few lifecycle cycles during the load leaves the race unexercised");
+        foreach (var (mismatches, final) in new[] { (1, true), (0, false) })
+        {
+            try
+            {
+                QueueCache.Operations.OrderingFaultScenarios.VerifyReleaseUnderLoad("r", 12, 5, 900, mismatches, final);
+                throw new Exception("A torn or stale block under the lifecycle race was accepted.");
             }
             catch (IOException) { }
         }

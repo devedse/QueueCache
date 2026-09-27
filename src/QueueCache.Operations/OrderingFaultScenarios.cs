@@ -10,7 +10,8 @@ namespace QueueCache.Operations;
 /// newer paging write waits, a short last sparse segment, and cancellation of a capacity-blocked write.
 /// T053 lower-IRP allocation failure: a transient failure retries without faulting; exhaustion faults
 /// with the dirty version retained. T083 failed direct paging write: the error reaches the application,
-/// the cache stays healthy and a later save succeeds.
+/// the cache stays healthy and a later save succeeds. T053 release race: the cache is repeatedly applied,
+/// flushed, disabled and released under concurrent unbuffered writes and reads.
 /// Each stage restores a healthy cache (Retry) itself; faults are driver lab hooks, never raw disk writes.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -26,6 +27,8 @@ public static class OrderingFaultScenarios
     private const ulong FaultTransientAllocation = 8, FaultExhaustedAllocation = 9, FaultDirectWrite = 10;
     private const ulong SimulatedAllocationFailures = 3, AllocationAttempts = 250;
     private const uint InsufficientResources = 0xC000009A;
+    private const int ReleaseCyclesRequired = 10, ReleaseFileBytes = 32 * MiB, ReleaseBlockBytes = 64 * 1024,
+        ReleaseMaxPasses = 40;
 
     /// <summary>A transient lower-IRP allocation failure must be retried: the flush succeeds, the cache stays healthy.</summary>
     internal static string VerifyAllocationRetry(ulong? before, ulong? after, bool flushSucceeded, int lastError)
@@ -55,6 +58,23 @@ public static class OrderingFaultScenarios
             throw new IOException($"A failed direct paging write faulted the cache (0x{lastError:X8}); it owns no cached data.");
         return $"The forced direct paging write failed ({directAfter - directBefore} direct write(s)); the mapped " +
             "flush reported the error and the cache stayed healthy.";
+    }
+
+    /// <summary>Cache lifecycle under load: every read is a whole written version and the final media is the
+    /// last pass. Too few lifecycle cycles during the load leave the race unexercised (SKIP).</summary>
+    internal static CheckResult VerifyReleaseUnderLoad(string label, int cycles, int passes, long reads,
+        int mismatches, bool finalMatches)
+    {
+        if (mismatches != 0)
+            throw new IOException($"{label}: {mismatches} of {reads} concurrent reads returned a block that was " +
+                "neither the previous nor the current written version.");
+        if (!finalMatches)
+            throw new IOException($"{label}: after release the file was not the last written pass.");
+        var detail = $"{cycles} apply/flush/disable/release cycles ran during {passes} unbuffered write passes; " +
+            $"{reads} concurrent reads each returned a whole written version and the released file matched the last pass.";
+        return cycles < ReleaseCyclesRequired
+            ? new(label, "SKIP", detail + $" Fewer than {ReleaseCyclesRequired} cycles overlapped the load; the race is unexercised.")
+            : new(label, "PASS", detail);
     }
 
     /// <summary>A lasting allocation failure must fault the cache with the dirty version retained, not hang.</summary>
@@ -130,7 +150,8 @@ public static class OrderingFaultScenarios
             RunCancelledBlockedWrite(target, device, workDirectory),
             RunAllocationRetry(target, device, workDirectory),
             RunAllocationExhaustion(target, device, workDirectory),
-            RunDirectWriteFailure(target, device, workDirectory)
+            RunDirectWriteFailure(target, device, workDirectory),
+            RunReleaseUnderLoad(target, device, workDirectory)
         ];
     }
 
@@ -520,5 +541,115 @@ public static class OrderingFaultScenarios
             throw new IOException($"{label}: the later successful save was not the released-cache media.");
         return new(label, "PASS", evidence + " A later mapped save succeeded and matched after release. The forced " +
             "write did reach the disk, so this does not prove the failed range's clean view was dropped.");
+    }
+
+    private static byte[] ReleasePattern(int pass, int block)
+    {
+        var data = new byte[ReleaseBlockBytes];
+        new Random(unchecked(104999 + pass * 100_003 + block)).NextBytes(data);
+        return data;
+    }
+
+    private static CheckResult RunReleaseUnderLoad(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const string label = "ordering-faults/release-under-load";
+        const int blocks = ReleaseFileBytes / ReleaseBlockBytes;
+        var path = Path.Combine(workDirectory, "release-under-load.bin");
+        // Pass 0 is written while caching is released, so valid data length covers the file.
+        using (var file = new AlignedFile(path, ReleaseBlockBytes, create: true))
+            for (var block = 0; block < blocks; block++)
+                file.Write((long)block * ReleaseBlockBytes, ReleasePattern(0, block));
+        var pass = 0;
+        var cycles = 0;
+        var mismatches = 0;
+        long reads = 0;
+        Exception? loadError = null;
+        using var writerFile = new AlignedFile(path, ReleaseBlockBytes, create: false, shareRead: true);
+        var writer = Task.Run(() =>
+        {
+            try
+            {
+                while (Volatile.Read(ref pass) < ReleaseMaxPasses &&
+                       (Volatile.Read(ref cycles) < ReleaseCyclesRequired || Volatile.Read(ref pass) < 2))
+                {
+                    var next = Volatile.Read(ref pass) + 1;
+                    Volatile.Write(ref pass, next);
+                    for (var block = 0; block < blocks; block++)
+                        writerFile.Write((long)block * ReleaseBlockBytes, ReleasePattern(next, block));
+                }
+            }
+            catch (Exception exception)
+            {
+                loadError = exception;
+            }
+        });
+        var reader = Task.Run(() =>
+        {
+            try
+            {
+                using var readFile = new AlignedFile(path, ReleaseBlockBytes, create: false, sharedReadOnly: true);
+                var random = new Random(105019);
+                var actual = new byte[ReleaseBlockBytes];
+                while (!writer.IsCompleted)
+                {
+                    var block = random.Next(blocks);
+                    var first = Volatile.Read(ref pass);
+                    readFile.Read((long)block * ReleaseBlockBytes, actual);
+                    var last = Volatile.Read(ref pass);
+                    var whole = false;
+                    for (var candidate = Math.Max(0, first - 1); candidate <= last && !whole; candidate++)
+                        whole = actual.AsSpan().SequenceEqual(ReleasePattern(candidate, block));
+                    if (!whole)
+                        Interlocked.Increment(ref mismatches);
+                    Interlocked.Increment(ref reads);
+                }
+            }
+            catch (Exception exception)
+            {
+                loadError ??= exception;
+            }
+        });
+        var schedule = new Random(105037);
+        try
+        {
+            while (!writer.IsCompleted)
+            {
+                // Alternate drain policy and write retention: retained clean data must not outlive a release.
+                var cycle = Volatile.Read(ref cycles);
+                ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+                {
+                    Options = new CacheOptions(Drain: cycle % 2 == 0 ? DrainAlgorithm.Eager : DrainAlgorithm.Idle,
+                        MaxDirtyAgeMs: 3600000, Parallelism: 1, RetainWrites: cycle % 3 != 0)
+                }, true);
+                Thread.Sleep(schedule.Next(20, 200));
+                device.Control(WriteCacheAction.Flush);
+                Thread.Sleep(schedule.Next(0, 50));
+                device.Control(WriteCacheAction.Disable);
+                device.Control(WriteCacheAction.Release);
+                Interlocked.Increment(ref cycles);
+                Thread.Sleep(schedule.Next(0, 100));
+            }
+        }
+        finally
+        {
+            if (!Task.WaitAll([writer, reader], TimeSpan.FromMinutes(5)))
+                throw new IOException($"{label}: the writer or reader did not finish within 5 minutes.");
+        }
+        if (loadError is not null)
+            throw new IOException($"{label}: the concurrent load failed.", loadError);
+        var state = device.GetWriteCacheState();
+        if (state.LastError != 0)
+            throw new IOException($"{label}: the cache faulted during the lifecycle race (0x{state.LastError:X8}).");
+        var finalPass = Volatile.Read(ref pass);
+        var finalMatches = true;
+        var readBack = new byte[ReleaseBlockBytes];
+        using (var file = new AlignedFile(path, ReleaseBlockBytes, create: false))
+            for (var block = 0; block < blocks && finalMatches; block++)
+            {
+                file.Read((long)block * ReleaseBlockBytes, readBack);
+                finalMatches = readBack.AsSpan().SequenceEqual(ReleasePattern(finalPass, block));
+            }
+        return VerifyReleaseUnderLoad(label, Volatile.Read(ref cycles), finalPass, Interlocked.Read(ref reads),
+            Volatile.Read(ref mismatches), finalMatches);
     }
 }

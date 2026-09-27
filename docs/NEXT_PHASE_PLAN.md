@@ -70,14 +70,18 @@ then Driver Verifier, because it can invalidate paths we consider finished.
      cycles, every byte matched.
    - Done when: each transition passes a byte oracle with the cache active.
 4. **Remaining fault and teardown cases (A06a/A08, T052-T053, T083).**
-   - Cancel an in-flight paging request.
+   - Cancel an in-flight paging request. NOT REACHABLE: Windows does not cancel
+     paging I/O and user mode cannot cancel another component's IRP; the
+     cancel-safe queue path is covered by `cancel-capacity-blocked-write`.
    - Inject a fault on a direct paging write. DONE (plan 50): lab fault 10 and
      `ordering-faults/direct-paging-write-failure` pass under Driver Verifier.
    - Allocation failure under memory pressure. Lower IRP builds DONE (plan 48,
      0.4.131.1): transient failures retry, exhaustion faults after a bound,
      both covered by `ordering-faults` under Driver Verifier. Request MDL
      mapping failure remains.
-   - Races between Release/Remove and I/O.
+   - Races between Release/Remove and I/O. In progress (plan 51):
+     `ordering-faults/release-under-load`. Physical removal needs a hypervisor
+     hot-unplug.
    - Done when: each is a maintained `qcache developer verify` case that passes.
 5. **Offline recovery and Retry UI (A10, T054).**
    - Real Safe Mode/offline recovery of a machine whose cache cannot start.

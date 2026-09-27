@@ -14,7 +14,9 @@ internal sealed class AlignedFile : IDisposable
     private readonly int alignment;
     /// <param name="sharedReadOnly">Open an existing file for reading only, sharing it with applications that
     /// still hold it open.</param>
-    public AlignedFile(string path, int capacity, bool create, int alignment = 4096, bool sharedReadOnly = false)
+    /// <param name="shareRead">Let a separate read-only handle read the file while this one writes.</param>
+    public AlignedFile(string path, int capacity, bool create, int alignment = 4096, bool sharedReadOnly = false,
+        bool shareRead = false)
     {
         if (alignment is not (512 or 4096))
             throw new ArgumentOutOfRangeException(nameof(alignment));
@@ -24,7 +26,7 @@ internal sealed class AlignedFile : IDisposable
         if (capacity <= 0 || capacity % 4096 != 0)
             throw new ArgumentException("Transfer buffer must be 4 KiB aligned.");
         this.capacity = capacity;
-        handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly ? 7u : 0u, IntPtr.Zero,
+        handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly ? 7u : shareRead ? 1u : 0u, IntPtr.Zero,
             create ? 1u : 3u, 0x20000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
