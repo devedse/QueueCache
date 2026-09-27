@@ -12,6 +12,26 @@ See the [T085 design](T085_APPLICATION_CACHING_DESIGN.md).
 
 QueueCache uses one block index: dirty writes, retained clean writes and clean reads never need separate copies of the same current block. An older in-flight write can temporarily coexist with its newer replacement. Reads select the newest version; the older version must finish before its replacement can be written to disk.
 
+## How requests are served (since 0.4.153.1-0.4.162.1)
+
+Every disk has one ordered request worker, a pool of three offloaded-request
+threads and the drainers. The order of requests that could affect each other is
+decided in one place, while copies of independent requests run in parallel.
+
+| Request | Where it runs |
+|---|---|
+| RAM read hit or fitting write, disk otherwise idle | On the application's own thread (the caller path): no queue hand-off, worker wake-up or cross-thread completion. |
+| Several requests outstanding (queue depth > 1) | Queued to the worker, which overlaps with the submitting thread and polls 30 us before sleeping. After finding it busy, the next 256 candidates follow; every 1024th caller-path candidate is sent to the worker to detect a deep queue. |
+| Read of 256 KiB or more fully in RAM; payload copy of a fitting write that size | Admitted in order by the worker, copied on an offloaded-request thread. Overlapping writes and reads wait for it; controls wait for all of them. |
+| Paging read that needs the disk | Offloaded-request thread, as before. |
+| Paging-file I/O | Forwarded from dispatch, as before. |
+| Misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+
+`qcache developer performance Q: --caller-path false` turns the caller path off
+until the next boot (for comparisons); Diagnostics V14-V16 count caller-path
+requests (`CallerPath`), declined attempts, and offloaded copies
+(`CopyOffloadReads`, `CopyOffloadWrites`).
+
 ## Allocation and retention
 
 | Setting | Behaviour |
@@ -21,7 +41,7 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 | Retain writes (default) | Successful background writes become clean cached blocks instead of immediately being discarded. |
 | Promote on read (default) | Reading a retained clean write moves it into the read quota without copying its payload. Dirty writes remain in the write quota until drained. |
 | Discard drained | Release successful writes immediately. Read misses can still populate the read quota. |
-| Read misses (since plan 56) | Every read that misses the cache is kept as a clean read block when a full 4 KiB block was read: unbuffered reads and application paging reads (Windows file-cache refills and mapped files). Paging-file and unknown-origin reads are never kept. |
+| Read misses | An unbuffered read that misses the cache is kept as a clean read block when a full 4 KiB block was read and the application's buffer repeats no physical page. Paging reads (Windows file-cache refills, mapped files, programs) are never kept since plan 60: a clustered page-in's buffer can repeat Windows' shared dummy page, which holds another block's data (see KNOWN_ISSUES). Plan 56 kept them and served that data on C:. Data already in the cache still serves paging reads. |
 | Scan resistance (since plan 56) | A block read from disk once enters its clean list at the eviction end; only a later hit moves it to the recent end. One fill in 16 enters as recent so a large working set can still settle. A one-off large read (a copy, a scan) therefore mostly evicts its own blocks instead of the data you use repeatedly. |
 
 **Clear read cache** (`qcache policy drop-clean Q:`, or the card button) releases clean read and retained-write blocks on demand. It is not a flush: pending writes, in-flight writes and draining are untouched, and it never discards data the disk has not accepted. New drivers advertise this control with state flag 1024; the button stays hidden otherwise.
@@ -38,7 +58,7 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 |---|---|
 | Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The alpha baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 256 KiB batches and parallelism 1. |
+| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The alpha baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 256 KiB batches and parallelism 2 (1 before plan 56). |
 | Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.

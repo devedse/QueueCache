@@ -2,6 +2,55 @@
 
 Current execution/status source: [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
+## CrystalDiskMark rows after the request-path work, 2026-09-27
+
+CrystalDiskMark 9.0.3's DiskSpd (same binary as below) in CrystalDiskMark's four
+default shapes on a 1 GiB file created once, 5 s runs, warm cache (the file read
+twice first), Q: 2 GiB Fast/Idle, parallelism 2, Driver Verifier off. MB/s,
+range of three runs:
+
+| Row | 0.4.151.1 (before) | 0.4.162.1 (`98a7d03`) |
+|---|---|---|
+| SEQ1M Q8T1 read | 14,337-14,437 | 35,949-36,510 |
+| SEQ1M Q8T1 write | 12,635-13,954 | 20,508-21,483 |
+| SEQ1M Q1T1 read | 9,025-9,171 | 14,475-14,606 |
+| SEQ1M Q1T1 write | 8,701-9,148 | 13,073-13,354 |
+| RND4K Q32T1 read | 1,274-1,321 | 1,489-1,523 |
+| RND4K Q32T1 write | 146-1,265 | 1,240-1,285 |
+| RND4K Q1T1 read | 100 | 974-981 |
+| RND4K Q1T1 write | 77-79 | 848-860 |
+
+What changed, in order, each measured on the VM before the next:
+
+1. Caller-thread service (0.4.153.1): a RAM hit or fitting write on an otherwise
+   idle disk is served on the submitting thread. A queued 4 KiB request waited
+   about 11 us for the worker to wake, for about 1.4 us of cache work, plus a
+   cross-thread completion. Q1 random 4 KiB: 24,500 -> 238,000 reads/s,
+   22,000 -> 190,000 writes/s.
+2. Unused drainers no longer wake on every write (0.4.154.1). Drainers above
+   the configured parallelism cleared the shared wake event, so each cached write
+   re-signalled it and woke them to contend for the cache lock (180,000 wake-ups
+   in 5 s). Random Q32 writes collapsed to about 35,000/s whenever write-back
+   was running. This is the "random Q32 gap": 0.4.148.1's `write-performance`
+   Q32 medians (34,066-34,400 IOPS) sat exactly at this collapse.
+3. Deep queues stay on the worker (0.4.156.1-0.4.158.1): at Q32 the worker
+   overlaps with the submitter and is faster than caller-thread service
+   (333,000-356,000 vs 217,000-236,000 reads/s). Every 1024th caller-path
+   candidate goes to the worker, and one that finds it busy keeps the next 256
+   there.
+4. Parallel copies (0.4.158.1-0.4.161.1): reads of 256 KiB or more that are fully
+   in RAM, and the payload copy of fitting writes that size, run on three
+   offloaded-request threads. A pinned read copies its whole range after one lock
+   release, and the cache lock is an exclusive push lock instead of a KMUTEX,
+   whose hand-off to sleeping waiters convoyed the threads (9.7 s of lock waits
+   in a 5 s run for 0.7 s held).
+5. The idle worker polls for 30 us before sleeping (0.4.162.1), restoring random
+   Q32 writes to about 310,000/s.
+
+For reference, a plain user-mode copy on this VM moves 28.6 GB/s on one thread
+and 33 GB/s on four, so SEQ1M Q8 reads are now at the VM's memory-copy speed. SEQ1M Q1 is one
+request at a time on the caller's thread and stays near one copy's speed.
+
 ## CrystalDiskMark SEQ1M Q8T1 and the single-worker ceiling, 2026-09-27
 
 Measured with CrystalDiskMark 9.0.3's DiskSpd (SHA-256 `7281BF6D...1079`) using

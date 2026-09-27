@@ -26,7 +26,22 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 60, "paging read misses are no longer kept");
+        Check(VerificationPlan.Version == 61, "system-paging-recognition checks program files against the disk");
+        Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5).Detail.Contains("repeated a page: 5"),
+            "program-file check accepts matching files and clean exits");
+        foreach (var bad in new Action[]
+        {
+            () => QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, ["coreclr.dll"], [0], null),
+            () => QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, -1073741819], null)
+        })
+        {
+            try
+            {
+                bad();
+                Check(false, "program-file check rejects a mismatched file or a crashed process");
+            }
+            catch (IOException) { }
+        }
         Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, 3, 4, 0, true).Result == "PASS",
             "parallel-copies accepts whole versions and offloaded copies");
         Check(QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 0, null, null, 0, true).Detail.Contains("unavailable"),

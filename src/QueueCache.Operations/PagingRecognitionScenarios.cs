@@ -10,7 +10,8 @@ namespace QueueCache.Operations;
 /// the current paging-file extents as an observe-only reference set, then applies bounded memory pressure so
 /// Windows pages to and from the pagefile. The driver counts paging requests it recognised as paging-file I/O, and
 /// "reference misses": requests inside a paging-file extent that recognition would have admitted as application
-/// traffic. Any miss fails the check.
+/// traffic. Any miss fails the check. It also checks that program files read back correctly through the cache
+/// after that pressure (see <see cref="VerifyImages"/>); the only cache change is dropping clean data first.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class PagingRecognitionScenarios
@@ -67,18 +68,93 @@ public static class PagingRecognitionScenarios
         device.SetSpecialRanges(map.Ranges, SpecialRangeKind.Reference);
         try
         {
+            // Program-file oracle: with clean cached data dropped, unbuffered reads of these unmodified files come
+            // from the disk. After the pressure, and after new processes loaded them, every file must still hash
+            // the same through the normal (cached, paging) read path.
+            var images = Directory.GetFiles(AppContext.BaseDirectory, "*.dll");
+            device.Control(WriteCacheAction.DropClean);
+            var reference = images.ToDictionary(path => path, UnbufferedHash);
             var diagnosticsBefore = device.GetDiagnostics();
             var pressure = ApplyBoundedPressure();
+            var launches = LaunchSelf(10);
             var diagnosticsAfter = device.GetDiagnostics();
-            return Evaluate(diagnosticsBefore.PagingAdmission!, diagnosticsAfter.PagingAdmission!,
+            var mismatched = images.Where(path => !BufferedHash(path).AsSpan().SequenceEqual(reference[path]))
+                .Select(path => Path.GetFileName(path)).ToArray();
+            var checks = Evaluate(diagnosticsBefore.PagingAdmission!, diagnosticsAfter.PagingAdmission!,
                 diagnosticsBefore.PagingIo!, diagnosticsAfter.PagingIo!,
                 $"Reference: {map.Ranges.Count} range(s) of {string.Join(", ", map.Files)}. {pressure}",
                 diagnosticsBefore.PagingFileBypasses, diagnosticsAfter.PagingFileBypasses);
+            return [.. checks, VerifyImages(images.Length, images.Sum(path => new FileInfo(path).Length), mismatched, launches,
+                diagnosticsBefore.PagingReadsRepeatedPages is null || diagnosticsAfter.PagingReadsRepeatedPages is null
+                    ? null : diagnosticsAfter.PagingReadsRepeatedPages - diagnosticsBefore.PagingReadsRepeatedPages)];
         }
         finally
         {
             device.SetSpecialRanges([], SpecialRangeKind.Reference);
         }
+    }
+
+    /// <summary>0.4.148.1-0.4.162.1 kept paging read misses; a clustered page-in's buffer can repeat Windows'
+    /// shared dummy page, so program pages were cached with another block's data and new processes crashed.
+    /// Every file must hash as it did on disk and every started process must exit normally.</summary>
+    internal static CheckResult VerifyImages(int files, long bytes, IReadOnlyList<string> mismatched,
+        IReadOnlyList<int> exitCodes, ulong? repeatedPageReads)
+    {
+        const string label = "system-paging/program-files-match-disk";
+        var failedLaunches = exitCodes.Count(code => code != 0);
+        var evidence = FormattableString.Invariant(
+            $"{files} program files ({bytes / MiB} MiB) hashed from disk before the pressure; {exitCodes.Count} processes started afterwards") +
+            (repeatedPageReads is { } repeated
+                ? FormattableString.Invariant($"; paging reads whose buffer repeated a page: {repeated}") : "");
+        if (mismatched.Count != 0 || failedLaunches != 0)
+            throw new IOException(FormattableString.Invariant(
+                $"{label}: {mismatched.Count} program files read differently through the cache ({string.Join(", ", mismatched.Take(8))}) and {failedLaunches} processes failed. ") + evidence);
+        return new(label, "PASS", evidence + ". Every file matched and every process exited normally.");
+    }
+
+    private static byte[] UnbufferedHash(string path)
+    {
+        using var file = new AlignedFile(path, (int)MiB, create: false, sharedReadOnly: true);
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        var buffer = new byte[MiB];
+        var length = new FileInfo(path).Length;
+        for (long offset = 0; offset < length; offset += MiB)
+        {
+            var read = file.ReadUpTo(offset, buffer);
+            hash.AppendData(buffer, 0, (int)Math.Min(read, length - offset));
+        }
+        return hash.GetHashAndReset();
+    }
+
+    private static byte[] BufferedHash(string path)
+    {
+        using var stream = File.OpenRead(path);
+        return System.Security.Cryptography.SHA256.HashData(stream);
+    }
+
+    // Short-lived copies of this program load its runtime and libraries through paging reads.
+    private static IReadOnlyList<int> LaunchSelf(int count)
+    {
+        var codes = new List<int>();
+        for (var index = 0; index < count; index++)
+        {
+            using var process = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--version")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            })!;
+            process.StandardOutput.ReadToEnd();
+            process.StandardError.ReadToEnd();
+            if (!process.WaitForExit(60_000))
+            {
+                process.Kill();
+                codes.Add(-1);
+                continue;
+            }
+            codes.Add(process.ExitCode);
+        }
+        return codes;
     }
 
     // Commit private memory until available physical memory is nearly exhausted (bounded by the commit headroom

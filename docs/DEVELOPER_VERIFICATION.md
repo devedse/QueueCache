@@ -17,7 +17,24 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 59)
+## Suites (plan version 61)
+
+Plan 61 adds `system-paging/program-files-match-disk` to
+`system-paging-recognition` (and so to every restart-soak cycle). It drops the
+cache's clean data, hashes the DLLs next to `qcache` with unbuffered reads (from
+the disk, as nothing of them is dirty), applies the bounded memory pressure,
+starts `qcache --version` ten times, then hashes the files again through the
+normal cached read path. Every file must match and every process must exit
+normally. On 0.4.162.1 with a 512 MiB C: cache this failed immediately (11 DLLs
+differed, `qcache` crashed); see KNOWN_ISSUES. With Diagnostics V17 the PASS text
+reports paging reads whose buffer repeated a physical page.
+
+Plan 60 replaces `paging-coherence/mapped-read-retained` with
+`mapped-read-not-kept`: the mapped read and a later unbuffered read must still
+return the file's bytes, and the paging read fill counter must not move. Paging
+read misses are no longer kept (KNOWN_ISSUES: programs on a cached C: read wrong
+data). With Diagnostics V17 the PASS text reports how many paging reads repeated
+a physical page during the check.
 
 Plan 59 adds `policies/parallel-copies` (256 MiB Fast, Eager, parallelism 2): for
 20 s four threads each rewrite their own 8 MiB file in 1 MiB blocks and read each

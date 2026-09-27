@@ -40,21 +40,21 @@ focus; Strict stays correct but is not tuned (owner decision, 2026-09-27).
 
 ## Phase 2: Fast-mode performance
 
-4. **Parallel data copies (top priority for speed).** CrystalDiskMark SEQ1M Q8T1
-   reaches about 15 GB/s on every build since 0.4.51.1, and more application
-   threads do not raise it: the single request worker performs every copy. Keep
-   the worker for ordering and slot bookkeeping, but run the RAM copies of
-   independent requests (read hits and fitting writes) in parallel, on the
-   calling thread or a small copy pool, with slots pinned or marked filling
-   while copied. Target: scale with cores, beyond 15 GB/s on SEQ1M Q8T1.
-   Also release cache space held by deleted files' data on disks without TRIM.
-5. **Random Q32 gap.** Earlier builds reached about 74,500 IOPS at Q32 with
-   CrystalDiskMark's DiskSpd; 0.4.148.1 measured 34,400 with Microsoft's. Measure
-   an older build with the same binary to separate binary/VM effects from a
-   regression, then profile the request worker's per-request cost.
-6. **Request-path cost.** If the worker is the limit, serve RAM read hits and
-   fitting writes without a queue round-trip where ordering allows, keeping every
-   existing ordering and coherence test green.
+4. **Parallel data copies: DONE (0.4.158.1-0.4.162.1).** Large RAM-hit reads and
+   the payload copies of large fitting writes run on three offloaded-request
+   threads; the cache lock is a push lock. CrystalDiskMark SEQ1M Q8T1 rose from
+   about 14.4/14.0 to 36.4/20.7 GB/s read/write (WRITE_PERFORMANCE_TRAJECTORY).
+   Follow-ups: measure multi-threaded rows (T4); release cache space held by
+   deleted files' data on disks without TRIM; optionally split one large
+   caller-path copy across threads (SEQ1M Q1 stays near one copy's speed).
+5. **Random Q32 gap: EXPLAINED AND FIXED (0.4.154.1).** Drainers above the
+   configured parallelism woke on every cached write while write-back ran,
+   collapsing random Q32 writes to about 35,000/s, which is where 0.4.148.1's
+   `write-performance` Q32 medians sat. Now about 310,000/s with CrystalDiskMark's
+   DiskSpd. Re-run `write-performance` for a new maintained baseline.
+6. **Request-path cost: DONE (0.4.153.1-0.4.162.1).** RAM hits and fitting writes
+   on an otherwise idle disk are served on the caller's thread (random 4 KiB Q1
+   about 10x); deep queues stay on the worker, which polls 30 us before sleeping.
 7. **Drain shape.** Larger batches (512 KiB-1 MiB) and disk-order batching when a
    backlog builds, measured with `drain-decision` and `write-performance`; confirm
    on a physical NVMe or HDD before changing defaults.

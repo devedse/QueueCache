@@ -13,6 +13,42 @@ reproduced since the fixes that plausibly addressed them). TRIM handling is
 range-aware but not VM-verified. The older version checkpoints below describe
 their original scope.
 
+## Fixed: programs on a cached C: read wrong data (0.4.148.1-0.4.162.1)
+
+What you would see: with caching on for C:, programs started crashing
+(`qcache.exe` in `coreclr.dll` and `System.Security.Cryptography.dll`, access
+violations at the same code offsets in every new process). Found on 0.4.162.1 on
+2026-09-27 during a saved-profile C: soak with the owner's 2 GiB Q: profile also
+active. 11 of `qcache`'s 192 DLLs hashed wrong when read through the cache; the
+files on disk were intact (all matched after caching was released and Windows
+restarted), and nothing wrong was written back.
+
+Why: since plan 56 (0.4.148.1) a page-in that missed the cache was kept as clean
+cache blocks, copied from the request's own buffer. When Windows reads a group of
+pages of a program or mapped file at once and some of them are already in memory,
+it points those slots of the buffer at one shared scratch page (the "dummy
+page"), which other reads overwrite at the same time. Those slots therefore hold
+another block's data, and keeping them served that data to the next page-in of
+the file. More simultaneous page-ins (0.4.158.1 added three parallel reader
+threads) and heavier memory pressure made it frequent.
+
+Fix (0.4.164.1 or later, `4f28450`): page-in misses are never kept (as before
+plan 56; resident data still serves page-ins). An ordinary read miss is kept only
+when its buffer repeats no physical page, since an application can also map one
+page twice. Diagnostics V17 counts page-ins whose buffer repeated a page.
+Verification of the fix is recorded in the tracker.
+
+## Fixed: small writes slowed about 8x while write-back ran (up to 0.4.153.1)
+
+Random 4 KiB writes at queue depth 32 ran at about 300,000/s until background
+write-back started, then fell to about 35,000/s for as long as it ran (the
+"random Q32 gap" in earlier plans). Only the configured number of drain threads
+(parallelism, default 2) write back; the other drain threads idle. Each time an
+idle one woke, it cleared the shared wake-up signal, so the next cached write set
+it again and woke them to compete for the cache lock: about one wake-up per
+write (180,000 in 5 s). Since 0.4.154.1 idle drain threads wait on a separate
+stop signal and never touch the shared one; the same run keeps about 300,000/s.
+
 ## Fixed: shutdown deadlock on a paging-path usage notification (0.4.117.1-0.4.125.1)
 
 On 2026-09-25 the first saved-profile restart (C: Fast 1 GiB, Deferred, about
@@ -230,6 +266,11 @@ forced on the VM.
 
 ## Performance acceptance is incomplete
 
+CrystalDiskMark-shaped runs on 0.4.162.1 are in
+[WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md); the maintained
+`write-performance` baseline predates the request-path changes and must be re-run.
+Multi-threaded rows (T4) are not yet measured. SEQ1M Q1 is one request at a time
+and stays near one core's copy speed (about 14.5 GB/s on the VM).
 Focused Q1/Q32 and drain-attribution runs exist, but they are not a complete
 performance verdict. Full 72-case small-write and broader mixed-workload matrices
 must use the same DiskSpd binary/hash, budget and repetitions. `MEASURED` means a

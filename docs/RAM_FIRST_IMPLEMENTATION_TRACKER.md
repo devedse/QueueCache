@@ -264,13 +264,29 @@ pagefile saved-startup regression without the earlier process corruption.
 | Item | Implementation | Verification |
 |---|---|---|
 | N1 settings apply | Apply completes or restores the previous preset, options, size and state; the error says exactly what is left if even that fails (`3b33de7`). | Fake-device contract tests for every failure point (CI). Not forced on the VM. |
-| N2 read caching | Application paging read misses kept like unbuffered ones; paging-file and unknown-origin reads never; bimodal (scan-resistant) insertion; Diagnostics V13 fill counters (plan 56, `0f49f7c`). | VERIFIED on 0.4.148.1 under Driver Verifier: `paging-coherence/mapped-read-retained` 2016/2048 blocks kept, re-read 98% from RAM. Speed benefit on real workloads not yet measured. |
+| N2 read caching | WITHDRAWN for paging reads (plan 60, `4f28450`): keeping application paging read misses served another block's data on C: (KNOWN_ISSUES). Unbuffered read misses are still kept when the buffer repeats no page; bimodal (scan-resistant) insertion stays. | Plan 56's `mapped-read-retained` check passed on 0.4.148.1 but used a file with no pages already resident, so it could not see the dummy page. Plan 60 checks that nothing is kept. |
 | N3 fixed reservation | Design decision recorded: no shrinking. | n/a |
 | N4 drain defaults | Default parallelism 2 (plan 56). Bounded flush dropped after analysis. | Two `drain-decision` runs (0.4.139.1, 0.4.148.1). |
 | N5 paging-file I/O | Recognised paging-file requests forwarded from dispatch, bypassing the worker; Diagnostics V12 counter (plan 55, `8833f67`/`cb29d5a`). | VERIFIED on 0.4.146.1: every recognised request bypassed the worker in all 20 Driver Verifier soak cycles. |
 | N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | Compile-time mask checks only. The VM has no TRIM-capable disk. |
 | N7 special requests | Pass-through after shutdown/power-down (existing), work-item lower calls for PnP/shutdown/disk controls, plus N5. | Driver Verifier soaks above. |
 | N8 status display | CLI and desktop label live values vs totals since boot; stale desktop data greyed out (existing). | Desktop fixture tests pass; desktop visuals not checked on the VM. |
+
+### Fast-mode request-path batch, 2026-09-27
+
+Measured with CrystalDiskMark 9.0.3's DiskSpd in CrystalDiskMark's four shapes,
+Q: 2 GiB Fast/Idle, Driver Verifier off (details and before/after table:
+[WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md)). Correctness
+runs used standard Driver Verifier on installed 0.4.162.1 (`98a7d03`).
+
+| Item | Implementation | Verification |
+|---|---|---|
+| P1 caller-thread service | RAM hits and fitting writes on an otherwise idle disk served on the submitting thread; runtime switch `developer performance --caller-path`; Diagnostics V14 (`32f4239`, 0.4.153.1). | RND4K Q1: 100 -> 978 MB/s read, 79 -> 854 MB/s write. Plan 58 `foreground-background`: 1,203,326 of 1,205,844 requests on the caller thread, 0 declined, persisted bytes verified (Verifier on, `...-224226-7300593f...`). |
+| P2 idle drainers | Drainers above the parallelism no longer clear the shared wake event (`029d081`, 0.4.154.1). | RND4K Q32 writes during write-back: about 35,000 -> 300,000 IOPS. Explains the "random Q32 gap". |
+| P3 deep queues on the worker | Probe every 1024th candidate; a candidate finding the worker busy keeps the next 256 there (`ba8de51`, `117586e`). | RND4K Q32 read 1,489-1,523 MB/s with the caller path on (was 890-969 with it always used). |
+| P4 parallel copies | Reads of 256 KiB+ fully in RAM and payload copies of fitting writes that size run on three offloaded-request threads; pinned reads copy with one lock release; cache lock is an exclusive push lock; Diagnostics V15/V16 (`9527891`, `df4904f`, `346be2f`, `f3000a7`). | SEQ1M Q8: 14.4 -> 36.4 GB/s read, 14.0 -> 20.7 GB/s write. Plan 59 `parallel-copies` PASS under Verifier: 13,848 1 MiB writes with read-back and 1,630 concurrent reads each returned one whole version; 15,389 read and 13,846 write copies offloaded; last versions persisted (`...-225146-6a9aab31...`). |
+| P5 worker spin | Idle worker polls 30 us before sleeping (`98a7d03`, 0.4.162.1). | RND4K Q32 write 1,240-1,285 MB/s (about 200,000 IOPS -> 310,000). |
+| All | | Under Verifier on 0.4.162.1: `quick`, `policies`, `pressure`, `paging-coherence`, `ordering-faults`, `app-write-profile` COMPLETED with every check PASS (the four standing `quick` SKIPs: no TRIM-capable disk, excluded cases); Windows host tests pass. Saved C: restart soak: see below. Not covered: multi-threaded (T4) performance rows, the maintained `write-performance` baseline, physical hardware. |
 
 ### Revision 4 implementation queue: 2026-09-24 review correction
 
