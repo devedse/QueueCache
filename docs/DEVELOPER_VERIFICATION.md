@@ -17,7 +17,13 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 49)
+## Suites (plan version 50)
+
+Plan 50 fixes a race in plan 48/49's allocation stages: they run Deferred, so
+NTFS metadata admitted after the recovery Retry legitimately stayed dirty and
+failed the old zero-dirty check (plan-49 run `...-065833-6298f410...` on
+0.4.133.1 stopped there). Their recovery now requires no fault, nothing in
+flight and a successful second flush; the owned bytes are proven after release.
 
 Plan 49 (T083) adds `ordering-faults/direct-paging-write-failure`: lab fault 10
 reports the next direct paging write inside a force-direct range as failed after

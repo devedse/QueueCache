@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 49, "ordering-faults adds a failed direct paging write");
+        Check(VerificationPlan.Version == 50, "ordering-faults Deferred-stage recovery tolerates later metadata");
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
             .SequenceEqual([new IntegrityCase("paging-coherence", "paging-coherence")]),
             "mixed paging/file check is one maintained non-OS case");

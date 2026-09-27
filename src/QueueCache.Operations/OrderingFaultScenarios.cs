@@ -165,14 +165,19 @@ public static class OrderingFaultScenarios
     }
 
     // Clear the fault through the maintained Retry barrier and prove the cache is clean again.
-    private static void Recover(CacheDevice device, string label)
+    // Under Deferred, NTFS metadata admitted after the barrier legitimately stays dirty; there a
+    // second flush must succeed and the owned bytes are proven after release instead.
+    private static void Recover(CacheDevice device, string label, bool deferred = false)
     {
         device.Control(WriteCacheAction.LabGate, value: 0);
         device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
         device.Control(WriteCacheAction.Retry);
+        if (deferred)
+            device.Control(WriteCacheAction.Flush);
         var state = device.GetWriteCacheState();
-        if (state.LastError != 0 || state.DirtyBytes != 0 || state.InFlightBytes != 0)
-            throw new IOException($"{label}: Retry did not restore a clean healthy cache.");
+        if (state.LastError != 0 || state.InFlightBytes != 0 || !deferred && state.DirtyBytes != 0)
+            throw new IOException($"{label}: Retry did not restore a clean healthy cache " +
+                $"(error 0x{state.LastError:X8}, dirty {state.DirtyBytes}, in flight {state.InFlightBytes}).");
     }
 
     private static void ReleaseAndRead(CacheDevice device, string path, long offset, byte[] actual)
@@ -419,7 +424,7 @@ public static class OrderingFaultScenarios
         }
         finally
         {
-            Recover(device, label);
+            Recover(device, label, deferred: true);
         }
         var actual = new byte[MiB];
         ReleaseAndRead(device, path, Offset, actual);
@@ -455,7 +460,7 @@ public static class OrderingFaultScenarios
         finally
         {
             device.Control(WriteCacheAction.LabFault, value: 0);
-            Recover(device, label);
+            Recover(device, label, deferred: true);
         }
         var actual = new byte[MiB];
         ReleaseAndRead(device, path, Offset, actual);
