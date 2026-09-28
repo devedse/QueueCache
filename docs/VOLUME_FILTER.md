@@ -37,6 +37,28 @@ records the Volume class list, uninstall that drains lettered volumes and remove
 both class entries, and `Recover-Registration.ps1` that restores the Volume class
 list (or, for a version-1 backup, removes only the QueueCache entry).
 
+## Boot reset on C:'s volume (found and fixed on the branch)
+
+0.4.183.1 booted with the filter on Q:'s volume only, but with it on C:'s volume
+the VM reset silently a few seconds into boot (no stop screen, no dump, no event),
+with or without Driver Verifier, until Automatic Repair gave up. Recovery each
+time: the Windows recovery command prompt, loading the offline SYSTEM hive and
+restricting the filter to Q:'s volume again (`ClassCoverage` 0 and
+`LabAllowedDriverKey`).
+
+Bisected with a lab `DiagnosticMode` service value (0.4.185.1) on C:'s volume:
+pure pass-through booted; the full driver booted with the power-pageable mirror,
+dispatch paging classification and the post-start queries all disabled, and with
+each of the first two re-enabled; with only the post-start queries enabled it
+reset again. The driver sent `IOCTL_DISK_GET_LENGTH_INFO` and
+`IOCTL_DISK_GET_DRIVE_GEOMETRY` down the volume stack from its
+`IRP_MN_START_DEVICE` handler. On the disk stack that was harmless; on the boot
+volume (snapshots, BitLocker and the volume manager below) it resets the machine.
+
+Fix (0.4.187.1, `e7150b7`): the length and sector size are queried once, on first
+need, from a PASSIVE_LEVEL thread: the caller of the first QueueCache management
+request or the request worker. With it the filter covers every volume and boots.
+
 ## Known limitations on the branch
 
 - The desktop keeps one card per disk and uses that disk's first lettered volume
@@ -49,6 +71,14 @@ list (or, for a version-1 backup, removes only the QueueCache entry).
   the tools, as before.
 
 ## Test plan
+
+Results so far (0.4.187.1, `e7150b7`): every volume covered, boots; all six Q:
+suites pass under Driver Verifier (`policies` 42/42); the C: program-file check
+passes 3/3; a 10-cycle saved-C:-profile restart soak passes 10/10 under Driver
+Verifier, with the program-file check in every cycle. Raw SCSI INQUIRY on Q:'s
+disk works while Q: is cached (0.4.183.1). CrystalDiskMark on Q: (0.4.183.1):
+SEQ1M Q8T1 about 36/21.6 GB/s, RND4K Q32T1 about 1,570/1,630 MB/s, RND4K Q1T1
+about 1,340/1,030 MB/s (disk filter: 36.5/21.3 GB/s, 1,550/1,310, 1,010/855).
 
 1. Install the branch build with the cache restricted to Q:'s volume
    (`ClassCoverage` 0, `LabAllowedDriverKey` = Q:'s volume driver key), so the C:
