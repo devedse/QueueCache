@@ -38,14 +38,22 @@ What changed, in order, each measured on the VM before the next:
    (333,000-356,000 vs 217,000-236,000 reads/s). Every 1024th caller-path
    candidate goes to the worker, and one that finds it busy keeps the next 256
    there.
-4. Parallel copies (0.4.158.1-0.4.161.1): reads of 256 KiB or more that are fully
-   in RAM, and the payload copy of fitting writes that size, run on three
-   offloaded-request threads. A pinned read copies its whole range after one lock
-   release, and the cache lock is an exclusive push lock instead of a KMUTEX,
-   whose hand-off to sleeping waiters convoyed the threads (9.7 s of lock waits
-   in a 5 s run for 0.7 s held).
+4. Parallel copies. 0.4.158.1: reads of 256 KiB or more fully in RAM run on three
+   offloaded-request threads, but SEQ1M Q8 stayed at 15.2 GB/s with the CPUs half
+   idle: 9.7 s of cache-lock waits in a 5 s run for 0.7 s held. 0.4.159.1
+   (`df4904f`): a pinned read copies its whole range after one lock release
+   (3 instead of 6 acquisitions per request; 1.4 s of waits): 21.9-23.8 GB/s.
+   0.4.161.1: the cache lock is an exclusive push lock instead of a KMUTEX, whose
+   hand-off to a sleeping waiter convoyed the threads (reads 34.5-36.2 GB/s), and
+   the payload copy of fitting writes of 256 KiB or more also runs on those
+   threads (writes 20.9 GB/s).
 5. The idle worker polls for 30 us before sleeping (0.4.162.1), restoring random
    Q32 writes to about 310,000/s.
+
+0.4.166.1 (`233b501`, which stops keeping page-in misses; see KNOWN_ISSUES)
+measured the same: SEQ1M Q8 35,158-37,071 / 20,845-21,444, SEQ1M Q1
+14,249-14,669 / 13,192-13,529, RND4K Q32 1,531-1,566 / 1,199-1,310, RND4K Q1
+944-972 / 840-856 MB/s.
 
 For reference, a plain user-mode copy on this VM moves 28.6 GB/s on one thread
 and 33 GB/s on four, so SEQ1M Q8 reads are now at the VM's memory-copy speed. SEQ1M Q1 is one

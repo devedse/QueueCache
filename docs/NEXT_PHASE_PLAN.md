@@ -7,6 +7,17 @@ focus; Strict stays correct but is not tuned (owner decision, 2026-09-27).
 
 ## Where things stand
 
+Update 2026-09-28 (installed 0.4.166.1): the Fast-mode request-path work (items
+4-6 below) is done: CrystalDiskMark SEQ1M Q8T1 about 36/21 GB/s read/write
+(was 14.4/14.0), RND4K Q1T1 about 960/850 MB/s (was 100/79). The saved-C: soak
+found that plan 56's read retention of page-ins served wrong data to programs on
+C:; it is withdrawn (KNOWN_ISSUES) and a program-file check now runs every soak
+cycle. New open item: a read miss is kept from the application's own buffer
+(KNOWN_ISSUES; proposed staging-buffer fix, to do before any further read-caching
+work).
+
+Earlier status (2026-09-27):
+
 - Every maintained suite passes under Driver Verifier (standard checks) on
   0.4.148.1, plus saved-profile C: restart soaks (20/20 on 0.4.146.1, 10/10 on
   0.4.148.1) with about 100 MiB dirty and pagefile pressure.

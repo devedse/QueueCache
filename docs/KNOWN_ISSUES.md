@@ -4,8 +4,11 @@ This file describes the current QueueCache implementation. Removed historical
 engine defects remain available in Git history and must not be reported as current
 bugs without a reproduction on the current driver.
 
-Current status (2026-09-27, installed 0.4.148.1): every maintained suite and a
-10-cycle saved-profile C: restart soak pass under Driver Verifier. Fixed this
+Current status (2026-09-28, installed 0.4.166.1): every maintained suite and a
+10-cycle saved-profile C: restart soak pass under Driver Verifier (the soak on
+0.4.165.1). Fixed 2026-09-27: programs on a cached C: could read wrong data (read
+retention of page-ins, 0.4.148.1-0.4.162.1), and small writes slowing about 8x
+during write-back. Earlier status: Fixed this
 phase: a shutdown deadlock, cache faults on transient allocation failure, and
 settings changes that could leave the cache disabled. The pre-alpha Paint/Photos
 BSOD and the 0.4.83.1 application crashes are recorded as possibly fixed (not
@@ -32,11 +35,29 @@ another block's data, and keeping them served that data to the next page-in of
 the file. More simultaneous page-ins (0.4.158.1 added three parallel reader
 threads) and heavier memory pressure made it frequent.
 
-Fix (0.4.164.1 or later, `4f28450`): page-in misses are never kept (as before
-plan 56; resident data still serves page-ins). An ordinary read miss is kept only
-when its buffer repeats no physical page, since an application can also map one
-page twice. Diagnostics V17 counts page-ins whose buffer repeated a page.
-Verification of the fix is recorded in the tracker.
+Fix (`4f28450`, completed in 0.4.166.1 by `233b501`): page-in misses are never
+kept (as before plan 56; resident data still serves page-ins). An ordinary read
+miss is kept only when its buffer repeats no physical page, since an application
+can also map one page twice. Diagnostics V17 counts page-ins whose buffer
+repeated a page: 1,654 in five pressure runs on C:, which confirms the cause.
+Verified under Driver Verifier: a 10-cycle saved-C:-profile restart soak with a
+new program-file check each cycle (plan 61, `system-paging/program-files-match-disk`),
+and every Q: suite (tracker, P6).
+
+## Open: a read miss is kept from the application's own buffer
+
+What can happen: when an unbuffered read misses the cache, the driver keeps a
+copy of the block taken from the application's buffer after the disk filled it.
+If that application changes its buffer before the read completes (a bug, or on
+purpose), the changed bytes are kept as the file's contents and other programs
+reading that file receive them. Reading the file is enough; no write access is
+needed. Normal applications do not modify a buffer while reading into it, and
+nothing reaches the disk, but cached data must never depend on another program's
+memory.
+
+Proposed change: read a miss into driver-owned staging memory (like the drain
+staging buffers), keep the blocks from there and copy them to the application's
+buffer. The extra memory copy is small next to the disk read.
 
 ## Fixed: small writes slowed about 8x while write-back ran (up to 0.4.153.1)
 
@@ -266,7 +287,7 @@ forced on the VM.
 
 ## Performance acceptance is incomplete
 
-CrystalDiskMark-shaped runs on 0.4.162.1 are in
+CrystalDiskMark-shaped runs on 0.4.162.1 and 0.4.166.1 are in
 [WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md); the maintained
 `write-performance` baseline predates the request-path changes and must be re-run.
 Multi-threaded rows (T4) are not yet measured. SEQ1M Q1 is one request at a time
