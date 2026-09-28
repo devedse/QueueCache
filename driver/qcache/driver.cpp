@@ -522,6 +522,11 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
 }
 // Paging-thread callback for an offloaded original read. Its remove-lock
 // reference was taken in QcDispatch and is released exactly once here.
+// A forwarded control completes in the lower device; only the remove lock remains ours.
+static void ReleaseForwardedRequest(PVOID context, PIRP irp)
+{
+    IoReleaseRemoveLock(&static_cast<QC_EXTENSION*>(context)->RemoveLock, irp);
+}
 static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -562,7 +567,8 @@ static void RequestWorker(PVOID context)
                                          &transferred);
             if (transferred)
             {
-                // An offloaded-read thread completes it and releases its remove lock.
+                // An offloaded-read thread or the lower device (a forwarded control)
+                // completes it and releases its remove lock.
                 KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
                 ext->ActiveSince = 0;
                 KeReleaseSpinLock(&ext->QueueLock, activeIrql);
@@ -1315,6 +1321,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
 #if QCACHE_CACHE_DRIVER
     ext->Cache.ServiceReads = ServiceCachedReads;
     ext->Cache.CompleteRequest = CompleteOffloadedRead;
+    ext->Cache.ReleaseRequest = ReleaseForwardedRequest;
     ext->Cache.ServiceContext = ext;
     ext->Cache.RequestAvailable = &ext->WorkAvailable;
 #endif

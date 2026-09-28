@@ -376,6 +376,12 @@ struct QC_CACHE
     LONGLONG ActiveWriteStart, ActiveWriteEnd;
     // Completes an offloaded original IRP and releases its remove lock.
     void (*CompleteRequest)(PVOID, PIRP, NTSTATUS);
+    // Releases the remove lock of a forwarded control when the lower device completes it.
+    void (*ReleaseRequest)(PVOID, PIRP);
+    PDEVICE_OBJECT Self;
+    // Media-changing controls forwarded without waiting and not yet completed below.
+    // While any is in flight, read misses are not kept (they could predate its change).
+    volatile LONG ControlsInFlight;
     ULONG DelayMs, InjectFault;
     // Lab range gate. State/range/hold under Mutex; sequences written once each.
     ULONG LabGateState, LabGateHoldMs, LabGateMode; // Mode: 0 success, 1 report failure, 2 short transfer.

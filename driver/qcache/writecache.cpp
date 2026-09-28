@@ -596,7 +596,62 @@ static void CallLowerAndWait(QC_CACHE* c, PIRP irp, UCHAR major, KEVENT* complet
     if (offWorker)
         KeWaitForSingleObject(&call.Returned, Executive, KernelMode, FALSE, nullptr);
 }
-static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
+// A control that can change the device is forwarded after the barrier has drained
+// every earlier write, but the request worker does not wait for it. The lower device
+// may need this volume to finish it: preparing a shadow copy, volsnap creates its
+// diff-area file on the same volume, and NTFS's log write for that file queued behind
+// a worker waiting for the control (found on the VM: every process start then hung).
+static NTSTATUS ForwardedControlCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto c = static_cast<QC_CACHE*>(context);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    InterlockedDecrement(&c->ControlsInFlight);
+    c->ReleaseRequest(c->ServiceContext, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+struct QC_FORWARD
+{
+    PIO_WORKITEM Item;
+    PDEVICE_OBJECT Lower;
+    PIRP Irp;
+};
+static IO_WORKITEM_ROUTINE ForwardControlItem;
+static void ForwardControlItem(PDEVICE_OBJECT, PVOID context)
+{
+    auto forward = static_cast<QC_FORWARD*>(context);
+    auto item = forward->Item;
+    // Lower drivers can page-fault inside IoCallDriver; never on the request worker.
+    IoCallDriver(forward->Lower, forward->Irp);
+    ExFreePoolWithTag(forward, Tag);
+    IoFreeWorkItem(item);
+}
+static constexpr NTSTATUS QcControlForwarded = STATUS_PENDING;
+static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true);
+static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp)
+{
+    if (!c->ReleaseRequest || !c->Self)
+        return OriginalIo(c, irp);
+    auto forward = static_cast<QC_FORWARD*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(QC_FORWARD), Tag));
+    auto item = forward ? IoAllocateWorkItem(c->Self) : nullptr;
+    if (!item)
+    {
+        if (forward)
+            ExFreePoolWithTag(forward, Tag);
+        return OriginalIo(c, irp); // Allocation failed: the previous, waiting path.
+    }
+    const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
+    IoCopyCurrentIrpStackLocationToNext(irp);
+    IoSetCompletionRoutine(irp, ForwardedControlCompletion, c, TRUE, TRUE, TRUE);
+    InterlockedIncrement(&c->ControlsInFlight);
+    QcCacheRecordLowerAttempt(c, major, irp);
+    forward->Item = item;
+    forward->Lower = c->Lower;
+    forward->Irp = irp;
+    IoQueueWorkItem(item, ForwardControlItem, DelayedWorkQueue, forward);
+    return QcControlForwarded; // The lower device completes irp; do not touch it again.
+}
+static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService)
 {
     const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
     KEVENT completed;
@@ -1093,6 +1148,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
 {
     RtlZeroMemory(c, sizeof(*c));
     c->Lower = lower;
+    c->Self = self;
     // Failing attach on the boot disk would stop Windows; forward inline instead.
     c->LowerCallItem = IoAllocateWorkItem(self);
     c->Head = c->Tail = c->FreeHead = NoSlot;
@@ -2188,7 +2244,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
     // Only the request worker keeps misses; paging reads never do (DistinctPages).
     PUCHAR staging = nullptr;
-    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c);
+    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
+        !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
     if (!full)
     {
         c->Performance.Phase = QcLowerReadPhase;
@@ -2963,6 +3020,8 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     ReleaseCache(c);
     if (!NT_SUCCESS(status))
         return status;
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
+        return ForwardControl(c, irp);
     return OriginalIo(c, irp);
 }
 // Request-worker entry point. Offloaded reads run concurrently with the worker,
@@ -3030,5 +3089,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
     AcquireCache(c);
     c->OffloadBlocked = FALSE;
     ReleaseCache(c);
+    // A forwarded media-changing control: the lower device completes it.
+    *transferred = control && status == QcControlForwarded;
     return status;
 }
