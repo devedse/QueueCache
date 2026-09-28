@@ -87,10 +87,27 @@ try
         if ($volumeInstalled)
         {
             # Driver remains loaded until reboot. Do not remove its service or binary.
-            # Only lettered volumes can have caching enabled; drain and disable each.
+            # Only lettered volumes can have caching enabled; drain and disable each one
+            # with a cache. Exit code 4 means no filter answers there (not loaded yet), so
+            # that volume has no cache; any other failure stops uninstall.
             foreach ($volume in Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' })
             {
-                Native $controller @('disable', "$($volume.DriveLetter):")
+                $letter = "$($volume.DriveLetter):"
+                $json = & $controller cache-status $letter --json
+                if ($LASTEXITCODE -eq 4)
+                {
+                    Write-Output "$letter has no QueueCache filter loaded; nothing to drain."
+                    continue
+                }
+                if ($LASTEXITCODE)
+                {
+                    throw "Cannot read the cache state of $letter; retaining QueueCache."
+                }
+                if ([uint64](($json | Out-String) | ConvertFrom-Json).BudgetBytes -gt 0)
+                {
+                    Native $controller @('disable', $letter)
+                    Write-Output "$letter cache drained and disabled."
+                }
             }
         }
         foreach ($disk in Get-CimInstance Win32_DiskDrive)

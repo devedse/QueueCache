@@ -168,6 +168,12 @@ internal static class LegacyCommands
             return 2;
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { return 0; }
+        // Distinct exit code: the volume's stack has no QueueCache filter (not loaded yet), so it has no cache.
+        catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50)
+        {
+            Console.Error.WriteLine($"No QueueCache filter answers on this device ({ex.Message}).");
+            return 4;
+        }
         catch (Exception ex) when (ex is Win32Exception or IOException or ArgumentException)
         {
             Console.Error.WriteLine(ex.Message);
