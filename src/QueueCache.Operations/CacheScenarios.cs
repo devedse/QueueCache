@@ -29,6 +29,7 @@ public static class CacheScenarios
             SectorScenarios.Run(target, device, directory, results, progress, token);
             RunSustainedForeground(target, device, directory, results, progress, token);
             RunParallelCopies(target, device, directory, results, progress, token);
+            RunReadMissIsolation(target, device, directory, results, progress, token);
             for (int scenario = 0; scenario < cases.Length; scenario++)
             {
                 token.ThrowIfCancellationRequested();
@@ -224,6 +225,87 @@ public static class CacheScenarios
             before.CopyOffloadReads is null || after.CopyOffloadReads is null ? null : after.CopyOffloadReads - before.CopyOffloadReads,
             before.CopyOffloadWrites is null || after.CopyOffloadWrites is null ? null : after.CopyOffloadWrites - before.CopyOffloadWrites,
             state.LastError, persisted));
+    }
+
+    /// <summary>A kept read miss must be the disk's data, not the application's buffer: another thread overwrites
+    /// the read buffer while each unbuffered read misses, then a separate handle re-reads the block from RAM.</summary>
+    private static void RunReadMissIsolation(DiskTarget target, CacheDevice device, string directory,
+        List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
+    {
+        const string label = "read-miss-isolation";
+        const int fileBytes = 16 << 20, chunk = 1 << 20;
+        progress?.Report($"{label}: read misses while another thread overwrites the read buffer");
+        ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Eager)
+        }, true);
+        var path = Path.Combine(directory, "read-miss-isolation.bin");
+        var expected = new byte[fileBytes];
+        new Random(300_007).NextBytes(expected);
+        using (var file = new AlignedFile(path, chunk, create: true))
+            for (var offset = 0; offset < fileBytes; offset += chunk)
+                file.Write(offset, expected.AsSpan(offset, chunk).ToArray());
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+        var before = device.GetWriteCacheState();
+        var diagnosticsBefore = device.GetDiagnostics();
+        long scribbles = 0;
+        var mismatched = 0;
+        using (var victim = new AlignedFile(path, chunk, create: false, sharedReadOnly: true))
+        using (var check = new AlignedFile(path, chunk, create: false, sharedReadOnly: true))
+        {
+            var stop = 0;
+            var scribbler = Task.Run(() =>
+            {
+                var noise = new byte[chunk];
+                Array.Fill(noise, (byte)0xEE);
+                while (Volatile.Read(ref stop) == 0)
+                {
+                    System.Runtime.InteropServices.Marshal.Copy(noise, 0, victim.TransferBuffer, chunk);
+                    Interlocked.Increment(ref scribbles);
+                }
+            });
+            var ignored = new byte[chunk];
+            var actual = new byte[chunk];
+            try
+            {
+                for (var offset = 0; offset < fileBytes; offset += chunk)
+                {
+                    token.ThrowIfCancellationRequested();
+                    victim.Read(offset, ignored); // Its buffer is overwritten concurrently; contents undefined.
+                    check.Read(offset, actual);
+                    if (!actual.AsSpan().SequenceEqual(expected.AsSpan(offset, chunk)))
+                        mismatched++;
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref stop, 1);
+                scribbler.Wait();
+            }
+        }
+        var after = device.GetWriteCacheState();
+        var diagnosticsAfter = device.GetDiagnostics();
+        results.Add(VerifyReadMissIsolation(label, fileBytes, mismatched, after.ReadHitBytes - before.ReadHitBytes,
+            diagnosticsBefore.ReadFills is null || diagnosticsAfter.ReadFills is null ? null : diagnosticsAfter.ReadFills - diagnosticsBefore.ReadFills,
+            Interlocked.Read(ref scribbles)));
+        device.Control(WriteCacheAction.Disable);
+    }
+
+    internal static CheckResult VerifyReadMissIsolation(string label, int fileBytes, int mismatchedChunks,
+        ulong hitBytes, ulong? fills, long scribbles)
+    {
+        if (mismatchedChunks != 0)
+            throw new IOException(FormattableString.Invariant(
+                $"{label}: {mismatchedChunks} MiB re-read from RAM held another program's buffer contents instead of the file"));
+        if (fills is null)
+            return new(label, "PASS", FormattableString.Invariant(
+                $"Re-reads matched the file; read fill counter unavailable (driver older than Diagnostics V13); {scribbles} buffer overwrites."));
+        if (fills < (ulong)(fileBytes / 4096) || hitBytes < (ulong)fileBytes)
+            throw new IOException(FormattableString.Invariant(
+                $"{label}: the misses were not kept (fills {fills}, re-read hit {hitBytes} of {fileBytes} bytes), so isolation was not exercised"));
+        return new(label, "PASS", FormattableString.Invariant(
+            $"{fills} blocks kept from misses while their read buffer was overwritten {scribbles} times; every re-read from RAM ({hitBytes} bytes) matched the file."));
     }
 
     internal static CheckResult VerifyParallelCopies(string label, long writes, long reads, long readBackMismatches,

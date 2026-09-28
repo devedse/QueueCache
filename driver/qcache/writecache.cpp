@@ -546,14 +546,11 @@ static void CallLower(PDEVICE_OBJECT, PVOID context)
     IoCallDriver(call->Lower, call->Irp);
     KeSetEvent(&call->Returned, IO_NO_INCREMENT, FALSE);
 }
-static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
+// Sends irp (next stack location prepared, RetainCompletion signalling completed)
+// and waits for its completion, servicing independent reads meanwhile.
+static void CallLowerAndWait(QC_CACHE* c, PIRP irp, UCHAR major, KEVENT* completedEvent, bool allowReadService)
 {
-    const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
-    KEVENT completed;
-    KeInitializeEvent(&completed, NotificationEvent, FALSE);
-    IoCopyCurrentIrpStackLocationToNext(irp);
-    IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
-    QcCacheRecordLowerAttempt(c, IoGetCurrentIrpStackLocation(irp)->MajorFunction, irp);
+    auto& completed = *completedEvent;
     // Lower drivers can page-fault synchronously inside IoCallDriver on this thread;
     // the page-in then queues behind this worker. Call from a work item and keep
     // servicing paging reads below until the lower completion.
@@ -598,7 +595,53 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
     // The work item (and the stack context it uses) must be idle before reuse.
     if (offWorker)
         KeWaitForSingleObject(&call.Returned, Executive, KernelMode, FALSE, nullptr);
+}
+static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
+{
+    const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
+    KEVENT completed;
+    KeInitializeEvent(&completed, NotificationEvent, FALSE);
+    IoCopyCurrentIrpStackLocationToNext(irp);
+    IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
+    QcCacheRecordLowerAttempt(c, major, irp);
+    CallLowerAndWait(c, irp, major, &completed, allowReadService);
     return irp->IoStatus.Status;
+}
+// Reads [offset, offset + length) from the disk into a new driver-owned buffer, the
+// only source for keeping a read miss: an application's buffer can change while
+// its read runs, or map one page twice. Returns null (read nothing) when the
+// buffer or request cannot be allocated; the caller then forwards the original
+// request and keeps nothing. *status: the lower read's result.
+static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, bool allowReadService, NTSTATUS* status)
+{
+    if (length > QcStagedReadMaxBytes)
+        return nullptr;
+    auto staging = static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, length, Tag));
+    if (!staging)
+        return nullptr;
+    LARGE_INTEGER position;
+    position.QuadPart = offset;
+    auto irp = IoBuildAsynchronousFsdRequest(IRP_MJ_READ, c->Lower, staging, length, &position, nullptr);
+    if (!irp)
+    {
+        ExFreePoolWithTag(staging, Tag);
+        return nullptr;
+    }
+    KEVENT completed;
+    KeInitializeEvent(&completed, NotificationEvent, FALSE);
+    IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
+    QcCacheRecordLowerAttempt(c, IRP_MJ_READ);
+    CallLowerAndWait(c, irp, IRP_MJ_READ, &completed, allowReadService);
+    *status = irp->IoStatus.Status;
+    if (NT_SUCCESS(*status) && irp->IoStatus.Information != length)
+        *status = STATUS_DEVICE_DATA_ERROR;
+    if (irp->MdlAddress)
+    {
+        MmUnlockPages(irp->MdlAddress);
+        IoFreeMdl(irp->MdlAddress);
+    }
+    IoFreeIrp(irp);
+    return staging;
 }
 static bool RangeOverlaps(LONGLONG first, LONGLONG end, LONGLONG block)
 {
@@ -2142,12 +2185,31 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             ++c->Slots[index].Pins;
     }
     NTSTATUS status = STATUS_SUCCESS;
+    // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
+    // Only the request worker keeps misses; paging reads never do (DistinctPages).
+    PUCHAR staging = nullptr;
+    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c);
     if (!full)
     {
         c->Performance.Phase = QcLowerReadPhase;
         Publish(c);
         ReleaseCache(c);
-        status = OriginalIo(c, irp, allowReadService);
+        if (keepMiss)
+            staging = StagedRead(c, start, length, allowReadService, &status);
+        if (staging)
+        {
+            if (NT_SUCCESS(status))
+            {
+                RtlCopyMemory(target, staging, length);
+                irp->IoStatus.Information = length;
+            }
+        }
+        else
+        {
+            if (keepMiss)
+                InterlockedIncrement64(&c->ReadFillsSkippedRepeatedPages); // V17: now "not staged".
+            status = OriginalIo(c, irp, allowReadService);
+        }
         AcquireCache(c);
         c->Performance.Phase = QcRequestPhase;
     }
@@ -2240,13 +2302,9 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     if (NT_SUCCESS(status))
     {
-        // Keep a miss only from a non-paging read whose buffer repeats no page.
-        bool fillable = !full && !pagingIo;
-        if (!full && !DistinctPages(irp))
-        {
-            fillable = false;
-            InterlockedIncrement64(pagingIo ? &c->PagingReadsRepeatedPages : &c->ReadFillsSkippedRepeatedPages);
-        }
+        const bool fillable = staging != nullptr;
+        if (!full && pagingIo && !DistinctPages(irp))
+            InterlockedIncrement64(&c->PagingReadsRepeatedPages); // Evidence only.
         for (auto block = firstBlock; block < end; block += Chunk)
         {
             auto index = FindSlot(c, block);
@@ -2267,7 +2325,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 fill->Length = Chunk;
                 fill->ValidSectors = 255;
                 c->CleanValidBytes[1] += Chunk; // AllocateSlot linked it with an empty mask.
-                RtlCopyMemory(fill->Buffer, target + (block - start), Chunk);
+                RtlCopyMemory(fill->Buffer, staging + (block - start), Chunk);
                 IndexSlot(c, index);
                 DemoteReadFill(c, index);
                 InterlockedIncrement64(&c->ReadFills);
@@ -2278,6 +2336,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     Publish(c);
     ReleaseCache(c);
+    if (staging)
+        ExFreePoolWithTag(staging, Tag);
     return status;
 }
 bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)

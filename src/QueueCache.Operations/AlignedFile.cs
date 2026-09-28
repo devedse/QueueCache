@@ -42,6 +42,8 @@ internal sealed class AlignedFile : IDisposable
             throw new Win32Exception(error);
         }
     }
+    /// <summary>The native transfer buffer (tests that modify it while a read is in flight).</summary>
+    internal IntPtr TransferBuffer => memory;
     public void Write(long offset, byte[] data)
     {
         Seek(offset, data.Length);

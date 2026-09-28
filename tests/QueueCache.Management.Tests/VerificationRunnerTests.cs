@@ -26,7 +26,23 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 61, "system-paging-recognition checks program files against the disk");
+        Check(VerificationPlan.Version == 62, "policies adds read-miss-isolation");
+        Check(QueueCache.Operations.CacheScenarios.VerifyReadMissIsolation("r", 16 << 20, 0, 16UL << 20, 4096, 9).Result == "PASS",
+            "read-miss isolation accepts kept misses that match the file");
+        foreach (var bad in new Action[]
+        {
+            () => QueueCache.Operations.CacheScenarios.VerifyReadMissIsolation("r", 16 << 20, 1, 16UL << 20, 4096, 9),
+            () => QueueCache.Operations.CacheScenarios.VerifyReadMissIsolation("r", 16 << 20, 0, 1UL << 20, 4096, 9),
+            () => QueueCache.Operations.CacheScenarios.VerifyReadMissIsolation("r", 16 << 20, 0, 16UL << 20, 10, 9)
+        })
+        {
+            try
+            {
+                bad();
+                Check(false, "read-miss isolation rejects buffer contents, missing hits or missing fills");
+            }
+            catch (IOException) { }
+        }
         Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5).Detail.Contains("repeated a page: 5"),
             "program-file check accepts matching files and clean exits");
         foreach (var bad in new Action[]

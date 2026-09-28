@@ -91,7 +91,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public ulong? CopyOffloadWrites { get; init; }
     /// <summary>V17: paging reads whose buffer repeated a physical page (the memory manager's dummy page).</summary>
     public ulong? PagingReadsRepeatedPages { get; init; }
-    /// <summary>V17: ordinary read misses not kept because their buffer repeated a physical page.</summary>
+    /// <summary>V17: ordinary read misses not kept: since plan 62 because no driver-owned copy could be made
+    /// (allocation failure or over 16 MiB); before, because their buffer repeated a physical page.</summary>
     public ulong? ReadFillsSkippedRepeatedPages { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {

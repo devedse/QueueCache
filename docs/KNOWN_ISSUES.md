@@ -44,20 +44,22 @@ Verified under Driver Verifier: a 10-cycle saved-C:-profile restart soak with a
 new program-file check each cycle (plan 61, `system-paging/program-files-match-disk`),
 and every Q: suite (tracker, P6).
 
-## Open: a read miss is kept from the application's own buffer
+## Fixed: a read miss was kept from the application's own buffer (up to 0.4.166.1)
 
-What can happen: when an unbuffered read misses the cache, the driver keeps a
+What could happen: when an unbuffered read missed the cache, the driver kept a
 copy of the block taken from the application's buffer after the disk filled it.
-If that application changes its buffer before the read completes (a bug, or on
-purpose), the changed bytes are kept as the file's contents and other programs
-reading that file receive them. Reading the file is enough; no write access is
-needed. Normal applications do not modify a buffer while reading into it, and
-nothing reaches the disk, but cached data must never depend on another program's
-memory.
+If that application changed its buffer before the read completed (a bug, or on
+purpose), the changed bytes were kept as the file's contents and other programs
+reading that file received them. Reading the file was enough; no write access was
+needed. Nothing reached the disk. Found by review on 2026-09-28, not observed.
 
-Proposed change: read a miss into driver-owned staging memory (like the drain
-staging buffers), keep the blocks from there and copy them to the application's
-buffer. The extra memory copy is small next to the disk read.
+Fix (plan 62): a miss that will be kept is read from the disk into a new
+driver-owned buffer, copied to the application from there, and kept from there.
+The worker still serves other reads while it waits. Misses over 16 MiB, or when
+that buffer cannot be allocated, are forwarded as before and not kept
+(Diagnostics V17 `ReadFillsSkippedRepeatedPages` now counts those). The
+`policies/read-miss-isolation` case overwrites the read buffer from another
+thread during every miss and requires the re-read from RAM to match the file.
 
 ## Fixed: small writes slowed about 8x while write-back ran (up to 0.4.153.1)
 

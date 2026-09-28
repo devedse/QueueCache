@@ -17,7 +17,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 61)
+## Suites (plan version 62)
+
+Plan 62 adds `policies/read-miss-isolation`: a 16 MiB file is written, flushed
+and its clean cached copy dropped, then read in 1 MiB unbuffered misses while
+another thread keeps overwriting that read's buffer. A separate handle re-reads
+each MiB; every re-read must match the file and, with Diagnostics V13, all 4,096
+blocks must have been kept and re-read from RAM (otherwise isolation was not
+exercised and the check fails).
 
 Plan 61 adds `system-paging/program-files-match-disk` to
 `system-paging-recognition` (and so to every restart-soak cycle). It drops the

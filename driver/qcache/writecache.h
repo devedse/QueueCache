@@ -119,8 +119,9 @@ struct QC_DIAGNOSTICS
     ULONGLONG CopyOffloadReads;
     // V16: large fitting writes whose payload copy was handed to those threads.
     ULONGLONG CopyOffloadWrites;
-    // V17: read misses whose buffer repeats a physical page (never kept): paging
-    // reads (the memory manager's dummy page) and skipped ordinary read fills.
+    // V17: paging read misses whose buffer repeats a physical page (the memory
+    // manager's dummy page; never kept), and ordinary misses not kept because no
+    // staging copy could be made (before plan 62: because their buffer repeated a page).
     ULONGLONG PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
@@ -275,6 +276,8 @@ struct QC_DRAIN_WORKER
 // their copies run in parallel instead of one after another on the request worker.
 static constexpr ULONG QcReadThreads = 3;
 static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
+// Largest read miss copied through a driver-owned buffer and kept (StagedRead).
+static constexpr ULONG QcStagedReadMaxBytes = 16 * 1024 * 1024;
 struct QC_READ_THREAD
 {
     QC_CACHE* Cache;
