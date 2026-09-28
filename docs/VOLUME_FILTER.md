@@ -118,21 +118,34 @@ bring-up); the installer always sets `ClassCoverage` 1.
 - Raw reads and writes sent to the physical disk bypass the cache (above).
 - Crash durability of Fast data is unchanged: pending data is lost on a crash.
 
-## Test plan
+## Verification (2026-09-28)
 
-Results so far (0.4.187.1, `e7150b7`): every volume covered, boots; all six Q:
-suites pass under Driver Verifier (`policies` 42/42); the C: program-file check
-passes 3/3; a 10-cycle saved-C:-profile restart soak passes 10/10 under Driver
-Verifier, with the program-file check in every cycle. Raw SCSI INQUIRY on Q:'s
-disk works while Q: is cached (0.4.183.1). CrystalDiskMark on Q: (0.4.183.1):
-SEQ1M Q8T1 about 36/21.6 GB/s, RND4K Q32T1 about 1,570/1,630 MB/s, RND4K Q1T1
-about 1,340/1,030 MB/s (disk filter: 36.5/21.3 GB/s, 1,550/1,310, 1,010/855).
+Maintained checks: `qcache developer verify <volume> --suite volumes` (registration,
+raw disk commands, shared disk, resize, snapshot) and `--suite trim-cache` on the lab
+VHDX from `qcache developer lab-disk create`; the raw `write-tests` on its unformatted
+volume; host contract tests and desktop fixture tests in CI. Results on 0.4.219.1
+(`7a18a57`) under standard Driver Verifier, VM with 16 GB:
 
-1. Install the branch build with the cache restricted to Q:'s volume
-   (`ClassCoverage` 0, `LabAllowedDriverKey` = Q:'s volume driver key), so the C:
-   volume stack is not attached on the first boot.
-2. Management requests on `\\.\Q:`, the owner's saved Q: profile, CrystalDiskMark
-   rows, and read-only SCSI INQUIRY on Q:'s disk while Q: is cached.
-3. The Q: suites under Driver Verifier.
-4. Class coverage for every volume, then the C: program-file check and a saved-C:
-   restart soak under Driver Verifier.
+| Check | Result |
+|---|---|
+| `volumes` on V: (lab VHDX) | 5/5 PASS, including the shadow copy containing 32 MiB that were pending in RAM |
+| `volumes` on Q: (VirtIO disk) | registration, raw disk commands and snapshot PASS; shared-disk and resize SKIP by design (no lab volume there) |
+| `trim-cache` on V: | PASS (pending dropped, clean released, TRIM during a drain) |
+| `quick`, `policies`, `paging-coherence`, `ordering-faults`, `app-write-profile`, `pressure` on V: | PASS |
+| `policies` on Q: | PASS |
+| `write-tests` on X: (base, concurrent, toggle, write-through, verify) and `developer test` on V: | PASS |
+| Install over the disk filter, uninstall (drained Q:'s 2 GiB cache), restart without the filter, reinstall (profile restored at startup) | PASS (0.4.191.1 - 0.4.217.1) |
+| `Recover-Registration.ps1` on copies of the SYSTEM hive | Restores the backed-up lists; live registry untouched |
+| Desktop on the VM console | Volumes grouped by disk; live Q: card; unformatted X: shown without settings |
+| Saved-C:-profile restart soak, CrystalDiskMark | Recorded in the tracker when complete |
+
+Earlier branch results (0.4.187.1): every volume boots; the C: program-file check
+passes 3/3; a 10-cycle saved-C:-profile restart soak passed 10/10 under Driver
+Verifier. CrystalDiskMark on Q: (0.4.183.1): SEQ1M Q8T1 about 36/21.6 GB/s, RND4K
+Q32T1 about 1,570/1,630 MB/s, RND4K Q1T1 about 1,340/1,030 MB/s (disk filter:
+36.5/21.3 GB/s, 1,550/1,310, 1,010/855).
+
+The volume suites found six defects that the disk-level suites could not (boot reset,
+resize, two shadow-copy problems, removal of a cache on an unformatted volume, and a
+restoration RAM wait); all are fixed and each has a maintained check
+([known issues](KNOWN_ISSUES.md)).

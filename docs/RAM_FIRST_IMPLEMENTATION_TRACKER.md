@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-27. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-28. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -259,6 +259,25 @@ pagefile saved-startup regression without the earlier process corruption.
 | A15 / T061-T063 | FALSE | Environment/endurance/final performance qualification planned. | Frozen-candidate support matrix and long-run evidence pending. |
 | A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
 
+### Volume filter batch, 2026-09-28 (branch `volume-filter`, PR #2)
+
+QueueCache caches volumes instead of disks ([VOLUME_FILTER.md](VOLUME_FILTER.md)).
+Verification on the VM (16 GB since 2026-09-28) with standard Driver Verifier on
+0.4.219.1 (`7a18a57`) unless stated. Lab disk: `qcache developer lab-disk` VHDX with
+V: and W: (NTFS) and X: (unformatted).
+
+| Item | Implementation | Verification |
+|---|---|---|
+| V1 volume registration | Topmost Volume-class upper filter; installer backup version 3; no disk-class or per-disk registration; no migration code (owner decision) (`d7033f9`, `d61af51`). | `volumes/volume-registration` PASS on V: and Q:; uninstall drained Q:'s 2 GiB cache, removed only QueueCache from the class list, Windows booted without the filter; reinstall restored Q:'s saved profile at startup (0.4.213.1 -> 0.4.217.1); `Recover-Registration.ps1` restored backups on copies of the SYSTEM hive. |
+| V2 boot | Length/sector size read on first need, never from start-up (`e7150b7`). | Every volume, including C:, boots (0.4.187.1 onward); saved-C:-profile soak: see V9. |
+| V3 per-volume profiles, CLI, desktop | Profiles named by volume GUID; `qcache volume list`; one desktop card per volume grouped by disk; RAW volumes can be flushed/removed only (`b9680c2`, `7134514`). | Host and desktop fixture tests; desktop checked on the VM console (0.4.191.1); `volumes/volume-shared-disk` profile check PASS. |
+| V4 raw disk commands | Nothing to implement: they no longer reach the filter. | `volumes/volume-raw-disk-commands` PASS on the VirtIO disk (Q:) and the VHDX (V:): descriptor, geometry and SCSI INQUIRY with 16 MiB pending and 8 MiB clean; nothing drained, flushed or evicted. |
+| V5 shared disk | One cache per volume (unchanged driver design). | `volumes/volume-shared-disk` PASS: V: 256 MiB and W: 128 MiB accept only their own data; flushing V: leaves W:'s pending data. |
+| V6 resize | Length re-read per management request and before judging a request beyond the known end (`6ae1e0c`). | Before the fix extending W: past its size failed (Invalid Parameter). `volumes/volume-resize` PASS: shrink 1 GiB and extend back with 32 MiB pending; driver length follows; bytes exact. |
+| V7 shadow copies | Media-changing controls forwarded without holding the worker (`fcc0c4c`); only flush-and-hold drains; other volsnap controls bypass the queue (`0909d93`, `7a18a57`). | Found a system-wide freeze (0.4.207.1, local kernel debugger: volsnap's diff-area write queued behind the waiting worker) and then 10 s hold time-outs. `volumes/volume-snapshot` PASS on V: and Q:: the snapshot holds the 32 MiB that were pending in RAM, exact. |
+| V8 TRIM | Unchanged driver (`97b8f4f`). | `trim-cache` PASS on the VHDX: pending dropped, clean released, TRIM during a drain accounted for. |
+| V9 suites on a volume | Maintained suites unchanged; raw tests (`developer test`, `write-tests`) address a volume. | V: `quick`, `policies`, `paging-coherence`, `ordering-faults`, `app-write-profile`, `pressure` PASS; Q: `policies` PASS; `write-tests` (base, concurrent, toggle, write-through, verify) and `developer test` PASS on X:/V:. Saved-C:-profile restart soak and CrystalDiskMark: below when complete. |
+
 ### Normal-use batch, 2026-09-27
 
 | Item | Implementation | Verification |
@@ -268,7 +287,7 @@ pagefile saved-startup regression without the earlier process corruption.
 | N3 fixed reservation | Design decision recorded: no shrinking. | n/a |
 | N4 drain defaults | Default parallelism 2 (plan 56). Bounded flush dropped after analysis. | Two `drain-decision` runs (0.4.139.1, 0.4.148.1). |
 | N5 paging-file I/O | Recognised paging-file requests forwarded from dispatch, bypassing the worker; Diagnostics V12 counter (plan 55, `8833f67`/`cb29d5a`). | VERIFIED on 0.4.146.1: every recognised request bypassed the worker in all 20 Driver Verifier soak cycles. |
-| N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | Compile-time mask checks only. Not VM-verified: Windows on the VM sends no TRIM (Windows 11 + VirtIO SCSI GET LBA STATUS problem, 2026-09-28; retrim fails on uncached C: too and works on a filtered VHDX). See KNOWN_ISSUES. |
+| N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | VERIFIED on a VHDX (`trim-cache`, plan 64, 0.4.211.1-0.4.219.1 under Driver Verifier). The VM's VirtIO disks still cannot TRIM (Windows 11 + VirtIO SCSI GET LBA STATUS problem). See KNOWN_ISSUES. |
 | N7 special requests | Pass-through after shutdown/power-down (existing), work-item lower calls for PnP/shutdown/disk controls, plus N5. | Driver Verifier soaks above. |
 | N8 status display | CLI and desktop label live values vs totals since boot; stale desktop data greyed out (existing). | Desktop fixture tests pass; desktop visuals not checked on the VM. |
 

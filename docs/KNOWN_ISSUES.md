@@ -4,17 +4,34 @@ This file describes the current QueueCache implementation. Removed historical
 engine defects remain available in Git history and must not be reported as current
 bugs without a reproduction on the current driver.
 
-Current status (2026-09-28, installed 0.4.166.1): every maintained suite and a
-10-cycle saved-profile C: restart soak pass under Driver Verifier (the soak on
-0.4.165.1). Fixed 2026-09-27: programs on a cached C: could read wrong data (read
-retention of page-ins, 0.4.148.1-0.4.162.1), and small writes slowing about 8x
-during write-back. Earlier status: Fixed this
-phase: a shutdown deadlock, cache faults on transient allocation failure, and
-settings changes that could leave the cache disabled. The pre-alpha Paint/Photos
-BSOD and the 0.4.83.1 application crashes are recorded as possibly fixed (not
-reproduced since the fixes that plausibly addressed them). TRIM handling is
-range-aware but not VM-verified. The older version checkpoints below describe
-their original scope.
+Current status (2026-09-28, branch `volume-filter`, installed 0.4.219.1): QueueCache
+now caches volumes ([volume filtering](VOLUME_FILTER.md)). Under Driver Verifier every
+maintained suite passes on a lab-disk volume, plus the new `volumes` and `trim-cache`
+suites; the raw volume tests, uninstall/reinstall and the registration recovery
+script were checked on the VM. Six defects were found and fixed along the way (below).
+Earlier (disk filter, 0.4.166.1): every maintained suite and a 10-cycle saved-profile
+C: restart soak passed under Driver Verifier.
+
+## Fixed on the volume filter (2026-09-28)
+
+| What you would have seen | Why | Fix |
+|---|---|---|
+| With the cache covering C:'s volume, the PC reset a few seconds into boot | The driver asked the boot volume for its length from its start-up handler; below it are snapshots, BitLocker and the volume manager | The length and sector size are read on first need, from a normal thread (`e7150b7`) |
+| Extending a cached volume beyond its original size failed ("Invalid Parameter"); the partition grew but the file system did not | The driver learned the length once and refused writes beyond it | The length is re-read for each QueueCache request and before judging a request beyond the known end (`6ae1e0c`); `volumes/volume-resize` |
+| Creating a shadow copy (System Restore, backup) of a cached volume froze the PC: no program could start, not even Task Manager | The cache forwarded the snapshot driver's "prepare" request and waited for it; that request writes a file on the same volume, and that write queued behind the waiting cache | Requests that can change the volume are forwarded without holding the request worker (`fcc0c4c`) |
+| Shadow copies of a cached volume then failed after 10 s (Windows event: "flush and hold writes ... timed out waiting for a release writes command") | The snapshot driver's follow-up requests, such as "release writes", waited in the cache's ordered queue behind work that needed a write the snapshot driver was holding | Only "flush and hold" drains the cache (so the snapshot contains data that was pending in RAM); the follow-up requests bypass the queue (`0909d93`, `7a18a57`); `volumes/volume-snapshot` |
+| A cache left on an unformatted volume by a raw test could not be removed from the CLI or desktop | Removal used the NTFS-only identity check | Removal works on any volume; the desktop disables Settings and Pause on non-NTFS volumes (`7134514`) |
+| A verification run on Q: left the cache at the test's 256 MiB | The RAM guard refused growing back to 2 GiB during a momentary low-memory dip on the 8 GiB VM | Restoration waits up to two minutes for RAM (`0909d93`); the VM now has 16 GB |
+
+## Raw disk reads and writes bypass the cache (by design)
+
+What it means: the cache sits on the volume. A program that reads the physical disk
+directly (`\\.\PhysicalDriveN`, some imaging and forensic tools) while a Fast cache
+holds pending writes sees the disk without them; one that writes there leaves the
+cache with stale copies. Health tools, SMART and SCSI/ATA queries are not affected
+(they no longer reach the cache at all). Backup and imaging through shadow copies are
+consistent (`volume-snapshot`). Proposed use: flush or pause the cache before such a
+tool reads the raw disk, and never write raw to a disk under a cached volume.
 
 ## Fixed: programs on a cached C: read wrong data (0.4.148.1-0.4.162.1)
 
@@ -264,7 +281,7 @@ first failure, so brief memory pressure could leave a cache faulted until Retry.
 These are verification gaps, not permission to relax capacity backpressure,
 ordering, failure propagation or explicit durability.
 
-## TRIM is range-aware but not yet VM-verified
+## TRIM is range-aware and verified on a VHDX
 
 Since 2026-09-27 (after 0.4.139.1) any number of sector-aligned TRIM ranges is
 handled without emptying the cache: in-flight writes are awaited, the TRIM is
@@ -272,8 +289,14 @@ forwarded, and on success cached data inside the ranges is dropped. Unwritten
 data for trimmed sectors is discarded rather than written (it would overwrite
 space the file system has freed); a partly trimmed unwritten block keeps its
 other sectors. Only unknown flags or malformed input use the conservative
-write-out-and-invalidate path. A failed TRIM keeps all cached data. Not yet verified on the VM, because Windows
-on the VM currently sends no TRIM at all (below).
+write-out-and-invalidate path. A failed TRIM keeps all cached data.
+
+Verified 2026-09-28 on the lab VHDX (`trim-cache`, 0.4.211.1-0.4.219.1 under Driver
+Verifier): TRIM of pending data dropped exactly the trimmed 1 MiB and drained
+nothing; TRIM of drained, retained data released 1 MiB of clean copies; a TRIM
+during an in-flight drain completed with every pending byte either written or
+dropped (at most the trimmed range); all untrimmed guards and later rewrites read
+back exact from the disk. The VM's own VirtIO disks still cannot TRIM (below).
 
 ### Why the test VM sends no TRIM (investigated 2026-09-28)
 
@@ -294,36 +317,20 @@ other VirtIO block driver (PR #1653). Evidence that QueueCache is not involved:
 retrim fails identically on C:, which has no cache, and succeeds on a temporary
 VHDX disk that has the same QueueCache filter attached.
 
-Proposed change (owner choice): verify TRIM handling on a VHDX-backed test disk
-inside Windows (no host change), and/or add a small SATA test disk with Discard
-and SSD emulation in Proxmox, which does not use the affected driver. Q: itself
-trims again once Microsoft or virtio-win ship a fix.
+Done: TRIM handling is verified on a VHDX (`trim-cache`, above). Optional (owner
+choice): a small SATA test disk with Discard and SSD emulation in Proxmox would also
+exercise TRIM on an emulated physical disk. Q: itself trims again once Microsoft or
+virtio-win ship a fix.
 
-## Open: raw disk commands on a cached disk
+## Fixed: raw disk commands on a cached disk (volume filter)
 
-What you see: while a disk is being cached, disk tools that send raw commands to
-the disk (SCSI/ATA pass-through, as used by SMART and health tools) get "not
-supported" on it; the same read-only INQUIRY that works on an uncached disk fails
-on Q:. SMART reads (`SMART_RCV_DRIVE_DATA`) are accepted but, because that
-control declares write access, each one drains all pending writes and empties the
-clean cache first: a health monitor polling SMART repeatedly empties the cache.
-
-Why: the driver filters the whole disk, so every request to the disk, including
-raw commands, passes through it. While caching, requests go to the ordered
-request worker, a system thread; a pass-through request carries pointers into the
-calling program's memory, which are not valid there, so the worker refuses it.
-A product that caches at the volume level (a filter on each volume instead of on
-the disk) never sees raw disk commands, because they are sent to the disk's own
-device, not the volume; that is a different architecture with its own trade-offs
-and is not proposed here.
-
-Proposed change: forward raw commands that cannot change data (SCSI INQUIRY,
-MODE SENSE, LOG SENSE, READ CAPACITY, REPORT LUNS, TEST UNIT READY, REQUEST
-SENSE; ATA IDENTIFY and SMART read/status) straight to the disk from the caller's
-own thread, as read-only queries already are, and treat SMART reads the same way.
-Raw commands that read or write data keep being refused on a cached disk (a raw
-read would bypass unwritten data; a raw write would bypass the cache), unless a
-later change drains and invalidates the range first.
+Health and SMART tools that send raw commands to the disk (SCSI/ATA pass-through)
+used to be refused on a cached disk, and SMART reads drained and emptied the cache,
+because the filter sat on the disk. The cache now sits on the volume, so these
+commands go to the disk's own stack. `volumes/volume-raw-disk-commands` sends a device
+descriptor query, a geometry query and a SCSI INQUIRY to the physical disk while 16
+MiB are pending and 8 MiB clean: nothing is drained, flushed or evicted (verified on
+the VM's VirtIO disk and on a VHDX, 0.4.219.1).
 
 ## Configuration changes apply completely or restore the previous settings
 
