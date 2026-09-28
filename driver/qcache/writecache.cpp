@@ -1994,7 +1994,8 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
 // manager's clustered page-ins, which point every already-resident page of the
 // cluster at one shared dummy page that concurrent reads overwrite. Copying such
 // a position into the cache kept another block's data (0.4.148.1-0.4.162.1:
-// corrupted executable pages on C:). Bounded quadratic scan; misses only.
+// corrupted executable pages on C:). Called for misses only (after a disk read):
+// a direct scan for small buffers, a sorted pool copy for larger ones.
 static bool DistinctPages(PIRP irp)
 {
     auto mdl = irp->MdlAddress;
@@ -2002,13 +2003,49 @@ static bool DistinctPages(PIRP irp)
         return false;
     const auto pages = MmGetMdlPfnArray(mdl);
     const auto count = ADDRESS_AND_SIZE_TO_SPAN_PAGES(MmGetMdlVirtualAddress(mdl), MmGetMdlByteCount(mdl));
-    if (count > QcPagingPinBlocks + 1)
-        return false;
-    for (ULONG i = 1; i < count; ++i)
-        for (ULONG j = 0; j < i; ++j)
-            if (pages[i] == pages[j])
-                return false;
-    return true;
+    if (count <= 64)
+    {
+        for (ULONG i = 1; i < count; ++i)
+            for (ULONG j = 0; j < i; ++j)
+                if (pages[i] == pages[j])
+                    return false;
+        return true;
+    }
+    auto sorted = static_cast<PFN_NUMBER*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, count * sizeof(PFN_NUMBER), Tag));
+    if (!sorted)
+        return false; // Not provable: do not keep this miss.
+    RtlCopyMemory(sorted, pages, count * sizeof(PFN_NUMBER));
+    // Heap sort: bounded work, no recursion.
+    auto sift = [sorted](ULONG root, ULONG size) {
+        for (;;)
+        {
+            auto child = root * 2 + 1;
+            if (child >= size)
+                return;
+            if (child + 1 < size && sorted[child + 1] > sorted[child])
+                ++child;
+            if (sorted[root] >= sorted[child])
+                return;
+            const auto swap = sorted[root];
+            sorted[root] = sorted[child];
+            sorted[child] = swap;
+            root = child;
+        }
+    };
+    for (ULONG i = count / 2; i-- > 0;)
+        sift(i, count);
+    for (ULONG end = count; end-- > 1;)
+    {
+        const auto swap = sorted[0];
+        sorted[0] = sorted[end];
+        sorted[end] = swap;
+        sift(0, end);
+    }
+    bool distinct = true;
+    for (ULONG i = 1; i < count && distinct; ++i)
+        distinct = sorted[i] != sorted[i - 1];
+    ExFreePoolWithTag(sorted, Tag);
+    return distinct;
 }
 // callerPath (with hitOnly): QcCacheTryCallerPath; the read-service counters
 // stay the worker's, and a mapping failure declines instead of failing.
