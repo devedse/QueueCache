@@ -140,7 +140,8 @@ public static class VolumeScenarios
             device.Control(WriteCacheAction.Flush);
             var a3 = device.GetWriteCacheState();
             var b3 = otherDevice.GetWriteCacheState();
-            var independentFlush = a3.DirtyBytes == 0 && b3.DirtyBytes >= 32UL * MiB && b3.DrainedBytes == b2.DrainedBytes;
+            // W:'s own 32 MiB must still be pending; its file-system metadata may drain meanwhile.
+            var independentFlush = a3.DirtyBytes == 0 && b3.DirtyBytes >= 32UL * MiB;
             otherDevice.Control(WriteCacheAction.Flush);
             device.Control(WriteCacheAction.DropClean);
             otherDevice.Control(WriteCacheAction.DropClean);
@@ -264,10 +265,39 @@ public static class VolumeScenarios
         var before = device.GetWriteCacheState();
         if (before.DirtyBytes < 32UL * MiB)
             throw new IOException("Could not establish 32 MiB of pending writes before the snapshot.");
-        var created = PowerShell($"$ErrorActionPreference='Stop'; $r=Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{{Volume='{target.Root}'; Context='ClientAccessible'}}; " +
+        // Sample the cache while Windows creates the snapshot: if it holds the sequence up, the samples show
+        // which request (major function, phase, age), the queue and the last barrier control.
+        var samples = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        using var stopSampling = new CancellationTokenSource();
+        var sampler = Task.Run(() =>
+        {
+            using var observer = new CacheDevice(target.Device);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!stopSampling.IsCancellationRequested)
+            {
+                var state = observer.GetWriteCacheState();
+                var performance = observer.GetPerformance();
+                samples.Enqueue($"{clock.Elapsed.TotalSeconds:0.0}s queue {performance.QueueDepth} active 0x{performance.ActiveMajor:X}/{performance.PhaseName} " +
+                    $"{performance.Milliseconds(performance.ActiveAgeTicks):0}ms pending {state.DirtyBytes >> 10}K inflight {state.InFlightBytes >> 10}K " +
+                    $"barrier 0x{observer.GetDiagnostics().LastBarrierCode:X}");
+                Thread.Sleep(200);
+            }
+        });
+        string created;
+        try
+        {
+            created = PowerShell($"$ErrorActionPreference='Stop'; $r=Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{{Volume='{target.Root}'; Context='ClientAccessible'}}; " +
             "if ($r.ReturnValue -ne 0) { \"FAILED $($r.ReturnValue)\" } else { $s=Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $r.ShadowID; \"$($r.ShadowID)|$($s.DeviceObject)\" }").Trim();
+        }
+        finally
+        {
+            stopSampling.Cancel();
+            sampler.GetAwaiter().GetResult();
+        }
+        // A cached volume must not stop Windows from taking a snapshot: failure here is a FAIL, with the samples.
         if (created.StartsWith("FAILED", StringComparison.Ordinal))
-            return [new("snapshot/pending-data-included", "SKIP", $"Windows could not create a shadow copy of {target.Device} (Win32_ShadowCopy.Create {created}).")];
+            return [new("snapshot/pending-data-included", "FAIL", $"Windows could not create a shadow copy of {target.Device} " +
+                $"(Win32_ShadowCopy.Create {created}). Cache samples during the attempt: {string.Join("; ", samples)}")];
         var parts = created.Split('|');
         if (parts.Length != 2 || !Guid.TryParse(parts[0], out var id) || !parts[1].StartsWith(@"\\?\GLOBALROOT\Device\", StringComparison.OrdinalIgnoreCase))
             throw new IOException("Unexpected shadow copy identity: " + created);
