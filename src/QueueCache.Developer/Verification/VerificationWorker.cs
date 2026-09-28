@@ -590,7 +590,22 @@ public static class VerificationWorker
                 else
                 {
                     ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
-                    ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                    // Available RAM on a small machine dips while other programs run; a moment later
+                    // the original budget fits again. Wait for it rather than leave the cache shrunk.
+                    var memoryWait = Stopwatch.StartNew();
+                    while (true)
+                    {
+                        try
+                        {
+                            ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                            break;
+                        }
+                        catch (InsufficientMemoryForCacheException) when (memoryWait.Elapsed < TimeSpan.FromMinutes(2))
+                        {
+                            Stage("waiting for enough available RAM to restore the original budget");
+                            Thread.Sleep(2000);
+                        }
+                    }
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);

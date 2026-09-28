@@ -503,6 +503,15 @@ constexpr bool QcMayChangeMedia(ULONG code)
         return false;
     }
 }
+// volsnap (device type 0x53). Only flush-and-hold must drain before it is forwarded.
+constexpr ULONG QcVolsnapFlushAndHoldWrites = 0x53C000; // IOCTL_VOLSNAP_FLUSH_AND_HOLD_WRITES
+constexpr bool QcSnapshotControlWithoutDrain(ULONG code)
+{
+    return DEVICE_TYPE_FROM_CTL_CODE(code) == 0x53 && code != QcVolsnapFlushAndHoldWrites;
+}
+static_assert(!QcSnapshotControlWithoutDrain(QcVolsnapFlushAndHoldWrites));
+static_assert(QcSnapshotControlWithoutDrain(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES, seen on the VM
+static_assert(!QcSnapshotControlWithoutDrain(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
 // Compile-time contract: the polled queries that previously wiped the cache stay read-only,
 // and destructive controls keep draining and invalidating.
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_GET_INFO));
@@ -3010,6 +3019,15 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         Publish(c);
         ReleaseCache(c);
     }
+    // Shadow copies: volsnap's flush-and-hold drains the cache (the snapshot then contains
+    // data that was pending in RAM); its other controls, notably release-writes, arrive
+    // while volsnap holds every write. Draining then would wait for writes that only that
+    // release lets through (found on the VM: the hold timed out and the snapshot failed).
+    const bool snapshotControl = (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL ||
+                                  stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
+                                 QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode);
+    if (snapshotControl)
+        dirty = false;
     auto status = dirty || stack->MajorFunction == IRP_MJ_PNP ? QcCacheBarrier(c, stack->MajorFunction == IRP_MJ_PNP, QcOrderedBarrier, irp)
                                                               : STATUS_SUCCESS;
     // Unknown commands can modify media (including unsupported TRIM shapes).

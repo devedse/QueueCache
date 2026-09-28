@@ -4,6 +4,9 @@ using System.Runtime.Versioning;
 
 namespace QueueCache.Operations;
 
+/// <summary>A budget increase was refused because too little RAM is available right now.</summary>
+public sealed class InsufficientMemoryForCacheException(string message) : IOException(message);
+
 public static class MemoryBudget
 {
     public const int MaximumMiB = 131072;
@@ -28,7 +31,7 @@ public static class MemoryBudget
     public static void ValidateIncrease(ulong current, ulong requested)
     {
         if (requested > current && requested - current > AvailableForCache())
-            throw new IOException("Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.");
+            throw new InsufficientMemoryForCacheException("Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.");
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatus
