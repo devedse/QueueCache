@@ -46,6 +46,11 @@ struct QC_EXTENSION
 static WCHAR ExpectedDriverKey[512];
 static UNICODE_STRING AllowedDriverKey;
 static BOOLEAN ClassCoverage;
+// Lab bisection aid for the volume-filter branch (service value DiagnosticMode, read
+// once at load): 1 = attach as a pure pass-through filter (no cache, no threads),
+// 2 = do not mirror DO_POWER_PAGABLE, 4 = skip paging classification at dispatch,
+// 8 = skip the length/geometry queries after start.
+static ULONG DiagnosticMode;
 extern "C" DRIVER_INITIALIZE DriverEntry;
 DRIVER_ADD_DEVICE QcAddDevice;
 DRIVER_DISPATCH QcDispatch;
@@ -708,9 +713,25 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     if (!NT_SUCCESS(status))
         return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (DiagnosticMode & 1)
+    {
+        IoSkipCurrentIrpStackLocation(irp);
+        if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
+        {
+            IoReleaseRemoveLockAndWait(&ext->RemoveLock, irp);
+            auto lower = ext->Lower;
+            status = IoCallDriver(lower, irp);
+            IoDetachDevice(lower);
+            IoDeleteDevice(device);
+            return status;
+        }
+        status = IoCallDriver(ext->Lower, irp);
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        return status;
+    }
 #if QCACHE_CACHE_DRIVER
     // Record paging traffic before routing selection, including disabled pass-through.
-    const bool pagingFile = QcCacheRecordPagingIo(&ext->Cache, irp);
+    const bool pagingFile = (DiagnosticMode & 4) ? false : QcCacheRecordPagingIo(&ext->Cache, irp);
 #endif
     if (stack->MajorFunction == IRP_MJ_PNP)
     {
@@ -792,7 +813,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             if (status == STATUS_PENDING)
                 KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
             status = irp->IoStatus.Status;
-            if (NT_SUCCESS(status))
+            if (NT_SUCCESS(status) && !(DiagnosticMode & 8))
             {
                 GET_LENGTH_INFORMATION length = {};
                 IO_STATUS_BLOCK iosb = {};
@@ -1201,8 +1222,13 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     // Volume stacks (volume.sys, volsnap) are power-pageable: a filter above a
     // pageable driver must be pageable too, so power IRPs arrive at PASSIVE_LEVEL.
     // Our dispatch handles power at PASSIVE_LEVEL; its code stays nonpageable.
-    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO | DO_POWER_PAGABLE);
+    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO | ((DiagnosticMode & 2) ? 0 : DO_POWER_PAGABLE));
     device->Characteristics |= ext->Lower->Characteristics;
+    if (DiagnosticMode & 1)
+    {
+        device->Flags &= ~DO_DEVICE_INITIALIZING;
+        return STATUS_SUCCESS;
+    }
 #if QCACHE_CACHE_DRIVER
     status = QcCacheInitialize(&ext->Cache, device, ext->Lower);
     if (NT_SUCCESS(status))
@@ -1284,6 +1310,14 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
         auto classValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
         ClassCoverage = classValue->Type == REG_DWORD && classValue->DataLength == sizeof(ULONG) &&
                         *reinterpret_cast<ULONG*>(classValue->Data) == 1;
+    }
+    UNICODE_STRING diagnosticName = RTL_CONSTANT_STRING(L"DiagnosticMode");
+    if (NT_SUCCESS(ZwQueryValueKey(
+            key, &diagnosticName, KeyValuePartialInformation, classBuffer, sizeof(classBuffer), &classRequired)))
+    {
+        auto diagnosticValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
+        if (diagnosticValue->Type == REG_DWORD && diagnosticValue->DataLength == sizeof(ULONG))
+            DiagnosticMode = *reinterpret_cast<ULONG*>(diagnosticValue->Data);
     }
     ZwClose(key);
     if (!NT_SUCCESS(status))
