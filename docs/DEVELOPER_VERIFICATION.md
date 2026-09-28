@@ -27,14 +27,21 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 67)
+## Suites (plan version 68)
+
+Plan 68: `volume-snapshot` records the cache every 200 ms while the shadow copy is
+created (queue, active request phase and age, pending/in-flight bytes, last barrier
+control), and a shadow copy that Windows cannot create on the cached volume is a FAIL
+with those samples (it was SKIP in plan 67; an uncached volume on the VM snapshots
+fine, so a failure means the cache interfered). `volume-shared-disk` checks the bytes
+the flush of the first volume wrote instead of requiring zero pending bytes.
 
 Plan 67 adds `volumes/volume-snapshot`. Shadow copies (System Restore, backup and
 imaging tools) are taken by `volsnap`, below the cache. With 32 MiB pending in a
 256 MiB Fast/Deferred cache on the target, a client-accessible shadow copy is
 created (`Win32_ShadowCopy.Create`); the file read from the snapshot device must be
 exact and the cache must have drained the pending data before the snapshot. The
-shadow copy is deleted afterwards. SKIP if Windows cannot create a shadow copy.
+shadow copy is deleted afterwards.
 
 Plan 66 adds `volumes/volume-resize` (found on the VM: extending a cached volume
 beyond the length the driver had learned failed with Invalid Parameter; fixed by

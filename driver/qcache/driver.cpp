@@ -1122,6 +1122,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         // must not hold up subsequent cache admission behind DirectIdle.
         return Forward(ext, irp);
     }
+    if ((stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
+        QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode))
+        return Forward(ext, irp); // See observation.h: shadow-copy controls after flush-and-hold.
 #if QCACHE_CACHE_DRIVER
     // Paging-file blocks are never cached (registration drains and drops clean data,
     // and paging-file writes are never admitted), so this I/O needs no ordering

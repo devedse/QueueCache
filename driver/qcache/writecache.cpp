@@ -503,15 +503,6 @@ constexpr bool QcMayChangeMedia(ULONG code)
         return false;
     }
 }
-// volsnap (device type 0x53). Only flush-and-hold must drain before it is forwarded.
-constexpr ULONG QcVolsnapFlushAndHoldWrites = 0x53C000; // IOCTL_VOLSNAP_FLUSH_AND_HOLD_WRITES
-constexpr bool QcSnapshotControlWithoutDrain(ULONG code)
-{
-    return DEVICE_TYPE_FROM_CTL_CODE(code) == 0x53 && code != QcVolsnapFlushAndHoldWrites;
-}
-static_assert(!QcSnapshotControlWithoutDrain(QcVolsnapFlushAndHoldWrites));
-static_assert(QcSnapshotControlWithoutDrain(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES, seen on the VM
-static_assert(!QcSnapshotControlWithoutDrain(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
 // Compile-time contract: the polled queries that previously wiped the cache stay read-only,
 // and destructive controls keep draining and invalidating.
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_GET_INFO));

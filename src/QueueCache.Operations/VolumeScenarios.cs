@@ -140,8 +140,9 @@ public static class VolumeScenarios
             device.Control(WriteCacheAction.Flush);
             var a3 = device.GetWriteCacheState();
             var b3 = otherDevice.GetWriteCacheState();
-            // W:'s own 32 MiB must still be pending; its file-system metadata may drain meanwhile.
-            var independentFlush = a3.DirtyBytes == 0 && b3.DirtyBytes >= 32UL * MiB;
+            // Flushing V: wrote V:'s 32 MiB; W:'s own 32 MiB stay pending. File-system metadata can arrive or
+            // drain on either volume meanwhile (Fast), so pending bytes of V: are not required to be zero.
+            var independentFlush = a3.DrainedBytes - a2.DrainedBytes >= 32UL * MiB && b3.DirtyBytes >= 32UL * MiB;
             otherDevice.Control(WriteCacheAction.Flush);
             device.Control(WriteCacheAction.DropClean);
             otherDevice.Control(WriteCacheAction.DropClean);
