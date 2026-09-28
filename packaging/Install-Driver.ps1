@@ -110,6 +110,12 @@ try
             }
         }
         Remove-QueueCacheClassFilter $volumeClassPath
+        # Nothing references the filter any more; keep the service and binary for recovery
+        # but stop loading it at boot. Installation sets boot start again.
+        if (Get-Service qcachelab -ErrorAction SilentlyContinue)
+        {
+            Native sc.exe @('config', 'qcachelab', 'start=', 'demand')
+        }
         UpdatePath $true
         Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
         Write-Output 'Filters removed. Reboot to unload; driver binaries/service retained for recovery.'
