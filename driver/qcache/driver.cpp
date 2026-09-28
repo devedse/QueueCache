@@ -39,6 +39,8 @@ struct QC_EXTENSION
     bool ReadSelectionAllowsFlush;             // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
     BOOLEAN CallerActive; // QueueLock: a caller-thread request owns the cache (counted in DirectCount).
+    volatile LONG GeometryState; // EnsureDeviceGeometry: 0 not queried, 1 querying, 2 done.
+    KEVENT GeometryReady;
     ULONG CallerStreak;   // QueueLock: caller-path requests since the last probe via the worker.
     ULONG WorkerWindow;   // QueueLock: candidates still routed to the worker (QcCallerPathWorkerWindow).
 #endif
@@ -49,7 +51,7 @@ static BOOLEAN ClassCoverage;
 // Lab bisection aid for the volume-filter branch (service value DiagnosticMode, read
 // once at load): 1 = attach as a pure pass-through filter (no cache, no threads),
 // 2 = do not mirror DO_POWER_PAGABLE, 4 = skip paging classification at dispatch,
-// 8 = skip the length/geometry queries after start.
+// 8 = never query the length/geometry (see EnsureDeviceGeometry).
 static ULONG DiagnosticMode;
 extern "C" DRIVER_INITIALIZE DriverEntry;
 DRIVER_ADD_DEVICE QcAddDevice;
@@ -528,6 +530,7 @@ static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
     Complete(irp, status, bytes);
 }
 #endif
+static void EnsureDeviceGeometry(QC_EXTENSION* ext);
 static void RequestWorker(PVOID context)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -548,6 +551,7 @@ static void RequestWorker(PVOID context)
             // A control request closes direct admission under QueueLock. Complete
             // older direct I/O before any queued request changes cache state.
             KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
+            EnsureDeviceGeometry(ext);
 #if QCACHE_CACHE_DRIVER
             bool transferred;
             auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0),
@@ -706,6 +710,58 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 }
 #endif
 
+#if QCACHE_SERIALIZED_IO
+// Queries the lower device's length and sector size once, on first need, from a
+// PASSIVE_LEVEL thread (a management request's caller or the request worker).
+// Sending these queries from the IRP_MN_START_DEVICE handler of the boot volume
+// (below: snapshots, BitLocker, the volume manager) reset the machine during boot.
+static void EnsureDeviceGeometry(QC_EXTENSION* ext)
+{
+    if (ext->GeometryState == 2 || (DiagnosticMode & 8) || KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    if (InterlockedCompareExchange(&ext->GeometryState, 1, 0) != 0)
+    {
+        // Another thread is querying; its result is needed here too.
+        KeWaitForSingleObject(&ext->GeometryReady, Executive, KernelMode, FALSE, nullptr);
+        return;
+    }
+    KEVENT event;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    GET_LENGTH_INFORMATION length = {};
+    IO_STATUS_BLOCK iosb = {};
+    auto query = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
+    if (query)
+    {
+        auto queryStatus = IoCallDriver(ext->Lower, query);
+        if (queryStatus == STATUS_PENDING)
+            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length))
+            InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
+    }
+#if QCACHE_CACHE_DRIVER
+    DISK_GEOMETRY geometry = {};
+    iosb = {};
+    KeClearEvent(&event);
+    query = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_GET_DRIVE_GEOMETRY, ext->Lower, nullptr, 0, &geometry, sizeof(geometry), FALSE, &event, &iosb);
+    if (query)
+    {
+        auto queryStatus = IoCallDriver(ext->Lower, query);
+        if (queryStatus == STATUS_PENDING)
+            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
+            ext->Cache.SectorBytes = geometry.BytesPerSector;
+    }
+#endif
+    // Retry on a later request if the length could not be read.
+    InterlockedExchange(&ext->GeometryState, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0) > 0 ? 2 : 0);
+    KeSetEvent(&ext->GeometryReady, IO_NO_INCREMENT, FALSE);
+    if (ext->GeometryState == 0)
+        KeClearEvent(&ext->GeometryReady);
+}
+#endif
+
 NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 {
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
@@ -813,44 +869,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             if (status == STATUS_PENDING)
                 KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
             status = irp->IoStatus.Status;
-            if (NT_SUCCESS(status) && !(DiagnosticMode & 8))
-            {
-                GET_LENGTH_INFORMATION length = {};
-                IO_STATUS_BLOCK iosb = {};
-                KeClearEvent(&event);
-                auto query = IoBuildDeviceIoControlRequest(
-                    IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
-                if (query)
-                {
-                    auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING)
-                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length))
-                        InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
-                }
-#if QCACHE_CACHE_DRIVER
-                DISK_GEOMETRY geometry = {};
-                iosb = {};
-                KeClearEvent(&event);
-                query = IoBuildDeviceIoControlRequest(IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                                                      ext->Lower,
-                                                      nullptr,
-                                                      0,
-                                                      &geometry,
-                                                      sizeof(geometry),
-                                                      FALSE,
-                                                      &event,
-                                                      &iosb);
-                if (query)
-                {
-                    auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING)
-                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
-                        ext->Cache.SectorBytes = geometry.BytesPerSector;
-                }
-#endif
-            }
+            // Length and sector size are queried later (EnsureDeviceGeometry): the same
+            // queries sent to the boot volume from this start handler reset the machine.
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             return Complete(irp, status, irp->IoStatus.Information);
         }
@@ -858,6 +878,11 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
+#if QCACHE_SERIALIZED_IO
+        // QueueCache management requests report and validate the device length.
+        if (DEVICE_TYPE_FROM_CTL_CODE(code) == DEVICE_TYPE_FROM_CTL_CODE(IOCTL_QCACHE_GET_DEVICE_DATA))
+            EnsureDeviceGeometry(ext);
+#endif
 #if QCACHE_CACHE_DRIVER
         if (code == IOCTL_QCACHE_STATE_V3)
         {
@@ -1247,6 +1272,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     ext->Cache.RoutingLock = &ext->QueueLock;
 #endif
     KeInitializeEvent(&ext->DirectIdle, NotificationEvent, TRUE);
+    KeInitializeEvent(&ext->GeometryReady, NotificationEvent, FALSE);
     InitializeListHead(&ext->Pending);
     ext->ReadSelection.Reset(&ext->Pending);
     KeInitializeEvent(&ext->WorkAvailable, NotificationEvent, FALSE);
