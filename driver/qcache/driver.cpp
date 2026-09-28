@@ -1198,8 +1198,10 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
         IoDeleteDevice(device);
         return status;
     }
-    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO);
-    // All harness code/data is nonpageable; do not advertise pageable power dispatch.
+    // Volume stacks (volume.sys, volsnap) are power-pageable: a filter above a
+    // pageable driver must be pageable too, so power IRPs arrive at PASSIVE_LEVEL.
+    // Our dispatch handles power at PASSIVE_LEVEL; its code stays nonpageable.
+    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO | DO_POWER_PAGABLE);
     device->Characteristics |= ext->Lower->Characteristics;
 #if QCACHE_CACHE_DRIVER
     status = QcCacheInitialize(&ext->Cache, device, ext->Lower);

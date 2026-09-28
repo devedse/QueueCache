@@ -43,11 +43,11 @@ function Expect-Rejection([scriptblock]$Check)
 try
 {
     foreach ($case in @(
-            @{ Before = @('partmgr'); After = @('qcachelab', 'partmgr') },
-            @{ Before = @('partmgr', 'qcachelab'); After = @('qcachelab', 'partmgr') },
-            @{ Before = @('qcachelab', 'partmgr'); After = @('qcachelab', 'partmgr') },
-            @{ Before = @('other', 'partmgr', 'third', 'QCACHELAB', 'qcachelab'); After = @('other', 'qcachelab', 'partmgr', 'third') },
-            @{ Before = @('PARTMGR', 'third'); After = @('qcachelab', 'PARTMGR', 'third') }
+            @{ Before = @(); After = @('qcachelab') },
+            @{ Before = @('volsnap'); After = @('volsnap', 'qcachelab') },
+            @{ Before = @('qcachelab', 'volsnap'); After = @('volsnap', 'qcachelab') },
+            @{ Before = @('volsnap', 'qcachelab'); After = @('volsnap', 'qcachelab') },
+            @{ Before = @('other', 'volsnap', 'QCACHELAB', 'third', 'qcachelab'); After = @('other', 'volsnap', 'third', 'qcachelab') }
         ))
     {
         [string[]]$ordered = Get-QueueCacheClassFilters $case.Before
@@ -58,8 +58,6 @@ try
         $testKey.SetValue('UpperFilters', $ordered, [Microsoft.Win32.RegistryValueKind]::MultiString)
         Assert-RegistryMultiString $testPath $case.After
     }
-    Expect-Rejection { Get-QueueCacheClassFilters @() }
-    Expect-Rejection { Get-QueueCacheClassFilters @('other', 'qcachelab') }
     foreach ($case in @(
             @{ Values = [string[]]@() },
             @{ Values = [string[]]@('qcachelab') },

@@ -57,7 +57,7 @@ public static class Runner
                 length = (long)mib << 20;
             }
             using var volume = new CheckedVolume(letter, number, expectedSize, writing);
-            using var cache = new CacheDevice($"PhysicalDrive{number}");
+            using var cache = new CacheDevice($"{letter}:");
             var before = cache.GetWriteCacheState();
             if (writing && before.UnsafeDefer)
                 throw new IOException("Start file tests in strict policy. Policy-specific tests switch modes only after preparing durable metadata.");
@@ -167,7 +167,7 @@ public static class Runner
                 throw new IOException("File bytes matched but cache admission/drain/flush evidence was missing.");
             if (args[4] == "--test-coalescing")
             {
-                using var control = new CacheDevice($"PhysicalDrive{number}", writable: true);
+                using var control = new CacheDevice($"{letter}:", writable: true);
                 control.Control(WriteCacheAction.Disable);
                 control.Control(WriteCacheAction.FlushPolicy, value: 1);
                 control.Control(WriteCacheAction.Enable);
@@ -260,7 +260,7 @@ public static class Runner
                     metadata.Flush(true);
                 }
                 volume.Flush();
-                using var control = new CacheDevice($"PhysicalDrive{number}", writable: true);
+                using var control = new CacheDevice($"{letter}:", writable: true);
                 var testUnsafe = args[4] != "--dirty-reboot";
                 if (testUnsafe)
                 {

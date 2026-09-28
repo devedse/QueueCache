@@ -567,7 +567,7 @@ internal static class VerificationRunnerTests
             new("system-active-image-strict", "system-active-image")
         }), "active system-image covers normal Fast and Strict product paths");
         var imageRoot = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
-        var imageTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
+        var imageTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true) { DiskBytes = 100L << 30 };
         var fastArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-fast");
         var strictArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-strict");
         Check(fastArtifacts.WorkDirectory != strictArtifacts.WorkDirectory &&
@@ -617,8 +617,8 @@ internal static class VerificationRunnerTests
             "passed active image requires post-release byte evidence");
         Check(!VerificationWorker.RequiresSystemImageEvidence([passedImage with { Status = "FAIL" }]),
             "failed active image permits restoration without nonexistent image evidence");
-        var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
-        var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
+        var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true) { DiskBytes = 100L << 30 };
+        var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS") { DiskBytes = 200L << 30 };
         Check(VerificationRunner.IsSystemRecoveryTarget(systemTarget),
             "C boot/system recovery selects guarded system restoration");
         Check(!VerificationRunner.IsSystemRecoveryTarget(resultsTarget),
@@ -823,7 +823,7 @@ internal static class VerificationRunnerTests
                 "structured check failures reach worker stderr with exact details");
         }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
-        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture");
+        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture") { DiskBytes = 200L << 30 };
         var dataDisk = new QueueCache.Operations.DiskDescription(1, "fixture", 200L << 30, "fixture", ["Q:"], false, false);
         VerificationWorker.ValidateFileTarget(identity, dataDisk);
         foreach (var excluded in new[] { dataDisk with { IsBoot = true }, dataDisk with { IsSystem = true }, dataDisk with { IsPaging = true }, dataDisk with { Bytes = 1 }, dataDisk with { Instance = "other" } })
@@ -1312,7 +1312,7 @@ internal static class VerificationRunnerTests
             Fake = true
         };
         if (job.Operation == "capture")
-            reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only"),
+            reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only") { DiskBytes = 50L << 30 },
                 new QueueCache.Management.WriteCacheState(0, 0, 50UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
                 false, "[]", DateTimeOffset.UtcNow, Environment.MachineName);
         RunStorage.AtomicJson(job.Reply, reply);

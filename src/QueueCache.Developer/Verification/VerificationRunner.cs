@@ -889,7 +889,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         }
         options = systemRecovery
             ? new($"{original.Target.Letter}:", "system-active-image", path,
-                SystemInstance: original.Target.Instance, SystemBytes: original.Target.Bytes, RecoverableVm: true)
+                SystemInstance: original.Target.Instance, SystemBytes: original.Target.DiskBytes, RecoverableVm: true)
             : new($"{original.Target.Letter}:", Output: path);
         fileTarget = systemRecovery ? original.Target : null;
         storage = new RunStorage(path);
@@ -907,7 +907,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 Recovery = snapshotPath,
                 SystemInstance = systemRecovery ? original.Target.Instance : null,
-                SystemBytes = systemRecovery ? original.Target.Bytes : null,
+                SystemBytes = systemRecovery ? original.Target.DiskBytes : null,
                 RecoverableVm = systemRecovery,
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),

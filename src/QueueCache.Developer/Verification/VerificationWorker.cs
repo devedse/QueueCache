@@ -26,7 +26,7 @@ public static class VerificationWorker
     {
         if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
             throw new IOException("File-only verification excludes boot/system/paging disks.");
-        if (inventory.Number != target.Number || inventory.Bytes != target.Bytes ||
+        if (inventory.Number != target.Number || inventory.Bytes != target.DiskBytes ||
             !string.Equals(inventory.Instance, target.Instance, StringComparison.OrdinalIgnoreCase))
             throw new IOException("File-only target identity changed.");
     }
@@ -252,7 +252,7 @@ public static class VerificationWorker
                         throw new IOException("System recovery identity or disabled/released baseline changed.");
                     FlushForRestoration(() =>
                     {
-                        using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                        using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
                         volume.Flush();
                     }, () => systemDevice.Control(WriteCacheAction.Flush), () => systemDevice.Control(WriteCacheAction.Disable),
                         systemDevice.GetWriteCacheState,
@@ -552,7 +552,7 @@ public static class VerificationWorker
                 FlushForRestoration(() =>
                 {
                     Stage("flushing filesystem volume before cache drain");
-                    using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                    using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
                     volume.Flush();
                 }, () =>
                 {

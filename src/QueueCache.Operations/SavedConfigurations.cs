@@ -72,7 +72,9 @@ public static class SavedConfigurations
             try
             {
                 var target = await DiskTarget.InspectAsync(profile.Volume, token);
-                if (!string.Equals(target.Instance, profile.Instance, StringComparison.OrdinalIgnoreCase) || target.Bytes != profile.Bytes)
+                // Profiles saved by the disk-level filter recorded the disk size; accept that for this volume.
+                if (!string.Equals(target.Instance, profile.Instance, StringComparison.OrdinalIgnoreCase) ||
+                    (target.Bytes != profile.Bytes && target.DiskBytes != profile.Bytes))
                     throw new IOException("Saved identity does not match this volume. Refusing to select another disk.");
                 await Task.Run(() => ConfigurationManager.Apply(target, profile.Configuration, profile.VolatileFlushAccepted, progress), token);
                 results.Add(new(profile.Volume, true, "Applied matching saved configuration."));

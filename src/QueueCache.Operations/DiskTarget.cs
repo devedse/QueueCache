@@ -9,20 +9,25 @@ using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations;
 
-/// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.</summary>
+/// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.
+/// The cache filters the volume: <see cref="Device"/> is the volume and <see cref="Bytes"/> its length,
+/// which the driver reports as its device length. <see cref="Number"/>, <see cref="Instance"/> and
+/// <see cref="DiskBytes"/> identify the physical disk that holds it.</summary>
 [SupportedOSPlatform("windows")]
 public sealed record DiskTarget(char Letter, int Number, long Bytes, string Instance,
     bool IsBoot = false, bool IsSystem = false, bool IsPaging = false)
 {
     public string Root => $"{Letter}:\\";
-    public string Device => $"PhysicalDrive{Number}";
+    public string Device => $"{Letter}:";
+    /// <summary>Size of the physical disk holding the volume.</summary>
+    public long DiskBytes { get; init; }
 
     // Pagefile configuration can change IsPaging across a restart. The other
     // fields identify the volume, physical disk and required system role.
     public static void ValidateRecordedSystemTarget(DiskTarget recorded, DiskTarget current)
     {
         if (recorded.Letter != current.Letter || recorded.Number != current.Number ||
-            recorded.Bytes != current.Bytes ||
+            recorded.Bytes != current.Bytes || recorded.DiskBytes != current.DiskBytes ||
             !string.Equals(recorded.Instance, current.Instance, StringComparison.OrdinalIgnoreCase) ||
             recorded.IsBoot != current.IsBoot || recorded.IsSystem != current.IsSystem)
             throw new IOException("System oracle target identity changed.");
@@ -64,9 +69,12 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
         if (process.ExitCode != 0)
             throw new IOException(await stderr);
-        var target = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
-        if (target.Number < 0 || target.Bytes <= 0 || string.IsNullOrWhiteSpace(target.Instance) || target.Letter != letter)
+        // The inventory reports the disk size as Bytes; the target's Bytes is the volume.
+        var disk = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
+        if (disk.Number < 0 || disk.Bytes <= 0 || string.IsNullOrWhiteSpace(disk.Instance) || disk.Letter != letter)
             throw new IOException("Invalid disk identity.");
+        var extent = ReadExtent(letter);
+        var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes };
         if (!string.Equals(new DriveInfo(target.Root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
             throw new IOException("Only NTFS volumes are currently supported.");
         target.CheckExtents();
@@ -160,7 +168,8 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     internal static void ValidateExtent(DiskTarget target, (int Number, long Start, long Length) extent)
     {
-        if (extent.Number != target.Number || extent.Start < 0 || extent.Length <= 0 || extent.Start > target.Bytes - extent.Length)
+        if (extent.Number != target.Number || extent.Start < 0 || extent.Length <= 0 ||
+            extent.Length != target.Bytes || extent.Start > target.DiskBytes - extent.Length)
             throw new IOException("Volume extents do not match the selected disk.");
     }
 
@@ -180,7 +189,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     internal static void ValidateDeviceLength(DiskTarget target, ulong bytes)
     {
         if (bytes != (ulong)target.Bytes)
-            throw new IOException("Disk length changed; refusing operation.");
+            throw new IOException("Volume length changed; refusing operation.");
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]

@@ -8,8 +8,8 @@ using QueueCache.Management;
 namespace QueueCache.Operations;
 
 /// <summary>
-/// T085 verification aid: the current disk ranges of every paging file (pagefile.sys, swapfile.sys and configured
-/// paging files) on one physical disk. The driver recognises paging-file requests by file object, not by these
+/// T085 verification aid: the current volume ranges of every paging file (pagefile.sys, swapfile.sys and
+/// configured paging files) on the target volume, the device the driver filters. The driver recognises paging-file requests by file object, not by these
 /// ranges. They are sent as an observe-only reference set so recognition misses can be counted.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -27,9 +27,9 @@ public static class SpecialFileMap
             if (drive.DriveType is not (DriveType.Fixed or DriveType.Removable))
                 continue;
             var letter = char.ToUpperInvariant(drive.Name[0]);
-            var extents = VolumeExtents(letter);
-            if (extents.All(extent => extent.Disk != target.Number))
+            if (letter != target.Letter)
                 continue;
+            var extents = VolumeExtents(letter);
             if (extents.Count != 1)
                 throw new NotSupportedException($"Volume {letter}: spans several disk extents.");
             var root = $"{letter}:\\";
@@ -46,7 +46,8 @@ public static class SpecialFileMap
                 if (!File.Exists(path))
                     continue;
                 files.Add(path);
-                ranges.AddRange(FileDiskRanges(path, root, extents[0].Start));
+                // The driver filters the volume: ranges are volume offsets (cluster * size).
+                ranges.AddRange(FileDiskRanges(path, root, 0));
             }
         }
         return new(files, SpecialRangeMap.Normalize(ranges));

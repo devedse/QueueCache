@@ -9,9 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $backupPath = (Resolve-Path -LiteralPath $BackupFile).Path
 $backup = Get-Content -LiteralPath $backupPath -Raw | ConvertFrom-Json
-if (-not $ConfirmRestore -or $backup.Version -ne 1 -or -not $backup.CreatedUtc -or $null -eq $backup.ClassUpperFilters -or $null -eq $backup.Devices)
+# Version 1: disk-class installs. Version 2 also records the Volume class list.
+if (-not $ConfirmRestore -or $backup.Version -notin @(1, 2) -or -not $backup.CreatedUtc -or $null -eq $backup.ClassUpperFilters -or
+    $null -eq $backup.Devices -or ($backup.Version -eq 2 -and $null -eq $backup.VolumeClassUpperFilters))
 {
-    throw 'A version-1 QueueCache registration backup and explicit -ConfirmRestore are required.'
+    throw 'A version-1 or version-2 QueueCache registration backup and explicit -ConfirmRestore are required.'
 }
 
 $mountName = 'QueueCacheRecovery'
@@ -44,6 +46,11 @@ try
 
     $classPath = Join-Path $systemRoot 'Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
     if (-not (Test-Path -LiteralPath $classPath)) { throw 'Disk class registry key is missing.' }
+    $volumeClassPath = Join-Path $systemRoot 'Control\Class\{71a27cdd-812a-11d0-bec7-08002be2092f}'
+    if (-not (Test-Path -LiteralPath $volumeClassPath)) { throw 'Volume class registry key is missing.' }
+    # A version-1 backup predates volume registration: restore that list without our entry.
+    [string[]]$volumeFilters = if ($backup.Version -eq 2) { @($backup.VolumeClassUpperFilters | Where-Object { $_ }) }
+        else { @((Get-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ -and $_ -ine 'qcachelab' }) }
     # Validate every recorded target before changing any registration. A stale or
     # malformed per-device key must not leave only the class filter restored.
     $deviceTargets = @(
@@ -71,6 +78,18 @@ try
         else
         {
             Remove-ItemProperty -LiteralPath $classPath -Name UpperFilters -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($PSCmdlet.ShouldProcess($volumeClassPath, "restore volume-class UpperFilters from $backupPath"))
+    {
+        if ($volumeFilters.Count)
+        {
+            New-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value $volumeFilters -Force | Out-Null
+        }
+        else
+        {
+            Remove-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue
         }
     }
 

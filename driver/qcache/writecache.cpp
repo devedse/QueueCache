@@ -2798,9 +2798,11 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
-        // Neither-I/O and raw controller pass-through may contain uncaptured user pointers.
-        // They cannot safely be forwarded from a system worker in another process context.
-        if ((code & 3) == METHOD_NEITHER || DEVICE_TYPE_FROM_CTL_CODE(code) == FILE_DEVICE_CONTROLLER)
+        // Neither-I/O and raw controller pass-through from an application may contain
+        // uncaptured user pointers, which are not valid on this system worker. Kernel
+        // components on a volume stack (snapshots, encryption) send kernel pointers.
+        if (irp->RequestorMode != KernelMode &&
+            ((code & 3) == METHOD_NEITHER || DEVICE_TYPE_FROM_CTL_CODE(code) == FILE_DEVICE_CONTROLLER))
             return STATUS_NOT_SUPPORTED;
     }
     if (stack->MajorFunction == IRP_MJ_SHUTDOWN)

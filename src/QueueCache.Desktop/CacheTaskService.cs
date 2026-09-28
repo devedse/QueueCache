@@ -25,7 +25,7 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public async Task<IReadOnlyList<DiskDescription>> ListAsync() => await DiskCatalog.ListAsync();
     public Task<WriteCacheState> ReadAsync(DiskDescription disk) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.Device);
+        using var device = new CacheDevice(disk.CacheDevice);
         var state = device.GetWriteCacheState();
         return state.SupportsPerformance ? state with
         {
@@ -39,13 +39,13 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume, enabled, persistent);
     public Task FlushAsync(DiskDescription disk) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.Device, true);
+        using var device = new CacheDevice(disk.CacheDevice, true);
         device.Control(WriteCacheAction.Flush);
     });
     // Clean blocks only: no drain, no effect on pending writes.
     public Task DropCleanAsync(DiskDescription disk) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.Device, true);
+        using var device = new CacheDevice(disk.CacheDevice, true);
         device.Control(WriteCacheAction.DropClean);
     });
     public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);
