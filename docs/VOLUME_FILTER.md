@@ -25,7 +25,7 @@ cache is no longer part of. Comparable caching products work per volume.
 | Management requests | Sent to `\\.\PhysicalDriveN` | Sent to `\\.\X:` (the file system passes device controls to the top of the volume stack, which is this filter) |
 | Target identity in the tools | `Device` = `PhysicalDriveN`, `Bytes` = disk size | `Device` = `X:`, `Bytes` = volume size (what the driver reports); `Number`, `Instance` and new `DiskBytes` still identify the physical disk |
 | Page-file / gate ranges | Disk offsets (partition start + cluster) | Volume offsets (cluster only), page files of the target volume only |
-| Saved profiles | Disk size | Volume size; profiles saved with the disk size are still accepted |
+| Saved profiles | Disk identity and size | Volume GUID and volume size (one format; no conversion of disk-filter profiles) |
 
 Driver changes are small: the filter mirrors `DO_POWER_PAGABLE` (volume stacks are
 power-pageable, so a filter above them must be too), and the ordered worker refuses
@@ -34,10 +34,11 @@ components (snapshots and encryption send kernel pointers). Everything else in t
 cache (ordering, caller-thread service, offloaded copies, TRIM ranges) works on
 device offsets and is unchanged.
 
-Installer: Volume-class registration, a version-2 registration backup that also
-records the Volume class list, uninstall that drains lettered volumes and removes
-both class entries, and `Recover-Registration.ps1` that restores the Volume class
-list (or, for a version-1 backup, removes only the QueueCache entry).
+Installer: Volume-class registration only, a registration backup (version 3: the
+Volume class list and service values), uninstall that drains lettered volumes and
+removes the Volume class entry, and `Recover-Registration.ps1` that restores that
+backup. There is no migration from the disk filter (owner decision, 2026-09-28: no
+other users); the lab VM was converted by hand.
 
 ## Boot reset on C:'s volume (found and fixed on the branch)
 
@@ -65,9 +66,9 @@ request or the request worker. With it the filter covers every volume and boots.
 
 | Situation | Behaviour |
 |---|---|
-| Install | The installer registers `qcachelab` as the last Volume-class upper filter and removes any disk-class entry (and per-disk entries of old packages). Every volume gets the filter after a restart; volumes that appear later (a new partition, an attached VHDX) get it immediately. No cache is enabled. `qcache developer driver registration` / `qcache volume list` report the registration. |
+| Install | The installer registers `qcachelab` as the last Volume-class upper filter. Every volume gets the filter after a restart; volumes that appear later (a new partition, an attached VHDX) get it immediately. No cache is enabled. `qcache developer driver registration` / `qcache volume list` report the registration. |
 | Several volumes on one disk | Each has its own cache, budget, counters, worker and drainers; flushing or removing one never touches another. The shared RAM limit covers all of them. Verification leases are per physical disk. |
-| Saved profiles | Version 2, one per volume, named by the volume GUID and recording the volume size and the disk's PnP identity; a profile follows the volume if its letter changes. Version-1 (disk filter) profiles still restore, matched by letter, disk and disk size, and are then rewritten as version 2 (seen on the VM after the upgrade). |
+| Saved profiles | One per volume, named by the volume GUID and recording the volume size and the disk's PnP identity; a profile follows the volume if its letter changes. Restore refuses a different volume, disk or size. |
 | Commands to the physical disk | SMART/health queries, SCSI/ATA pass-through and firmware polls go to the disk's own stack: never refused, never a drain or cache wipe (`volumes/volume-raw-disk-commands`). |
 | Raw reads/writes to the physical disk | Also bypass the cache. A tool that reads `\\.\PhysicalDriveN` directly while a Fast cache holds pending writes sees the disk without them; one that writes there leaves the cache with stale copies. Imaging and backup tools normally read a shadow copy, which is consistent (next row); otherwise run `qcache policy flush X:` (or pause the task) first, and never write to a disk under a cached volume. |
 | Shadow copies (System Restore, backup, imaging) | `volsnap` is below the cache; Windows' flush-and-hold request passes through the cache first and drains it, so a snapshot contains data that was pending in RAM (`volumes/volume-snapshot`). |
@@ -78,7 +79,7 @@ request or the request worker. With it the filter covers every volume and boots.
 | Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
 | Unformatted or non-NTFS volumes | The filter passes everything through. A cache task can only be created on NTFS; a cache left by raw developer tests can still be flushed and removed (CLI and desktop). |
 | Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |
-| Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes both class entries, keeps the service and binary until the restart. `Recover-Registration.ps1` restores a version-2 backup's Volume and disk class lists, or removes only the QueueCache entry for a version-1 backup. |
+| Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes the Volume class entry, keeps the service and binary until the restart. `Recover-Registration.ps1` restores the backed-up Volume class list and service values (verified on copies of the SYSTEM hive). |
 
 ## Advantages and disadvantages compared with the disk filter
 
@@ -98,7 +99,7 @@ request or the request worker. With it the filter covers every volume and boots.
 | RAM is per volume | Two cached volumes on one disk each need their own budget; there is no pool shared per disk, and each drains independently, so the disk sees two write-back streams. |
 | One more stack layer everywhere | A filter instance on every volume (including EFI/recovery), passing through when no task exists; no measurable cost found. |
 | Scope | Only lettered NTFS volumes on one disk can be cached (no mount-point-only, spanned/striped, ReFS or FAT volumes). |
-| No simple downgrade | Profiles are rewritten as version 2; an older disk-filter package cannot read them and needs its tasks re-created. |
+| No upgrade path from the disk filter | By decision there is no migration code: disk-filter profiles and registrations are not converted (re-create tasks after installing). |
 
 ## Lab switches
 

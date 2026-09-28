@@ -109,7 +109,7 @@ public static class VolumeScenarios
         var other = DiskTarget.InspectAsync(sibling.Volume).GetAwaiter().GetResult();
         using var otherDevice = new CacheDevice(other.Device, writable: true);
         var otherInitial = otherDevice.GetWriteCacheState();
-        if (otherInitial.BudgetBytes != 0 || SavedConfigurations.IsSaved(other.Device, other.Instance, other.VolumeId))
+        if (otherInitial.BudgetBytes != 0 || SavedConfigurations.IsSaved(other.VolumeId))
             return [new("shared-disk/independent-caches", "SKIP", $"{other.Device} already has a cache task or saved profile; the suite does not change it.")];
         var checks = new List<CheckResult>();
         var saved = false;
@@ -152,14 +152,14 @@ public static class VolumeScenarios
                 $"flushing {target.Device} left {b3.DirtyBytes / (double)MiB:0.0} MiB pending on {other.Device} undrained; bytes {(bytes ? "match" : "DIFFER")} after both flushes. " +
                 $"Retained files: {directory}, {otherDirectory}."));
             // Per-volume saved profiles: named by the volume GUID, independent of the other volume's profile.
-            var targetSavedBefore = SavedConfigurations.IsSaved(target.Device, target.Instance, target.VolumeId);
+            var targetSavedBefore = SavedConfigurations.IsSaved(target.VolumeId);
             SavedConfigurations.Save(other, Pending(128), true);
             saved = true;
             var profile = SavedConfigurations.List().SingleOrDefault(p => p.VolumeId == other.VolumeId);
-            var targetSavedDuring = SavedConfigurations.IsSaved(target.Device, target.Instance, target.VolumeId);
+            var targetSavedDuring = SavedConfigurations.IsSaved(target.VolumeId);
             SavedConfigurations.Remove(other);
             saved = false;
-            var removed = !SavedConfigurations.IsSaved(other.Device, other.Instance, other.VolumeId);
+            var removed = !SavedConfigurations.IsSaved(other.VolumeId);
             var profiles = profile is { Version: 2 } && profile.Bytes == other.Bytes && profile.Volume == other.Device &&
                 targetSavedDuring == targetSavedBefore && removed;
             checks.Add(new("shared-disk/per-volume-profiles", profiles ? "PASS" : "FAIL",
@@ -196,7 +196,7 @@ public static class VolumeScenarios
             return [new("resize/shrink-extend", "SKIP", "Resizing is only exercised on the lab disk's QC-Lab-2 volume (qcache developer lab-disk create).")];
         var other = DiskTarget.InspectAsync(lab.Volume).GetAwaiter().GetResult();
         using var device = new CacheDevice(other.Device, writable: true);
-        if (device.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(other.Device, other.Instance, other.VolumeId))
+        if (device.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(other.VolumeId))
             return [new("resize/shrink-extend", "SKIP", $"{other.Device} already has a cache task or saved profile; the suite does not change it.")];
         var original = other.Bytes;
         var smaller = original - (1L << 30);

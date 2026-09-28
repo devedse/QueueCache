@@ -248,7 +248,7 @@ public static class VerificationWorker
                 {
                     if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
                         throw new IOException("Active system verification must start with C: disabled, released and clean.");
-                    if (SavedConfigurations.IsSaved(target.Device, target.Instance, target.VolumeId))
+                    if (SavedConfigurations.IsSaved(target.VolumeId))
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
                         systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName));

@@ -46,19 +46,6 @@ internal static class LegacyCommands
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
         try
         {
-            // Compatibility installer plumbing. Product safety/identity gates live in packaging/Install-Driver.ps1.
-            if (args is ["lab-filter", "inspect", var instance])
-            {
-                Console.WriteLine(JsonSerializer.Serialize(DeviceFilters.Inspect(instance)));
-                return 0;
-            }
-            if (args.Length == 5 && args[0] == "lab-filter" && args[1] is "add" or "remove")
-            {
-                if (args[4] != "--lab-installer")
-                    throw new ArgumentException("Use the lab installer with disk safety checks.");
-                Console.WriteLine(JsonSerializer.Serialize(DeviceFilters.Change(args[2], args[3], args[1] == "add")));
-                return 0;
-            }
             if (args is ["list"])
             {
                 foreach (var name in CacheDevice.EnumerateDevices())

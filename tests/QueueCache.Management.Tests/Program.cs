@@ -99,9 +99,13 @@ Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configura
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
 Check(MemoryBudget.RequiredSystemHeadroom(8UL << 30) == 2UL << 30, "8 GiB host keeps 2 GiB application/OS headroom");
 Check(MemoryBudget.RequiredSystemHeadroom(32UL << 30) == 8UL << 30, "larger host keeps 25% application/OS headroom");
-var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
-var existingProfile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30,
-    new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) }, false);
+const string volumeGuid = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}";
+var profile = new SavedConfiguration(2, "Q:", "test-device-identity", 150L << 30, new(), true, volumeGuid);
+var existingProfile = profile with
+{
+    Configuration = new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) },
+    VolatileFlushAccepted = false
+};
 var existingJson = System.Text.Json.JsonSerializer.Serialize(existingProfile);
 var existingRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(existingJson)!;
 existingRoundTrip.Validate();
@@ -115,35 +119,19 @@ ActivationSafety.ValidateTarget(0);
 ActivationSafety.ValidateTarget(1);
 Reject(() => ActivationSafety.ValidateTarget(-1), "invalid usage-path count");
 profile.Validate();
-Reject(() => (profile with { Version = 3 }).Validate(), "unknown profile version");
-Reject(() => (profile with { Version = 2 }).Validate(), "version-2 profile requires the volume GUID");
-Reject(() => (profile with { VolumeId = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}" }).Validate(), "version-1 profile carries no volume GUID");
+Reject(() => (profile with { Version = 1 }).Validate(), "unknown profile version");
+Reject(() => (profile with { VolumeId = null! }).Validate(), "profile requires the volume GUID");
+Reject(() => (profile with { VolumeId = "0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d" }).Validate(), "volume GUID keeps its braces");
 Reject(() => (profile with { Volume = @"Q:\folder" }).Validate(), "profile requires volume not path");
 Reject(() => (profile with { Instance = "" }).Validate(), "profile requires disk identity");
-Reject(() => (profile with { Bytes = 0 }).Validate(), "profile requires disk size");
+Reject(() => (profile with { Bytes = 0 }).Validate(), "profile requires volume size");
 Reject(() => (profile with { Configuration = null! }).Validate(), "profile requires configuration");
 Reject(() => (profile with { VolatileFlushAccepted = false }).Validate(), "saved fast profile requires acknowledgement");
-// Version 2: one profile per volume, named by the volume GUID; version 1 (disk filter) recorded the disk size.
-const string volumeGuid = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}";
-var volumeProfile = new SavedConfiguration(2, "Q:", "test-device-identity", 150L << 30, new(), true, volumeGuid);
-volumeProfile.Validate();
-Reject(() => (volumeProfile with { VolumeId = "0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d" }).Validate(), "volume GUID keeps its braces");
-var volumeRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(System.Text.Json.JsonSerializer.Serialize(volumeProfile))!;
-Check(volumeRoundTrip == volumeProfile, "version-2 profile round-trips");
-var legacyRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(
-    """{"Version":1,"Volume":"Q:","Instance":"test-device-identity","Bytes":214748364800,"Configuration":{"BudgetMiB":2048,"Preset":1,"Enabled":true},"VolatileFlushAccepted":false}""")!;
-legacyRoundTrip.Validate();
-Check(legacyRoundTrip.VolumeId is null && legacyRoundTrip.Version == 1, "a version-1 profile written by the disk filter still reads");
-Check(volumeProfile.Matches("R:", "other-disk", volumeGuid.ToUpperInvariant()), "a version-2 profile follows its volume GUID, not the letter");
-Check(!volumeProfile.Matches("Q:", "test-device-identity", "{00000000-0000-0000-0000-000000000002}"), "another volume at the same letter does not match");
-Check(profile.Matches("q:", "TEST-DEVICE-IDENTITY", volumeGuid) && !profile.Matches("R:", "test-device-identity", volumeGuid), "a version-1 profile matches its letter on its disk");
-volumeProfile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 200L << 30);
-RejectIo(() => volumeProfile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30, 200L << 30), "version-2 restore refuses a disk-size match");
-RejectIo(() => volumeProfile.CheckIdentity("test-device-identity", "{00000000-0000-0000-0000-000000000002}", 150L << 30, 200L << 30), "version-2 restore refuses another volume");
-RejectIo(() => volumeProfile.CheckIdentity("other-disk", volumeGuid, 150L << 30, 200L << 30), "restore refuses another disk");
-profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 200L << 30);
-profile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30, 300L << 30);
-RejectIo(() => profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 300L << 30), "version-1 restore needs the recorded disk or volume size");
+Check(profile.Matches(volumeGuid.ToUpperInvariant()) && !profile.Matches("{00000000-0000-0000-0000-000000000002}"), "a profile follows its volume GUID, not the letter");
+profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30);
+RejectIo(() => profile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30), "restore refuses a changed volume size");
+RejectIo(() => profile.CheckIdentity("test-device-identity", "{00000000-0000-0000-0000-000000000002}", 150L << 30), "restore refuses another volume");
+RejectIo(() => profile.CheckIdentity("other-disk", volumeGuid, 150L << 30), "restore refuses another disk");
 Check(VolumeIds.Parse(@"\\?\Volume{0E0C7F9E-1C1B-4C7E-8D7A-1F9F2A3B4C5D}\") == volumeGuid, "volume GUID parsed from the mount-manager name, lowercase");
 foreach (var invalid in new[] { @"\\?\Volume{0e0c7f9e}\", @"\\.\Q:", @"\\?\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}", "" })
     RejectIo(() => VolumeIds.Parse(invalid), "reject malformed volume name " + invalid);
@@ -447,15 +435,6 @@ diagnosticsBytes[0] = 1;
 BinaryPrimitives.WriteUInt64LittleEndian(diagnosticsBytes.AsSpan(16), 10);
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "deferred count exceeds requests");
 Console.WriteLine("Flush-policy/diagnostics protocol regression checks passed.");
-if (OperatingSystem.IsWindows())
-{
-    Check(DeviceFilters.Plan(["one", "two"], true).SequenceEqual(["one", "two", "qcachelab"]), "append lab filter");
-    Check(DeviceFilters.Plan(["one", "QCACHELAB", "two"], true).SequenceEqual(["one", "QCACHELAB", "two"]), "idempotent registration");
-    Check(DeviceFilters.Plan(["one", "QCACHELAB", "two"], false).SequenceEqual(["one", "two"]), "remove only lab filter");
-    Check(DeviceFilters.Plan([], false).Length == 0, "empty removal");
-    Console.WriteLine("Filter-list regression checks passed (no device changes).");
-}
-
 static void Check(bool value, string label) { if (!value) throw new Exception("FAIL: " + label); }
 static void RejectIo(Action action, string label)
 {

@@ -74,21 +74,4 @@ public static class DriverRegistration
         // Invalid function / not supported: no QueueCache filter on this volume's stack.
         catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50) { return false; }
     }
-
-    /// <summary>Per-disk registration belonged to the disk filter. Every volume is covered by the one
-    /// Volume-class registration, so these requests only explain that (or what is wrong).</summary>
-    public static async Task<string> ChangeAsync(string volume, bool attach, CancellationToken token = default)
-    {
-        var target = await DiskTarget.InspectAsync(volume, token);
-        var registration = Inspect();
-        var problems = registration.Problems();
-        if (problems.Count != 0)
-            throw new IOException($"{target.Device}: " + string.Join(" ", problems));
-        if (!attach)
-            throw new IOException($"{target.Device}: QueueCache no longer registers per disk; the filter stays on every volume and passes requests through unless a cache task is running. " +
-                $"Use 'qcache policy remove {target.Device}' to stop caching, or uninstall QueueCache to remove the filter.");
-        return IsLoaded(target.Device)
-            ? $"{target.Device}: covered by QueueCache's volume filter. Use 'qcache policy apply {target.Device} ...' to start caching."
-            : $"{target.Device}: registered for QueueCache's volume filter; restart Windows to load it.";
-    }
 }

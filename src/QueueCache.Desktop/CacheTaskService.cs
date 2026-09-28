@@ -33,7 +33,7 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
             Performance = device.GetPerformance()
         } : state;
     });
-    public bool IsPersistent(VolumeDescription volume) => SavedConfigurations.IsSaved(volume.Volume, volume.Instance, volume.VolumeId);
+    public bool IsPersistent(VolumeDescription volume) => SavedConfigurations.IsSaved(volume.VolumeId);
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
         // Choosing Fast in the editor is the desktop's explicit volatility acknowledgement.
         await CacheTasks.SaveAsync(volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress);

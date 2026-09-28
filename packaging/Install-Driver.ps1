@@ -26,7 +26,6 @@ function UpdatePath([bool]$Remove)
     }
     [Environment]::SetEnvironmentVariable('Path', ($parts -join ';'), 'Machine')
 }
-$diskClassPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
 $volumeClassPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{71a27cdd-812a-11d0-bec7-08002be2092f}'
 function Get-QueueCacheClassFilters([string[]]$Existing)
 {
@@ -41,7 +40,7 @@ function Get-QueueCacheClassFilters([string[]]$Existing)
 }
 function Remove-QueueCacheClassFilter([string]$Path)
 {
-    # Earlier packages filtered disks. Remove only our entry; keep every other filter.
+    # Remove only our entry; keep every other filter.
     $filters = @((Get-ItemProperty $Path -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ -and $_ -ine 'qcachelab' })
     if ($filters.Count)
     {
@@ -110,19 +109,6 @@ try
                 }
             }
         }
-        foreach ($disk in Get-CimInstance Win32_DiskDrive)
-        {
-            $filter = & $controller lab-filter inspect $disk.PNPDeviceID | ConvertFrom-Json
-            if ($LASTEXITCODE)
-            {
-                throw 'Cannot inspect disk filters; retaining recovery tools.'
-            }
-            if ($filter.UpperFilters -contains 'qcachelab')
-            {
-                Native $controller @('lab-filter', 'remove', $filter.InstanceId, $filter.DriverKey, '--lab-installer')
-            }
-        }
-        Remove-QueueCacheClassFilter $diskClassPath
         Remove-QueueCacheClassFilter $volumeClassPath
         UpdatePath $true
         Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
@@ -184,7 +170,6 @@ public static class QueueCacheCodeIntegrity {
     # Capture recovery data BEFORE changing the service or any registration.
     # Keep it outside the installation directory so uninstall cannot remove it.
     $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
-    $filters = @((Get-ItemProperty $diskClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
     $volumeFilters = @((Get-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
     $previousService = if (Test-Path $servicePath)
     {
@@ -194,17 +179,8 @@ public static class QueueCacheCodeIntegrity {
     {
         $null
     }
-    $deviceFilters = @(foreach ($disk in Get-CimInstance Win32_DiskDrive)
-        {
-            $filter = & $controller lab-filter inspect $disk.PNPDeviceID | ConvertFrom-Json
-            if ($LASTEXITCODE)
-            {
-                throw 'Cannot capture existing disk registration; no registration changed.'
-            }
-            $filter
-        })
     $backup = "$stateRoot\Registration-before-$([guid]::NewGuid().ToString('N')).json"
-    [pscustomobject]@{ Version = 2; CreatedUtc = [DateTime]::UtcNow.ToString('O'); Service = $previousService; ClassUpperFilters = $filters; VolumeClassUpperFilters = $volumeFilters; Devices = $deviceFilters } |
+    [pscustomobject]@{ Version = 3; CreatedUtc = [DateTime]::UtcNow.ToString('O'); Service = $previousService; VolumeClassUpperFilters = $volumeFilters } |
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $backup -Encoding UTF8
     Write-Output "Original registration saved to $backup"
     # An immutable version/hash filename can be staged while the old driver is
@@ -245,26 +221,13 @@ public static class QueueCacheCodeIntegrity {
     }
     UpdatePath $false
     # Volume-class registration covers volumes created in future as well as existing
-    # volumes after restart. Preserve every unrelated filter and its ordering. The
-    # disk-class entry of earlier packages is removed so no volume is cached twice.
+    # volumes after restart. Preserve every unrelated filter and its ordering.
     New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
     Native sc.exe @('config', 'qcachelab', 'start=', 'boot', 'group=', 'Filter')
-    Remove-QueueCacheClassFilter $diskClassPath
-    if (@((Get-ItemProperty $diskClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters) -contains 'qcachelab')
-    {
-        throw 'The disk-class QueueCache entry could not be removed.'
-    }
     $filters = @((Get-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ })
     [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $volumeClassPath -Expected $filters
-    foreach ($filter in $deviceFilters)
-    {
-        if ($filter.UpperFilters -contains 'qcachelab')
-        {
-            Native $controller @('lab-filter', 'remove', $filter.InstanceId, $filter.DriverKey, '--lab-installer')
-        }
-    }
     $action = New-ScheduledTaskAction -Execute $controller -Argument 'policy restore'
     $trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'
     $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest

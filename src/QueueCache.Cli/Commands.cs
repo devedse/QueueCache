@@ -36,19 +36,6 @@ internal static class Commands
             return 0;
         });
         disks.Subcommands.Add(diskList);
-        foreach (var attach in new[] { true, false })
-        {
-            var command = new Command(attach ? "attach" : "detach", "Obsolete: the filter covers every volume. Explains the volume's coverage; changes nothing.");
-            var drive = new Argument<string>("volume");
-            ValidateVolume(drive);
-            command.Arguments.Add(drive);
-            command.SetAction(async (p, token) =>
-            {
-                Console.WriteLine(await DriverRegistration.ChangeAsync(p.GetValue(drive)!, attach, token));
-                return 0;
-            });
-            disks.Subcommands.Add(command);
-        }
         root.Subcommands.Add(disks);
         var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
         var volume = new Argument<string>("volume") { Description = "Lettered NTFS volume, e.g. Q:. Each volume has its own cache, also when several share one disk." };
@@ -114,7 +101,7 @@ internal static class Commands
                 else
                 {
                     var target = await DiskTarget.InspectAsync(selected, token);
-                    var persistent = SavedConfigurations.IsSaved(target.Device, target.Instance, target.VolumeId);
+                    var persistent = SavedConfigurations.IsSaved(target.VolumeId);
                     await CacheTasks.SetEnabledAsync(selected, name == "resume", persistent, token, p.GetValue(transient));
                 }
                 Console.WriteLine($"Cache task {name} completed.");
@@ -180,26 +167,6 @@ internal static class Commands
         Add("status", ["device"], ["--json"], policy, "cache-status");
         Add("configure", ["device", "value"], [], policy);
         Add("set", ["device", "preset"], ["--accept-volatile-flush"], policy, "policy");
-        var filter = new Command("lab-filter", "Internal guarded installer integration.");
-        foreach (var action in new[] { "inspect", "add", "remove" })
-        {
-            var command = new Command(action);
-            var instance = new Argument<string>("instance");
-            command.Arguments.Add(instance);
-            var service = new Argument<string>("service");
-            var marker = new Option<bool>("--lab-installer");
-            if (action != "inspect")
-            {
-                command.Arguments.Add(service);
-                command.Options.Add(marker);
-            }
-            command.SetAction(p => compatibility(action == "inspect"
-                ? ["lab-filter", action, p.GetValue(instance)!]
-                : p.GetValue(marker) ? ["lab-filter", action, p.GetValue(instance)!, p.GetValue(service)!, "--lab-installer"]
-                : ["lab-filter", action, p.GetValue(instance)!, p.GetValue(service)!]));
-            filter.Subcommands.Add(command);
-        }
-        root.Subcommands.Add(filter);
         root.Subcommands.Add(DeveloperCommands.Create(compatibility));
         return root;
 
@@ -219,7 +186,7 @@ internal static class Commands
     }
     private static string VolumeStatus(VolumeDescription volume, IReadOnlyList<SavedConfiguration> saved)
     {
-        var profile = saved.Any(p => p.Matches(volume.Volume, volume.Instance, volume.VolumeId)) ? " | saved for startup" : "";
+        var profile = saved.Any(p => p.Matches(volume.VolumeId)) ? " | saved for startup" : "";
         try
         {
             using var device = new CacheDevice(volume.Volume);

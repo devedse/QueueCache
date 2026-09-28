@@ -148,11 +148,6 @@ internal static class DeveloperCommands
             return problems.Count == 0 ? 0 : 1;
         });
         driver.Subcommands.Add(registration);
-        var inspect = new Command("inspect", "Read a disk's own (per-device) UpperFilters by PnP instance, where packages before the volume filter registered; changes nothing.");
-        var target = new Argument<string>("instance");
-        inspect.Arguments.Add(target);
-        inspect.SetAction(p => compatibility(["lab-filter", "inspect", p.GetValue(target)!]));
-        driver.Subcommands.Add(inspect);
         root.Subcommands.Add(driver);
         var lab = new Command("lab-disk", "Volume-filter lab disk: an expandable VHDX with two NTFS volumes and one unformatted volume, for the volumes and trim-cache suites and write-tests.");
         var labPath = new Argument<string>("vhdx") { Description = @"Local .vhdx path, e.g. C:\QueueCache-Lab\VolumeLab.vhdx." };

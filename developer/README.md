@@ -21,7 +21,6 @@ before running; use the shared runner instead of copying private harness scripts
 | `qcache developer write-tests <volume> <exact-volume-bytes> <volume-GUID> <mode>` | Raw integration tests through the volume handle (the cache filter's position), including destructive writes in a fixed 64 MiB region at 1 GiB. Requires an unformatted (RAW) volume of at least 4 GiB on a non-OS disk, e.g. the lab disk's third volume. |
 | `qcache developer lab-disk create\|attach\|detach <path.vhdx>` | The volume-filter lab VHDX: two NTFS volumes and one unformatted volume on one disk. Creates/partitions only the new VHDX. |
 | `qcache developer driver registration` | The Volume/disk class filter lists, lab switches and any problem, as JSON. Exit 1 when the registration is not the supported one. |
-| `qcache developer driver inspect <PnP-instance>` | A disk's own per-device UpperFilters (where packages before the volume filter registered). |
 | `qcache developer driver delay <device> <milliseconds>` | Synthetic lower-write delay; 0 clears. |
 | `qcache developer driver fault <device> <value>` | Synthetic fault selector; 0 clears. |
 
@@ -61,7 +60,7 @@ secondary documentation; do not recreate those wrappers as another runner.
 
 Registration backups and logs are stored under `%ProgramData%\QueueCache` before
 setup changes registration. `packaging/Recover-Registration.ps1` restores an exact
-version-1 backup without the driver or CLI, either in Safe Mode or against an
+version-3 backup (Volume class list and service values) without the driver or CLI, either in Safe Mode or against an
 offline SYSTEM hive. Copy that script and the selected backup outside the guest
 before boot experiments. It requires `-ConfirmRestore`, supports `-WhatIf`, refuses
 to rewrite registration under a running QueueCache driver, and never reboots.

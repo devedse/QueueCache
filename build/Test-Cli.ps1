@@ -9,7 +9,7 @@ if ($CliPath)
 {
     $cli = (Resolve-Path -LiteralPath $CliPath).Path
 }
-foreach ($arguments in @(@('--help'), @('apply', '--help'), @('policy', '--help'), @('policy', 'apply', '--help'), @('policy', 'enable', '--help'), @('policy', 'set', '--help'), @('volume', '--help'), @('volume', 'list', '--help'), @('disk', 'list', '--help'), @('disk', 'attach', '--help'), @('test', '--help'), @('benchmark', '--help'), @('--version')))
+foreach ($arguments in @(@('--help'), @('apply', '--help'), @('policy', '--help'), @('policy', 'apply', '--help'), @('policy', 'enable', '--help'), @('policy', 'set', '--help'), @('volume', '--help'), @('volume', 'list', '--help'), @('disk', 'list', '--help'), @('test', '--help'), @('benchmark', '--help'), @('--version')))
 {
     & $cli @arguments
     if ($LASTEXITCODE)
@@ -50,13 +50,8 @@ foreach ($name in @('pause', 'resume', 'remove'))
         throw 'Invalid task volume must fail before disk access.'
     }
 }
-& $cli disk attach 'Q:\not-a-volume' 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 2)
-{
-    throw 'Invalid attachment target must fail during parsing.'
-}
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'inspect'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
+foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
 {
     & $cli @command --help
     if ($LASTEXITCODE)

@@ -9,11 +9,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $backupPath = (Resolve-Path -LiteralPath $BackupFile).Path
 $backup = Get-Content -LiteralPath $backupPath -Raw | ConvertFrom-Json
-# Version 1: disk-class installs. Version 2 also records the Volume class list.
-if (-not $ConfirmRestore -or $backup.Version -notin @(1, 2) -or -not $backup.CreatedUtc -or $null -eq $backup.ClassUpperFilters -or
-    $null -eq $backup.Devices -or ($backup.Version -eq 2 -and $null -eq $backup.VolumeClassUpperFilters))
+# Version 3: the Volume class UpperFilters and the service values before installation.
+if (-not $ConfirmRestore -or $backup.Version -ne 3 -or -not $backup.CreatedUtc -or $null -eq $backup.VolumeClassUpperFilters)
 {
-    throw 'A version-1 or version-2 QueueCache registration backup and explicit -ConfirmRestore are required.'
+    throw 'A version-3 QueueCache registration backup and explicit -ConfirmRestore are required.'
 }
 
 $mountName = 'QueueCacheRecovery'
@@ -44,43 +43,9 @@ try
         $systemRoot = 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet'
     }
 
-    $classPath = Join-Path $systemRoot 'Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
-    if (-not (Test-Path -LiteralPath $classPath)) { throw 'Disk class registry key is missing.' }
     $volumeClassPath = Join-Path $systemRoot 'Control\Class\{71a27cdd-812a-11d0-bec7-08002be2092f}'
     if (-not (Test-Path -LiteralPath $volumeClassPath)) { throw 'Volume class registry key is missing.' }
-    # A version-1 backup predates volume registration: restore that list without our entry.
-    [string[]]$volumeFilters = if ($backup.Version -eq 2) { @($backup.VolumeClassUpperFilters | Where-Object { $_ }) }
-        else { @((Get-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters | Where-Object { $_ -and $_ -ine 'qcachelab' }) }
-    # Validate every recorded target before changing any registration. A stale or
-    # malformed per-device key must not leave only the class filter restored.
-    $deviceTargets = @(
-        foreach ($device in @($backup.Devices))
-        {
-            if ($device.DriverKey -notmatch '^\{[0-9A-Fa-f-]{36}\}\\[0-9]{4}$' -or $null -eq $device.UpperFilters)
-            {
-                throw 'Backup contains an invalid disk driver key or filter list.'
-            }
-            $devicePath = Join-Path (Join-Path $systemRoot 'Control\Class') $device.DriverKey
-            if (-not (Test-Path -LiteralPath $devicePath))
-            {
-                throw "Recorded disk registry key is absent: $($device.DriverKey)"
-            }
-            [pscustomobject]@{ Path = $devicePath; Filters = [string[]]@($device.UpperFilters | Where-Object { $_ }) }
-        }
-    )
-    [string[]]$classFilters = @($backup.ClassUpperFilters | Where-Object { $_ })
-    if ($PSCmdlet.ShouldProcess($classPath, "restore disk-class UpperFilters from $backupPath"))
-    {
-        if ($classFilters.Count)
-        {
-            New-ItemProperty -LiteralPath $classPath -Name UpperFilters -PropertyType MultiString -Value $classFilters -Force | Out-Null
-        }
-        else
-        {
-            Remove-ItemProperty -LiteralPath $classPath -Name UpperFilters -ErrorAction SilentlyContinue
-        }
-    }
-
+    [string[]]$volumeFilters = @($backup.VolumeClassUpperFilters | Where-Object { $_ })
     if ($PSCmdlet.ShouldProcess($volumeClassPath, "restore volume-class UpperFilters from $backupPath"))
     {
         if ($volumeFilters.Count)
@@ -90,21 +55,6 @@ try
         else
         {
             Remove-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue
-        }
-    }
-
-    foreach ($device in $deviceTargets)
-    {
-        if ($PSCmdlet.ShouldProcess($device.Path, 'restore per-device UpperFilters'))
-        {
-            if ($device.Filters.Count)
-            {
-                New-ItemProperty -LiteralPath $device.Path -Name UpperFilters -PropertyType MultiString -Value $device.Filters -Force | Out-Null
-            }
-            else
-            {
-                Remove-ItemProperty -LiteralPath $device.Path -Name UpperFilters -ErrorAction SilentlyContinue
-            }
         }
     }
 

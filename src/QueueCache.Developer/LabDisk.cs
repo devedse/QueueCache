@@ -51,16 +51,10 @@ public static class LabDisk
         foreach (var letter in new[] { letters.First, letters.Second, letters.Raw })
             if (used.Contains(letter))
                 throw new IOException($"{letter}: is already in use.");
-        var script = Path.Combine(Path.GetTempPath(), $"QueueCache-LabDisk-{Guid.NewGuid():N}.txt");
-        await File.WriteAllTextAsync(script, $"create vdisk file=\"{path}\" maximum={sizeGiB * 1024} type=expandable\r\n", token);
-        try
-        {
-            await Run("diskpart.exe", ["/s", script], token);
-        }
-        finally { File.Delete(script); }
+        await DiskPart($"create vdisk file=\"{path}\" maximum={sizeGiB * 1024} type=expandable\r\nattach vdisk\r\n", token);
         // The new VHDX is the only disk this touches: found by its image path and required to be empty (RAW).
-        await PowerShell($"$ErrorActionPreference='Stop'; $i=Mount-DiskImage -ImagePath '{path}' -PassThru | Get-DiskImage; " +
-            "$d=Get-Disk -Number $i.Number; if ($d.PartitionStyle -ne 'RAW' -or $d.NumberOfPartitions -ne 0 -or $d.IsBoot -or $d.IsSystem) { throw 'The attached VHDX is not an empty disk.' }; " +
+        await PowerShell($"$ErrorActionPreference='Stop'; $d=@(Get-Disk | Where-Object Location -eq '{path}'); if ($d.Count -ne 1) {{ throw 'The new VHDX is not attached.' }}; $d=$d[0]; " +
+            "if ($d.PartitionStyle -ne 'RAW' -or $d.NumberOfPartitions -ne 0 -or $d.IsBoot -or $d.IsSystem) { throw 'The attached VHDX is not an empty disk.' }; " +
             "Initialize-Disk -Number $d.Number -PartitionStyle GPT; " +
             $"New-Partition -DiskNumber $d.Number -Size {VolumeGiB}GB -DriveLetter {letters.First} | Format-Volume -FileSystem NTFS -NewFileSystemLabel QC-Lab-1 -Confirm:$false | Out-Null; " +
             $"New-Partition -DiskNumber $d.Number -Size {VolumeGiB}GB -DriveLetter {letters.Second} | Format-Volume -FileSystem NTFS -NewFileSystemLabel QC-Lab-2 -Confirm:$false | Out-Null; " +
@@ -73,7 +67,10 @@ public static class LabDisk
         path = ValidatePath(path);
         if (!File.Exists(path))
             throw new FileNotFoundException("No lab disk at this path; create it first.", path);
-        await PowerShell($"$ErrorActionPreference='Stop'; if (-not (Get-DiskImage -ImagePath '{path}').Attached) {{ Mount-DiskImage -ImagePath '{path}' | Out-Null }}", token);
+        // diskpart: after an unclean restart Mount-DiskImage answered "Access is denied" on the VM.
+        var attached = await PowerShell($"@(Get-Disk | Where-Object Location -eq '{path}').Count", token);
+        if (attached.Trim() == "0")
+            await DiskPart($"select vdisk file=\"{path}\"\r\nattach vdisk\r\n", token);
         return await ShowAsync(path, token);
     }
 
@@ -87,7 +84,7 @@ public static class LabDisk
             if (device.GetWriteCacheState().BudgetBytes != 0)
                 throw new IOException($"{volume} has a cache task. Remove it first: qcache policy remove {volume}");
         }
-        await PowerShell($"$ErrorActionPreference='Stop'; Dismount-DiskImage -ImagePath '{path}' | Out-Null", token);
+        await DiskPart($"select vdisk file=\"{path}\"\r\ndetach vdisk\r\n", token);
         Console.WriteLine($"Detached {path}.");
         return 0;
     }
@@ -111,9 +108,20 @@ public static class LabDisk
 
     private static async Task<string[]> VolumesAsync(string path, CancellationToken token)
     {
-        var output = await PowerShell($"$ErrorActionPreference='Stop'; $i=Get-DiskImage -ImagePath '{path}'; if (-not $i.Attached) {{ throw 'The lab disk is not attached.' }}; " +
-            "Get-Partition -DiskNumber $i.Number | Where-Object DriveLetter | ForEach-Object { \"$($_.DriveLetter):\" }", token);
+        var output = await PowerShell($"$ErrorActionPreference='Stop'; $d=@(Get-Disk | Where-Object Location -eq '{path}'); if ($d.Count -ne 1) {{ throw 'The lab disk is not attached.' }}; " +
+            "Get-Partition -DiskNumber $d[0].Number | Where-Object DriveLetter | ForEach-Object { \"$($_.DriveLetter):\" }", token);
         return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static async Task DiskPart(string commands, CancellationToken token)
+    {
+        var script = Path.Combine(Path.GetTempPath(), $"QueueCache-LabDisk-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(script, commands, token);
+        try
+        {
+            await Run("diskpart.exe", ["/s", script], token);
+        }
+        finally { File.Delete(script); }
     }
 
     private static Task<string> PowerShell(string command, CancellationToken token) =>
