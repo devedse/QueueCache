@@ -78,8 +78,17 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
             throw new IOException("Invalid disk identity.");
         var extent = ReadExtent(letter);
         var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes, VolumeId = ReadVolumeId(letter) };
-        if (!string.Equals(new DriveInfo(target.Root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Only NTFS volumes are currently supported.");
+        string format;
+        try
+        {
+            format = new DriveInfo(target.Root).DriveFormat;
+        }
+        catch (IOException ex)
+        {
+            throw new IOException($"{letter}: has no file system Windows can read (it may be unformatted). QueueCache caches NTFS volumes.", ex);
+        }
+        if (!string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"{letter}: is {format}. QueueCache caches NTFS volumes.");
         target.CheckExtents();
         return target;
     }

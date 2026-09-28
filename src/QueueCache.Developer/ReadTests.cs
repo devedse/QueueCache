@@ -37,7 +37,9 @@ public static class ReadTests
         var before = Snapshot();
         using (var stream = new FileStream(DevicePath.NormalizeVolume(disk.Volume), FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536))
         {
-            foreach (var offset in new[] { 0L, 1L << 20, 1L << 30, expectedBytes - 65536 })
+            // Through a mounted file system's volume handle Windows limits reads to the file system's size
+            // (NTFS: one sector short of the partition), so the last probe starts 1 MiB before the end.
+            foreach (var offset in new[] { 0L, 1L << 20, 1L << 30, expectedBytes - (1L << 20) })
             {
                 token.ThrowIfCancellationRequested();
                 var first = new byte[65536];

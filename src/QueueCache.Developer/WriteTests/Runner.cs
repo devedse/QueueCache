@@ -94,7 +94,7 @@ public static class Runner
                 using var cache = new CacheDevice(volume);
                 cacheBefore = cache.GetWriteCacheState();
                 if (!cacheBefore.Enabled || cacheBefore.Faulted || cacheBefore.DirtyBytes != 0)
-                    throw new IOException("Cache exercise requires a healthy enabled, initially clean cache.");
+                    throw new IOException($"Cache exercise requires a healthy enabled, initially clean cache on {volume} (for example: qcache start {volume} 256).");
             }
 
             // An independent in-memory oracle. Pattern is stable across processes/reboots.
@@ -425,9 +425,12 @@ public static class Runner
             {
                 using var cache = new CacheDevice(volume);
                 var after = cache.GetWriteCacheState();
+                // 64 MiB base plus 2 MiB of 4 KiB overwrites are admitted. An overwrite of a block that is still
+                // pending is merged in RAM (Idle/Balanced/Deferred), so between 64 MiB and everything admitted drains.
+                var drained = after.DrainedBytes - cacheBefore.DrainedBytes;
                 if (after.Faulted || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
                     after.AcceptedBytes - cacheBefore.AcceptedBytes != 69206016 ||
-                    after.DrainedBytes - cacheBefore.DrainedBytes != 69206016 || after.CacheReadBytes <= cacheBefore.CacheReadBytes ||
+                    drained < regionLength || drained > 69206016 || after.CacheReadBytes <= cacheBefore.CacheReadBytes ||
                     after.Flushes <= cacheBefore.Flushes)
                     throw new IOException("Cache counters do not prove admission, RAM reads, full drain and flush.");
                 Console.WriteLine(JsonSerializer.Serialize(new
