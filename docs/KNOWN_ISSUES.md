@@ -44,14 +44,15 @@ Verified under Driver Verifier: a 10-cycle saved-C:-profile restart soak with a
 new program-file check each cycle (plan 61, `system-paging/program-files-match-disk`),
 and every Q: suite (tracker, P6).
 
-## Fixed: a read miss was kept from the application's own buffer (up to 0.4.166.1)
+## Fixed: a read miss was kept from the application's own buffer (up to 0.4.166.1; fixed in 0.4.169.1)
 
 What could happen: when an unbuffered read missed the cache, the driver kept a
 copy of the block taken from the application's buffer after the disk filled it.
 If that application changed its buffer before the read completed (a bug, or on
 purpose), the changed bytes were kept as the file's contents and other programs
 reading that file received them. Reading the file was enough; no write access was
-needed. Nothing reached the disk. Found by review on 2026-09-28, not observed.
+needed. Nothing reached the disk. Found by review on 2026-09-28; the new check
+then reproduced it on 0.4.166.1 (all 16 MiB re-read held the other thread's bytes).
 
 Fix (plan 62): a miss that will be kept is read from the disk into a new
 driver-owned buffer, copied to the application from there, and kept from there.

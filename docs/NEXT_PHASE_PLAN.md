@@ -37,55 +37,56 @@ Earlier status (2026-09-27):
 - Offline/Safe Mode recovery and the desktop Retry button (T054).
 - Physical disk removal (hot-unplug) tests.
 
-## Phase 1: verify and measure what was just built
+## Done (Fast-mode request path, 0.4.153.1-0.4.166.1)
 
-1. **TRIM on a discard-capable disk (N6).** Enable discard on Q:'s virtual disk
-   (owner), then run `trim-file` and `trim-diagnostic` and add a maintained case:
-   cached dirty data inside a trimmed range must not reach the disk, a partly
-   trimmed block keeps its other sectors, and no whole-cache wipe happens.
-2. **Read-caching benefit (N2).** Add a measurement: read a data set, evict it
-   from Windows' own cache, read it again and compare with caching off. Add a
-   scan-resistance case: a hot set stays cached across a large one-off read.
-3. **Settings rollback on the VM (N1).** Force a failed resize with existing lab
-   fault 6/7 during Apply and check the previous settings are restored.
+Parallel copies (SEQ1M Q8T1 about 36/21 GB/s), the random Q32 gap (idle drainers
+woke on every write), and caller-thread service (random 4 KiB Q1 about 10x).
+Details: [WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md).
 
-## Phase 2: Fast-mode performance
+## Step 1: safety first (in progress, 2026-09-28)
 
-4. **Parallel data copies: DONE (0.4.158.1-0.4.162.1).** Large RAM-hit reads and
-   the payload copies of large fitting writes run on three offloaded-request
-   threads; the cache lock is a push lock. CrystalDiskMark SEQ1M Q8T1 rose from
-   about 14.4/14.0 to 36.4/20.7 GB/s read/write (WRITE_PERFORMANCE_TRAJECTORY).
-   Follow-ups: measure multi-threaded rows (T4); release cache space held by
-   deleted files' data on disks without TRIM; optionally split one large
-   caller-path copy across threads (SEQ1M Q1 stays near one copy's speed).
-5. **Random Q32 gap: EXPLAINED AND FIXED (0.4.154.1).** Drainers above the
-   configured parallelism woke on every cached write while write-back ran,
-   collapsing random Q32 writes to about 35,000/s, which is where 0.4.148.1's
-   `write-performance` Q32 medians sat. Now about 310,000/s with CrystalDiskMark's
-   DiskSpd. Re-run `write-performance` for a new maintained baseline.
-6. **Request-path cost: DONE (0.4.153.1-0.4.162.1).** RAM hits and fitting writes
-   on an otherwise idle disk are served on the caller's thread (random 4 KiB Q1
-   about 10x); deep queues stay on the worker, which polls 30 us before sleeping.
-7. **Drain shape.** Larger batches (512 KiB-1 MiB) and disk-order batching when a
-   backlog builds, measured with `drain-decision` and `write-performance`; confirm
-   on a physical NVMe or HDD before changing defaults.
-8. **Optional: warm start.** Remember the hot read set at shutdown and reload it
-   in the background after boot.
+1. **Read misses kept only from driver-owned memory: DONE (plan 62, 0.4.169.1).**
+   A program changing its buffer mid-read could put its bytes in the cache for
+   other programs. `policies/read-miss-isolation` failed on 0.4.166.1 (16 of
+   16 MiB poisoned) and passes on 0.4.169.1 under Driver Verifier.
+2. **Settings rollback on the driver: DONE (plan 63, 0.4.169.1).** Lab faults 6/7
+   fail a resize once; the previous settings were back and the same change
+   applied afterwards, under Driver Verifier.
+3. **TRIM on a discard-capable disk (N6): needs the owner.** Windows allows TRIM
+   but Q:'s virtual disk rejects it ("Not Supported"): enable discard for that
+   disk in the hypervisor. Then run `trim-file`/`trim-diagnostic` and add a
+   maintained case: trimmed dirty data never reaches the disk, a partly trimmed
+   block keeps its other sectors, no whole-cache wipe.
 
-## Phase 3: remaining normal-use robustness
+## Step 2: measure what we have
 
-9. Adding or removing a pagefile while the cache is active (paging-role
-   transitions, A08).
-10. Exact flush cutoff under concurrent writers (T052).
-11. Installer, upgrade and uninstall failure matrix and final user documentation
+4. Re-run `write-performance` for a new maintained baseline.
+5. Multi-threaded rows (T1/T2/T4); if limited, allow several read hits at once.
+6. Read-caching benefit: read, evict Windows' cache, re-read, compare with caching
+   off; a hot set must survive a large one-off read.
+
+## Step 3: optional speed work
+
+7. SEQ1M Q1 (about 14.5 GB/s): split one large caller-path copy across threads.
+8. Release cache space held by deleted files' data on disks without TRIM.
+9. Drain shape: larger, disk-ordered batches when a backlog builds (confirm on
+   physical NVMe/HDD first).
+10. Warm start: reload the hot read set after boot.
+
+## Step 4: normal-use robustness
+
+11. Adding or removing a pagefile while caching is active (A08).
+12. Exact flush cutoff under concurrent writers (T052), now more important with
+    caller-thread service and parallel copies.
+13. Installer, upgrade and uninstall failure matrix and final user documentation
     (A10).
 
-## Phase 4: release readiness (A12-A16)
+## Step 5: release readiness (A12-A16)
 
-12. Private-alpha freeze and reporting handoff (A12).
-13. Support contract and safety gaps (A13); signing, servicing and security,
+14. Private-alpha freeze and reporting handoff (A12).
+15. Support contract and safety gaps (A13); signing, servicing and security,
     including CodeQL/SDV in CI (A14).
-14. Endurance and environment matrix with Driver Verifier enabled (A15); release
+16. Endurance and environment matrix with Driver Verifier enabled (A15); release
     process (A16).
 
 ## Test VM notes
