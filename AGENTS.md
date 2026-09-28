@@ -31,8 +31,10 @@
   ID. Never silently turn missing fields into zero, infer loaded-driver identity
   from a version string, or declare an incomplete matrix passed.
 - Before a run: use an elevated terminal on the test VM, stop competing tests/UI
-  workloads, confirm the intended CI driver is loaded, and use a clean non-OS
-  physical disk. No existing delay/fault hooks may be armed. The current driver
+  workloads, confirm the intended CI driver is loaded, and use a volume on a clean
+  non-OS physical disk. QueueCache filters volumes (docs/VOLUME_FILTER.md); keep the
+  `volumes`/`trim-cache` suites and `write-tests` on the lab VHDX
+  (`qcache developer lab-disk`), and keep the registration check strict. No existing delay/fault hooks may be armed. The current driver
   cannot report their original settings; the runner restores its delay to zero.
 - Examples (paths are on the machine running qcache, not the controlling machine):
 
@@ -40,6 +42,9 @@
   qcache developer verify Q: --suite quick --output C:\QueueCache-Results
   qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
   qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+  qcache developer lab-disk attach C:\QueueCache-Lab\VolumeLab.vhdx
+  qcache developer verify V: --suite volumes --output C:\QueueCache-Results
+  qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
   qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
   ```
 

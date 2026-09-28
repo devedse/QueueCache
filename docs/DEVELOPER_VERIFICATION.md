@@ -9,7 +9,17 @@ qcache developer verify Q: --suite quick
 qcache developer verify Q: --suite paging-coherence --output C:\QueueCache-Results
 qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+# Volume-filter suites on the lab VHDX (see "Volume-filter lab disk" below)
+qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
+qcache developer verify V: --suite volumes --output C:\QueueCache-Results
+qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
 ```
+
+The target is always a volume (`Q:`): QueueCache filters volumes, and every volume
+has its own cache. Every suite that changes cache settings first requires the
+supported registration (`qcache developer driver registration`): QueueCache as the
+last Volume-class upper filter, not on the disk class, every volume covered, no
+lab `DiagnosticMode`.
 
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
@@ -17,7 +27,46 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 63)
+## Suites (plan version 64)
+
+Plan 64 adds two suites for the volume filter, both outside `full` because they need
+the lab disk:
+
+- `volumes` (three cases). `volume-registration`: the registration is the supported
+  one, the driver's device length equals the volume length, the physical disk
+  rejects a QueueCache request (no disk-level filter), and the filter answers on
+  every lettered fixed volume. `volume-raw-disk-commands`: with 16 MiB pending
+  (Fast, Deferred, one-hour age) and 8 MiB clean, a storage device-descriptor
+  query, a drive-geometry query and a SCSI INQUIRY pass-through (SKIP-noted when the
+  storage driver refuses pass-through) go to `\\.\PhysicalDriveN`; nothing may be
+  drained, flushed or evicted and no error recorded; both files must then read
+  back exact from the disk. `volume-shared-disk`: a second NTFS volume on the same
+  disk (without a cache task or saved profile, otherwise SKIP) gets its own 128 MiB
+  cache beside the target's 256 MiB; each accepts only its own 32 MiB file,
+  flushing one leaves the other's pending data undrained, both read back exact; a
+  version-2 profile saved for the second volume leaves the target's profile alone
+  and is removed again. The second volume is left without a cache task.
+- `trim-cache`: file-level TRIM with the cache running (Fast, Deferred). Pending
+  writes in the trimmed range are dropped (discarded counter, nothing drained),
+  clean copies are released, and a TRIM during an in-flight drain (300 ms lab delay)
+  waits for the issued write; untrimmed guards and a full rewrite read back exact
+  from the disk. A disk that rejects TRIM makes the case SKIP.
+
+Both suites may finish `COMPLETED_WITH_SKIPS`; a skipped case is not a pass. Plan
+64 also makes every cache-changing suite refuse an unsupported registration at
+capture.
+
+### Volume-filter lab disk
+
+`qcache developer lab-disk create <path.vhdx> [--letters V,W,X] [--size-gib 24]`
+creates a new expandable VHDX (diskpart), attaches it and partitions only that
+disk: two 8 GiB NTFS volumes (`QC-Lab-1`, `QC-Lab-2`) and one unformatted volume
+with the rest. It refuses an existing file and letters in use. Windows does not
+reattach a VHDX after a restart: run `lab-disk attach <path.vhdx>`. `lab-disk detach`
+refuses while any of its volumes has a cache task. The command prints the exact
+`write-tests` arguments for the unformatted volume. A VHDX accepts TRIM, so the
+`trim-cache` suite runs there even where the VM's own disks cannot TRIM (known
+issues). Keep the VHDX file on a volume without a cache task (C: on the lab VM).
 
 Plan 63 adds `policies/settings-rollback/lab-fault-6` and `-7` (N1 on the real
 driver). From 64 MiB Fast/Idle with a file cached, the lab fault makes the next
@@ -302,6 +351,8 @@ Preserve prior raw results and their scope.
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
+| `volumes` | Plan 64: `volume-registration`, `volume-raw-disk-commands` and `volume-shared-disk` (above). Needs the lab disk for the shared-disk case (SKIP otherwise). No DiskSpd. Not in `full`. |
+| `trim-cache` | Plan 64: TRIM of pending, clean and in-flight data with guard and rewrite oracles (above). Needs a disk that accepts TRIM (lab VHDX); SKIP otherwise. No DiskSpd. Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
@@ -777,7 +828,7 @@ The delay hook is cleared to zero; **start with no armed delay/fault hooks** bec
 the protocol cannot capture their original values. The runner never resets faults,
 formats, deletes test data, reboots, or touches OS-disk caching. Recovery is bounded
 and can fail; inspect its evidence rather than assuming the old configuration won.
-Only one runner/recovery may own a physical disk. Do not change the same cache from
+Only one runner/recovery may own a physical disk (volumes on one disk share the lease). Do not change the same cache from
 the UI, CLI or another test during a run; the lease does not lock out those clients.
 
 ## Scope and maintenance

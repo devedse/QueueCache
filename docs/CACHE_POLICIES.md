@@ -10,11 +10,24 @@ Paging-file and unknown-origin requests take coherent ordered lower I/O. Paging
 read misses are not newly retained; resident sectors still serve coherent reads.
 See the [T085 design](T085_APPLICATION_CACHING_DESIGN.md).
 
+## Where the cache sits (volume filter)
+
+QueueCache filters volumes: it is the topmost volume filter, directly below the file
+system, and every volume has its own cache (state, budget, counters, worker and
+drainers), also when several volumes share one disk. Offsets are volume offsets.
+Requests reach it from the file system, or from an application that opens the volume
+(`\\.\Q:`). Requests sent to the physical disk (`\\.\PhysicalDriveN`: SMART
+and health queries, SCSI/ATA pass-through, firmware polls) go to the disk's own
+stack and never reach the cache, so they cannot drain it, empty it or be refused by
+it. Raw reads and writes sent to the physical disk also bypass it; see
+[known issues](KNOWN_ISSUES.md) for what that means for disk-imaging tools.
+Background: [volume filtering](VOLUME_FILTER.md).
+
 QueueCache uses one block index: dirty writes, retained clean writes and clean reads never need separate copies of the same current block. An older in-flight write can temporarily coexist with its newer replacement. Reads select the newest version; the older version must finish before its replacement can be written to disk.
 
 ## How requests are served (since 0.4.153.1-0.4.162.1)
 
-Every disk has one ordered request worker, a pool of three offloaded-request
+Every cached volume has one ordered request worker, a pool of three offloaded-request
 threads and the drainers. The order of requests that could affect each other is
 decided in one place, while copies of independent requests run in parallel.
 
@@ -106,7 +119,7 @@ are not reset when settings change. `qcache watch` prints the same on one line;
 
 ## Memory and confirmed state
 
-The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include all active disk budgets in experiment planning. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Cache payload is preallocated physical pages (not kernel nonpaged pool); only bookkeeping uses nonpaged pool. It does not shrink automatically under later Windows memory pressure.
+The shared driver limit is 75% of physical RAM, capped at 128 GiB. Before increasing a budget, management preserves the greater of 2 GiB or 25% of physical RAM from currently available memory for Windows/applications. Include the budgets of all cached volumes in experiment planning; volumes on one disk each have their own budget. Availability is an estimate; kernel allocation can still fail. A failed resize leaves the cache disabled and reports failure, rather than pretending to restore the previous allocation. Cache payload is preallocated physical pages (not kernel nonpaged pool); only bookkeeping uses nonpaged pool. It does not shrink automatically under later Windows memory pressure.
 
 The driver advertises a versioned state/policy contract while retaining its old ABI. A new-driver **Active** state requires enabled routing, allocated payload, and no fault, suspension, removal or barrier. Settings are read back and compared after Apply. Instance/revision identify the live cache, not a saved profile; unavailable samples must not be displayed as live. A status sample confirms driver state at that instant, not filesystem correctness, physical durability, or a throughput guarantee.
 
@@ -124,12 +137,13 @@ proof remain open.
 
 Validation status: maintained policy runs have verified retained hot data across an unrelated small-file write and disk discovery. CI-built plan-37 policies passed against loaded 0.4.92.1. Plan-14 trigger/capacity checks passed on 0.4.64.1. These remain scoped results; T083/T084 require stronger ordering and owned-request admission attribution.
 
-Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
+The desktop shows one card per lettered volume, grouped under its disk. An unformatted
+or non-NTFS volume shows why it cannot get a cache. Each card shows **Readable from RAM** (clean read-fill plus retained drained writes, both served without touching the disk), pending writes, and incoming/drain rates, with read cache, retained writes, read hits and evicted-block count in the residency line.
 
 The occupancy bar shows resident RAM: blue for clean read data, teal for retained clean writes, purple for pending writes, pale for the unused budget. Both the bar and the throughput chart carry a colour key drawn from the same palette constants. Draining changes pending writes into retained writes when retention is enabled; it does not empty the read cache. The history chart separately shows read, incoming-write and drain throughput.
 
 One header selector sets the live update interval (0.5/1/2/5/10 s) for every value on every card: metrics, residency line and the history chart, which keeps one point per sample, so its window is 60 x the interval. Staleness marking and inventory rediscovery scale with the same interval.
 
-Each disk has one independent in-flight telemetry request. Slow inventory discovery or another disk cannot hold up healthy disks. Samples older than three seconds are shown as unavailable, never as a live Active state.
+Each volume has one independent in-flight telemetry request. Slow inventory discovery or another volume cannot hold up healthy volumes. Samples older than three seconds are shown as unavailable, never as a live Active state.
 
 Uncached/partial writes invalidate only intersecting clean blocks. Known geometry and descriptor queries preserve cached payload; unknown media-changing operations still drain and invalidate conservatively. Descriptor query semantics follow [Microsoft's storage-property contract](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-storage_property_query).

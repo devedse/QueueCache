@@ -16,10 +16,12 @@ before running; use the shared runner instead of copying private harness scripts
 | `qcache test Q:` | Ordinary current-boot file checks. New files retained; no raw writes, faults or reboot. |
 | `qcache benchmark Q:` | Ordinary sequential file benchmark. |
 | `qcache developer performance Q: [--timing true/false]` | Queue/phase/counter JSON; optional detailed lock and drain timing. No workload is started. |
-| `qcache developer test <disk> <exact-bytes> <PnP-instance>` | Read-only pass-through smoke test; use an idle disk. `--detached` expects no filter. |
-| `qcache developer file-tests Q <disk> <exact-bytes> <PnP-instance> <mode>` | Advanced NTFS integrity, concurrency, coalescing and flush-policy scenarios. |
-| `qcache developer write-tests <disk> <exact-bytes> <PnP-instance> <mode>` | Raw-disk integration tests, including destructive writes in a fixed 64 MiB region at 1 GiB. Requires an empty RAW non-OS disk. |
-| `qcache developer driver inspect <PnP-instance>` | Per-device registration diagnostics (not a class-registration report). |
+| `qcache developer test <volume> <exact-volume-bytes> <volume-GUID>` | Read-only pass-through smoke test through the volume handle; use an idle volume. `--detached` expects no filter. |
+| `qcache developer file-tests Q <disk> <exact-disk-bytes> <PnP-instance> <mode>` | Advanced NTFS integrity, concurrency, coalescing and flush-policy scenarios on volume Q of that disk. |
+| `qcache developer write-tests <volume> <exact-volume-bytes> <volume-GUID> <mode>` | Raw integration tests through the volume handle (the cache filter's position), including destructive writes in a fixed 64 MiB region at 1 GiB. Requires an unformatted (RAW) volume of at least 4 GiB on a non-OS disk, e.g. the lab disk's third volume. |
+| `qcache developer lab-disk create\|attach\|detach <path.vhdx>` | The volume-filter lab VHDX: two NTFS volumes and one unformatted volume on one disk. Creates/partitions only the new VHDX. |
+| `qcache developer driver registration` | The Volume/disk class filter lists, lab switches and any problem, as JSON. Exit 1 when the registration is not the supported one. |
+| `qcache developer driver inspect <PnP-instance>` | A disk's own per-device UpperFilters (where packages before the volume filter registered). |
 | `qcache developer driver delay <device> <milliseconds>` | Synthetic lower-write delay; 0 clears. |
 | `qcache developer driver fault <device> <value>` | Synthetic fault selector; 0 clears. |
 
@@ -50,7 +52,7 @@ secondary documentation; do not recreate those wrappers as another runner.
 | random drain | Random-write performance cells plus recorded explicit preparation/restoration drains |
 | drain-parallelism throughput comparison | Deferred until residual evidence justifies multi-worker tuning. Correctness at parallelism 1/2/4 remains in `policies`. |
 | flush under load | `verify --suite flush-interference` |
-| `Test-LabReads` attached/detached | `qcache developer test <disk> <bytes> <instance> [--detached]` |
+| `Test-LabReads` attached/detached | `qcache developer test <volume> <bytes> <volume-GUID> [--detached]` |
 | `Test-CacheFaults` lower completion error/retry | `file-tests ... test-coalescing` uses fault 4, retains dirty data, retries and verifies an independent file hash |
 | `Test-CacheFaults` lower flush error/retry | `file-tests ... test-flush-policy` uses fault 3, requires visible failure, retries and verifies the file hash |
 | raw pre-submission/short-completion faults 1/2/5 | Deferred raw-only variants. They are not needed to claim the A06 minimum fault paths and remain an explicit gap. |
