@@ -16,10 +16,10 @@ internal static class LegacyCommands
         if (args.Length == 0 || args is ["--help"] or ["help"])
         {
             Console.WriteLine("""
-        QueueCache experimental lab controller
+        QueueCache experimental lab controller (every <device> is a volume such as D:)
           qcache list
-          qcache status <D:|PhysicalDrive1> [--json]
-          qcache watch <D:|PhysicalDrive1>
+          qcache status <D:> [--json]
+          qcache watch <D:>
           qcache cache-status <device> [--json]
           qcache diagnostics <device>
           qcache policy <device> strict

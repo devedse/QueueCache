@@ -21,6 +21,8 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     public string Device => $"{Letter}:";
     /// <summary>Size of the physical disk holding the volume.</summary>
     public long DiskBytes { get; init; }
+    /// <summary>Volume GUID, e.g. {fa32f514-...}: stable across drive-letter changes; identifies saved profiles.</summary>
+    public string VolumeId { get; init; } = "";
 
     // Pagefile configuration can change IsPaging across a restart. The other
     // fields identify the volume, physical disk and required system role.
@@ -28,6 +30,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     {
         if (recorded.Letter != current.Letter || recorded.Number != current.Number ||
             recorded.Bytes != current.Bytes || recorded.DiskBytes != current.DiskBytes ||
+            (recorded.VolumeId.Length != 0 && !string.Equals(recorded.VolumeId, current.VolumeId, StringComparison.OrdinalIgnoreCase)) ||
             !string.Equals(recorded.Instance, current.Instance, StringComparison.OrdinalIgnoreCase) ||
             recorded.IsBoot != current.IsBoot || recorded.IsSystem != current.IsSystem)
             throw new IOException("System oracle target identity changed.");
@@ -74,7 +77,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         if (disk.Number < 0 || disk.Bytes <= 0 || string.IsNullOrWhiteSpace(disk.Instance) || disk.Letter != letter)
             throw new IOException("Invalid disk identity.");
         var extent = ReadExtent(letter);
-        var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes };
+        var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes, VolumeId = ReadVolumeId(letter) };
         if (!string.Equals(new DriveInfo(target.Root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
             throw new IOException("Only NTFS volumes are currently supported.");
         target.CheckExtents();
@@ -86,12 +89,25 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
     public void ValidateCurrent(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (VolumeId.Length != 0 && !string.Equals(ReadVolumeId(Letter), VolumeId, StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"{Letter}: is now a different volume; refusing operation.");
         var extent = ReadExtent(Letter);
         // Reject a remapped volume before opening even the previously recorded disk.
         ValidateExtent(this, extent);
         ValidateMountedIdentity(this, extent, ReadDiskInstance(Number, Instance, cancellationToken),
             new DriveInfo(Root).DriveFormat);
     }
+
+    /// <summary>The volume GUID mounted at this letter ({...}), from the mount manager.</summary>
+    public static string ReadVolumeId(char letter)
+    {
+        var name = new StringBuilder(64);
+        if (!GetVolumeNameForVolumeMountPointW($"{letter}:\\", name, name.Capacity))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return ParseVolumeId(name.ToString());
+    }
+
+    public static string ParseVolumeId(string volumeName) => VolumeIds.Parse(volumeName);
 
     private static (int Number, long Start, long Length) ReadExtent(char letter)
     {
@@ -192,6 +208,9 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
             throw new IOException("Volume length changed; refusing operation.");
     }
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPointW(string mountPoint, StringBuilder volumeName, int length);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]

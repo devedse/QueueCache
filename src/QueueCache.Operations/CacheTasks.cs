@@ -17,7 +17,7 @@ public static class CacheTasks
                 throw new IOException("The loaded driver does not support removing cache tasks. Install the matching driver and restart Windows.");
             device.Control(WriteCacheAction.Release);
             if (!preserveSaved)
-                SavedConfigurations.Remove(target.Instance);
+                SavedConfigurations.Remove(target);
         }, token);
     }
     public static async Task<WriteCacheState> SaveAsync(string volume, CacheConfiguration configuration, bool persistent,
@@ -35,7 +35,7 @@ public static class CacheTasks
             if (persistent)
                 SavedConfigurations.Save(target, configuration, acceptVolatileFlush);
             else if (!preserveSaved)
-                SavedConfigurations.Remove(target.Instance);
+                SavedConfigurations.Remove(target);
             return state;
         }, token);
     }
@@ -57,7 +57,7 @@ public static class CacheTasks
                 if (persistent)
                     SavedConfigurations.Save(target, configuration, true);
                 else
-                    SavedConfigurations.Remove(target.Instance);
+                    SavedConfigurations.Remove(target);
             }
         }, token);
     }

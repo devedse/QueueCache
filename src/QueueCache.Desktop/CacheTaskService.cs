@@ -8,13 +8,14 @@ namespace QueueCache.Desktop;
 // headless UI tests exercise real screens without opening physical disks.
 public interface ICacheTaskService
 {
-    Task<IReadOnlyList<DiskDescription>> ListAsync();
-    Task<WriteCacheState> ReadAsync(DiskDescription disk);
-    bool IsPersistent(DiskDescription disk);
+    // One cache per volume; several volumes can share a disk.
+    Task<IReadOnlyList<VolumeDescription>> ListAsync();
+    Task<WriteCacheState> ReadAsync(VolumeDescription volume);
+    bool IsPersistent(VolumeDescription volume);
     Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
     Task SetEnabledAsync(string volume, bool enabled, bool persistent);
-    Task FlushAsync(DiskDescription disk);
-    Task DropCleanAsync(DiskDescription disk);
+    Task FlushAsync(VolumeDescription volume);
+    Task DropCleanAsync(VolumeDescription volume);
     Task RemoveAsync(string volume);
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
 }
@@ -22,30 +23,30 @@ public interface ICacheTaskService
 [SupportedOSPlatform("windows")]
 public sealed class WindowsCacheTaskService : ICacheTaskService
 {
-    public async Task<IReadOnlyList<DiskDescription>> ListAsync() => await DiskCatalog.ListAsync();
-    public Task<WriteCacheState> ReadAsync(DiskDescription disk) => Task.Run(() =>
+    public async Task<IReadOnlyList<VolumeDescription>> ListAsync() => await VolumeCatalog.ListAsync();
+    public Task<WriteCacheState> ReadAsync(VolumeDescription volume) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.CacheDevice);
+        using var device = new CacheDevice(volume.Volume);
         var state = device.GetWriteCacheState();
         return state.SupportsPerformance ? state with
         {
             Performance = device.GetPerformance()
         } : state;
     });
-    public bool IsPersistent(DiskDescription disk) => SavedConfigurations.List().Any(p => p.Instance.Equals(disk.Instance, StringComparison.OrdinalIgnoreCase));
+    public bool IsPersistent(VolumeDescription volume) => SavedConfigurations.IsSaved(volume.Volume, volume.Instance, volume.VolumeId);
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
         // Choosing Fast in the editor is the desktop's explicit volatility acknowledgement.
         await CacheTasks.SaveAsync(volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress);
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume, enabled, persistent);
-    public Task FlushAsync(DiskDescription disk) => Task.Run(() =>
+    public Task FlushAsync(VolumeDescription volume) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.CacheDevice, true);
+        using var device = new CacheDevice(volume.Volume, true);
         device.Control(WriteCacheAction.Flush);
     });
     // Clean blocks only: no drain, no effect on pending writes.
-    public Task DropCleanAsync(DiskDescription disk) => Task.Run(() =>
+    public Task DropCleanAsync(VolumeDescription volume) => Task.Run(() =>
     {
-        using var device = new CacheDevice(disk.CacheDevice, true);
+        using var device = new CacheDevice(volume.Volume, true);
         device.Control(WriteCacheAction.DropClean);
     });
     public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);

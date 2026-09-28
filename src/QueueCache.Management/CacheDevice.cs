@@ -23,7 +23,7 @@ public sealed class CacheDevice : IDisposable
 
     public CacheDevice(string device, bool writable = false)
     {
-        Path = DevicePath.Normalize(device);
+        Path = DevicePath.NormalizeVolume(device);
         handle = Native.CreateFileW(Path, writable ? 0xC0000000u : 0, 1 | 2 | 4, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (handle.IsInvalid)
         {
@@ -155,9 +155,7 @@ public sealed class CacheDevice : IDisposable
             var count = Native.QueryDosDeviceW(null, buffer, buffer.Length);
             if (count != 0)
                 return new string(buffer, 0, (int)count).Split('\0', StringSplitOptions.RemoveEmptyEntries)
-                    .Where(n => (n.Length == 2 && char.IsAsciiLetter(n[0]) && n[1] == ':') ||
-                        (n.StartsWith("PhysicalDrive", StringComparison.OrdinalIgnoreCase) &&
-                         int.TryParse(n.AsSpan(13), out _)))
+                    .Where(n => n.Length == 2 && char.IsAsciiLetter(n[0]) && n[1] == ':')
                     .Order(StringComparer.OrdinalIgnoreCase).ToArray();
             var error = Marshal.GetLastWin32Error();
             if (error != 122)

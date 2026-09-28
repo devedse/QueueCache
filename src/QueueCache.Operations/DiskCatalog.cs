@@ -4,11 +4,11 @@ using System.Text.Json;
 
 namespace QueueCache.Operations;
 
+/// <summary>A physical disk and its lettered volumes. The cache works per volume (<see cref="VolumeCatalog"/>);
+/// disks are listed for identity and safety checks.</summary>
 public sealed record DiskDescription(int Number, string Name, long Bytes, string Instance, string[] Volumes, bool IsBoot, bool IsSystem, bool IsPaging = false)
 {
     public string Device => $"PhysicalDrive{Number}";
-    /// <summary>The cache filters volumes; this disk's cache is its (first) lettered volume.</summary>
-    public string CacheDevice => Volumes.Length > 0 ? Volumes[0] : Device;
     public double SizeGiB => Bytes / 1073741824.0;
     public string Display => $"{string.Join(", ", Volumes)} · {Device} · {SizeGiB:0.##} GiB · {Name}" +
         (IsBoot || IsSystem ? " [boot/system]" : "") + (IsPaging ? " [paging]" : "");

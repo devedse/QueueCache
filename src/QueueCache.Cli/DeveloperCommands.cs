@@ -48,22 +48,22 @@ internal static class DeveloperCommands
             return results.All(r => r.Result != "FAIL") ? 0 : 1;
         });
         root.Subcommands.Add(scenarios);
-        var reads = new Command("test", "Read-only pass-through smoke test on an idle disk; validates exact identity and size.");
-        var readDisk = new Argument<int>("disk");
+        var reads = new Command("test", "Read-only pass-through smoke test through an idle volume's handle; validates the exact volume GUID and size (see qcache volume list / Get-Volume).");
+        var readDisk = new Argument<string>("volume");
         var readBytes = new Argument<long>("expected-bytes");
-        var readInstance = new Argument<string>("instance");
+        var readInstance = new Argument<string>("volume-id") { Description = "Volume GUID with braces, e.g. {fa32f514-...}." };
         var detached = new Option<bool>("--detached");
         reads.Arguments.Add(readDisk);
         reads.Arguments.Add(readBytes);
         reads.Arguments.Add(readInstance);
         reads.Options.Add(detached);
-        reads.SetAction((p, token) => QueueCache.Developer.ReadTests.RunAsync(p.GetValue(readDisk), p.GetValue(readBytes), p.GetValue(readInstance)!, !p.GetValue(detached), token));
+        reads.SetAction((p, token) => QueueCache.Developer.ReadTests.RunAsync(p.GetValue(readDisk)!, p.GetValue(readBytes), p.GetValue(readInstance)!, !p.GetValue(detached), token));
         root.Subcommands.Add(reads);
 
-        var writes = new Command("write-tests", "DESTRUCTIVE: fixed 64 MiB region at 1 GiB on an empty RAW non-OS disk. Never formats; may change cache policy/hooks.");
-        var disk = new Argument<int>("disk");
-        var bytes = new Argument<long>("expected-bytes");
-        var instance = new Argument<string>("instance");
+        var writes = new Command("write-tests", "DESTRUCTIVE: fixed 64 MiB region at 1 GiB of an unformatted (RAW) lettered volume on a non-OS disk, written through the volume handle. Never formats; may change cache policy/hooks.");
+        var disk = new Argument<string>("volume");
+        var bytes = new Argument<long>("expected-bytes") { Description = "Exact volume (partition) size in bytes." };
+        var instance = new Argument<string>("volume-id") { Description = "Volume GUID with braces, e.g. {fa32f514-...}." };
         var mode = new Argument<string>("mode");
         mode.AcceptOnlyFromAmong("write-disposable-region", "write-and-read-disposable-region", "verify-only", "verify-base-prefix", "write-dirty-prefix", "verify-dirty-prefix", "write-through-check", "write-concurrent-check", "write-toggle-check", "write-cancellation-check", "write-performance-check");
         var prefix = new Option<int>("--prefix-bytes");
@@ -84,7 +84,7 @@ internal static class DeveloperCommands
                 return Task.FromResult(2);
             if (selected is "write-dirty-prefix" or "verify-dirty-prefix" && pattern == 0)
                 return Task.FromResult(2);
-            var args = new List<string> { N(p.GetValue(disk)), N(p.GetValue(bytes)), p.GetValue(instance)!, "--" + selected };
+            var args = new List<string> { p.GetValue(disk)!, N(p.GetValue(bytes)), p.GetValue(instance)!, "--" + selected };
             if (needsPrefix)
                 args.Add(N(count));
             if (selected is "write-dirty-prefix" or "verify-dirty-prefix")

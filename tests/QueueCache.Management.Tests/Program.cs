@@ -115,12 +115,52 @@ ActivationSafety.ValidateTarget(0);
 ActivationSafety.ValidateTarget(1);
 Reject(() => ActivationSafety.ValidateTarget(-1), "invalid usage-path count");
 profile.Validate();
-Reject(() => (profile with { Version = 2 }).Validate(), "unknown profile version");
+Reject(() => (profile with { Version = 3 }).Validate(), "unknown profile version");
+Reject(() => (profile with { Version = 2 }).Validate(), "version-2 profile requires the volume GUID");
+Reject(() => (profile with { VolumeId = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}" }).Validate(), "version-1 profile carries no volume GUID");
 Reject(() => (profile with { Volume = @"Q:\folder" }).Validate(), "profile requires volume not path");
 Reject(() => (profile with { Instance = "" }).Validate(), "profile requires disk identity");
 Reject(() => (profile with { Bytes = 0 }).Validate(), "profile requires disk size");
 Reject(() => (profile with { Configuration = null! }).Validate(), "profile requires configuration");
 Reject(() => (profile with { VolatileFlushAccepted = false }).Validate(), "saved fast profile requires acknowledgement");
+// Version 2: one profile per volume, named by the volume GUID; version 1 (disk filter) recorded the disk size.
+const string volumeGuid = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}";
+var volumeProfile = new SavedConfiguration(2, "Q:", "test-device-identity", 150L << 30, new(), true, volumeGuid);
+volumeProfile.Validate();
+Reject(() => (volumeProfile with { VolumeId = "0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d" }).Validate(), "volume GUID keeps its braces");
+var volumeRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(System.Text.Json.JsonSerializer.Serialize(volumeProfile))!;
+Check(volumeRoundTrip == volumeProfile, "version-2 profile round-trips");
+var legacyRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(
+    """{"Version":1,"Volume":"Q:","Instance":"test-device-identity","Bytes":214748364800,"Configuration":{"BudgetMiB":2048,"Preset":1,"Enabled":true},"VolatileFlushAccepted":false}""")!;
+legacyRoundTrip.Validate();
+Check(legacyRoundTrip.VolumeId is null && legacyRoundTrip.Version == 1, "a version-1 profile written by the disk filter still reads");
+Check(volumeProfile.Matches("R:", "other-disk", volumeGuid.ToUpperInvariant()), "a version-2 profile follows its volume GUID, not the letter");
+Check(!volumeProfile.Matches("Q:", "test-device-identity", "{00000000-0000-0000-0000-000000000002}"), "another volume at the same letter does not match");
+Check(profile.Matches("q:", "TEST-DEVICE-IDENTITY", volumeGuid) && !profile.Matches("R:", "test-device-identity", volumeGuid), "a version-1 profile matches its letter on its disk");
+volumeProfile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 200L << 30);
+RejectIo(() => volumeProfile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30, 200L << 30), "version-2 restore refuses a disk-size match");
+RejectIo(() => volumeProfile.CheckIdentity("test-device-identity", "{00000000-0000-0000-0000-000000000002}", 150L << 30, 200L << 30), "version-2 restore refuses another volume");
+RejectIo(() => volumeProfile.CheckIdentity("other-disk", volumeGuid, 150L << 30, 200L << 30), "restore refuses another disk");
+profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 200L << 30);
+profile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30, 300L << 30);
+RejectIo(() => profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30, 300L << 30), "version-1 restore needs the recorded disk or volume size");
+Check(VolumeIds.Parse(@"\\?\Volume{0E0C7F9E-1C1B-4C7E-8D7A-1F9F2A3B4C5D}\") == volumeGuid, "volume GUID parsed from the mount-manager name, lowercase");
+foreach (var invalid in new[] { @"\\?\Volume{0e0c7f9e}\", @"\\.\Q:", @"\\?\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}", "" })
+    RejectIo(() => VolumeIds.Parse(invalid), "reject malformed volume name " + invalid);
+var inventory = VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"Games","FileSystem":"NTFS","Bytes":161061273600,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false},{"Volume":"R:","Label":"","FileSystem":"","Bytes":53687091200,"VolumePath":"\\\\?\\Volume{00000000-0000-0000-0000-000000000002}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false}]""");
+Check(inventory.Count == 2 && inventory[0].VolumeId == volumeGuid && inventory[0].IsNtfs && !inventory[1].IsNtfs, "volume inventory keeps each volume on a shared disk");
+Check(inventory[0].Display.Contains("Q: Games") && inventory[0].Display.Contains("disk 1") && inventory[1].Display.Contains("RAW"), "volume label names the volume, file system and disk");
+RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"","FileSystem":"NTFS","Bytes":300,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume larger than its disk is refused");
+RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:\\","Label":"","FileSystem":"NTFS","Bytes":100,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume must be a letter");
+// The supported registration: topmost Volume-class filter, not on the disk class, every volume, no lab switches.
+var registration = new FilterRegistration(true, true, ["volsnap", "qcachelab"], ["partmgr"], "unconfigured", 0);
+Check(registration.Problems().Count == 0, "topmost volume registration is healthy");
+Check((registration with { VolumeClassUpperFilters = ["qcachelab", "volsnap"] }).Problems().Count == 1, "a filter above QueueCache is reported");
+Check((registration with { VolumeClassUpperFilters = ["volsnap", "qcachelab", "qcachelab"] }).Problems().Count == 1, "a duplicate registration is reported");
+Check((registration with { DiskClassUpperFilters = ["partmgr", "qcachelab"] }).Problems().Count == 1, "a leftover disk-level registration is reported");
+Check((registration with { AllVolumes = false }).Problems().Count == 1, "a single-volume lab restriction is reported");
+Check((registration with { DiagnosticMode = 8 }).Problems().Count == 1, "a lab diagnostic mode is reported");
+Check((registration with { ServiceInstalled = false, AllVolumes = false }).Problems().Count == 1, "a missing installation is reported once");
 Check(s.Enabled && s.LastError == unchecked((int)0xC000009A), "flags and signed NTSTATUS");
 Check(s.DeviceBytes == 200L << 30 && s.WrittenBytes == 9L << 30, "64-bit byte counters");
 Check(s.QueueMemoryBytes == 3L << 30 && s.MaxQueueBytes == 4L << 30, "cache budgets above 2 GiB");
@@ -133,6 +173,8 @@ Check(DevicePath.Normalize("D:") == @"\\.\D:", "volume normalization");
 Check(DevicePath.Normalize(@"\\.\PhysicalDrive1") == @"\\.\PhysicalDrive1", "disk normalization");
 foreach (var invalid in new[] { @"D:\file.bin", @"\\server\share", "PhysicalDrive-1", "D:\\", "PhysicalDrive1\n" })
     Reject(() => DevicePath.Normalize(invalid), "reject non-device path " + invalid);
+Check(DevicePath.NormalizeVolume("q:") == @"\\.\q:" && DevicePath.NormalizeVolume(@"\\.\Q:") == @"\\.\Q:", "management targets are volumes");
+Reject(() => DevicePath.NormalizeVolume("PhysicalDrive1"), "management rejects a whole disk");
 Console.WriteLine("All protocol/path regression checks passed.");
 var cacheData = new byte[WriteCacheState.WireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(cacheData, 1);
@@ -415,6 +457,15 @@ if (OperatingSystem.IsWindows())
 }
 
 static void Check(bool value, string label) { if (!value) throw new Exception("FAIL: " + label); }
+static void RejectIo(Action action, string label)
+{
+    try
+    {
+        action();
+    }
+    catch (IOException) { return; }
+    throw new Exception("FAIL: " + label);
+}
 static void Reject(Action action, string label)
 {
     try
