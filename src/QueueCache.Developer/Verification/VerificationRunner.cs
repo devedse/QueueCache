@@ -367,7 +367,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
                     if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or
-                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "trim-cache")
+                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;

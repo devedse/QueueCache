@@ -250,7 +250,46 @@ public static class VolumeScenarios
         }
     }
 
-    private static void ResizePartition(char letter, long bytes)
+    /// <summary>
+    /// A shadow copy (System Restore, backup tools) is taken by volsnap, below the cache. Windows' flush-and-hold
+    /// request passes through the cache first, so data still pending in RAM must be in the snapshot.
+    /// </summary>
+    public static IReadOnlyList<CheckResult> Snapshot(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        ConfigurationManager.Apply(target, Pending(256), true);
+        var directory = NewDirectory(target, workDirectory, "snapshot");
+        var path = Path.Combine(directory, "pending.bin");
+        var data = Pattern(32 * MiB, 0x5EED0301);
+        WriteNew(path, data);
+        var before = device.GetWriteCacheState();
+        if (before.DirtyBytes < 32UL * MiB)
+            throw new IOException("Could not establish 32 MiB of pending writes before the snapshot.");
+        var created = PowerShell($"$ErrorActionPreference='Stop'; $r=Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{{Volume='{target.Root}'; Context='ClientAccessible'}}; " +
+            "if ($r.ReturnValue -ne 0) { \"FAILED $($r.ReturnValue)\" } else { $s=Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $r.ShadowID; \"$($r.ShadowID)|$($s.DeviceObject)\" }").Trim();
+        if (created.StartsWith("FAILED", StringComparison.Ordinal))
+            return [new("snapshot/pending-data-included", "SKIP", $"Windows could not create a shadow copy of {target.Device} (Win32_ShadowCopy.Create {created}).")];
+        var parts = created.Split('|');
+        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var id) || !parts[1].StartsWith(@"\\?\GLOBALROOT\Device\", StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Unexpected shadow copy identity: " + created);
+        try
+        {
+            var after = device.GetWriteCacheState();
+            var snapshotPath = parts[1] + Path.GetFullPath(path)[2..];
+            var copy = File.ReadAllBytes(snapshotPath);
+            var included = copy.AsSpan().SequenceEqual(data);
+            var pass = included && after.DrainedBytes - before.DrainedBytes >= 32UL * MiB && !after.Faulted && after.LastError == 0;
+            return [new("snapshot/pending-data-included", pass ? "PASS" : "FAIL",
+                $"Shadow copy of {target.Device} taken with {before.DirtyBytes / (double)MiB:0.0} MiB pending: the cache drained " +
+                $"{(after.DrainedBytes - before.DrainedBytes) / (double)MiB:0.0} MiB before it; the 32 MiB file in the snapshot is " +
+                $"{(included ? "exact" : "DIFFERENT")} ({snapshotPath}).")];
+        }
+        finally
+        {
+            PowerShell($"$ErrorActionPreference='Stop'; Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq '{{{id}}}' | Remove-CimInstance");
+        }
+    }
+
+    private static string PowerShell(string command)
     {
         var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
         {
@@ -258,17 +297,30 @@ public static class VolumeScenarios
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add($"$ErrorActionPreference='Stop'; Resize-Partition -DriveLetter {letter} -Size {bytes}");
+        start.ArgumentList.Add(command);
         using var process = System.Diagnostics.Process.Start(start) ?? throw new IOException("Cannot start PowerShell.");
         var error = process.StandardError.ReadToEndAsync();
-        process.StandardOutput.ReadToEnd();
+        var output = process.StandardOutput.ReadToEnd();
         if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
         {
             process.Kill(true);
-            throw new TimeoutException($"Resizing {letter}: did not finish within five minutes.");
+            throw new TimeoutException("PowerShell did not finish within five minutes.");
         }
         if (process.ExitCode != 0)
-            throw new IOException($"Resizing {letter}: to {bytes} bytes failed: {error.GetAwaiter().GetResult().Trim()}");
+            throw new IOException($"PowerShell failed ({process.ExitCode}): {error.GetAwaiter().GetResult().Trim()}");
+        return output;
+    }
+
+    private static void ResizePartition(char letter, long bytes)
+    {
+        try
+        {
+            PowerShell($"$ErrorActionPreference='Stop'; Resize-Partition -DriveLetter {letter} -Size {bytes}");
+        }
+        catch (IOException ex)
+        {
+            throw new IOException($"Resizing {letter}: to {bytes} bytes failed: {ex.Message}", ex);
+        }
     }
 
     internal static string NewDirectory(DiskTarget target, string workDirectory, string name)

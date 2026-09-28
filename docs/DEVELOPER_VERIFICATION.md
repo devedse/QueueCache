@@ -27,7 +27,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 66)
+## Suites (plan version 67)
+
+Plan 67 adds `volumes/volume-snapshot`. Shadow copies (System Restore, backup and
+imaging tools) are taken by `volsnap`, below the cache. With 32 MiB pending in a
+256 MiB Fast/Deferred cache on the target, a client-accessible shadow copy is
+created (`Win32_ShadowCopy.Create`); the file read from the snapshot device must be
+exact and the cache must have drained the pending data before the snapshot. The
+shadow copy is deleted afterwards. SKIP if Windows cannot create a shadow copy.
 
 Plan 66 adds `volumes/volume-resize` (found on the VM: extending a cached volume
 beyond the length the driver had learned failed with Invalid Parameter; fixed by
@@ -370,7 +377,7 @@ Preserve prior raw results and their scope.
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
-| `volumes` | Plans 64/66: `volume-registration`, `volume-raw-disk-commands`, `volume-shared-disk` and `volume-resize` (above). Needs the lab disk for the shared-disk case (SKIP otherwise). No DiskSpd. Not in `full`. |
+| `volumes` | Plans 64/66/67: `volume-registration`, `volume-raw-disk-commands`, `volume-shared-disk`, `volume-resize` and `volume-snapshot` (above). Needs the lab disk for the shared-disk case (SKIP otherwise). No DiskSpd. Not in `full`. |
 | `trim-cache` | Plan 64: TRIM of pending, clean and in-flight data with guard and rewrite oracles (above). Needs a disk that accepts TRIM (lab VHDX); SKIP otherwise. No DiskSpd. Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |

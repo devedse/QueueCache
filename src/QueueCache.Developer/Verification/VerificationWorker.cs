@@ -645,13 +645,14 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, profileChecks);
                 ReportFailures(profileChecks, Console.Error);
                 return profileChecks.All(c => c.Result == "PASS") ? 0 : 1;
-            case "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "trim-cache":
+            case "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache":
                 var volumeChecks = job.Operation switch
                 {
                     "volume-registration" => VolumeScenarios.Registration(target, device),
                     "volume-raw-disk-commands" => VolumeScenarios.RawDiskCommands(target, device, job.WorkDirectory!),
                     "volume-shared-disk" => VolumeScenarios.SharedDisk(target, device, job.WorkDirectory!),
                     "volume-resize" => VolumeScenarios.Resize(target, job.WorkDirectory!),
+                    "volume-snapshot" => VolumeScenarios.Snapshot(target, device, job.WorkDirectory!),
                     _ => TrimScenarios.Run(target, device, job.WorkDirectory!)
                 };
                 RunStorage.AtomicJson(job.Reply, volumeChecks);
