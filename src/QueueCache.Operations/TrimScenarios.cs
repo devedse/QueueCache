@@ -93,6 +93,7 @@ public static class TrimScenarios
         var path = Path.Combine(directory, "in-flight.bin");
         var data = VolumeScenarios.Pattern(8 * MiB, 0x7125);
         VolumeScenarios.WriteNew(path, data);
+        var start = device.GetWriteCacheState();
         device.Control(WriteCacheAction.LabDelay, value: 300);
         Task flush;
         WriteCacheState before, after;
@@ -115,13 +116,20 @@ public static class TrimScenarios
         }
         flush.GetAwaiter().GetResult();
         var drained = device.GetWriteCacheState();
+        // Every pending byte of the file either reached the disk or was dropped by the TRIM, and the TRIM dropped
+        // no more than its own range. New file-system metadata may arrive after the flush (Fast), so the guards
+        // are compared after a second flush, from the disk.
+        var written = drained.DrainedBytes - start.DrainedBytes;
+        var dropped = drained.DiscardedBytes - start.DiscardedBytes;
+        device.Control(WriteCacheAction.Flush);
         device.Control(WriteCacheAction.DropClean);
         var guards = Guards(path, data, 3 * MiB, 2 * MiB);
-        var pass = after.TrimRequests > before.TrimRequests && Healthy(drained) && drained.DirtyBytes == 0 && drained.InFlightBytes == 0 && guards;
+        var pass = after.TrimRequests > before.TrimRequests && Healthy(drained) && written + dropped >= 8UL * MiB &&
+            dropped <= 2UL * MiB && guards;
         return new("trim-cache/during-drain", pass ? "PASS" : "FAIL",
-            $"TRIM of 2 MiB inside 8 MiB while {before.InFlightBytes} bytes were in flight (300 ms lab delay per drain batch): " +
-            $"{after.TrimRequests - before.TrimRequests} TRIM request(s); the flush then finished with {drained.DirtyBytes} bytes pending; " +
-            $"untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk.");
+            $"TRIM of 2 MiB inside 8 MiB pending while {before.InFlightBytes} bytes were in flight (300 ms lab delay per drain batch): " +
+            $"{after.TrimRequests - before.TrimRequests} TRIM request(s); the flush wrote {written} bytes and the TRIM dropped {dropped} " +
+            $"(at most its 2 MiB); untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk.");
     }
 
     private static void Trim(string path, long offset, long length)
