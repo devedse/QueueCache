@@ -78,6 +78,17 @@ fixture.PendingInventory.SetResult(fixture.Volumes);
 fixture.PendingInventory = null;
 Dispatcher.UIThread.RunJobs();
 Check(blockedSample.IsCompleted && discovery.IsCompleted, "pending sampling/discovery finish independently");
+// A cache left on an unformatted volume (raw developer tests) can be flushed and removed, not reconfigured.
+fixture.RawVolumeHasCache = true;
+Invoke("Sample").GetAwaiter().GetResult();
+Dispatcher.UIThread.RunJobs();
+var rawCard = window.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "R:").GetVisualAncestors().OfType<Border>()
+    .First(b => b.Child is StackPanel);
+Button RawButton(string label) => rawCard.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
+Check(!RawButton("Cache settings").IsEnabled && !RawButton("Pause").IsEnabled, "a cached unformatted volume cannot be reconfigured or paused");
+Check(RawButton("Remove cache").IsEnabled && RawButton("Flush now").IsEnabled, "a cached unformatted volume can be flushed and removed");
+Check(rawCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.Contains("not NTFS") == true), "the card says why settings are unavailable");
+fixture.RawVolumeHasCache = false;
 window.Close();
 var newState = fixture.State with { Flags = fixture.State.Flags | 4096, BudgetBytes = 0, ReservedBytes = 0, Options = null };
 var newSettings = new CacheSettingsWindow(fixture.Volumes[1], newState, false);
@@ -144,6 +155,7 @@ sealed class Fixture : ICacheTaskService
         GlobalReservedBytes = 4UL << 30
     };
     public int Pauses, Removes, CleanDrops, DataReads, BlockedReads, InventoryReads;
+    public bool RawVolumeHasCache;
     public TaskCompletionSource<IReadOnlyList<VolumeDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
     public TaskCompletionSource? PendingFlush;
@@ -161,7 +173,7 @@ sealed class Fixture : ICacheTaskService
         }
         if (volume.Volume == "Q:")
             DataReads++;
-        return Task.FromResult(volume.Volume == "Q:" ? State : State with
+        return Task.FromResult(volume.Volume == "Q:" || volume.Volume == "R:" && RawVolumeHasCache ? State : State with
         {
             Flags = 256,
             BudgetBytes = 0,

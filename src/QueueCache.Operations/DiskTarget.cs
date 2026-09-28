@@ -36,7 +36,9 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
             throw new IOException("System oracle target identity changed.");
     }
 
-    public static async Task<DiskTarget> InspectAsync(string volume, CancellationToken cancellationToken = default)
+    /// <param name="requireNtfs">False only for removing a cache task, which is safe on any volume (for example
+    /// one a raw test left on an unformatted volume); creating or changing a task needs NTFS.</param>
+    public static async Task<DiskTarget> InspectAsync(string volume, CancellationToken cancellationToken = default, bool requireNtfs = true)
     {
         if (volume.Length != 2 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':')
             throw new ArgumentException("Select an explicit volume such as Q:, not a directory or raw disk.");
@@ -78,17 +80,20 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
             throw new IOException("Invalid disk identity.");
         var extent = ReadExtent(letter);
         var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes, VolumeId = ReadVolumeId(letter) };
-        string format;
-        try
+        if (requireNtfs)
         {
-            format = new DriveInfo(target.Root).DriveFormat;
+            string format;
+            try
+            {
+                format = new DriveInfo(target.Root).DriveFormat;
+            }
+            catch (IOException ex)
+            {
+                throw new IOException($"{letter}: has no file system Windows can read (it may be unformatted). QueueCache caches NTFS volumes.", ex);
+            }
+            if (!string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"{letter}: is {format}. QueueCache caches NTFS volumes.");
         }
-        catch (IOException ex)
-        {
-            throw new IOException($"{letter}: has no file system Windows can read (it may be unformatted). QueueCache caches NTFS volumes.", ex);
-        }
-        if (!string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase))
-            throw new IOException($"{letter}: is {format}. QueueCache caches NTFS volumes.");
         target.CheckExtents();
         return target;
     }

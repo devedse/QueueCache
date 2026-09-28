@@ -218,6 +218,8 @@ public sealed class MainWindow : Window
             card.Description.Text = exists ? $"{state.BudgetBytes / 1048576:0} MiB RAM cache · {(state.UnsafeDefer ? "Fast" : "Strict")} · {state.Options?.Allocation.ToString() ?? "Legacy"} · {state.Options?.Drain.ToString() ?? "Eager"}"
                 : card.Volume.IsNtfs ? "Ready for a cache. Choose a memory budget to get started."
                 : "QueueCache caches NTFS volumes. Format this volume as NTFS to add a cache.";
+            if (exists && !card.Volume.IsNtfs)
+                card.Description.Text += " · not NTFS: only Flush, Clear read cache and Remove are available";
             // Amounts are live; hits and evictions are driver totals since Windows started.
             card.Residency.Text = $"In RAM now: read cache {state.CleanReadBytes / 1048576.0:0.0} MiB · retained writes {state.CleanWriteBytes / 1048576.0:0.0} MiB · free {state.FreeBytes / 1048576.0:0.0} MiB · oldest unwritten data {state.OldestDirtyMs / 1000.0:0.0}s · reading {rates?.ReadMiBPerSecond ?? 0:0.0} MiB/s\n" +
                 $"Since Windows started: read hits {state.ReadHitPercent:0.0}% ({state.ReadHitBytes / 1073741824.0:0.00} GiB from RAM) · evicted blocks {state.Evictions:N0}";
@@ -229,10 +231,12 @@ public sealed class MainWindow : Window
             card.Incoming.Text = $"{rates?.AcceptedMiBPerSecond ?? 0:0.0} MB/s";
             card.Draining.Text = $"{rates?.DrainedMiBPerSecond ?? 0:0.0} MB/s";
             card.Settings.Content = exists ? "Cache settings" : "Add cache";
-            card.Settings.IsEnabled = !card.Busy && state.SupportsReadWrite && (exists || card.Volume.IsNtfs);
+            card.Settings.IsEnabled = !card.Busy && state.SupportsReadWrite && card.Volume.IsNtfs;
             card.Pause.Content = state.Enabled ? "Pause" : "Resume";
             card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = exists;
             card.Pause.IsEnabled = card.Flush.IsEnabled = card.Remove.IsEnabled = !card.Busy;
+            // Settings and Pause re-apply a configuration, which needs NTFS; Flush and Remove work on any volume.
+            card.Pause.IsEnabled &= card.Volume.IsNtfs;
             card.DropClean.IsVisible = exists && state.SupportsDropClean;
             card.DropClean.IsEnabled = !card.Busy && state.CleanReadBytes + state.CleanWriteBytes > 0;
             card.Remove.IsEnabled = !card.Busy && state.SupportsRelease;
