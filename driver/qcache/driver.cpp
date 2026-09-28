@@ -531,6 +531,8 @@ static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
 }
 #endif
 static void EnsureDeviceGeometry(QC_EXTENSION* ext);
+static void RefreshDeviceLength(QC_EXTENSION* ext);
+static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp);
 static void RequestWorker(PVOID context)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -552,6 +554,8 @@ static void RequestWorker(PVOID context)
             // older direct I/O before any queued request changes cache state.
             KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
             EnsureDeviceGeometry(ext);
+            if (BeyondKnownEnd(ext, irp))
+                RefreshDeviceLength(ext);
 #if QCACHE_CACHE_DRIVER
             bool transferred;
             auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0),
@@ -715,6 +719,25 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 // PASSIVE_LEVEL thread (a management request's caller or the request worker).
 // Sending these queries from the IRP_MN_START_DEVICE handler of the boot volume
 // (below: snapshots, BitLocker, the volume manager) reset the machine during boot.
+// Reads the lower device's current length (PASSIVE_LEVEL only). A volume can be
+// extended or shrunk while the filter is loaded.
+static void QueryDeviceLength(QC_EXTENSION* ext)
+{
+    KEVENT event;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    GET_LENGTH_INFORMATION length = {};
+    IO_STATUS_BLOCK iosb = {};
+    auto query = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
+    if (!query)
+        return;
+    auto queryStatus = IoCallDriver(ext->Lower, query);
+    if (queryStatus == STATUS_PENDING)
+        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length) && length.Length.QuadPart > 0)
+        InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
+}
+
 static void EnsureDeviceGeometry(QC_EXTENSION* ext)
 {
     if (ext->GeometryState == 2 || (DiagnosticMode & 8) || KeGetCurrentIrql() != PASSIVE_LEVEL)
@@ -725,25 +748,13 @@ static void EnsureDeviceGeometry(QC_EXTENSION* ext)
         KeWaitForSingleObject(&ext->GeometryReady, Executive, KernelMode, FALSE, nullptr);
         return;
     }
+    QueryDeviceLength(ext);
+#if QCACHE_CACHE_DRIVER
     KEVENT event;
     KeInitializeEvent(&event, NotificationEvent, FALSE);
-    GET_LENGTH_INFORMATION length = {};
     IO_STATUS_BLOCK iosb = {};
-    auto query = IoBuildDeviceIoControlRequest(
-        IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
-    if (query)
-    {
-        auto queryStatus = IoCallDriver(ext->Lower, query);
-        if (queryStatus == STATUS_PENDING)
-            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length))
-            InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
-    }
-#if QCACHE_CACHE_DRIVER
     DISK_GEOMETRY geometry = {};
-    iosb = {};
-    KeClearEvent(&event);
-    query = IoBuildDeviceIoControlRequest(
+    auto query = IoBuildDeviceIoControlRequest(
         IOCTL_DISK_GET_DRIVE_GEOMETRY, ext->Lower, nullptr, 0, &geometry, sizeof(geometry), FALSE, &event, &iosb);
     if (query)
     {
@@ -759,6 +770,26 @@ static void EnsureDeviceGeometry(QC_EXTENSION* ext)
     KeSetEvent(&ext->GeometryReady, IO_NO_INCREMENT, FALSE);
     if (ext->GeometryState == 0)
         KeClearEvent(&ext->GeometryReady);
+}
+
+// After the first query, re-reads the length: a management request reports the
+// current volume size, and a read or write beyond the known end (the file system
+// extending the volume) is judged against the new length rather than refused.
+static void RefreshDeviceLength(QC_EXTENSION* ext)
+{
+    if (ext->GeometryState != 2 || (DiagnosticMode & 8) || KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    QueryDeviceLength(ext);
+}
+
+static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction != IRP_MJ_READ && stack->MajorFunction != IRP_MJ_WRITE)
+        return false;
+    const auto size = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
+    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    return offset >= 0 && (offset > size || stack->Parameters.Read.Length > static_cast<ULONGLONG>(size - offset));
 }
 #endif
 
@@ -881,7 +912,12 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_SERIALIZED_IO
         // QueueCache management requests report and validate the device length.
         if (DEVICE_TYPE_FROM_CTL_CODE(code) == DEVICE_TYPE_FROM_CTL_CODE(IOCTL_QCACHE_GET_DEVICE_DATA))
+        {
+            const bool known = ext->GeometryState == 2;
             EnsureDeviceGeometry(ext);
+            if (known)
+                RefreshDeviceLength(ext);
+        }
 #endif
 #if QCACHE_CACHE_DRIVER
         if (code == IOCTL_QCACHE_STATE_V3)
