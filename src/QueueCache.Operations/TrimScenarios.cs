@@ -34,7 +34,7 @@ public static class TrimScenarios
         {
             device.Control(WriteCacheAction.Flush);
             return [new("trim-cache", "SKIP", $"The disk under {target.Device} does not accept TRIM: Win32 {ex.NativeErrorCode} ({ex.Message}). " +
-                "Run this suite on a VHDX volume (build/New-VolumeLabDisk.ps1).")];
+                "Run this suite on a lab-disk volume (qcache developer lab-disk create).")];
         }
         return [Pending(device, directory), Clean(device, directory), InFlight(target, device, directory)];
     }

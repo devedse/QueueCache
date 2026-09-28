@@ -105,7 +105,7 @@ public static class VolumeScenarios
             !volume.IsBoot && !volume.IsSystem && !volume.IsPaging);
         if (sibling is null)
             return [new("shared-disk/independent-caches", "SKIP", $"Needs a second non-OS NTFS volume on disk {target.Number}; " +
-                "create one with build/New-VolumeLabDisk.ps1 (docs/DEVELOPER_VERIFICATION.md).")];
+                "create the lab disk with qcache developer lab-disk create (docs/DEVELOPER_VERIFICATION.md).")];
         var other = DiskTarget.InspectAsync(sibling.Volume).GetAwaiter().GetResult();
         using var otherDevice = new CacheDevice(other.Device, writable: true);
         var otherInitial = otherDevice.GetWriteCacheState();

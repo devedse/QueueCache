@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 64, "plan 64 adds the volumes and trim-cache suites");
+        Check(VerificationPlan.Version == 65, "plan 65 proves the restoration drain when the cache is disabled");
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
@@ -1053,12 +1053,26 @@ internal static class VerificationRunnerTests
             }),
                 "failed flush stops restoration without recording a successful boundary");
         }
-        Check(VerificationWorker.RestorationMismatches(original, healthy, "[]", 0).Count == 0,
+        var drained = healthy with { Flags = healthy.Flags & ~1u, DirtyBytes = 0, InFlightBytes = 0 };
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0).Count == 0,
             "matching restoration accepted");
+        var enabled = healthy with { Flags = 1 };
+        Check(VerificationWorker.RestorationMismatches(original with { State = enabled }, drained, enabled with { DirtyBytes = 8192, InFlightBytes = 4096 }, "[]", 0).Count == 0,
+            "a re-enabled restored cache may already hold new writes from Windows");
         foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]
         {
-            ("DirtyBytes", healthy with { DirtyBytes = 1 }),
-            ("InFlightBytes", healthy with { InFlightBytes = 1 }),
+            ("DirtyBytes when disabled", drained with { DirtyBytes = 1 }),
+            ("InFlightBytes when disabled", drained with { InFlightBytes = 1 }),
+            ("Enabled when disabled", enabled)
+        })
+        {
+            var mismatch = VerificationWorker.RestorationMismatches(original, changed, healthy, "[]", 0);
+            Check(mismatch.Count == 1 && mismatch[0].StartsWith(name + ": expected "), "restoration proves the drain at the disabled boundary: " + name);
+        }
+        Check(!healthy.Enabled && VerificationWorker.RestorationMismatches(original, drained, healthy with { DirtyBytes = 1 }, "[]", 0)
+            .SequenceEqual(["DirtyBytes: expected 0, actual 1"]), "a cache restored as disabled must stay empty");
+        foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]
+        {
             ("Errors", healthy with { Errors = 1 }),
             ("Instance", healthy with { Instance = 1 }),
             ("BudgetBytes", healthy with { BudgetBytes = 1 }),
@@ -1067,15 +1081,15 @@ internal static class VerificationRunnerTests
             ("Options", healthy with { Options = new QueueCache.Management.CacheOptions() })
         })
         {
-            var mismatch = VerificationWorker.RestorationMismatches(original, changed, "[]", 0);
+            var mismatch = VerificationWorker.RestorationMismatches(original, drained, changed, "[]", 0);
             Check(mismatch.Count == 1 && mismatch[0].StartsWith(name + ": expected ") && mismatch[0].Contains(", actual "),
                 "restoration preserves and identifies " + name);
         }
-        Check(VerificationWorker.RestorationMismatches(original, healthy, "changed", 1).Count == 2,
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "changed", 1).Count == 2,
             "profile and timing mismatches both retained");
         var originalOptions = new QueueCache.Management.CacheOptions();
         Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
-            healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
+            drained, healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
             "restoration compares option values rather than object identity");
         ApplyRollbackChecks(healthy, Check);
         var reads = 0;

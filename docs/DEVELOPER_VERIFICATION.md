@@ -27,7 +27,16 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 64)
+## Suites (plan version 65)
+
+Plan 65 changes how restoration proves the drain. Restoration flushes the file
+system and the cache, then disables the cache; that disabled state must have
+nothing pending or in flight. Afterwards the original settings are re-applied, and
+a cache that is enabled again may already hold new writes from Windows (on Q:, 8 KiB
+of NTFS metadata arrived within a second in a plan-64 run and failed restoration
+although everything had drained). Pending bytes must still be zero when the
+restored cache stays disabled. Budget, preset, options, timing, error count,
+instance and saved profiles are compared exactly, as before.
 
 Plan 64 adds two suites for the volume filter, both outside `full` because they need
 the lab disk:

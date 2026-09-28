@@ -141,7 +141,9 @@ public static class VerificationWorker
         return delta;
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
-    public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
+    /// <summary>Returns the state once the cache is disabled: the point at which every pending byte must have
+    /// been drained. Later states of a re-enabled cache can legitimately hold new writes from Windows.</summary>
+    public static WriteCacheState FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
     {
         record("before-volume-flush", snapshot());
@@ -150,10 +152,15 @@ public static class VerificationWorker
         flushCache();
         record("after-cache-flush", snapshot());
         disableCache();
-        record("after-cache-disable", snapshot());
+        var drained = snapshot();
+        record("after-cache-disable", drained);
+        return drained;
     }
+    /// <param name="drained">The state when the cache was disabled during restoration: nothing may be pending
+    /// or in flight there. A restored cache that is enabled again (Fast or Strict) can already hold new writes
+    /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
-        WriteCacheState restored, string profiles, ulong timing)
+        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -161,8 +168,14 @@ public static class VerificationWorker
             if (!EqualityComparer<T>.Default.Equals(expected, actual))
                 mismatches.Add($"{name}: expected {JsonSerializer.Serialize(expected)}, actual {JsonSerializer.Serialize(actual)}");
         }
-        Compare(nameof(restored.DirtyBytes), 0UL, restored.DirtyBytes);
-        Compare(nameof(restored.InFlightBytes), 0UL, restored.InFlightBytes);
+        Compare("DirtyBytes when disabled", 0UL, drained.DirtyBytes);
+        Compare("InFlightBytes when disabled", 0UL, drained.InFlightBytes);
+        Compare("Enabled when disabled", false, drained.Enabled);
+        if (!restored.Enabled)
+        {
+            Compare(nameof(restored.DirtyBytes), 0UL, restored.DirtyBytes);
+            Compare(nameof(restored.InFlightBytes), 0UL, restored.InFlightBytes);
+        }
         Compare(nameof(restored.Errors), original.State.Errors, restored.Errors);
         Compare(nameof(restored.Instance), original.State.Instance, restored.Instance);
         Compare(nameof(original.Profiles), original.Profiles, profiles);
@@ -235,8 +248,7 @@ public static class VerificationWorker
                 {
                     if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
                         throw new IOException("Active system verification must start with C: disabled, released and clean.");
-                    if (SavedConfigurations.List().Any(profile =>
-                            profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase)))
+                    if (SavedConfigurations.IsSaved(target.Device, target.Instance, target.VolumeId))
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
                         systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName));
@@ -250,7 +262,7 @@ public static class VerificationWorker
                     if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName ||
                         original.State.Enabled || original.State.BudgetBytes != 0)
                         throw new IOException("System recovery identity or disabled/released baseline changed.");
-                    FlushForRestoration(() =>
+                    var systemDrained = FlushForRestoration(() =>
                     {
                         using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
                         volume.Flush();
@@ -263,7 +275,7 @@ public static class VerificationWorker
                         systemDevice.SetOptions(original.State.Options);
                     var restored = systemDevice.GetWriteCacheState();
                     RunStorage.AtomicJson(job.Reply, restored);
-                    var mismatches = RestorationMismatches(original, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
+                    var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
                     var requiredOracles = job.ImageOraclePaths ?? [];
@@ -553,7 +565,7 @@ public static class VerificationWorker
                         original = original with { State = original.State with { Errors = current.Errors } };
                     }
                 }
-                FlushForRestoration(() =>
+                var drainedState = FlushForRestoration(() =>
                 {
                     Stage("flushing filesystem volume before cache drain");
                     using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
@@ -584,7 +596,7 @@ public static class VerificationWorker
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
-                var mismatches = RestorationMismatches(original, restored, restoredProfiles, restoredTiming);
+                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
