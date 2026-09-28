@@ -26,7 +26,25 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 62, "policies adds read-miss-isolation");
+        Check(VerificationPlan.Version == 63, "policies adds settings-rollback on the driver");
+        Check(QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "x. The previous settings were restored.",
+            true, true, true, true, true, true).Result == "PASS", "settings rollback accepts a verified restore");
+        foreach (var bad in new Action[]
+        {
+            () => QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", null, null, true, true, true, true, true, true),
+            () => QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", false, "not restored", true, true, true, true, true, true),
+            () => QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "The previous settings were restored.", true, false, true, true, true, true),
+            () => QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "The previous settings were restored.", true, true, true, true, false, true),
+            () => QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "The previous settings were restored.", true, true, true, true, true, false)
+        })
+        {
+            try
+            {
+                bad();
+                Check(false, "settings rollback rejects an unarmed fault, a false restore claim, lost data or a stuck fault");
+            }
+            catch (IOException) { }
+        }
         Check(QueueCache.Operations.CacheScenarios.VerifyReadMissIsolation("r", 16 << 20, 0, 16UL << 20, 4096, 9).Result == "PASS",
             "read-miss isolation accepts kept misses that match the file");
         foreach (var bad in new Action[]

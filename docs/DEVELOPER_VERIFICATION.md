@@ -17,7 +17,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 62)
+## Suites (plan version 63)
+
+Plan 63 adds `policies/settings-rollback/lab-fault-6` and `-7` (N1 on the real
+driver). From 64 MiB Fast/Idle with a file cached, the lab fault makes the next
+cache allocation fail once, and Apply of 128 MiB Strict/Fixed/Balanced must fail
+with "The previous settings were restored"; the driver must then be enabled,
+healthy, 64 MiB Fast with the previous options, the file must read back intact,
+and the same change must apply once the fault is spent. The fault is disarmed in
+all cases.
 
 Plan 62 adds `policies/read-miss-isolation`: a 16 MiB file is written, flushed
 and its clean cached copy dropped, then read in 1 MiB unbuffered misses while

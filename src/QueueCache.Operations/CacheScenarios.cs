@@ -30,6 +30,7 @@ public static class CacheScenarios
             RunSustainedForeground(target, device, directory, results, progress, token);
             RunParallelCopies(target, device, directory, results, progress, token);
             RunReadMissIsolation(target, device, directory, results, progress, token);
+            RunSettingsRollback(target, device, directory, results, progress, token);
             for (int scenario = 0; scenario < cases.Length; scenario++)
             {
                 token.ThrowIfCancellationRequested();
@@ -290,6 +291,79 @@ public static class CacheScenarios
             diagnosticsBefore.ReadFills is null || diagnosticsAfter.ReadFills is null ? null : diagnosticsAfter.ReadFills - diagnosticsBefore.ReadFills,
             Interlocked.Read(ref scribbles)));
         device.Control(WriteCacheAction.Disable);
+    }
+
+    /// <summary>N1 on the real driver: lab faults 6 and 7 fail the next cache allocation once, so applying a
+    /// different size fails after the old cache was freed. The previous settings must be back, enabled and healthy,
+    /// with cached data intact; once the fault is spent the same change must apply.</summary>
+    private static void RunSettingsRollback(DiskTarget target, CacheDevice device, string directory,
+        List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
+    {
+        var previous = new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Idle, Parallelism: 2)
+        };
+        var requested = new CacheConfiguration(128, CachePreset.Strict)
+        {
+            Options = new CacheOptions(CacheAllocation.Fixed, 50, Drain: DrainAlgorithm.Balanced, Parallelism: 1)
+        };
+        foreach (var fault in new[] { 6UL, 7UL })
+        {
+            token.ThrowIfCancellationRequested();
+            var label = $"settings-rollback/lab-fault-{fault}";
+            progress?.Report($"{label}: a failed resize must restore the previous settings");
+            ConfigurationManager.Apply(target, previous, true);
+            var path = Path.Combine(directory, $"settings-rollback-{fault}.bin");
+            var expected = new byte[1 << 20];
+            new Random(400_009 + (int)fault).NextBytes(expected);
+            var actual = new byte[expected.Length];
+            using var file = new AlignedFile(path, expected.Length, create: true);
+            file.Write(0, expected);
+            device.Control(WriteCacheAction.LabFault, value: fault);
+            ConfigurationNotAppliedException? failure = null;
+            try
+            {
+                ConfigurationManager.Apply(target, requested, true);
+            }
+            catch (ConfigurationNotAppliedException exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                device.Control(WriteCacheAction.LabFault, value: 0);
+            }
+            var restored = device.GetWriteCacheState();
+            file.Read(0, actual);
+            var dataMatches = actual.AsSpan().SequenceEqual(expected);
+            WriteCacheState? applied = null;
+            if (failure is not null)
+                applied = ConfigurationManager.Apply(target, requested, true);
+            results.Add(VerifySettingsRollback(label, failure?.PreviousSettingsRestored, failure?.Message,
+                restored.Enabled && restored.Operational && restored.LastError == 0,
+                restored.BudgetBytes == 64UL << 20, restored.UnsafeDefer, restored.Options == previous.Options,
+                dataMatches, applied is { } state && state.BudgetBytes == 128UL << 20 && !state.UnsafeDefer));
+        }
+        ConfigurationManager.Apply(target, previous, true);
+    }
+
+    internal static CheckResult VerifySettingsRollback(string label, bool? restored, string? message, bool healthy,
+        bool previousSize, bool previousFast, bool previousOptions, bool dataMatches, bool appliedAfterwards)
+    {
+        if (restored is null)
+            throw new IOException($"{label}: the settings change succeeded although the allocation fault was armed");
+        if (restored != true || message?.Contains("previous settings were restored", StringComparison.Ordinal) != true)
+            throw new IOException($"{label}: the failure did not report restored settings: {message}");
+        if (!healthy || !previousSize || !previousFast || !previousOptions)
+            throw new IOException(FormattableString.Invariant(
+                $"{label}: reported restored, but the driver is not: healthy {healthy}, 64 MiB {previousSize}, Fast {previousFast}, options {previousOptions}"));
+        if (!dataMatches)
+            throw new IOException($"{label}: a file written before the failed change read back differently");
+        if (!appliedAfterwards)
+            throw new IOException($"{label}: the same change did not apply once the fault was spent");
+        return new(label, "PASS", "The failed resize reported \"previous settings were restored\"; the cache was back at " +
+            "64 MiB Fast with its options, enabled and healthy; a file written before read back intact; the same " +
+            "change (128 MiB Strict) applied once the fault was spent.");
     }
 
     internal static CheckResult VerifyReadMissIsolation(string label, int fileBytes, int mismatchedChunks,
