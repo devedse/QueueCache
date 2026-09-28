@@ -75,7 +75,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
-    private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + target.Device;
+    // Leases are per physical disk (one verification per disk), not per cached volume.
+    private static string LeaseKey(DiskTarget target) => $"PhysicalDrive{target.Number}";
+    private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + LeaseKey(target);
 
     private async Task<string> Worker(WorkerJob job, CancellationToken token, int timeoutSeconds = 120)
     {
@@ -277,7 +279,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 var leases = LeaseDirectory;
                 Directory.CreateDirectory(leases);
-                diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
             if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
@@ -885,7 +887,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         {
             var leases = LeaseDirectory;
             Directory.CreateDirectory(leases);
-            diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            diskLease = new FileStream(Path.Combine(leases, LeaseKey(original.Target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
         options = systemRecovery
             ? new($"{original.Target.Letter}:", "system-active-image", path,
