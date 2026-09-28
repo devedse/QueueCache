@@ -181,6 +181,96 @@ public static class VolumeScenarios
         return checks;
     }
 
+    /// <summary>
+    /// Shrinks the lab disk's second volume by 1 GiB and extends it back while its cache holds pending writes.
+    /// Only a volume labelled QC-Lab-2 on the same virtual disk as the target is resized (qcache developer
+    /// lab-disk); anything else is SKIP. The extend goes beyond the length the driver re-read after the shrink.
+    /// </summary>
+    public static IReadOnlyList<CheckResult> Resize(DiskTarget target, string workDirectory)
+    {
+        var lab = VolumeCatalog.ListAsync().GetAwaiter().GetResult().FirstOrDefault(volume =>
+            volume.DiskNumber == target.Number && string.Equals(volume.Instance, target.Instance, StringComparison.OrdinalIgnoreCase) &&
+            volume.Label == "QC-Lab-2" && volume.DiskName == "Msft Virtual Disk" && volume.IsNtfs &&
+            !volume.IsBoot && !volume.IsSystem && !volume.IsPaging);
+        if (lab is null)
+            return [new("resize/shrink-extend", "SKIP", "Resizing is only exercised on the lab disk's QC-Lab-2 volume (qcache developer lab-disk create).")];
+        var other = DiskTarget.InspectAsync(lab.Volume).GetAwaiter().GetResult();
+        using var device = new CacheDevice(other.Device, writable: true);
+        if (device.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(other.Device, other.Instance, other.VolumeId))
+            return [new("resize/shrink-extend", "SKIP", $"{other.Device} already has a cache task or saved profile; the suite does not change it.")];
+        var original = other.Bytes;
+        var smaller = original - (1L << 30);
+        try
+        {
+            ConfigurationManager.Apply(other, Pending(128), true);
+            var directory = Path.Combine(other.Root, Path.GetFileName(workDirectory) + "-resize");
+            if (Directory.Exists(directory))
+                throw new IOException("Resize workload directory already exists.");
+            Directory.CreateDirectory(directory);
+            var first = Pattern(32 * MiB, 0x5EED0201);
+            WriteNew(Path.Combine(directory, "before.bin"), first);
+            var pending = device.GetWriteCacheState();
+            ResizePartition(other.Letter, smaller);
+            var shrunk = device.GetWriteCacheState();
+            var shrunkBytes = ReadAll(Path.Combine(directory, "before.bin")).AsSpan().SequenceEqual(first);
+            ResizePartition(other.Letter, original);
+            var extended = device.GetWriteCacheState();
+            var fileSystem = new DriveInfo(other.Root).TotalSize;
+            var second = Pattern(32 * MiB, 0x5EED0202);
+            WriteNew(Path.Combine(directory, "after.bin"), second);
+            device.Control(WriteCacheAction.Flush);
+            device.Control(WriteCacheAction.DropClean);
+            var bytes = shrunkBytes && ReadAll(Path.Combine(directory, "before.bin")).AsSpan().SequenceEqual(first) &&
+                ReadAll(Path.Combine(directory, "after.bin")).AsSpan().SequenceEqual(second);
+            var final = device.GetWriteCacheState();
+            // NTFS keeps a few sectors of the partition for itself; the file system must have grown past the shrunk size.
+            var pass = pending.DirtyBytes >= 32UL * MiB && shrunk.DeviceBytes == (ulong)smaller && extended.DeviceBytes == (ulong)original &&
+                fileSystem > smaller && bytes && !final.Faulted && final.LastError == 0 && final.Errors == pending.Errors;
+            return [new("resize/shrink-extend", pass ? "PASS" : "FAIL",
+                $"{other.Device} with {pending.DirtyBytes / (double)MiB:0.0} MiB pending: shrunk to {smaller} bytes (driver length {shrunk.DeviceBytes}, " +
+                $"pending afterwards {shrunk.DirtyBytes / (double)MiB:0.0} MiB), extended back to {original} bytes (driver length {extended.DeviceBytes}, " +
+                $"file system {fileSystem} bytes); both files {(bytes ? "exact" : "DIFFER")} from the disk; errors {final.Errors - pending.Errors}. Retained: {directory}.")];
+        }
+        finally
+        {
+            // Leave the lab volume at its original size and without a cache task.
+            try
+            {
+                if (new DriveInfo(other.Root).TotalSize < smaller + (1L << 29))
+                    ResizePartition(other.Letter, original);
+            }
+            // The case's own result or exception says what happened; the size is visible in qcache volume list.
+            catch (IOException) { }
+            var state = device.GetWriteCacheState();
+            if (state.BudgetBytes != 0)
+            {
+                device.Control(WriteCacheAction.Flush);
+                device.Control(WriteCacheAction.Release);
+            }
+        }
+    }
+
+    private static void ResizePartition(char letter, long bytes)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-Command");
+        start.ArgumentList.Add($"$ErrorActionPreference='Stop'; Resize-Partition -DriveLetter {letter} -Size {bytes}");
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new IOException("Cannot start PowerShell.");
+        var error = process.StandardError.ReadToEndAsync();
+        process.StandardOutput.ReadToEnd();
+        if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
+        {
+            process.Kill(true);
+            throw new TimeoutException($"Resizing {letter}: did not finish within five minutes.");
+        }
+        if (process.ExitCode != 0)
+            throw new IOException($"Resizing {letter}: to {bytes} bytes failed: {error.GetAwaiter().GetResult().Trim()}");
+    }
+
     internal static string NewDirectory(DiskTarget target, string workDirectory, string name)
     {
         var directory = Path.GetFullPath(workDirectory + "-" + name);

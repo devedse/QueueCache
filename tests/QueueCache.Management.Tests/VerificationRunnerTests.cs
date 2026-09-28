@@ -26,11 +26,11 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 65, "plan 65 proves the restoration drain when the cache is disabled");
+        Check(VerificationPlan.Version == 66, "plan 66 adds volume-resize");
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
-            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk"]), "volumes runs registration, raw disk commands and a shared disk as separate cases");
+            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk", "volume-resize"]), "volumes runs registration, raw disk commands, a shared disk and a resize as separate cases");
         Check(VerificationPlan.Integrity(options with { Suite = "trim-cache" }).Single() == new IntegrityCase("trim-cache", "trim-cache"), "trim-cache is one case");
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(test => test.Id.StartsWith("volume-") || test.Id == "trim-cache"),
             "full does not include the volume or TRIM suites (they need a lab disk)");
