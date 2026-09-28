@@ -89,7 +89,7 @@ request or the request worker. With it the filter covers every volume and boots.
 | Cache exactly what you choose | A cache belongs to one volume (for example a games volume), not to everything on the disk. Volumes on one disk can have different sizes and policies, and flushing or removing one does not stall the others. |
 | Profiles follow the volume | Named by the volume GUID, so a drive-letter change does not lose or misapply a profile. |
 | Automatic coverage | Volumes created later, attached VHDX files and removable fixed volumes get the filter without a restart. |
-| Same speed | CrystalDiskMark rows match the disk filter (results below). |
+| Same speed | CrystalDiskMark rows match or beat the disk filter (results below). |
 
 | Disadvantages | What it means / mitigation |
 |---|---|
@@ -137,7 +137,8 @@ volume; host contract tests and desktop fixture tests in CI. Results on 0.4.219.
 | Install over the disk filter, uninstall (drained Q:'s 2 GiB cache), restart without the filter, reinstall (profile restored at startup) | PASS (0.4.191.1 - 0.4.217.1) |
 | `Recover-Registration.ps1` on copies of the SYSTEM hive | Restores the backed-up lists; live registry untouched |
 | Desktop on the VM console | Volumes grouped by disk; live Q: card; unformatted X: shown without settings |
-| Saved-C:-profile restart soak, CrystalDiskMark | Recorded in the tracker when complete |
+| Saved-C:-profile restart soak (10 cycles, 512 MiB C: profile) | 10/10 PASS; paging recognition unexercised in 2 cycles (16 GB: no page-file I/O under the applied pressure) |
+| CrystalDiskMark on Q: (Verifier off, 3 runs) | SEQ1M Q8T1 36.6-37.2 / 20.6-21.4 GB/s; RND4K Q32T1 1,576-1,638 / 1,555-1,648 MB/s; RND4K Q1T1 1,230-1,328 / 1,023-1,073 MB/s: same as or faster than the disk filter |
 
 Earlier branch results (0.4.187.1): every volume boots; the C: program-file check
 passes 3/3; a 10-cycle saved-C:-profile restart soak passed 10/10 under Driver
