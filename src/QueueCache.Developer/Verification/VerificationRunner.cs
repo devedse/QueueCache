@@ -133,6 +133,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             throw new InvalidDataException("Worker did not write its result: " + id);
         return job.Reply;
     }
+    /// <summary>Suites whose cases may SKIP on hardware that lacks the capability (TRIM, a second volume on
+    /// the disk). The run then completes as COMPLETED_WITH_SKIPS, never as COMPLETED.</summary>
+    public static bool AllowsSkips(string suite) => suite is "trim-file" or "trim-cache" or "volumes";
     private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original.Target);
 
     public static (string WorkDirectory, string OracleFile) SystemImageArtifacts(string workDirectory, string caseId)
@@ -363,7 +366,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         await Worker(Job("configure") with { Configuration = configuration }, deadline.Token);
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
-                    if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile")
+                    if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or
+                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;
@@ -439,7 +443,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (ownsSystemLease) systemLease!.Release();
             systemLease?.Dispose();
         }
-        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: options.Suite == "trim-file");
+        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: AllowsSkips(options.Suite));
         var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
             token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         if (complete && performance.Count > 0)

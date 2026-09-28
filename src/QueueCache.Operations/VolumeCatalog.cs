@@ -33,9 +33,9 @@ public static class VolumeIds
     }
 }
 
-[SupportedOSPlatform("windows")]
 public static class VolumeCatalog
 {
+    [SupportedOSPlatform("windows")]
     public static async Task<IReadOnlyList<VolumeDescription>> ListAsync(CancellationToken token = default)
     {
         var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))

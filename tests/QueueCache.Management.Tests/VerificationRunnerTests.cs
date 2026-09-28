@@ -26,7 +26,16 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 63, "policies adds settings-rollback on the driver");
+        Check(VerificationPlan.Version == 64, "plan 64 adds the volumes and trim-cache suites");
+        VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
+        VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
+        Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
+            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk"]), "volumes runs registration, raw disk commands and a shared disk as separate cases");
+        Check(VerificationPlan.Integrity(options with { Suite = "trim-cache" }).Single() == new IntegrityCase("trim-cache", "trim-cache"), "trim-cache is one case");
+        Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(test => test.Id.StartsWith("volume-") || test.Id == "trim-cache"),
+            "full does not include the volume or TRIM suites (they need a lab disk)");
+        Check(VerificationRunner.AllowsSkips("volumes") && VerificationRunner.AllowsSkips("trim-cache") && VerificationRunner.AllowsSkips("trim-file") &&
+            !VerificationRunner.AllowsSkips("policies") && !VerificationRunner.AllowsSkips("full"), "only capability-dependent suites may complete with skips");
         Check(QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "x. The previous settings were restored.",
             true, true, true, true, true, true).Result == "PASS", "settings rollback accepts a verified restore");
         foreach (var bad in new Action[]

@@ -139,12 +139,41 @@ internal static class DeveloperCommands
             command.SetAction(p => compatibility(["lab-" + name, p.GetValue(device)!, N(p.GetValue(value))]));
             driver.Subcommands.Add(command);
         }
-        var inspect = new Command("inspect", "Read per-device filter registration by PnP instance; does not modify registration.");
+        var registration = new Command("registration", "Show the Volume/disk class filter lists, lab switches and any problem as JSON; changes nothing.");
+        registration.SetAction(_ =>
+        {
+            var current = QueueCache.Operations.DriverRegistration.Inspect();
+            var problems = current.Problems();
+            Console.WriteLine(JsonSerializer.Serialize(new { Registration = current, Problems = problems }, new JsonSerializerOptions { WriteIndented = true }));
+            return problems.Count == 0 ? 0 : 1;
+        });
+        driver.Subcommands.Add(registration);
+        var inspect = new Command("inspect", "Read a disk's own (per-device) UpperFilters by PnP instance, where packages before the volume filter registered; changes nothing.");
         var target = new Argument<string>("instance");
         inspect.Arguments.Add(target);
         inspect.SetAction(p => compatibility(["lab-filter", "inspect", p.GetValue(target)!]));
         driver.Subcommands.Add(inspect);
         root.Subcommands.Add(driver);
+        var lab = new Command("lab-disk", "Volume-filter lab disk: an expandable VHDX with two NTFS volumes and one unformatted volume, for the volumes and trim-cache suites and write-tests.");
+        var labPath = new Argument<string>("vhdx") { Description = @"Local .vhdx path, e.g. C:\QueueCache-Lab\VolumeLab.vhdx." };
+        var create = new Command("create", "Create and attach a NEW VHDX and partition only that disk. Refuses an existing file or a letter in use.");
+        var letters = new Option<string>("--letters") { DefaultValueFactory = _ => "V,W,X", Description = "Two NTFS volumes, then the unformatted volume." };
+        var labSize = new Option<int>("--size-gib") { DefaultValueFactory = _ => QueueCache.Developer.LabDisk.DefaultSizeGiB };
+        create.Arguments.Add(labPath);
+        create.Options.Add(letters);
+        create.Options.Add(labSize);
+        create.SetAction((p, token) => QueueCache.Developer.LabDisk.CreateAsync(p.GetValue(labPath)!,
+            QueueCache.Developer.LabDisk.ParseLetters(p.GetValue(letters)!), p.GetValue(labSize), token));
+        lab.Subcommands.Add(create);
+        var attach = new Command("attach", "Attach an existing lab VHDX (Windows does not reattach it after a restart) and show its volumes.");
+        attach.Arguments.Add(labPath);
+        attach.SetAction((p, token) => QueueCache.Developer.LabDisk.AttachAsync(p.GetValue(labPath)!, token));
+        lab.Subcommands.Add(attach);
+        var detach = new Command("detach", "Detach the lab VHDX. Refuses while any of its volumes has a cache task.");
+        detach.Arguments.Add(labPath);
+        detach.SetAction((p, token) => QueueCache.Developer.LabDisk.DetachAsync(p.GetValue(labPath)!, token));
+        lab.Subcommands.Add(detach);
+        root.Subcommands.Add(lab);
         return root;
     }
     private static string N<T>(T value) where T : IFormattable => value.ToString(null, CultureInfo.InvariantCulture);

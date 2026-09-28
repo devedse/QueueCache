@@ -509,6 +509,10 @@ public static class VerificationWorker
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
                 if (inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0)
                     throw new IOException("Verification excludes boot/system/paging disks.");
+                // Only the supported registration is verified: topmost volume filter on every volume, none on disks.
+                var registrationProblems = DriverRegistration.Inspect().Problems();
+                if (registrationProblems.Count != 0)
+                    throw new IOException("Filter registration is not the supported volume-filter registration: " + string.Join(" ", registrationProblems));
                 var state = device.GetWriteCacheState();
                 ConfigurationManager.EnsureHealthy(state);
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
@@ -629,6 +633,17 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, profileChecks);
                 ReportFailures(profileChecks, Console.Error);
                 return profileChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "trim-cache":
+                var volumeChecks = job.Operation switch
+                {
+                    "volume-registration" => VolumeScenarios.Registration(target, device),
+                    "volume-raw-disk-commands" => VolumeScenarios.RawDiskCommands(target, device, job.WorkDirectory!),
+                    "volume-shared-disk" => VolumeScenarios.SharedDisk(target, device, job.WorkDirectory!),
+                    _ => TrimScenarios.Run(target, device, job.WorkDirectory!)
+                };
+                RunStorage.AtomicJson(job.Reply, volumeChecks);
+                ReportFailures(volumeChecks, Console.Error);
+                return volumeChecks.Count > 0 && volumeChecks.All(c => c.Result is "PASS" or "SKIP") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);
