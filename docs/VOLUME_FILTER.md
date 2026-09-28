@@ -1,6 +1,8 @@
-# Volume-level filtering (branch `volume-filter`)
+# Volume-level filtering
 
-Status: experimental branch, 2026-09-28. The tracker records verification.
+Status: implemented on branch `volume-filter` (PR #2), 2026-09-28; VM results are
+below and in the tracker. QueueCache caches volumes: the filter is the topmost
+volume filter and every volume has its own cache.
 
 ## Why
 
@@ -59,16 +61,61 @@ Fix (0.4.187.1, `e7150b7`): the length and sector size are queried once, on firs
 need, from a PASSIVE_LEVEL thread: the caller of the first QueueCache management
 request or the request worker. With it the filter covers every volume and boots.
 
-## Known limitations on the branch
+## How it behaves
 
-- The desktop keeps one card per disk and uses that disk's first lettered volume
-  as its cache.
-- The destructive raw-disk developer tests (`write-tests`) address a disk with no
-  volume and do not apply to a volume filter.
-- Crash dumps and hibernation write through the dump stack below every filter, as
-  before.
-- A volume spanning several disks (spanned/striped dynamic volumes) is refused by
-  the tools, as before.
+| Situation | Behaviour |
+|---|---|
+| Install | The installer registers `qcachelab` as the last Volume-class upper filter and removes any disk-class entry (and per-disk entries of old packages). Every volume gets the filter after a restart; volumes that appear later (a new partition, an attached VHDX) get it immediately. No cache is enabled. `qcache developer driver registration` / `qcache volume list` report the registration. |
+| Several volumes on one disk | Each has its own cache, budget, counters, worker and drainers; flushing or removing one never touches another. The shared RAM limit covers all of them. Verification leases are per physical disk. |
+| Saved profiles | Version 2, one per volume, named by the volume GUID and recording the volume size and the disk's PnP identity; a profile follows the volume if its letter changes. Version-1 (disk filter) profiles still restore, matched by letter, disk and disk size, and are then rewritten as version 2 (seen on the VM after the upgrade). |
+| Commands to the physical disk | SMART/health queries, SCSI/ATA pass-through and firmware polls go to the disk's own stack: never refused, never a drain or cache wipe (`volumes/volume-raw-disk-commands`). |
+| Raw reads/writes to the physical disk | Also bypass the cache. A tool that reads `\\.\PhysicalDriveN` directly while a Fast cache holds pending writes sees the disk without them; one that writes there leaves the cache with stale copies. Imaging and backup tools normally read a shadow copy, which is consistent (next row); otherwise run `qcache policy flush X:` (or pause the task) first, and never write to a disk under a cached volume. |
+| Shadow copies (System Restore, backup, imaging) | `volsnap` is below the cache; Windows' flush-and-hold request passes through the cache first and drains it, so a snapshot contains data that was pending in RAM (`volumes/volume-snapshot`). |
+| Resizing a volume | The resize's volume-manager control (seen: `0x56C05C`) drains and invalidates the cache first; the driver re-reads the volume length for every QueueCache request and before judging a read or write beyond the known end, so extending past the original size works (`volumes/volume-resize`; before that fix it failed with Invalid Parameter). |
+| TRIM | NTFS sends the data-set TRIM to the volume; pending writes in the range are dropped, clean copies released, issued writes awaited (`trim-cache`, on a VHDX because the VM's VirtIO disks cannot TRIM, KNOWN_ISSUES). |
+| BitLocker | The cache is above `fvevol`, so it holds plaintext, as the Windows file cache does; the disk still receives encrypted data. |
+| Volume-handle I/O (`\\.\X:`), chkdsk, format | Goes through the cache like file-system I/O, so it is coherent. |
+| Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
+| Unformatted or non-NTFS volumes | The filter passes everything through. A cache task can only be created on NTFS; a cache left by raw developer tests can still be flushed and removed (CLI and desktop). |
+| Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |
+| Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes both class entries, keeps the service and binary until the restart. `Recover-Registration.ps1` restores a version-2 backup's Volume and disk class lists, or removes only the QueueCache entry for a version-1 backup. |
+
+## Advantages and disadvantages compared with the disk filter
+
+| Advantages | |
+|---|---|
+| Disk tools work normally | SMART/health monitors, SCSI/ATA pass-through and firmware polls no longer get "not supported", and no longer drain the cache or empty its read data. |
+| Cache exactly what you choose | A cache belongs to one volume (for example a games volume), not to everything on the disk. Volumes on one disk can have different sizes and policies, and flushing or removing one does not stall the others. |
+| Profiles follow the volume | Named by the volume GUID, so a drive-letter change does not lose or misapply a profile. |
+| Automatic coverage | Volumes created later, attached VHDX files and removable fixed volumes get the filter without a restart. |
+| Same speed | CrystalDiskMark rows match the disk filter (results below). |
+
+| Disadvantages | What it means / mitigation |
+|---|---|
+| Raw disk I/O bypasses the cache | A program reading `\\.\PhysicalDriveN` directly misses data still pending in a Fast cache; one writing there leaves stale cached copies. Backup/imaging via shadow copies is consistent; otherwise flush or pause first, and never write raw to a disk under a cached volume. |
+| More lifecycle to handle | Volumes are resized, taken offline, dismounted, snapshotted and created at runtime; the boot volume's stack (snapshots, BitLocker, volume manager) is sensitive: querying it at start-up reset the machine. Each case is now handled and has a check, but it is a larger surface than a disk. |
+| Plaintext above BitLocker | The cache holds unencrypted data in RAM, like the Windows file cache; dump/hibernation files stay encrypted on a BitLocker C:. |
+| RAM is per volume | Two cached volumes on one disk each need their own budget; there is no pool shared per disk, and each drains independently, so the disk sees two write-back streams. |
+| One more stack layer everywhere | A filter instance on every volume (including EFI/recovery), passing through when no task exists; no measurable cost found. |
+| Scope | Only lettered NTFS volumes on one disk can be cached (no mount-point-only, spanned/striped, ReFS or FAT volumes). |
+| No simple downgrade | Profiles are rewritten as version 2; an older disk-filter package cannot read them and needs its tasks re-created. |
+
+## Lab switches
+
+`DiagnosticMode` (service DWORD, read at driver load) exists for bisecting boot
+problems and support only; it must be absent or 0 in normal use, and every
+cache-changing verification suite refuses to run otherwise: 1 = pure pass-through,
+2 = do not mirror `DO_POWER_PAGABLE`, 4 = skip paging classification at dispatch,
+8 = never query the length or sector size. `ClassCoverage` 0 with
+`LabAllowedDriverKey` restricts the filter to one volume's driver key (first-boot
+bring-up); the installer always sets `ClassCoverage` 1.
+
+## Known limitations
+
+- Hot-unplug, sleep/hibernate and offline recovery remain postponed (owner
+  priorities), as for the disk filter.
+- Raw reads and writes sent to the physical disk bypass the cache (above).
+- Crash durability of Fast data is unchanged: pending data is lost on a crash.
 
 ## Test plan
 

@@ -22,7 +22,7 @@ internal static class Commands
             Console.WriteLine(problems.Count == 0 ? "Filter registration: every volume (topmost volume filter)." : "Filter registration: " + string.Join(" ", problems));
             var saved = SavedConfigurations.List();
             foreach (var item in await VolumeCatalog.ListAsync(token))
-                Console.WriteLine($"{item.Display} · {VolumeStatus(item, saved)}");
+                Console.WriteLine($"{item.Display} | {VolumeStatus(item, saved)}");
             return problems.Count == 0 ? 0 : 1;
         });
         volumes.Subcommands.Add(volumeList);
@@ -219,7 +219,7 @@ internal static class Commands
     }
     private static string VolumeStatus(VolumeDescription volume, IReadOnlyList<SavedConfiguration> saved)
     {
-        var profile = saved.Any(p => p.Matches(volume.Volume, volume.Instance, volume.VolumeId)) ? " · saved for startup" : "";
+        var profile = saved.Any(p => p.Matches(volume.Volume, volume.Instance, volume.VolumeId)) ? " | saved for startup" : "";
         try
         {
             using var device = new CacheDevice(volume.Volume);

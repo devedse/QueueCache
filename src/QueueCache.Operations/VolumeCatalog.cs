@@ -13,7 +13,7 @@ public sealed record VolumeDescription(string Volume, string Label, string FileS
     public double SizeGiB => Bytes / 1073741824.0;
     public bool IsNtfs => string.Equals(FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase);
     public string Name => string.IsNullOrWhiteSpace(Label) ? $"{Volume}" : $"{Volume} {Label}";
-    public string Display => $"{Name} · {(string.IsNullOrEmpty(FileSystem) ? "RAW" : FileSystem)} · {SizeGiB:0.##} GiB · " +
+    public string Display => $"{Name} | {(string.IsNullOrEmpty(FileSystem) ? "RAW" : FileSystem)} | {SizeGiB:0.##} GiB | " +
         $"disk {DiskNumber} ({DiskName})" + (IsBoot || IsSystem ? " [Windows]" : "") + (IsPaging ? " [paging file]" : "");
 }
 
