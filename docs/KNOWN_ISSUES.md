@@ -272,9 +272,58 @@ forwarded, and on success cached data inside the ranges is dropped. Unwritten
 data for trimmed sectors is discarded rather than written (it would overwrite
 space the file system has freed); a partly trimmed unwritten block keeps its
 other sectors. Only unknown flags or malformed input use the conservative
-write-out-and-invalidate path. A failed TRIM keeps all cached data. The test VM's
-disks do not support TRIM (file TRIM returns Win32 326), so this needs a
-discard-enabled test disk before it can be called verified.
+write-out-and-invalidate path. A failed TRIM keeps all cached data. Not yet verified on the VM, because Windows
+on the VM currently sends no TRIM at all (below).
+
+### Why the test VM sends no TRIM (investigated 2026-09-28)
+
+What you see: `Optimize-Volume -ReTrim` and `defrag /L` fail with "Incorrect
+function (0x80070001)", file-level TRIM (`FSCTL_FILE_LEVEL_TRIM`) fails with Win32
+326, and deleting a 64 MiB file on Q: produced no TRIM request at the driver.
+
+Why: this is a Windows 11 / VirtIO SCSI problem, not QueueCache. Proxmox already
+has Discard and SSD emulation on for both disks, and the virtual disk advertises
+UNMAP (read-only SCSI INQUIRY of C:'s disk: VPD B2 UNMAP supported, thin
+provisioning; VPD B0 unmap granularity 8 sectors = 4 KiB, the NTFS cluster size).
+Since the May 2026 Windows 11 update, Windows then asks such a disk for GET LBA
+STATUS (SCSI opcode 0x9E); the Storport log shows the disk rejecting it
+(sense 0x5/0x24), and Windows gives up on TRIM. The same failure is reported
+publicly for Windows 11 guests with the VirtIO SCSI driver (virtio-win issue
+#1574, 0.1.285 on Proxmox 9.2); a fix exists only as an unmerged change for the
+other VirtIO block driver (PR #1653). Evidence that QueueCache is not involved:
+retrim fails identically on C:, which has no cache, and succeeds on a temporary
+VHDX disk that has the same QueueCache filter attached.
+
+Proposed change (owner choice): verify TRIM handling on a VHDX-backed test disk
+inside Windows (no host change), and/or add a small SATA test disk with Discard
+and SSD emulation in Proxmox, which does not use the affected driver. Q: itself
+trims again once Microsoft or virtio-win ship a fix.
+
+## Open: raw disk commands on a cached disk
+
+What you see: while a disk is being cached, disk tools that send raw commands to
+the disk (SCSI/ATA pass-through, as used by SMART and health tools) get "not
+supported" on it; the same read-only INQUIRY that works on an uncached disk fails
+on Q:. SMART reads (`SMART_RCV_DRIVE_DATA`) are accepted but, because that
+control declares write access, each one drains all pending writes and empties the
+clean cache first: a health monitor polling SMART repeatedly empties the cache.
+
+Why: the driver filters the whole disk, so every request to the disk, including
+raw commands, passes through it. While caching, requests go to the ordered
+request worker, a system thread; a pass-through request carries pointers into the
+calling program's memory, which are not valid there, so the worker refuses it.
+A product that caches at the volume level (a filter on each volume instead of on
+the disk) never sees raw disk commands, because they are sent to the disk's own
+device, not the volume; that is a different architecture with its own trade-offs
+and is not proposed here.
+
+Proposed change: forward raw commands that cannot change data (SCSI INQUIRY,
+MODE SENSE, LOG SENSE, READ CAPACITY, REPORT LUNS, TEST UNIT READY, REQUEST
+SENSE; ATA IDENTIFY and SMART read/status) straight to the disk from the caller's
+own thread, as read-only queries already are, and treat SMART reads the same way.
+Raw commands that read or write data keep being refused on a cached disk (a raw
+read would bypass unwritten data; a raw write would bypass the cache), unless a
+later change drains and invalidates the range first.
 
 ## Configuration changes apply completely or restore the previous settings
 

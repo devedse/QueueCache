@@ -52,11 +52,15 @@ Details: [WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md).
 2. **Settings rollback on the driver: DONE (plan 63, 0.4.169.1).** Lab faults 6/7
    fail a resize once; the previous settings were back and the same change
    applied afterwards, under Driver Verifier.
-3. **TRIM on a discard-capable disk (N6): needs the owner.** Windows allows TRIM
-   but Q:'s virtual disk rejects it ("Not Supported"): enable discard for that
-   disk in the hypervisor. Then run `trim-file`/`trim-diagnostic` and add a
-   maintained case: trimmed dirty data never reaches the disk, a partly trimmed
-   block keeps its other sectors, no whole-cache wipe.
+3. **TRIM on a discard-capable disk (N6): blocked by Windows, not the VM
+   settings.** Discard and SSD emulation are on; Windows 11 stopped sending TRIM
+   to VirtIO SCSI disks after its May 2026 update (KNOWN_ISSUES). Options: test on
+   a VHDX-backed disk inside Windows (works through our filter), and/or a small
+   SATA test disk. Then add a maintained case: trimmed dirty data never reaches
+   the disk, a partly trimmed block keeps its other sectors, no whole-cache wipe.
+3a. **Raw disk commands on a cached disk (new).** Forward read-only SCSI/ATA
+   pass-through and SMART reads from the caller's thread instead of refusing them
+   or draining the cache for them (KNOWN_ISSUES).
 
 ## Step 2: measure what we have
 
