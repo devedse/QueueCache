@@ -823,7 +823,8 @@ internal static class VerificationRunnerTests
                 "structured check failures reach worker stderr with exact details");
         }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
-        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture") { DiskBytes = 200L << 30 };
+        // A 199 GiB volume (what the volume filter reports) on a 200 GiB disk.
+        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 199L << 30, "fixture") { DiskBytes = 200L << 30 };
         var dataDisk = new QueueCache.Operations.DiskDescription(1, "fixture", 200L << 30, "fixture", ["Q:"], false, false);
         VerificationWorker.ValidateFileTarget(identity, dataDisk);
         foreach (var excluded in new[] { dataDisk with { IsBoot = true }, dataDisk with { IsSystem = true }, dataDisk with { IsPaging = true }, dataDisk with { Bytes = 1 }, dataDisk with { Instance = "other" } })
@@ -840,7 +841,13 @@ internal static class VerificationRunnerTests
         Check(RunStorage.Complete(["trim-file"], skippedTrim, allowSkipped: true), "diagnostic can finish with explicit SKIP");
         Check(!RunStorage.Complete(["trim-file", "missing"], skippedTrim, allowSkipped: true), "diagnostic cannot accept missing cases");
         QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "FIXTURE", "ntfs");
-        QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
+        QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 199UL << 30);
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 198L << 30), "fixture", "NTFS");
+            throw new Exception("Extent length other than the volume size accepted.");
+        }
+        catch (IOException) { }
         try
         {
             QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (2, 1L << 20, 199L << 30), "fixture", "NTFS");
@@ -849,8 +856,8 @@ internal static class VerificationRunnerTests
         catch (IOException) { }
         try
         {
-            QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 201UL << 30);
-            throw new Exception("Disk-length mismatch accepted.");
+            QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
+            throw new Exception("Volume-length mismatch accepted.");
         }
         catch (IOException) { }
         try
