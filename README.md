@@ -23,7 +23,8 @@ Remaining work is ordered in the [next phase plan](docs/NEXT_PHASE_PLAN.md).
 QueueCache caches volumes. Installation registers the filter once as the topmost
 volume filter (directly below the file system), which covers every volume after a
 restart, including volumes created later. It starts inactive: installation does not
-allocate RAM or enable caching. A task is explicitly created for one volume, and
+allocate RAM or enable caching. A task is explicitly created for one volume (NTFS, ReFS, FAT32 or exFAT; FAT32 and exFAT
+have no journal, so a crash with Fast-mode data in RAM can damage them), and
 each volume has its own cache, also when several volumes share a disk. Only a
 saved profile whose volume (GUID), disk and size still match is restored at
 startup. Commands that disk tools send to the physical disk (health/SMART queries,

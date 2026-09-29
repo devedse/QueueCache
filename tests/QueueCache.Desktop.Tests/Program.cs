@@ -24,7 +24,8 @@ var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Tex
 Check(labels.Contains("Active") && labels.Contains("Available"), "active and available volumes render");
 Check(labels.Count(t => t?.StartsWith("Disk ") == true) == 2 && labels.Any(t => t?.Contains("each volume has its own cache") == true), "volumes are grouped under their disk; a shared disk says each volume has its own cache");
 Check(labels.Contains("Q: Games") && labels.Contains("C:") && labels.Contains("R:"), "one card per lettered volume");
-Check(labels.Any(t => t?.Contains("Format this volume as NTFS") == true), "an unformatted volume explains why it cannot be cached");
+Check(labels.Any(t => t?.Contains("not formatted") == true), "an unformatted volume explains why it cannot be cached");
+Check(labels.Any(t => t?.Contains("FAT32 has no journal") == true), "a FAT32 volume can be cached and warns that it has no journal");
 Check(!labels.Any(t => t?.Contains("Inspect") == true), "no manual inspect step");
 // Colour keys use the same brushes the bar and chart draw with.
 var swatches = window.GetVisualDescendants().OfType<Border>().Where(b => b.Width == 11 && b.Background is not null).ToArray();
@@ -55,8 +56,9 @@ buttons.Single(b => Equals(b.Content, "Flush now") && b.IsVisible).RaiseEvent(ne
 Dispatcher.UIThread.RunJobs();
 Check(!pause.IsEnabled, "same-volume mutations disabled during pending Flush");
 var addButtons = buttons.Where(b => Equals(b.Content, "Add cache")).ToArray();
-Check(addButtons.Length == 2 && addButtons[0].IsEnabled, "another volume remains configurable during pending Flush");
-Check(!addButtons[1].IsEnabled, "an unformatted volume cannot get a cache");
+Check(addButtons.Length == 3 && addButtons[0].IsEnabled, "another volume remains configurable during pending Flush");
+Check(addButtons[1].IsEnabled, "a FAT32 volume can get a cache");
+Check(!addButtons[2].IsEnabled, "an unformatted volume cannot get a cache");
 var duringFlush = fixture.DataReads;
 Invoke("Sample").GetAwaiter().GetResult();
 Check(fixture.DataReads > duringFlush, "telemetry continues during pending Flush");
@@ -87,7 +89,7 @@ var rawCard = window.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Te
 Button RawButton(string label) => rawCard.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
 Check(!RawButton("Cache settings").IsEnabled && !RawButton("Pause").IsEnabled, "a cached unformatted volume cannot be reconfigured or paused");
 Check(RawButton("Remove cache").IsEnabled && RawButton("Flush now").IsEnabled, "a cached unformatted volume can be flushed and removed");
-Check(rawCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.Contains("not NTFS") == true), "the card says why settings are unavailable");
+Check(rawCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.Contains("no file system") == true), "the card says why settings are unavailable");
 fixture.RawVolumeHasCache = false;
 window.Close();
 var newState = fixture.State with { Flags = fixture.State.Flags | 4096, BudgetBytes = 0, ReservedBytes = 0, Options = null };
@@ -142,6 +144,7 @@ sealed class Fixture : ICacheTaskService
     [
         new("C:", "", "NTFS", 99L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000001}\", 0, "System SSD", "fixture-system", 100L << 30, true, false, true),
         new("Q:", "Games", "NTFS", 150L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000002}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false),
+        new("S:", "Stick", "FAT32", 16L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000004}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false),
         new("R:", "", "", 49L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000003}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false)
     ];
     public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)

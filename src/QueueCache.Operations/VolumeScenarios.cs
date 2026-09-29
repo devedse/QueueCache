@@ -96,15 +96,15 @@ public static class VolumeScenarios
         return checks;
     }
 
-    /// <summary>A second NTFS volume on the same disk has its own cache, counters, drains and saved profile.</summary>
+    /// <summary>A second volume on the same disk has its own cache, counters, drains and saved profile.</summary>
     public static IReadOnlyList<CheckResult> SharedDisk(DiskTarget target, CacheDevice device, string workDirectory)
     {
         var sibling = VolumeCatalog.ListAsync().GetAwaiter().GetResult().FirstOrDefault(volume =>
             volume.DiskNumber == target.Number && string.Equals(volume.Instance, target.Instance, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(volume.Volume, target.Device, StringComparison.OrdinalIgnoreCase) && volume.IsNtfs &&
+            !string.Equals(volume.Volume, target.Device, StringComparison.OrdinalIgnoreCase) && volume.HasFileSystem &&
             !volume.IsBoot && !volume.IsSystem && !volume.IsPaging);
         if (sibling is null)
-            return [new("shared-disk/independent-caches", "SKIP", $"Needs a second non-OS NTFS volume on disk {target.Number}; " +
+            return [new("shared-disk/independent-caches", "SKIP", $"Needs a second non-OS volume with a file system on disk {target.Number}; " +
                 "create the lab disk with qcache developer lab-disk create (docs/DEVELOPER_VERIFICATION.md).")];
         var other = DiskTarget.InspectAsync(sibling.Volume).GetAwaiter().GetResult();
         using var otherDevice = new CacheDevice(other.Device, writable: true);
@@ -192,10 +192,11 @@ public static class VolumeScenarios
     {
         var lab = VolumeCatalog.ListAsync().GetAwaiter().GetResult().FirstOrDefault(volume =>
             volume.DiskNumber == target.Number && string.Equals(volume.Instance, target.Instance, StringComparison.OrdinalIgnoreCase) &&
-            volume.Label == "QC-Lab-2" && volume.DiskName == "Msft Virtual Disk" && volume.IsNtfs &&
+            // Windows can shrink and extend only NTFS volumes (ReFS extends only; FAT neither).
+            volume.Label == "QC-Lab-2" && volume.DiskName == "Msft Virtual Disk" && volume.FileSystem == "NTFS" &&
             !volume.IsBoot && !volume.IsSystem && !volume.IsPaging);
         if (lab is null)
-            return [new("resize/shrink-extend", "SKIP", "Resizing is only exercised on the lab disk's QC-Lab-2 volume (qcache developer lab-disk create).")];
+            return [new("resize/shrink-extend", "SKIP", "Resizing is only exercised on the lab disk's NTFS QC-Lab-2 volume (qcache developer lab-disk create); Windows cannot shrink ReFS or FAT volumes.")];
         var other = DiskTarget.InspectAsync(lab.Volume).GetAwaiter().GetResult();
         using var device = new CacheDevice(other.Device, writable: true);
         if (device.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(other.VolumeId))

@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 68, "plan 68: a failed snapshot on a cached volume is a FAIL");
+        Check(VerificationPlan.Version == 69, "plan 69: suites accept any file system; FAT cluster offsets");
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(

@@ -11,10 +11,25 @@ public sealed record VolumeDescription(string Volume, string Label, string FileS
 {
     public string VolumeId => VolumeIds.Parse(VolumePath);
     public double SizeGiB => Bytes / 1073741824.0;
-    public bool IsNtfs => string.Equals(FileSystem, "NTFS", StringComparison.OrdinalIgnoreCase);
+    /// <summary>A file system Windows mounted (NTFS, ReFS, FAT32, exFAT, ...): a cache task can be created.</summary>
+    public bool HasFileSystem => FileSystems.IsMounted(FileSystem);
+    /// <summary>False for FAT32/exFAT: no journal, so losing Fast-mode data in a crash can corrupt the file system.</summary>
+    public bool Journaled => FileSystems.IsJournaled(FileSystem);
     public string Name => string.IsNullOrWhiteSpace(Label) ? $"{Volume}" : $"{Volume} {Label}";
     public string Display => $"{Name} | {(string.IsNullOrEmpty(FileSystem) ? "RAW" : FileSystem)} | {SizeGiB:0.##} GiB | " +
         $"disk {DiskNumber} ({DiskName})" + (IsBoot || IsSystem ? " [Windows]" : "") + (IsPaging ? " [paging file]" : "");
+}
+
+/// <summary>What the cache needs from a volume's file system. The driver works below every file system; the
+/// difference is what a crash that loses Fast-mode data does: NTFS and ReFS recover from their journal, FAT32 and
+/// exFAT have none.</summary>
+public static class FileSystems
+{
+    public static bool IsMounted(string? name) => !string.IsNullOrWhiteSpace(name) && !string.Equals(name, "RAW", StringComparison.OrdinalIgnoreCase);
+    public static bool IsJournaled(string? name) => name is not null &&
+        (name.Equals("NTFS", StringComparison.OrdinalIgnoreCase) || name.Equals("ReFS", StringComparison.OrdinalIgnoreCase));
+    public const string NoJournalWarning = "has no journal (FAT32/exFAT): if Windows crashes or loses power while Fast-mode data is still in RAM, " +
+        "the file system itself can be damaged and need chkdsk, not only the newest files. Prefer Strict here, or NTFS/ReFS.";
 }
 
 /// <summary>Volume GUID names, the stable identity of a volume across drive-letter changes.</summary>

@@ -136,7 +136,11 @@ Check(VolumeIds.Parse(@"\\?\Volume{0E0C7F9E-1C1B-4C7E-8D7A-1F9F2A3B4C5D}\") == v
 foreach (var invalid in new[] { @"\\?\Volume{0e0c7f9e}\", @"\\.\Q:", @"\\?\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}", "" })
     RejectIo(() => VolumeIds.Parse(invalid), "reject malformed volume name " + invalid);
 var inventory = VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"Games","FileSystem":"NTFS","Bytes":161061273600,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false},{"Volume":"R:","Label":"","FileSystem":"","Bytes":53687091200,"VolumePath":"\\\\?\\Volume{00000000-0000-0000-0000-000000000002}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false}]""");
-Check(inventory.Count == 2 && inventory[0].VolumeId == volumeGuid && inventory[0].IsNtfs && !inventory[1].IsNtfs, "volume inventory keeps each volume on a shared disk");
+Check(FileSystems.IsMounted("NTFS") && FileSystems.IsMounted("ReFS") && FileSystems.IsMounted("FAT32") && FileSystems.IsMounted("exFAT") &&
+    !FileSystems.IsMounted("RAW") && !FileSystems.IsMounted("") && !FileSystems.IsMounted(null), "any mounted file system can be cached; RAW cannot");
+Check(FileSystems.IsJournaled("NTFS") && FileSystems.IsJournaled("refs") && !FileSystems.IsJournaled("FAT32") && !FileSystems.IsJournaled("exFAT"),
+    "FAT32 and exFAT are flagged as unjournaled");
+Check(inventory.Count == 2 && inventory[0].VolumeId == volumeGuid && inventory[0].HasFileSystem && !inventory[1].HasFileSystem, "volume inventory keeps each volume on a shared disk");
 Check(inventory[0].Display.Contains("Q: Games") && inventory[0].Display.Contains("disk 1") && inventory[1].Display.Contains("RAW"), "volume label names the volume, file system and disk");
 RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"","FileSystem":"NTFS","Bytes":300,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume larger than its disk is refused");
 RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:\\","Label":"","FileSystem":"NTFS","Bytes":100,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume must be a letter");

@@ -528,8 +528,10 @@ public static class PagingCoherenceScenarios
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (BitConverter.ToUInt32(disk, 0) != 1)
                 throw new NotSupportedException("The gated case requires a volume on exactly one disk extent.");
+            // FAT32/exFAT count clusters from the start of their data area, not the volume.
+            return SpecialFileMap.ClusterAreaOffset(volume.SafeFileHandle, bytesPerSector) +
+                lcn.Value * clusterBytes + fileOffset % clusterBytes;
         }
-        return lcn.Value * clusterBytes + fileOffset % clusterBytes;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

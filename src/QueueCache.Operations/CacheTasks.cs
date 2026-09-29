@@ -8,8 +8,8 @@ public static class CacheTasks
 {
     public static async Task RemoveAsync(string volume, CancellationToken token = default, bool preserveSaved = false)
     {
-        // Draining and freeing a cache is safe on any volume, including one that is not (or no longer) NTFS.
-        var target = await DiskTarget.InspectAsync(volume, token, requireNtfs: false);
+        // Draining and freeing a cache is safe on any volume, including one without a file system.
+        var target = await DiskTarget.InspectAsync(volume, token, requireFileSystem: false);
         await Task.Run(() =>
         {
             using var gate = ConfigurationGate.Enter();

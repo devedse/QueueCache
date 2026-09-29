@@ -27,7 +27,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 68)
+## Suites (plan version 69)
+
+Plan 69: the target volume may use any file system Windows mounts (NTFS, ReFS,
+FAT32, exFAT), not only NTFS. File offsets of test ranges and page files now add the
+volume's cluster-area offset (`FSCTL_GET_RETRIEVAL_POINTER_BASE`: zero on NTFS and
+ReFS, after the FAT tables on FAT32/exFAT); without it gated cases would target the
+wrong range on FAT. `volume-resize` stays NTFS-only (Windows cannot shrink ReFS or
+FAT). `qcache developer lab-disk create --file-system NTFS|ReFS|FAT32|exFAT` builds
+the lab volumes with that file system (ReFS as a Dev Drive, 50 GiB each).
 
 Plan 68: `volume-snapshot` records the cache every 200 ms while the shadow copy is
 created (queue, active request phase and age, pending/in-flight bytes, last barrier

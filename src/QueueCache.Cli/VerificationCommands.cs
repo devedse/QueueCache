@@ -53,7 +53,7 @@ internal static class VerificationCommands
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
-                                 No cache controls or telemetry. Non-OS/non-paging NTFS only; SKIP is not PASS.
+                                 No cache controls or telemetry. Non-OS/non-paging volumes only; SKIP is not PASS.
               flush-interference Focused hot-reader/blocked-writer test, with/without application flush.
                                  Use --repeats 2 for eight cases. Requires DiskSpd.
               performance        Repeated allocation/drain/queue-depth, delay and off/on workload matrix.

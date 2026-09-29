@@ -77,7 +77,7 @@ request or the request worker. With it the filter covers every volume and boots.
 | BitLocker | The cache is above `fvevol`, so it holds plaintext, as the Windows file cache does; the disk still receives encrypted data. |
 | Volume-handle I/O (`\\.\X:`), chkdsk, format | Goes through the cache like file-system I/O, so it is coherent. |
 | Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
-| Unformatted or non-NTFS volumes | The filter passes everything through. A cache task can only be created on NTFS; a cache left by raw developer tests can still be flushed and removed (CLI and desktop). |
+| File systems | Any file system Windows mounts: NTFS, ReFS (Dev Drives), FAT32, exFAT. FAT32/exFAT have no journal: the CLI and desktop warn that a crash with Fast-mode data in RAM can damage the file system itself. Unformatted volumes pass through; a cache left on one by raw developer tests can be flushed and removed. |
 | Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |
 | Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes the Volume class entry, keeps the service and binary until the restart. `Recover-Registration.ps1` restores the backed-up Volume class list and service values (verified on copies of the SYSTEM hive). |
 
@@ -98,7 +98,7 @@ request or the request worker. With it the filter covers every volume and boots.
 | Plaintext above BitLocker | The cache holds unencrypted data in RAM, like the Windows file cache; dump/hibernation files stay encrypted on a BitLocker C:. |
 | RAM is per volume | Two cached volumes on one disk each need their own budget; there is no pool shared per disk, and each drains independently, so the disk sees two write-back streams. |
 | One more stack layer everywhere | A filter instance on every volume (including EFI/recovery), passing through when no task exists; no measurable cost found. |
-| Scope | Only lettered NTFS volumes on one disk can be cached (no mount-point-only, spanned/striped, ReFS or FAT volumes). |
+| Scope | Only lettered volumes on one disk can be cached (no mount-point-only or spanned/striped volumes). FAT32/exFAT carry the no-journal risk above. |
 | No upgrade path from the disk filter | By decision there is no migration code: disk-filter profiles and registrations are not converted (re-create tasks after installing). |
 
 ## Lab switches

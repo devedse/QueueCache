@@ -13,7 +13,7 @@ public static class Runner
 {
     public static async Task<int> RunAsync(string[] args)
     {
-        // Never formats, partitions, deletes, or overwrites existing files. Requires a prepared NTFS lab volume.
+        // Never formats, partitions, deletes, or overwrites existing files. Requires a prepared, formatted lab volume.
         if (!OperatingSystem.IsWindows() || args.Length is not (5 or 6) || args[0].Length != 1 || !char.IsAsciiLetter(args[0][0]) ||
             !int.TryParse(args[1], out var number) || number <= 0 || !long.TryParse(args[2], out var expectedSize) || expectedSize < (4L << 30) ||
             args[4] is not ("--write-new-files" or "--concurrent" or "--baseline" or "--dirty-reboot" or "--dirty-reboot-unsafe" or "--test-flush-policy" or "--test-coalescing" or "--verify-files") || (args[4] == "--verify-files" && args.Length != 6))
@@ -43,8 +43,8 @@ public static class Runner
             var identity = JsonSerializer.Deserialize<Identity>(await stdout) ?? throw new IOException("Missing volume identity.");
             if (identity.Number != number || identity.Size != expectedSize || identity.Boot || identity.System ||
                 !string.Equals(identity.Instance, args[3], StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(new DriveInfo(root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-                throw new IOException("Expected NTFS volume on the exact non-OS secondary disk.");
+                !QueueCache.Operations.FileSystems.IsMounted(new DriveInfo(root).DriveFormat))
+                throw new IOException("Expected a formatted volume on the exact non-OS secondary disk.");
             var writing = args[4] != "--verify-files";
             var baseline = args[4] == "--baseline";
             long length = 64L << 20;

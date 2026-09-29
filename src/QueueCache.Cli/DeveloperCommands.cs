@@ -95,7 +95,7 @@ internal static class DeveloperCommands
         });
         root.Subcommands.Add(writes);
 
-        var files = new Command("file-tests", "Advanced NTFS scenarios on an exact non-OS disk. New files retained; some modes inject faults or prepare a reboot test.");
+        var files = new Command("file-tests", "Advanced file-system scenarios on an exact non-OS disk. New files retained; some modes inject faults or prepare a reboot test.");
         var letter = new Argument<string>("letter");
         var fileDisk = new Argument<int>("disk");
         var fileBytes = new Argument<long>("expected-bytes");
@@ -149,16 +149,25 @@ internal static class DeveloperCommands
         });
         driver.Subcommands.Add(registration);
         root.Subcommands.Add(driver);
-        var lab = new Command("lab-disk", "Volume-filter lab disk: an expandable VHDX with two NTFS volumes and one unformatted volume, for the volumes and trim-cache suites and write-tests.");
+        var lab = new Command("lab-disk", "Volume-filter lab disk: an expandable VHDX with two formatted volumes (NTFS by default) and one unformatted volume, for the volumes and trim-cache suites and write-tests.");
         var labPath = new Argument<string>("vhdx") { Description = @"Local .vhdx path, e.g. C:\QueueCache-Lab\VolumeLab.vhdx." };
-        var create = new Command("create", "Create and attach a NEW VHDX and partition only that disk. Refuses an existing file or a letter in use.");
-        var letters = new Option<string>("--letters") { DefaultValueFactory = _ => "V,W,X", Description = "Two NTFS volumes, then the unformatted volume." };
+        var create = new Command("create", "Create and attach a NEW VHDX and partition only that disk (expandable: uses only the space written). Refuses an existing file or a letter in use.");
+        var letters = new Option<string>("--letters") { DefaultValueFactory = _ => "V,W,X", Description = "Two formatted volumes, then the unformatted volume." };
         var labSize = new Option<int>("--size-gib") { DefaultValueFactory = _ => QueueCache.Developer.LabDisk.DefaultSizeGiB };
+        var labFileSystem = new Option<string>("--file-system") { DefaultValueFactory = _ => "NTFS", Description = "File system of the two formatted volumes: NTFS, ReFS (a Dev Drive, 50 GiB each), FAT32 or exFAT." };
         create.Arguments.Add(labPath);
         create.Options.Add(letters);
         create.Options.Add(labSize);
-        create.SetAction((p, token) => QueueCache.Developer.LabDisk.CreateAsync(p.GetValue(labPath)!,
-            QueueCache.Developer.LabDisk.ParseLetters(p.GetValue(letters)!), p.GetValue(labSize), token));
+        create.Options.Add(labFileSystem);
+        create.SetAction((p, token) =>
+        {
+            var fileSystem = QueueCache.Developer.LabDisk.ParseFileSystem(p.GetValue(labFileSystem)!);
+            // Default size: large enough for the chosen file system.
+            var size = p.GetResult(labSize) is null ? Math.Max(QueueCache.Developer.LabDisk.DefaultSizeGiB, QueueCache.Developer.LabDisk.MinimumSizeGiB(fileSystem) + 3)
+                : p.GetValue(labSize);
+            return QueueCache.Developer.LabDisk.CreateAsync(p.GetValue(labPath)!,
+                QueueCache.Developer.LabDisk.ParseLetters(p.GetValue(letters)!), size, fileSystem, token);
+        });
         lab.Subcommands.Add(create);
         var attach = new Command("attach", "Attach an existing lab VHDX (Windows does not reattach it after a restart) and show its volumes.");
         attach.Arguments.Add(labPath);

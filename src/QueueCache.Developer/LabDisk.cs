@@ -16,6 +16,17 @@ public static class LabDisk
 {
     public const int DefaultSizeGiB = 24;
     public const int VolumeGiB = 8;
+    // Windows 11 Pro creates ReFS only as a Dev Drive, which must be at least 50 GB.
+    public const int DevDriveGiB = 50;
+    public static readonly string[] FileSystemNames = ["NTFS", "ReFS", "FAT32", "exFAT"];
+
+    public static int VolumeSizeGiB(string fileSystem) =>
+        string.Equals(fileSystem, "ReFS", StringComparison.OrdinalIgnoreCase) ? DevDriveGiB : VolumeGiB;
+    public static int MinimumSizeGiB(string fileSystem) => 2 * VolumeSizeGiB(fileSystem) + 5;
+
+    public static string ParseFileSystem(string name) =>
+        FileSystemNames.FirstOrDefault(known => string.Equals(known, name, StringComparison.OrdinalIgnoreCase))
+        ?? throw new ArgumentException("File system must be NTFS, ReFS, FAT32 or exFAT.");
 
     public sealed record Layout(char First, char Second, char Raw);
 
@@ -25,7 +36,7 @@ public static class LabDisk
         if (parts.Length != 3 || parts.Any(p => p.Length != 1 || !char.IsAsciiLetter(p[0])) ||
             parts.Select(p => char.ToUpperInvariant(p[0])).Distinct().Count() != 3 ||
             parts.Any(p => char.ToUpperInvariant(p[0]) is 'A' or 'B' or 'C'))
-            throw new ArgumentException("Give three different drive letters (not A, B or C), e.g. V,W,X: two NTFS volumes, then the unformatted volume.");
+            throw new ArgumentException("Give three different drive letters (not A, B or C), e.g. V,W,X: two formatted volumes, then the unformatted volume.");
         return new(char.ToUpperInvariant(parts[0][0]), char.ToUpperInvariant(parts[1][0]), char.ToUpperInvariant(parts[2][0]));
     }
 
@@ -38,11 +49,13 @@ public static class LabDisk
         return full;
     }
 
-    public static async Task<int> CreateAsync(string path, Layout letters, int sizeGiB, CancellationToken token)
+    public static async Task<int> CreateAsync(string path, Layout letters, int sizeGiB, string fileSystem, CancellationToken token)
     {
         path = ValidatePath(path);
-        if (sizeGiB < 2 * VolumeGiB + 5 || sizeGiB > 256)
-            throw new ArgumentException($"The lab disk needs {2 * VolumeGiB + 5}..256 GiB (two {VolumeGiB} GiB NTFS volumes and a RAW volume of at least 4 GiB).");
+        fileSystem = ParseFileSystem(fileSystem);
+        var volumeGiB = VolumeSizeGiB(fileSystem);
+        if (sizeGiB < MinimumSizeGiB(fileSystem) || sizeGiB > 256)
+            throw new ArgumentException($"The lab disk needs {MinimumSizeGiB(fileSystem)}..256 GiB (two {volumeGiB} GiB {fileSystem} volumes and a RAW volume of at least 4 GiB).");
         if (File.Exists(path))
             throw new IOException($"{path} already exists. Attach it instead, or choose a new path.");
         var directory = Path.GetDirectoryName(path)!;
@@ -56,11 +69,15 @@ public static class LabDisk
         await PowerShell($"$ErrorActionPreference='Stop'; $d=@(Get-Disk | Where-Object Location -eq '{path}'); if ($d.Count -ne 1) {{ throw 'The new VHDX is not attached.' }}; $d=$d[0]; " +
             "if ($d.PartitionStyle -ne 'RAW' -or $d.NumberOfPartitions -ne 0 -or $d.IsBoot -or $d.IsSystem) { throw 'The attached VHDX is not an empty disk.' }; " +
             "Initialize-Disk -Number $d.Number -PartitionStyle GPT; " +
-            $"New-Partition -DiskNumber $d.Number -Size {VolumeGiB}GB -DriveLetter {letters.First} | Format-Volume -FileSystem NTFS -NewFileSystemLabel QC-Lab-1 -Confirm:$false | Out-Null; " +
-            $"New-Partition -DiskNumber $d.Number -Size {VolumeGiB}GB -DriveLetter {letters.Second} | Format-Volume -FileSystem NTFS -NewFileSystemLabel QC-Lab-2 -Confirm:$false | Out-Null; " +
+            $"New-Partition -DiskNumber $d.Number -Size {volumeGiB}GB -DriveLetter {letters.First} | {Format(fileSystem, "QC-Lab-1")}; " +
+            $"New-Partition -DiskNumber $d.Number -Size {volumeGiB}GB -DriveLetter {letters.Second} | {Format(fileSystem, "QC-Lab-2")}; " +
             $"New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter {letters.Raw} | Out-Null", token);
         return await ShowAsync(path, token);
     }
+
+    private static string Format(string fileSystem, string label) => (fileSystem == "ReFS"
+        ? $"Format-Volume -DevDrive -NewFileSystemLabel {label} -Confirm:$false"
+        : $"Format-Volume -FileSystem {fileSystem} -NewFileSystemLabel {label} -Confirm:$false") + " | Out-Null";
 
     public static async Task<int> AttachAsync(string path, CancellationToken token)
     {
@@ -96,8 +113,8 @@ public static class LabDisk
         Console.WriteLine($"Lab disk {path}:");
         foreach (var volume in volumes)
             Console.WriteLine($"  {volume.Display} · {volume.VolumeId} · {volume.Bytes} bytes");
-        var ntfs = volumes.Where(v => v.IsNtfs).ToArray();
-        var raw = volumes.FirstOrDefault(v => !v.IsNtfs);
+        var ntfs = volumes.Where(v => v.HasFileSystem).ToArray();
+        var raw = volumes.FirstOrDefault(v => !v.HasFileSystem);
         if (ntfs.Length != 0)
             Console.WriteLine($"Volume suite:  qcache developer verify {ntfs[0].Volume} --suite volumes\n" +
                 $"TRIM suite:    qcache developer verify {ntfs[0].Volume} --suite trim-cache");

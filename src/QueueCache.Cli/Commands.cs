@@ -38,7 +38,7 @@ internal static class Commands
         disks.Subcommands.Add(diskList);
         root.Subcommands.Add(disks);
         var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
-        var volume = new Argument<string>("volume") { Description = "Lettered NTFS volume, e.g. Q:. Each volume has its own cache, also when several share one disk." };
+        var volume = new Argument<string>("volume") { Description = "Lettered volume with a file system (NTFS, ReFS, FAT32, exFAT), e.g. Q:. Each volume has its own cache, also when several share one disk." };
         ValidateVolume(volume);
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 4096 };
         var preset = new Option<CachePreset>("--preset") { DefaultValueFactory = _ => CachePreset.Fast };
@@ -79,7 +79,15 @@ internal static class Commands
             configuration.Validate(accepted); // Validate before opening a disk. Fast requires explicit CLI acknowledgement.
             if (p.GetValue(save) && p.GetValue(runtimeOnly))
                 throw new ArgumentException("--save and --runtime-only cannot be combined.");
-            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), accepted,
+            var selectedVolume = p.GetValue(volume)!;
+            try
+            {
+                var fileSystem = new DriveInfo(selectedVolume + "\\").DriveFormat;
+                if (FileSystems.IsMounted(fileSystem) && !FileSystems.IsJournaled(fileSystem) && configuration.Preset == CachePreset.Fast)
+                    Console.Error.WriteLine($"Warning: {selectedVolume} ({fileSystem}) {FileSystems.NoJournalWarning}");
+            }
+            catch (IOException) { } // Unformatted: Apply below reports it.
+            var state = await CacheTasks.SaveAsync(selectedVolume, configuration, p.GetValue(save), accepted,
                 new ConsoleProgress(), token, p.GetValue(runtimeOnly));
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
