@@ -317,10 +317,15 @@ other VirtIO block driver (PR #1653). Evidence that QueueCache is not involved:
 retrim fails identically on C:, which has no cache, and succeeds on a temporary
 VHDX disk that has the same QueueCache filter attached.
 
-Done: TRIM handling is verified on a VHDX (`trim-cache`, above). Optional (owner
-choice): a small SATA test disk with Discard and SSD emulation in Proxmox would also
-exercise TRIM on an emulated physical disk. Q: itself trims again once Microsoft or
-virtio-win ship a fix.
+Done: TRIM handling is verified on a VHDX (`trim-cache`, above). On 2026-09-29 a
+32 GiB SATA test disk with Discard and SSD emulation was added to the VM (volume T:).
+Windows trims it (`Optimize-Volume -ReTrim`: 29.9 GB trimmed), unlike the VirtIO
+disks. It reports "not thinly provisioned", so Windows offers no file-level TRIM there
+(Win32 326) and `trim-cache` SKIPs; retrim through a Fast cache holding 112 MiB of
+pending data sent its TRIM through the cache, discarded none of the pending data, and
+the file read back exact from the disk after flushing and removing the cache (0.4.219.1).
+`volumes` on T: passed registration, raw disk commands and snapshot. Q: itself trims
+again once Microsoft or virtio-win ship a fix.
 
 ## Fixed: raw disk commands on a cached disk (volume filter)
 
