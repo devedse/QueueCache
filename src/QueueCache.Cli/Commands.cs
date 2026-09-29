@@ -36,6 +36,26 @@ internal static class Commands
             return 0;
         });
         disks.Subcommands.Add(diskList);
+        var eject = new Command("eject", "Safely eject the entire physical disk containing this volume. Every volume on the disk is flushed first.");
+        var ejectVolume = new Argument<string>("volume") { Description = "A lettered volume on the disk to eject, e.g. R:." };
+        ValidateVolume(ejectVolume);
+        var previewEject = new Option<bool>("--preview") { Description = "Show the disk, affected volumes and Windows eject capability without changing anything." };
+        eject.Arguments.Add(ejectVolume);
+        eject.Options.Add(previewEject);
+        eject.SetAction(async (p, token) =>
+        {
+            var selected = p.GetValue(ejectVolume)!;
+            if (p.GetValue(previewEject))
+            {
+                var found = await DiskEjection.PreviewAsync(selected, token);
+                Console.WriteLine(JsonSerializer.Serialize(found, JsonOptions));
+                return found.Ejectable ? 0 : 1;
+            }
+            var result = await DiskEjection.EjectAsync(selected, new ConsoleProgress(), token);
+            Console.WriteLine($"Windows accepted safe removal of disk {result.Disk.DiskNumber} ({string.Join(", ", result.Disk.Volumes)}).");
+            return 0;
+        });
+        disks.Subcommands.Add(eject);
         root.Subcommands.Add(disks);
         var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
         var volume = new Argument<string>("volume") { Description = "Lettered volume with a file system (NTFS, ReFS, FAT32, exFAT), e.g. Q:. Each volume has its own cache, also when several share one disk." };

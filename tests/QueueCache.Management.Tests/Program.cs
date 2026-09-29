@@ -112,6 +112,12 @@ existingRoundTrip.Validate();
 Check(existingRoundTrip == existingProfile && existingRoundTrip.Configuration.Options.Drain == DrainAlgorithm.Eager,
     "saved Strict/Eager profile survives new defaults exactly");
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
+var ejectableDisk = new DiskDescription(3, "Removable", 8L << 30, "test-removable", ["R:"], false, false, PartitionCount: 1);
+Check(DiskEjection.SafetyReason(ejectableDisk) is null, "one unprotected lettered partition is eligible for an eject capability check");
+Check(DiskEjection.SafetyReason(ejectableDisk with { IsPaging = true }) is not null, "paging disk cannot be ejected");
+Check(DiskEjection.SafetyReason(ejectableDisk with { IsBoot = true }) is not null, "boot disk cannot be ejected");
+Check(DiskEjection.SafetyReason(ejectableDisk with { PartitionCount = 2 }) is not null, "unlettered partition cannot be silently omitted from eject preparation");
+Check(DiskEjection.SafetyReason(ejectableDisk with { Volumes = ["R:", "R:"], PartitionCount = 2 }) is not null, "duplicate volume cannot be counted twice");
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");

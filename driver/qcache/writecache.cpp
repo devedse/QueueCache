@@ -1487,6 +1487,13 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     const auto command = *static_cast<QC_COMMAND*>(irp->AssociatedIrp.SystemBuffer);
     if (command.Version != 1 || command.Size != sizeof(command) || command.Reserved || size <= 0)
         return STATUS_INVALID_PARAMETER;
+    // A successful QUERY_REMOVE holds admission closed until removal or cancel.
+    // An operator command queued behind that query must not reopen the cache.
+    AcquireCache(c);
+    const BOOLEAN removePending = c->QueryRemovePending;
+    ReleaseCache(c);
+    if (removePending)
+        return STATUS_DEVICE_BUSY;
     if (command.Action == QcConfigure)
         return Configure(c, command.BudgetBytes);
     if (command.Action == QcRelease)
@@ -2927,6 +2934,43 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
         QcCacheRecordUsageCompletion(c, stack->Parameters.UsageNotification.Type,
             stack->Parameters.UsageNotification.InPath, status);
+        return status;
+    }
+    if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
+    {
+        // This IRP is ordered behind all earlier cached writes by the request
+        // worker. Keep admission disabled through the PnP transaction, including
+        // the interval between our successful query and final removal.
+        AcquireCache(c);
+        const BOOLEAN wasEnabled = c->Enabled;
+        ReleaseCache(c);
+        auto status = QcCacheBarrier(c, TRUE, QcOrderedBarrier, irp);
+        if (NT_SUCCESS(status))
+            status = OriginalIo(c, irp);
+        AcquireCache(c);
+        if (NT_SUCCESS(status))
+        {
+            c->QueryRemovePending = TRUE;
+            c->QueryRemoveWasEnabled = wasEnabled;
+        }
+        else if (!c->Gone && NT_SUCCESS(c->State.LastError))
+            c->Enabled = wasEnabled;
+        Publish(c);
+        ReleaseCache(c);
+        return status;
+    }
+    if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE)
+    {
+        const auto status = OriginalIo(c, irp);
+        AcquireCache(c);
+        if (c->QueryRemovePending)
+        {
+            if (!c->Gone && NT_SUCCESS(c->State.LastError))
+                c->Enabled = c->QueryRemoveWasEnabled;
+            c->QueryRemovePending = FALSE;
+            Publish(c);
+        }
+        ReleaseCache(c);
         return status;
     }
     // Suspended (after shutdown or leaving D0) only blocks re-enabling the cache.

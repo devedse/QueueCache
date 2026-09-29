@@ -110,6 +110,11 @@ public sealed class MainWindow : Window
                         (disk.Count() > 1 ? "  ·  each volume has its own cache" : ""), 13, Muted, FontWeight.SemiBold);
                     header.Margin = new Thickness(0, cards.Children.Count == 0 ? 0 : 12, 0, 0);
                     cards.Children.Add(header);
+                    if (!first.IsBoot && !first.IsSystem && !disk.Any(v => v.IsPaging))
+                    {
+                        var diskVolume = first.Volume;
+                        cards.Children.Add(Action($"Safely eject disk {first.DiskNumber}", () => EjectDisk(diskVolume)));
+                    }
                     foreach (var volume in disk)
                     {
                         var card = new Card(volume);
@@ -191,6 +196,48 @@ public sealed class MainWindow : Window
         content.Children.Add(details);
         return new Border { Background = Brushes.White, CornerRadius = new CornerRadius(14), BorderBrush = Brush.Parse("#E1E8F0"), BorderThickness = new Thickness(1), Padding = new Thickness(24), Child = content };
     }
+    private async Task EjectDisk(string volume)
+    {
+        var preview = await service.PreviewEjectAsync(volume);
+        if (!preview.Ejectable)
+        {
+            message.Text = preview.UnsupportedReason ?? "Windows cannot eject this disk.";
+            return;
+        }
+        var dialog = new Window
+        {
+            Title = "Safely eject disk", Width = 480, Height = 235,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(24), Spacing = 18,
+                Children =
+                {
+                    Text($"Eject disk {preview.DiskNumber} ({preview.Name})?", 19, Ink, FontWeight.SemiBold),
+                    Text($"Windows will remove the whole disk: {string.Join(", ", preview.Volumes)}. Pending cache data must be written first. Open files may make Windows refuse removal.", 14),
+                    new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal, Spacing = 12,
+                        Children =
+                        {
+                            new Button { Content = "Cancel", Padding = new Thickness(14, 8) },
+                            new Button { Content = "Eject disk", Padding = new Thickness(14, 8) }
+                        }
+                    }
+                }
+            }
+        };
+        var choices = ((StackPanel)dialog.Content!).Children.OfType<StackPanel>().Last().Children.OfType<Button>().ToArray();
+        choices[0].Click += (_, _) => dialog.Close(false);
+        choices[1].Click += (_, _) => dialog.Close(true);
+        if (!await dialog.ShowDialog<bool>(this))
+            return;
+        var progress = new Progress<string>(value => Dispatcher.UIThread.Post(() => message.Text = value));
+        var result = await service.EjectAsync(volume, progress);
+        message.Text = $"Windows accepted safe removal of disk {result.Disk.DiskNumber}.";
+        nextInventory = DateTimeOffset.MinValue;
+    }
+
     private async Task Sample()
     {
         await Task.WhenAll(views.ToArray().Select(SampleCard));

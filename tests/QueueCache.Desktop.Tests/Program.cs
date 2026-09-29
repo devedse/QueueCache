@@ -23,6 +23,9 @@ using (var frame = window.CaptureRenderedFrame() ?? throw new Exception("No rend
 var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();
 Check(labels.Contains("Active") && labels.Contains("Available"), "active and available volumes render");
 Check(labels.Count(t => t?.StartsWith("Disk ") == true) == 2 && labels.Any(t => t?.Contains("each volume has its own cache") == true), "volumes are grouped under their disk; a shared disk says each volume has its own cache");
+Check(window.GetVisualDescendants().OfType<Button>().Count(b => Equals(b.Content, "Safely eject disk 1")) == 1 &&
+      !window.GetVisualDescendants().OfType<Button>().Any(b => Equals(b.Content, "Safely eject disk 0")),
+    "the disk group offers one safe-eject action, never on the system disk");
 Check(labels.Contains("Q: Games") && labels.Contains("C:") && labels.Contains("R:"), "one card per lettered volume");
 Check(labels.Any(t => t?.Contains("not formatted") == true), "an unformatted volume explains why it cannot be cached");
 Check(labels.Any(t => t?.Contains("FAT32 has no journal") == true), "a FAT32 volume can be cached and warns that it has no journal");

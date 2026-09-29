@@ -17,6 +17,8 @@ public interface ICacheTaskService
     Task FlushAsync(VolumeDescription volume);
     Task DropCleanAsync(VolumeDescription volume);
     Task RemoveAsync(string volume);
+    Task<DiskEjectPreview> PreviewEjectAsync(string volume) => throw new NotSupportedException("Disk eject is unavailable in this service.");
+    Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
 }
 
@@ -50,6 +52,8 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
         device.Control(WriteCacheAction.DropClean);
     });
     public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);
+    public Task<DiskEjectPreview> PreviewEjectAsync(string volume) => DiskEjection.PreviewAsync(volume);
+    public Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress) => DiskEjection.EjectAsync(volume, progress);
     public async Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token)
     {
         var target = await DiskTarget.InspectAsync(volume, token);

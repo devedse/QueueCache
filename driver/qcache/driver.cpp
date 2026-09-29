@@ -875,6 +875,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             }
             return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
         }
+        if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE)
+            return QueueRequest(ext, irp); // Restore the state saved by QUERY_REMOVE, even if routing went idle.
         if (stack->MinorFunction == IRP_MN_QUERY_PNP_DEVICE_STATE)
             return ForwardQueryPnpState(ext, irp);
 #endif

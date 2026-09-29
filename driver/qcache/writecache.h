@@ -329,6 +329,9 @@ struct QC_CACHE
     PUCHAR DrainBuffer;
     ULONG Capacity, Head, Tail, FreeHead, Count, SectorBytes, DrainCapacity;
     BOOLEAN Enabled, Barrier, Suspended, Stop, ResumeEnabled;
+    // Request worker owns these fields. QUERY_REMOVE drains and disables the
+    // cache; CANCEL_REMOVE (or a lower veto) restores only the prior enablement.
+    BOOLEAN QueryRemovePending, QueryRemoveWasEnabled;
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
     // One foreground paging write owns this range until its lower completion.
