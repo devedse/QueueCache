@@ -26,7 +26,7 @@ internal static class VerificationRunnerTests
             throw new Exception("Expected rejection.");
         }
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 69, "plan 69: suites accept any file system; FAT cluster offsets");
+        Check(VerificationPlan.Version == 70, "plan 70: ReFS caller-path share, ReFS remount, FAT snapshot SKIP");
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
@@ -113,6 +113,14 @@ internal static class VerificationRunnerTests
         {
             QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(40, 40, 20), 100);
             Check(false, "caller-path check rejects worker-only service");
+        }
+        catch (IOException) { }
+        Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(20, 20, 0), 100, "ReFS").Contains("40 of 100 on ReFS"),
+            "caller-path check records the ReFS share instead of applying the 90% expectation");
+        try
+        {
+            QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(0, 0, 0), 100, "ReFS");
+            Check(false, "caller-path check still requires the path to work on ReFS");
         }
         catch (IOException) { }
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))

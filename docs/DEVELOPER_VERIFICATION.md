@@ -27,7 +27,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 69)
+## Suites (plan version 70)
+
+Plan 70, from the first FAT32 and ReFS runs: `volume-snapshot` is SKIP when Windows
+does not take shadow copies of the file system (FAT32/exFAT: Win32_ShadowCopy.Create
+4); file-level TRIM accepts the file system reporting more than one processed range
+(ReFS reports 2 for one); on ReFS `policies/foreground-background` records the share
+of requests on the caller's thread instead of requiring 90% (ReFS splits requests,
+KNOWN_ISSUES) and `ordering-faults` remounts the volume afterwards (ReFS takes a volume
+offline after the injected write failures, as for real disk errors).
 
 Plan 69: the target volume may use any file system Windows mounts (NTFS, ReFS,
 FAT32, exFAT), not only NTFS. File offsets of test ranges and page files now add the

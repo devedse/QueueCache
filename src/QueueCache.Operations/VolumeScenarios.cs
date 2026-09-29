@@ -296,6 +296,10 @@ public static class VolumeScenarios
             stopSampling.Cancel();
             sampler.GetAwaiter().GetResult();
         }
+        // Win32_ShadowCopy.Create 4 = volume not supported: Windows snapshots only NTFS and ReFS volumes.
+        if (created == "FAILED 4")
+            return [new("snapshot/pending-data-included", "SKIP", $"Windows does not take shadow copies of {new DriveInfo(target.Root).DriveFormat} volumes " +
+                $"(Win32_ShadowCopy.Create 4, volume not supported); the cache stayed healthy: {samples.LastOrDefault()}.")];
         // A cached volume must not stop Windows from taking a snapshot: failure here is a FAIL, with the samples.
         if (created.StartsWith("FAILED", StringComparison.Ordinal))
             return [new("snapshot/pending-data-included", "FAIL", $"Windows could not create a shadow copy of {target.Device} " +

@@ -153,7 +153,7 @@ internal static class DeveloperCommands
         var labPath = new Argument<string>("vhdx") { Description = @"Local .vhdx path, e.g. C:\QueueCache-Lab\VolumeLab.vhdx." };
         var create = new Command("create", "Create and attach a NEW VHDX and partition only that disk (expandable: uses only the space written). Refuses an existing file or a letter in use.");
         var letters = new Option<string>("--letters") { DefaultValueFactory = _ => "V,W,X", Description = "Two formatted volumes, then the unformatted volume." };
-        var labSize = new Option<int>("--size-gib") { DefaultValueFactory = _ => QueueCache.Developer.LabDisk.DefaultSizeGiB };
+        var labSize = new Option<int>("--size-gib") { DefaultValueFactory = _ => 0, Description = "0 (default): large enough for the chosen file system (24 GiB, or 108 GiB for ReFS). Expandable: only written space is used." };
         var labFileSystem = new Option<string>("--file-system") { DefaultValueFactory = _ => "NTFS", Description = "File system of the two formatted volumes: NTFS, ReFS (a Dev Drive, 50 GiB each), FAT32 or exFAT." };
         create.Arguments.Add(labPath);
         create.Options.Add(letters);
@@ -163,8 +163,8 @@ internal static class DeveloperCommands
         {
             var fileSystem = QueueCache.Developer.LabDisk.ParseFileSystem(p.GetValue(labFileSystem)!);
             // Default size: large enough for the chosen file system.
-            var size = p.GetResult(labSize) is null ? Math.Max(QueueCache.Developer.LabDisk.DefaultSizeGiB, QueueCache.Developer.LabDisk.MinimumSizeGiB(fileSystem) + 3)
-                : p.GetValue(labSize);
+            var size = p.GetValue(labSize) is > 0 and var chosen ? chosen
+                : Math.Max(QueueCache.Developer.LabDisk.DefaultSizeGiB, QueueCache.Developer.LabDisk.MinimumSizeGiB(fileSystem) + 3);
             return QueueCache.Developer.LabDisk.CreateAsync(p.GetValue(labPath)!,
                 QueueCache.Developer.LabDisk.ParseLetters(p.GetValue(letters)!), size, fileSystem, token);
         });

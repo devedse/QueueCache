@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.IO.MemoryMappedFiles;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 
@@ -164,7 +166,7 @@ public static class OrderingFaultScenarios
         if (device.GetDiagnostics().LabGate is null)
             throw new NotSupportedException("Fault ordering requires Diagnostics V9 (plan-39+ driver).");
         Directory.CreateDirectory(workDirectory);
-        return
+        List<CheckResult> checks =
         [
             RunFailedOldDrain(target, device, workDirectory),
             RunShortSparse(target, device, workDirectory),
@@ -175,6 +177,28 @@ public static class OrderingFaultScenarios
             RunReleaseUnderLoad(target, device, workDirectory),
             RunPagingMapFailure(target, device, workDirectory)
         ];
+        // ReFS answers the injected write failures as a real disk error: it takes the volume offline until it is
+        // mounted again (event 134), and a later volume flush fails. Remount it so the volume is usable again.
+        if (string.Equals(new DriveInfo(target.Root).DriveFormat, "ReFS", StringComparison.OrdinalIgnoreCase))
+            checks.Add(RemountAfterInjectedFailures(target));
+        return checks;
+    }
+
+    private static CheckResult RemountAfterInjectedFailures(DiskTarget target)
+    {
+        using (var volume = CreateFileW($@"\\.\{target.Letter}:", 0xC0000000, 7, IntPtr.Zero, 3, 0, IntPtr.Zero))
+        {
+            if (volume.IsInvalid)
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the volume to remount it.");
+            if (!DeviceIoControl(volume, 0x00090020 /* FSCTL_DISMOUNT_VOLUME */, null, 0, null, 0, out _, IntPtr.Zero))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot dismount the volume.");
+        }
+        _ = Directory.GetFileSystemEntries(target.Root); // The next access mounts the volume again.
+        using var flush = CreateFileW($@"\\.\{target.Letter}:", 0xC0000000, 7, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        var flushed = !flush.IsInvalid && FlushFileBuffers(flush);
+        return new("ordering-faults/refs-remount", flushed ? "PASS" : "FAIL",
+            "ReFS took the volume offline after the injected write failures, as it does for real disk errors; after a remount a volume flush " +
+            (flushed ? "succeeded." : $"still failed (Win32 {Marshal.GetLastWin32Error()})."));
     }
 
     private static void ApplyEager(DiskTarget target, int budgetMiB, DrainAlgorithm drain = DrainAlgorithm.Eager) =>
@@ -716,4 +740,14 @@ public static class OrderingFaultScenarios
             throw new IOException($"{label}: the saved block did not match after release.");
         return new(label, "PASS", evidence + " The saved block matched after release.");
     }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle device, uint code, byte[]? input, int inputLength,
+        byte[]? output, int outputLength, out int returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlushFileBuffers(SafeFileHandle file);
 }

@@ -23,6 +23,22 @@ C: restart soak passed under Driver Verifier.
 | A cache left on an unformatted volume by a raw test could not be removed from the CLI or desktop | Removal used the NTFS-only identity check | Removal works on any volume; the desktop disables Settings and Pause on non-NTFS volumes (`7134514`) |
 | A verification run on Q: left the cache at the test's 256 MiB | The RAM guard refused growing back to 2 GiB during a momentary low-memory dip on the 8 GiB VM | Restoration waits up to two minutes for RAM (`0909d93`); the VM now has 16 GB |
 
+## ReFS: fewer requests on the fast caller-thread path (performance)
+
+What you see: on a ReFS volume (for example a Dev Drive) with background write-back,
+fewer program requests are served on the program's own thread (64% instead of about
+99% in a 64 KiB random read/write test; 818 vs 1,200 MB/s on NTFS in the same test).
+Data is unaffected.
+
+Why: ReFS often splits one program request into two requests to the volume at the
+same time. The fast path is taken only when exactly one request is in flight, so the
+second request finds the first "busy" and sends the next 256 requests through the
+ordered worker.
+
+Proposed change: treat a request from the same file-system operation that overlaps an
+in-progress caller-path request as a candidate for the fast path instead of opening
+the 256-request worker window, then re-measure on ReFS.
+
 ## Raw disk reads and writes bypass the cache (by design)
 
 What it means: the cache sits on the volume. A program that reads the physical disk
