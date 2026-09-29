@@ -29,6 +29,9 @@ Check(window.GetVisualDescendants().OfType<Button>().Count(b => Equals(b.Content
 Check(labels.Contains("Q: Games") && labels.Contains("C:") && labels.Contains("R:"), "one card per lettered volume");
 Check(labels.Any(t => t?.Contains("not formatted") == true), "an unformatted volume explains why it cannot be cached");
 Check(labels.Any(t => t?.Contains("FAT32 has no journal") == true), "a FAT32 volume can be cached and warns that it has no journal");
+Check(labels.Any(t => t?.Contains("SAVED VOLUMES NOT CONNECTED") == true && t?.Contains("Unavailable") == false) &&
+      labels.Any(t => t?.Contains("T: · {00000000-0000-0000-0000-000000000005} · Unavailable") == true),
+    "a disconnected saved volume is shown without invented live cache counters");
 Check(!labels.Any(t => t?.Contains("Inspect") == true), "no manual inspect step");
 // Colour keys use the same brushes the bar and chart draw with.
 var swatches = window.GetVisualDescendants().OfType<Border>().Where(b => b.Width == 11 && b.Background is not null).ToArray();
@@ -170,6 +173,9 @@ sealed class Fixture : ICacheTaskService
         InventoryReads++;
         return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<VolumeDescription>>(Volumes);
     }
+    public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>(
+        [new SavedConfiguration(2, "T:", "fixture-removed", 8L << 30,
+            new CacheConfiguration(256, CachePreset.Strict), false, "{00000000-0000-0000-0000-000000000005}")]);
     public Task<WriteCacheState> ReadAsync(VolumeDescription volume)
     {
         if (volume.Volume == "C:" && PendingDisk is not null)

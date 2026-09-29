@@ -95,6 +95,8 @@ public static class DiskEjection
                 token.ThrowIfCancellationRequested();
                 progress?.Report($"Draining and disabling cache on {item.Volume}");
                 using var cache = new CacheDevice(item.Volume, writable: true);
+                if (cache.GetStatistics().PagingPathCount != 0)
+                    throw new NotSupportedException($"{item.Volume} hosts a paging, hibernation or crash-dump path. Eject was not requested.");
                 var before = cache.GetWriteCacheState();
                 if (before.BudgetBytes > 0)
                 {

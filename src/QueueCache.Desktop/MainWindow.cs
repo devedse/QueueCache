@@ -17,6 +17,7 @@ public sealed class MainWindow : Window
     internal static readonly IBrush ReadFill = CacheOccupancy.ReadFill, RetainedFill = CacheOccupancy.RetainedFill,
         PendingFill = CacheOccupancy.PendingFill, FreeFill = CacheOccupancy.FreeFill;
     private readonly StackPanel cards = new() { Spacing = 16 };
+    private readonly StackPanel disconnected = new() { Spacing = 8 };
     private readonly TextBlock message = Text("Discovering your volumes…", 14, Muted), summary = Text("Your storage, accelerated.", 16, Muted);
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly List<Card> views = [];
@@ -61,6 +62,7 @@ public sealed class MainWindow : Window
         body.Children.Add(heading);
         body.Children.Add(Text("VOLUMES & CACHES", 12, Muted, FontWeight.SemiBold));
         body.Children.Add(cards);
+        body.Children.Add(disconnected);
         body.Children.Add(message);
         Content = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
         Opened += async (_, _) => { timer.Start(); await Refresh(); };
@@ -96,6 +98,7 @@ public sealed class MainWindow : Window
         try
         {
             var volumes = await service.ListAsync();
+            var saved = await service.ListSavedAsync();
             if (closed)
                 return;
             if (!views.Any(v => v.Busy) && Signature(volumes) != Signature(views.Select(v => v.Volume)))
@@ -122,6 +125,14 @@ public sealed class MainWindow : Window
                         cards.Children.Add(BuildCard(card));
                     }
                 }
+            }
+            disconnected.Children.Clear();
+            var present = volumes.Select(v => v.VolumeId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var profile in saved.Where(p => !present.Contains(p.VolumeId)))
+            {
+                if (disconnected.Children.Count == 0)
+                    disconnected.Children.Add(Text("SAVED VOLUMES NOT CONNECTED", 12, Muted, FontWeight.SemiBold));
+                disconnected.Children.Add(Text($"{profile.Volume} · {profile.VolumeId} · Unavailable. Its saved settings remain; no live cache state is shown.", 13, Muted));
             }
             await Sample();
             message.Text = volumes.Count == 0 ? "No volumes found." : "";
@@ -296,7 +307,7 @@ public sealed class MainWindow : Window
         {
             card.State = null;
             card.Badge.Text = "Not connected";
-            card.Description.Text = "The QueueCache filter is not loaded on this volume. Finish installation and restart Windows, then refresh.";
+            card.Description.Text = "This volume is unavailable or its QueueCache filter is not responding. Refresh after reconnecting it.";
             card.Activity.IsVisible = false;
             card.Settings.IsEnabled = false;
             card.Pause.IsVisible = card.Flush.IsVisible = card.Remove.IsVisible = card.DropClean.IsVisible = false;

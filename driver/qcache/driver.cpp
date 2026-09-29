@@ -857,7 +857,26 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
         if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL)
         {
-            InterlockedExchange(&ext->Cache.Gone, TRUE);
+            if (!InterlockedExchange(&ext->Cache.Gone, TRUE))
+            {
+                // The cache IOCTL disappears with the volume. Keep a one-shot
+                // event in the Windows System log for post-removal diagnosis.
+                // Dirty bytes are a snapshot of possible volatile loss, not a
+                // claim that this many bytes were lost on the physical disk.
+                const ULONGLONG pending = ext->Cache.State.DirtyBytes;
+                auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(
+                    device, static_cast<UCHAR>(sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG))));
+                if (entry)
+                {
+                    RtlZeroMemory(entry, sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG));
+                    entry->ErrorCode = STATUS_DEVICE_NOT_CONNECTED;
+                    entry->FinalStatus = STATUS_DEVICE_NOT_CONNECTED;
+                    entry->DumpDataSize = 2 * sizeof(ULONG);
+                    entry->DumpData[0] = static_cast<ULONG>(pending);
+                    entry->DumpData[1] = static_cast<ULONG>(pending >> 32);
+                    IoWriteErrorLogEntry(entry);
+                }
+            }
             KeSetEvent(&ext->Cache.Changed, IO_NO_INCREMENT, FALSE);
             KeSetEvent(&ext->Cache.Wake, IO_NO_INCREMENT, FALSE);
         }

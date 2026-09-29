@@ -1762,3 +1762,28 @@ Restoration succeeded, dirty/error zero. Healthy timing-off random Q1 samples we
 ~80–83 MB/s; several other cells stalled, with active write/drain phase and no
 capacity throttles. Exact broad-barrier trigger is not yet captured. These facts
 justify investigation, not a complete before/after performance claim.
+
+### Drive disconnection handoff, 2026-09-29
+
+Owner reopened orderly eject and unexpected removal for implementation planning.
+[Detailed implementation handoff](DRIVE_DISCONNECT_IMPLEMENTATION_PLAN.md) defines
+driver lifecycle/ownership work, CLI and desktop eject, reconnect identity, and a
+maintained removal verification suite. Fast-mode unflushed data survival after an
+unexpected unplug is explicitly not promised.
+
+- Implementation: source checkpoint on `volume-filter` adds an ordered QUERY_REMOVE
+  drain/disable boundary, CANCEL_REMOVE restoration, a one-shot surprise-removal
+  Windows error-log packet, shared whole-disk eject preview/operation, CLI command,
+  desktop disk action and unavailable saved-profile display. Eject rejects protected,
+  ambiguous or unlettered layouts and revalidates PnP/volume identity. The eject
+  operation explicitly disables/drains each affected cache before asking Windows
+  for removal; a Windows veto attempts identity-checked rollback.
+- Verification: host management and desktop fixtures pass. A disposable 8 GiB
+  `drive-scsi2` NTFS disk was attached to VM 109 and formatted as W: after exact
+  identity checks. No orderly eject or physical hot-unplug has yet passed. Native
+  CI build and loaded-driver verification are separate gates; do not infer either
+  from host success. External Windows-eject routing, error-log collection, veto,
+  reconnect, two-volume, fault, FAT32/ReFS and surprise-removal cases remain open.
+- Next: qualify the loaded build on W:, implement the maintained removal suite and
+  remaining lifecycle/ownership work, then independent review. Virtual-drive
+  feature stays postponed.

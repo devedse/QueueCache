@@ -10,6 +10,7 @@ public interface ICacheTaskService
 {
     // One cache per volume; several volumes can share a disk.
     Task<IReadOnlyList<VolumeDescription>> ListAsync();
+    Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>([]);
     Task<WriteCacheState> ReadAsync(VolumeDescription volume);
     bool IsPersistent(VolumeDescription volume);
     Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
@@ -26,6 +27,7 @@ public interface ICacheTaskService
 public sealed class WindowsCacheTaskService : ICacheTaskService
 {
     public async Task<IReadOnlyList<VolumeDescription>> ListAsync() => await VolumeCatalog.ListAsync();
+    public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.Run<IReadOnlyList<SavedConfiguration>>(SavedConfigurations.List);
     public Task<WriteCacheState> ReadAsync(VolumeDescription volume) => Task.Run(() =>
     {
         using var device = new CacheDevice(volume.Volume);
