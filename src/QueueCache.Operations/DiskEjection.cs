@@ -8,7 +8,8 @@ namespace QueueCache.Operations;
 
 public sealed record DiskEjectPreview(int DiskNumber, string Instance, string Name, IReadOnlyList<string> Volumes,
     bool Ejectable, string? UnsupportedReason);
-public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName);
+public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName,
+    bool RemovalObserved);
 
 /// <summary>One physical-disk eject, including every lettered volume on the disk.</summary>
 public static class DiskEjection
@@ -129,7 +130,20 @@ public static class DiskEjection
             var result = CM_Request_Device_EjectW(node, out var vetoType, veto, (uint)veto.Capacity, 0);
             if (result != 0)
                 throw new IOException($"Windows refused safe removal (Configuration Manager {result}, veto {vetoType}: {veto}).");
-            return new(preview, result, vetoType, veto.ToString());
+            // Configuration Manager can accept a request before device removal
+            // becomes visible. Report that distinction rather than claiming a
+            // vanished disk from its return code alone.
+            var removed = false;
+            for (var attempt = 0; attempt < 20; attempt++)
+            {
+                if (CM_Locate_DevNodeW(out _, preview.Instance, 0) != 0)
+                {
+                    removed = true;
+                    break;
+                }
+                Thread.Sleep(250);
+            }
+            return new(preview, result, vetoType, veto.ToString(), removed);
         }
         catch
         {
@@ -140,7 +154,10 @@ public static class DiskEjection
                 try
                 {
                     var live = VolumeCatalog.ListAsync(CancellationToken.None).GetAwaiter().GetResult();
-                    if (!live.Any(v => v.VolumeId == item.VolumeId && v.Instance.Equals(item.Instance, StringComparison.OrdinalIgnoreCase)))
+                    if (!live.Any(v => v.Volume.Equals(item.Volume, StringComparison.OrdinalIgnoreCase) &&
+                        v.VolumeId.Equals(item.VolumeId, StringComparison.OrdinalIgnoreCase) &&
+                        v.Instance.Equals(item.Instance, StringComparison.OrdinalIgnoreCase) &&
+                        v.DiskNumber == item.DiskNumber && v.Bytes == item.Bytes))
                         continue;
                     using var cache = new CacheDevice(item.Volume, writable: true);
                     cache.Control(WriteCacheAction.Enable);

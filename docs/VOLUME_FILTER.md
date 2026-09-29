@@ -79,6 +79,8 @@ request or the request worker. With it the filter covers every volume and boots.
 | Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
 | File systems | Any file system Windows mounts: NTFS, ReFS (Dev Drives), FAT32, exFAT. FAT32/exFAT have no journal: the CLI and desktop warn that a crash with Fast-mode data in RAM can damage the file system itself. Unformatted volumes pass through; a cache left on one by raw developer tests can be flushed and removed. |
 | Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |
+| Orderly disk eject | `qcache disk eject W: --preview` checks the whole disk and all its lettered partitions. `qcache disk eject W:` disables and drains every affected cache, flushes each file system, then asks Windows to eject the physical disk. A Windows veto reports its reason and attempts to restore each still-present cache's enabled state. The desktop offers the same disk-level action. The command refuses boot/system/paging, offline/read-only and ambiguous or unlettered layouts. Hardware must report removable/ejectable capability. The result distinguishes Windows accepting a request from observed device disappearance. |
+| Unexpected disconnect | Already acknowledged volatile Fast writes may be lost and the file system may be damaged. The driver marks the volume gone and frees its cache on final removal; it records a one-shot Windows error-log entry with a snapshot of pending bytes. No data is replayed on reconnect. The pending-byte count is potential loss, not proven lost data. |
 | Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes the Volume class entry, keeps the service and binary until the restart. `Recover-Registration.ps1` restores the backed-up Volume class list and service values (verified on copies of the SYSTEM hive). |
 
 ## Advantages and disadvantages compared with the disk filter
@@ -113,8 +115,9 @@ bring-up); the installer always sets `ClassCoverage` 1.
 
 ## Known limitations
 
-- Hot-unplug, sleep/hibernate and offline recovery remain postponed (owner
-  priorities), as for the disk filter.
+- Surprise hot-unplug containment, external Windows-eject routing, and reconnect
+  are not yet VM-qualified on this branch. Sleep/hibernate and offline recovery
+  remain separate work.
 - Raw reads and writes sent to the physical disk bypass the cache (above).
 - Crash durability of Fast data is unchanged: pending data is lost on a crash.
 
