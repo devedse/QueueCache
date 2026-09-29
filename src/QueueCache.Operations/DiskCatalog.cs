@@ -7,6 +7,7 @@ namespace QueueCache.Operations;
 /// <summary>A physical disk and its lettered volumes. The cache works per volume (<see cref="VolumeCatalog"/>);
 /// disks are listed for identity and safety checks.</summary>
 public sealed record DiskDescription(int Number, string Name, long Bytes, string Instance, string[] Volumes, bool IsBoot, bool IsSystem, bool IsPaging = false,
+    // Excludes the GPT Microsoft Reserved partition, which has no file system to flush.
     int PartitionCount = 0, bool IsReadOnly = false, bool IsOffline = false)
 {
     public string Device => $"PhysicalDrive{Number}";
@@ -29,7 +30,7 @@ public static class DiskCatalog
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add("$ErrorActionPreference='Stop'; $paging=@(Get-CimInstance Win32_PageFileUsage | ForEach-Object { (Get-Partition -DriveLetter $_.Name.Substring(0,1)).DiskNumber }); $items=@(Get-Disk | ForEach-Object { $d=$_; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); $parts=@(Get-Partition -DiskNumber $d.Number); [pscustomobject]@{Number=[int]$d.Number;Name=$d.FriendlyName;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID;Volumes=@($parts | Where-Object DriveLetter | ForEach-Object { \"$($_.DriveLetter):\" });PartitionCount=$parts.Count;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsPaging=[bool]($paging -contains $d.Number)} }); ConvertTo-Json -InputObject $items -Compress -Depth 3");
+        start.ArgumentList.Add("$ErrorActionPreference='Stop'; $paging=@(Get-CimInstance Win32_PageFileUsage | ForEach-Object { (Get-Partition -DriveLetter $_.Name.Substring(0,1)).DiskNumber }); $items=@(Get-Disk | ForEach-Object { $d=$_; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); $parts=@(Get-Partition -DiskNumber $d.Number | Where-Object { $_.Type -ne 'Reserved' }); [pscustomobject]@{Number=[int]$d.Number;Name=$d.FriendlyName;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID;Volumes=@($parts | Where-Object DriveLetter | ForEach-Object { \"$($_.DriveLetter):\" });PartitionCount=$parts.Count;IsReadOnly=[bool]$d.IsReadOnly;IsOffline=[bool]$d.IsOffline;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsPaging=[bool]($paging -contains $d.Number)} }); ConvertTo-Json -InputObject $items -Compress -Depth 3");
         using var process = Process.Start(start) ?? throw new IOException("Cannot enumerate disks.");
         var output = process.StandardOutput.ReadToEndAsync(token);
         var error = process.StandardError.ReadToEndAsync(token);

@@ -1784,6 +1784,10 @@ unexpected unplug is explicitly not promised.
   CI build and loaded-driver verification are separate gates; do not infer either
   from host success. External Windows-eject routing, error-log collection, veto,
   reconnect, two-volume, fault, FAT32/ReFS and surprise-removal cases remain open.
+  The first W: preview on 0.4.233.1 correctly found the new disk but refused it:
+  the initial partition count included the hidden 16 MiB GPT Microsoft Reserved
+  partition. Inventory now excludes only that metadata partition from the
+  lettered-volume count; a new CI build and live preview must confirm the fix.
 - Next: qualify the loaded build on W:, implement the maintained removal suite and
   remaining lifecycle/ownership work, then independent review. Virtual-drive
   feature stays postponed.
