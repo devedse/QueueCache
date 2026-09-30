@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using QueueCache.Management;
+using QueueCache.Operations;
 
 namespace QueueCache.Cli;
 
@@ -61,9 +62,9 @@ internal static class LegacyCommands
             }
             if (args is ["policy", _, "strict"] or ["policy", _, "unsafe-defer", "--accept-volatile-flush"])
             {
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(WriteCacheAction.FlushPolicy, value: args[2] == "strict" ? 0UL : 1UL);
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1], WriteCacheAction.FlushPolicy,
+                    value: args[2] == "strict" ? 0UL : 1UL, token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 if (args[2] != "strict")
                     Console.WriteLine("WARNING: successful OS flush/write-through no longer promises persistence. Normal shutdown and qcache flush/disable still drain. Abrupt failure can corrupt the filesystem.");
                 return 0;
@@ -77,9 +78,9 @@ internal static class LegacyCommands
             }
             if (args.Length == 2 && args[0] is "enable" or "flush" or "disable" or "retry" or "drop-clean")
             {
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(Enum.Parse<WriteCacheAction>(args[0].Replace("-", ""), ignoreCase: true));
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1],
+                    Enum.Parse<WriteCacheAction>(args[0].Replace("-", ""), ignoreCase: true), token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 return 0;
             }
             if (args.Length == 3 && args[0] is "configure" or "start" or "lab-delay" or "lab-fault")
@@ -91,12 +92,10 @@ internal static class LegacyCommands
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
                 if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11)
                     throw new ArgumentException("Lab hook value is outside its range.");
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
-                    configure ? amount * 1048576 : 0, configure ? 0 : amount);
-                if (args[0] == "start")
-                    device.Control(WriteCacheAction.Enable);
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1],
+                    configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
+                    configure ? amount * 1048576 : 0, configure ? 0 : amount, enableAfter: args[0] == "start", token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 return 0;
             }
             if (args.Length is 2 or 3 && args[0] == "status" && (args.Length == 2 || args[2] == "--json"))

@@ -863,7 +863,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 // event in the Windows System log for post-removal diagnosis.
                 // Dirty bytes are a snapshot of possible volatile loss, not a
                 // claim that this many bytes were lost on the physical disk.
-                const ULONGLONG pending = ext->Cache.State.DirtyBytes;
+                QC_STATE removalSnapshot;
+                QcCacheSnapshot(&ext->Cache, &removalSnapshot);
+                const ULONGLONG pending = removalSnapshot.DirtyBytes;
                 auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(
                     device, static_cast<UCHAR>(sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG))));
                 if (entry)

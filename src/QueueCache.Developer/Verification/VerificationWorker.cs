@@ -14,7 +14,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, bool RequireImageEvidence = false,
-    string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false);
+    string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
+    string? DisposableInstance = null, long? DisposableBytes = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -507,6 +508,33 @@ public static class VerificationWorker
             ReportFailures(checks, Console.Error);
             return checks.All(check => check.Result != "FAIL") ? 0 : 1;
         }
+        if (job.Operation == "disk-removal-preflight")
+        {
+            var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
+            ValidateFileTarget(target, inventory);
+            if (!string.Equals(target.Instance, job.DisposableInstance, StringComparison.OrdinalIgnoreCase) ||
+                target.DiskBytes != job.DisposableBytes)
+                throw new IOException("Disposable physical disk identity does not match the explicit removal target.");
+            var output = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!));
+            output.ValidateCurrent();
+            if (output.Number == target.Number || output.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Removal evidence and oracle must reside on another physical disk.");
+            var preview = await DiskEjection.PreviewAsync(target.Device);
+            if (!preview.Ejectable || preview.Volumes.Count != 1)
+                throw new NotSupportedException(preview.UnsupportedReason ?? "The first removal suite requires exactly one lettered data volume.");
+            using var cache = new CacheDevice(target.Device);
+            if (cache.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(target.VolumeId))
+                throw new IOException("Removal verification requires an unconfigured disposable volume without a saved profile.");
+            RunStorage.AtomicJson(job.Reply, new { Target = target, Output = output, Preview = preview });
+            return 0;
+        }
+        if (job.Operation == "disk-removal-eject")
+        {
+            // No retained volume/cache handle may veto our own request.
+            var eject = await DiskEjection.EjectAsync(target.Device);
+            RunStorage.AtomicJson(job.Reply, eject);
+            return 0;
+        }
         Stage("target validated; opening cache device");
         using var device = new CacheDevice(target.Device, writable: true);
         Stage("cache device opened; validating device length");
@@ -516,6 +544,16 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "disk-removal-prepare":
+                result = DiskRemovalScenarios.Prepare(target, device, job.WorkDirectory!, job.BudgetMiB);
+                break;
+            case "disk-removal-verify":
+                var removalOracle = JsonSerializer.Deserialize<DiskRemovalOracle>(await File.ReadAllTextAsync(job.OraclePath!))
+                    ?? throw new InvalidDataException("Missing removal oracle.");
+                if (removalOracle.Target != target)
+                    throw new IOException("Removal oracle target identity changed.");
+                result = DiskRemovalScenarios.Verify(removalOracle, device);
+                break;
             case "capture":
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);

@@ -54,7 +54,7 @@ internal static class Commands
             var result = await DiskEjection.EjectAsync(selected, new ConsoleProgress(), token);
             Console.WriteLine(result.RemovalObserved
                 ? $"Windows removed disk {result.Disk.DiskNumber} ({string.Join(", ", result.Disk.Volumes)})."
-                : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal was not observed within five seconds. Check device state before disconnecting it.");
+                : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal was not observed within five seconds. Check device state before disconnecting it; affected caches remain disabled.");
             return result.RemovalObserved ? 0 : 1;
         });
         disks.Subcommands.Add(eject);

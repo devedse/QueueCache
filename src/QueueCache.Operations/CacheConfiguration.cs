@@ -82,7 +82,7 @@ public static class ConfigurationManager
     private static WriteCacheState ApplyCore(DiskTarget target, CacheConfiguration configuration,
         bool acceptVolatileFlush, IProgress<string>? progress)
     {
-        using var gate = ConfigurationGate.Enter();
+        using var gate = ConfigurationGate.Enter(target.Instance);
         configuration.Validate(acceptVolatileFlush);
         // An inspected volume can be remapped between inventory and Apply (including
         // saved-profile startup). Recheck its physical extent and PnP identity at

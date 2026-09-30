@@ -247,7 +247,7 @@ public sealed class MainWindow : Window
         var result = await service.EjectAsync(volume, progress);
         message.Text = result.RemovalObserved
             ? $"Windows removed disk {result.Disk.DiskNumber}."
-            : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal is not yet observed. Check device state before disconnecting it.";
+            : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal is not yet observed. Check device state before disconnecting it; affected caches remain disabled.";
         nextInventory = DateTimeOffset.MinValue;
     }
 

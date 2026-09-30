@@ -27,7 +27,33 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 70)
+## Suites (plan version 71)
+
+Plan 71 adds the opt-in `disk-removal` suite. Its first case covers exactly one
+unconfigured disposable volume: an 8 MiB Fast/Deferred pending-write oracle,
+Windows safe eject, and operator live reconnect on the same bus, disk number and
+drive letter. It is excluded from `full`. Surprise removal, multiple volumes,
+letter/number changes, fault races and repeated-cycle qualification remain open.
+
+```powershell
+qcache developer verify W: --suite disk-removal --budget-mib 256 --disposable-instance '<exact disk PnP ID>' --disposable-bytes 8589934592 --output C:\QueueCache-Results
+```
+
+The output directory must already exist on another physical disk. Obtain the
+identity with `qcache disk eject W: --preview` and the physical size with
+`Get-Disk`; confirm that it is the dedicated disposable disk. The runner refuses
+boot/system/special-file paths, saved profiles, existing caches and ambiguous
+layouts. A successful Windows API return without observed device disappearance
+is INCOMPLETE. After observed removal, `removal-ready.json` records the exact
+run/case/disk/volume identities and an acknowledgement template. Reconnect that
+disk externally, then atomically write the template as `reconnect-ack.json` in
+that run directory. The foreground runner waits at most 15 minutes, validates the
+acknowledgement, requires a fresh empty cache lifetime and compares all oracle
+bytes before restoration. An unknown eject outcome (including a worker failure
+or presence-query error), stale acknowledgement or incomplete reconnect
+defers restoration and reports RESTORATION_FAILED; preserve evidence, reconnect
+the recorded target and use `verify-recover` after owned workers have stopped.
+The runner never invokes a hypervisor, reboots, formats or repairs the target.
 
 Plan 70, from the first FAT32 and ReFS runs: `volume-snapshot` is SKIP when Windows
 does not take shadow copies of the file system (FAT32/exFAT: Win32_ShadowCopy.Create

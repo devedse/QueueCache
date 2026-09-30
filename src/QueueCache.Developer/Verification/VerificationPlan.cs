@@ -25,12 +25,13 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 70;
+    public const int Version = 71;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
+        "disk-removal",
         "system-preflight",
         "system-files",
         "system-post-restart",
@@ -79,6 +80,7 @@ public static class VerificationPlan
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
     {
         "quick" => [new("file-integrity", "files")],
+        "disk-removal" => [new("disk-orderly-eject-reconnect", "disk-removal")],
         "system-preflight" => [new("system-preflight", "system-preflight")],
         "system-files" => [new("system-file-create", "system-file-create")],
         "system-post-restart" => [new("system-file-verify", "system-file-verify")],
@@ -295,6 +297,15 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (options.Suite == "disk-removal")
+        {
+            if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
+                throw new ArgumentException("disk-removal requires --disposable-instance and --disposable-bytes for the disposable physical disk.");
+            if (options.BudgetMiB > 512 || options.DiskSpd is not null)
+                throw new ArgumentException("disk-removal requires --budget-mib 256..512 and does not use DiskSpd.");
+        }
+        else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
+            throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
             (options.Suite is not ("write-performance" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
             throw new ArgumentException("--case-filter requires write-performance or drain-decision and a nonempty case-sensitive ID substring.");

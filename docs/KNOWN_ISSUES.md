@@ -192,6 +192,21 @@ are not implemented.
 
 ## Lifecycle scope remains incomplete
 
+The `volume-filter` branch now has a source implementation for whole-disk safe
+eject and an ordered volume QUERY_REMOVE drain. A `qcache disk eject` request
+first disables and drains every lettered data volume on the disk. This is still
+experimental: the first live preview on a disposable GPT SCSI disk exposed a
+partition-count bug, which has a source fix awaiting exact-build VM validation.
+External Windows eject routing, veto/cancel, surprise removal under in-flight I/O,
+reconnect and FAT32/ReFS removal have not passed the maintained VM matrix. A
+successful host build or an empty dirty counter must not be read as that proof.
+Management transactions now serialize by physical-disk PnP identity, including
+low-level CLI mutations. A slow eject preparation leaves other disks configurable.
+The product transaction relies on cooperating management clients until Windows
+begins QUERY_REMOVE; a driver prepare/cancel protocol remains open if native
+volume-query routing proves insufficient. Old interfaces must be stopped during
+qualification, as required by the runner preflight instructions.
+
 Normal secondary-disk restart checks exist, but boot/system-disk, paging,
 hibernation, crash-dump, surprise-removal and full power-transition acceptance are
 still open. The class filter starts inactive and forwards I/O until a task is

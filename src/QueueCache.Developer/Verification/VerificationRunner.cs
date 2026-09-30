@@ -234,6 +234,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
         string? failure = null, restorationFailure = null;
         var captured = false;
+        var removalUnresolved = false;
         var systemCaptured = false;
         FileStream? diskLease = null;
         Semaphore? systemLease = null;
@@ -274,6 +275,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             else
             {
+                if (options.Suite == "disk-removal")
+                    await Worker(new WorkerJob("disk-removal-preflight", options.Volume, storage.PathFor("removal-preflight.json")) with
+                    {
+                        DisposableInstance = options.DisposableInstance,
+                        DisposableBytes = options.DisposableBytes
+                    }, deadline.Token);
                 var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json")), deadline.Token);
                 original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
                 target = original.Target;
@@ -311,6 +318,53 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
+                    if (test.Operation == "disk-removal")
+                    {
+                        var oraclePath = storage.PathFor(test.Id + ".oracle.json");
+                        await Worker(Job("disk-removal-prepare") with
+                        {
+                            Reply = oraclePath, WorkDirectory = workDirectory, BudgetMiB = options.BudgetMiB
+                        }, deadline.Token, 180);
+                        // A worker failure or timeout cannot prove that Windows never
+                        // started removal. Defer restoration until a typed result or
+                        // a verified reconnect settles the outcome.
+                        removalUnresolved = true;
+                        storage.Write("removal-requested.json", new { Phase = "RequestingRemoval", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        var ejectPath = await Worker(Job("disk-removal-eject") with
+                        {
+                            Reply = storage.PathFor(test.Id + ".eject.json")
+                        }, deadline.Token, options.PreparationFlushSeconds);
+                        var eject = JsonSerializer.Deserialize<DiskEjectResult>(await File.ReadAllTextAsync(ejectPath, deadline.Token))
+                            ?? throw new InvalidDataException("Missing eject result.");
+                        if (!eject.RemovalObserved)
+                        {
+                            removalUnresolved = eject.PresenceResult != 0;
+                            throw new IOException("Windows accepted the eject request, but device removal was not observed. Removal qualification is incomplete.");
+                        }
+                        var runId = Path.GetFileName(storage.DirectoryPath);
+                        var acknowledgement = new DiskReconnectAcknowledgement(runId, test.Id, original.Target.Instance, original.Target.VolumeId);
+                        storage.Write("removal-ready.json", new
+                        {
+                            Phase = "AwaitingReconnect", RunId = runId, CaseId = test.Id,
+                            Target = original.Target, Acknowledgement = acknowledgement,
+                            Instructions = "Reconnect the same disposable disk on the same bus and drive letter, then write Acknowledgement as reconnect-ack.json in this run directory. Do not reboot the guest or format/repair the disk."
+                        });
+                        Log("Removal observed. Awaiting the same disk and reconnect-ack.json; maximum 15 minutes. See removal-ready.json.");
+                        var ackPath = storage.PathFor("reconnect-ack.json");
+                        using var reconnectDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+                        reconnectDeadline.CancelAfter(TimeSpan.FromMinutes(15));
+                        while (!File.Exists(ackPath))
+                            await Task.Delay(500, reconnectDeadline.Token);
+                        var ack = JsonSerializer.Deserialize<DiskReconnectAcknowledgement>(await File.ReadAllTextAsync(ackPath, reconnectDeadline.Token))
+                            ?? throw new InvalidDataException("Missing reconnect acknowledgement.");
+                        DiskRemovalHandshake.Validate(ack, runId, original.Target);
+                        var verifyReply = await Worker(Job("disk-removal-verify") with { OraclePath = oraclePath }, deadline.Token);
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(verifyReply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing reconnect oracle checks.");
+                        removalUnresolved = false;
+                        storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        return null;
+                    }
                     if (test.Operation == "system-app-session")
                     {
                         var sessionReply = await Worker(Job(test.Operation) with
@@ -401,7 +455,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         }
         finally
         {
-            if (captured)
+            if (captured && removalUnresolved)
+            {
+                restorationFailure = "Removal outcome or reconnect verification is unresolved. Restoration deferred; preserve the disk and evidence, reconnect the exact original target, then use verify-recover.";
+                Log("RESTORATION DEFERRED: " + restorationFailure);
+            }
+            if (captured && !removalUnresolved)
             {
                 progressLabel = $"Restoring | {storage.Results.Count}/{totalCases} recorded";
                 Log("Restoring original runtime state (independent cleanup deadline).");

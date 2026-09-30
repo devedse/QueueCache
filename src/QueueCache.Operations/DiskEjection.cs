@@ -9,7 +9,7 @@ namespace QueueCache.Operations;
 public sealed record DiskEjectPreview(int DiskNumber, string Instance, string Name, IReadOnlyList<string> Volumes,
     bool Ejectable, string? UnsupportedReason);
 public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName,
-    bool RemovalObserved);
+    bool RemovalObserved, uint PresenceResult = 0);
 
 /// <summary>One physical-disk eject, including every lettered volume on the disk.</summary>
 public static class DiskEjection
@@ -62,6 +62,12 @@ public static class DiskEjection
         return null;
     }
 
+    internal static bool SameMountedVolume(VolumeDescription expected, VolumeDescription current) =>
+        current.Volume.Equals(expected.Volume, StringComparison.OrdinalIgnoreCase) &&
+        current.VolumeId.Equals(expected.VolumeId, StringComparison.OrdinalIgnoreCase) &&
+        current.Instance.Equals(expected.Instance, StringComparison.OrdinalIgnoreCase) &&
+        current.DiskNumber == expected.DiskNumber && current.Bytes == expected.Bytes;
+
     [SupportedOSPlatform("windows")]
     public static async Task<DiskEjectResult> EjectAsync(string volume, IProgress<string>? progress = null, CancellationToken token = default)
     {
@@ -72,17 +78,29 @@ public static class DiskEjection
         var affected = original.Where(v => v.DiskNumber == preview.DiskNumber).ToArray();
         if (affected.Length != preview.Volumes.Count || affected.Any(v => !string.Equals(v.Instance, preview.Instance, StringComparison.OrdinalIgnoreCase)))
             throw new IOException("The disk's volume inventory changed before eject.");
-        return await Task.Run(() => EjectPrepared(volume, preview, affected, progress, token), token);
+        var targets = new List<DiskTarget>(affected.Length);
+        foreach (var item in affected)
+        {
+            var target = await DiskTarget.InspectAsync(item.Volume, token);
+            if (target.Number != preview.DiskNumber ||
+                !target.Instance.Equals(preview.Instance, StringComparison.OrdinalIgnoreCase) ||
+                !target.VolumeId.Equals(item.VolumeId, StringComparison.OrdinalIgnoreCase) || target.Bytes != item.Bytes)
+                throw new IOException($"{item.Volume} has an ambiguous or changed disk extent. Eject was not requested.");
+            targets.Add(target);
+        }
+        return await Task.Run(() => EjectPrepared(volume, preview, affected, targets, progress, token), token);
     }
 
     [SupportedOSPlatform("windows")]
     private static DiskEjectResult EjectPrepared(string volume, DiskEjectPreview preview,
-        VolumeDescription[] affected, IProgress<string>? progress, CancellationToken token)
+        VolumeDescription[] affected, IReadOnlyList<DiskTarget> targets, IProgress<string>? progress, CancellationToken token)
     {
         // ConfigurationGate is a thread-affine mutex: no await while it is held.
         // QUERY_REMOVE closes admission for native eject; explicit Disable also
         // covers the interval before Windows begins its PnP request.
-        using var gate = ConfigurationGate.Enter();
+        using var gate = ConfigurationGate.Enter(preview.Instance);
+        foreach (var target in targets)
+            target.ValidateCurrent(token);
         var beforePreparation = PreviewAsync(volume, token).GetAwaiter().GetResult();
         if (!beforePreparation.Ejectable || beforePreparation.DiskNumber != preview.DiskNumber ||
             !string.Equals(beforePreparation.Instance, preview.Instance, StringComparison.OrdinalIgnoreCase) ||
@@ -121,6 +139,8 @@ public static class DiskEjection
             if (!current.Ejectable || !string.Equals(current.Instance, preview.Instance, StringComparison.OrdinalIgnoreCase) ||
                 current.DiskNumber != preview.DiskNumber || !current.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(preview.Volumes))
                 throw new IOException("The disk changed during eject preparation. Eject was not requested.");
+            foreach (var target in targets)
+                target.ValidateCurrent(token);
             token.ThrowIfCancellationRequested();
             progress?.Report("Requesting safe removal from Windows");
             var locate = CM_Locate_DevNodeW(out var node, preview.Instance, 0);
@@ -134,16 +154,23 @@ public static class DiskEjection
             // becomes visible. Report that distinction rather than claiming a
             // vanished disk from its return code alone.
             var removed = false;
+            uint presence = 0;
             for (var attempt = 0; attempt < 20; attempt++)
             {
-                if (CM_Locate_DevNodeW(out _, preview.Instance, 0) != 0)
+                presence = CM_Locate_DevNodeW(out _, preview.Instance, 0);
+                if (presence == 0x0D) // CR_NO_SUCH_DEVNODE; other API errors do not prove absence.
                 {
                     removed = true;
                     break;
                 }
+                if (presence != 0)
+                {
+                    progress?.Report($"Windows accepted eject, but device-presence verification failed (Configuration Manager {presence}).");
+                    break;
+                }
                 Thread.Sleep(250);
             }
-            return new(preview, result, vetoType, veto.ToString(), removed);
+            return new(preview, result, vetoType, veto.ToString(), removed, presence);
         }
         catch
         {
@@ -154,10 +181,7 @@ public static class DiskEjection
                 try
                 {
                     var live = VolumeCatalog.ListAsync(CancellationToken.None).GetAwaiter().GetResult();
-                    if (!live.Any(v => v.Volume.Equals(item.Volume, StringComparison.OrdinalIgnoreCase) &&
-                        v.VolumeId.Equals(item.VolumeId, StringComparison.OrdinalIgnoreCase) &&
-                        v.Instance.Equals(item.Instance, StringComparison.OrdinalIgnoreCase) &&
-                        v.DiskNumber == item.DiskNumber && v.Bytes == item.Bytes))
+                    if (!live.Any(v => SameMountedVolume(item, v)))
                         continue;
                     using var cache = new CacheDevice(item.Volume, writable: true);
                     cache.Control(WriteCacheAction.Enable);

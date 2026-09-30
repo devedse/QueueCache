@@ -25,8 +25,50 @@ internal static class VerificationRunnerTests
             catch (Exception e) when (e is ArgumentException or InvalidDataException or System.Xml.XmlException) { return; }
             throw new Exception("Expected rejection.");
         }
+        Check(QueueCache.Operations.ConfigurationGate.NameFor("disk-a") == QueueCache.Operations.ConfigurationGate.NameFor("DISK-A") &&
+            QueueCache.Operations.ConfigurationGate.NameFor("disk-a") != QueueCache.Operations.ConfigurationGate.NameFor("disk-b"),
+            "configuration transactions use case-insensitive physical-disk identity");
+        await Task.Run(() =>
+        {
+            using var firstGate = QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-a");
+            var otherDisk = Task.Run(() => { using var gate = QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-b"); });
+            Check(otherDisk.Wait(TimeSpan.FromSeconds(2)), "another disk can configure during an eject transaction");
+        });
+        await Task.Run(() =>
+        {
+            using var started = new ManualResetEventSlim();
+            Task sameDisk;
+            using (QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-a"))
+            {
+                sameDisk = Task.Run(() => { started.Set(); using var gate = QueueCache.Operations.ConfigurationGate.Enter("FIXTURE-DISK-A"); });
+                Check(started.Wait(TimeSpan.FromSeconds(2)) && !sameDisk.Wait(100), "volumes on the same disk serialize their mutations");
+            }
+            Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
+        });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 70, "plan 70: ReFS caller-path share, ReFS remount, FAT snapshot SKIP");
+        Check(VerificationPlan.Version == 71, "plan 71: explicit disposable orderly eject and reconnect handshake");
+        var removalOptions = new VerificationOptions("W:", "disk-removal", BudgetMiB: 256,
+            DisposableInstance: "test-disposable", DisposableBytes: 8L << 30);
+        VerificationPlan.Validate(removalOptions);
+        Reject(() => VerificationPlan.Validate(removalOptions with { DisposableInstance = null }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { DisposableBytes = 0 }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { BudgetMiB = 1024 }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { Suite = "quick" }));
+        Check(VerificationPlan.Integrity(removalOptions).Single().Id == DiskRemovalHandshake.CaseId &&
+            !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "disk-removal"),
+            "removal is explicitly opted in and excluded from full");
+        var reconnectTarget = new QueueCache.Operations.DiskTarget('W', 3, 1L << 30, "test-disposable")
+            { DiskBytes = 8L << 30, VolumeId = "{00000000-0000-0000-0000-000000000001}" };
+        var reconnectAck = new DiskReconnectAcknowledgement("run-one", DiskRemovalHandshake.CaseId,
+            reconnectTarget.Instance, reconnectTarget.VolumeId);
+        DiskRemovalHandshake.Validate(reconnectAck, "run-one", reconnectTarget);
+        foreach (var bad in new[] { reconnectAck with { RunId = "old-run" }, reconnectAck with { CaseId = "other-case" },
+            reconnectAck with { Instance = "replacement-disk" }, reconnectAck with { VolumeId = "replacement-volume" } })
+        {
+            try { DiskRemovalHandshake.Validate(bad, "run-one", reconnectTarget); }
+            catch (IOException) { continue; }
+            throw new Exception("Reconnect handshake accepted stale or replacement identity.");
+        }
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
@@ -1288,6 +1330,30 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
+            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure" })
+            {
+                var parent = store.PathFor(mode);
+                using var cancellation = new CancellationTokenSource();
+                var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                var progress = new InlineProgress(message =>
+                {
+                    if (!message.Contains("Awaiting the same disk and reconnect-ack.json")) return;
+                    var directory = Directory.GetDirectories(parent).Single();
+                    if (mode == "removal-cancel") { cancellation.Cancel(); return; }
+                    using var ready = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "removal-ready.json")));
+                    var ack = ready.RootElement.GetProperty("Acknowledgement").Deserialize<DiskReconnectAcknowledgement>()!;
+                    RunStorage.AtomicJson(Path.Combine(directory, "reconnect-ack.json"), mode == "removal-stale" ? ack with { RunId = "old-run" } : ack);
+                });
+                var exit = await runner.RunAsync(removalOptions with { Volume = "Q:", Output = parent }, progress, cancellation.Token);
+                var directory = Directory.GetDirectories(parent).Single();
+                using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                var expected = mode == "removal-success" ? "COMPLETED" : mode == "removal-unobserved" ? "INCOMPLETE" : "RESTORATION_FAILED";
+                Check(status.RootElement.GetProperty("Status").GetString() == expected && (exit == 0) == (mode == "removal-success"), "removal coordinator " + mode);
+                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-unobserved"),
+                    "removal restoration requires completed reconnect verification " + mode);
+                Check(File.Exists(Path.Combine(directory, "FINISHED.txt")), "removal completion marker " + mode);
+                OwnedProcess.EnsureStopped(directory);
+            }
             if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISKSPD") is { Length: > 0 } diskspd)
             {
                 var actual = await OwnedProcess.RunAsync(diskspd, ["-c16M", "-b4K", "-o1", "-t1", "-w0", "-d1", "-W0", "-S", "-L", "-Rxml", store.PathFor("fixture.dat")],
@@ -1340,6 +1406,11 @@ internal static class VerificationRunnerTests
         }
         if (mode == "cancel" && job.Operation == "files")
             await Task.Delay(Timeout.Infinite);
+        if (mode == "removal-worker-failure" && job.Operation == "disk-removal-eject")
+        {
+            Console.Error.WriteLine("fixture: eject outcome unknown after worker failure");
+            return 1;
+        }
         if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore" || mode == "capture-failure" && job.Operation == "capture")
         {
             Console.Error.WriteLine("fixture failure detail: Access is denied.");
@@ -1349,6 +1420,11 @@ internal static class VerificationRunnerTests
         {
             Fake = true
         };
+        if (job.Operation == "disk-removal-eject")
+            reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
+                0, 0, "", mode is not ("removal-unobserved" or "removal-presence-failure"), mode == "removal-presence-failure" ? 0x13u : 0);
+        if (job.Operation == "disk-removal-verify")
+            reply = new QueueCache.Operations.CheckResult[] { new("fixture-oracle", "PASS", "host-only fixture") };
         if (job.Operation == "capture")
             reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only") { DiskBytes = 50L << 30 },
                 new QueueCache.Management.WriteCacheState(0, 0, 50UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),

@@ -101,7 +101,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     public void CheckExtents() => ValidateExtent(this, ReadExtent(Letter));
 
-    public void ValidateCurrent(CancellationToken cancellationToken = default)
+    public void ValidateCurrent(CancellationToken cancellationToken = default, bool requireFileSystem = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (VolumeId.Length != 0 && !string.Equals(ReadVolumeId(Letter), VolumeId, StringComparison.OrdinalIgnoreCase))
@@ -109,8 +109,11 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         var extent = ReadExtent(Letter);
         // Reject a remapped volume before opening even the previously recorded disk.
         ValidateExtent(this, extent);
-        ValidateMountedIdentity(this, extent, ReadDiskInstance(Number, Instance, cancellationToken),
-            new DriveInfo(Root).DriveFormat);
+        var instance = ReadDiskInstance(Number, Instance, cancellationToken);
+        if (!MatchesInstance(Instance, instance))
+            throw new IOException("Disk identity changed; refusing operation.");
+        if (requireFileSystem)
+            ValidateMountedIdentity(this, extent, instance, new DriveInfo(Root).DriveFormat);
     }
 
     /// <summary>The volume GUID mounted at this letter ({...}), from the mount manager.</summary>

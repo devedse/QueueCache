@@ -1791,3 +1791,52 @@ unexpected unplug is explicitly not promised.
 - Next: qualify the loaded build on W:, implement the maintained removal suite and
   remaining lifecycle/ownership work, then independent review. Virtual-drive
   feature stays postponed.
+
+### Drive disconnection source and VM checkpoint, 2026-09-30
+
+Implementation: plan 71 adds the opted-in `disk-removal` orderly-eject/reconnect
+case to the foreground runner. It requires exact disposable physical disk
+identity, one initially unconfigured volume, a separate evidence disk, pending
+Fast bytes and observed Windows removal. Reconnect uses a run/case/disk/volume
+acknowledgement; a stale/missing acknowledgement or unknown eject outcome defers restoration. The oracle
+requires a fresh empty cache lifetime and byte match. This first case does not
+cover surprise removal or the full handoff matrix. Disk extent checks and rollback
+identity checks were tightened. Configuration mutexes are now per physical disk;
+CLI low-level mutations use the same transaction gate. Surprise-event pending
+bytes use the synchronized published snapshot. No ordinary admission path changed.
+
+Verification: host managed build and protocol/desktop fixtures passed; Windows
+host-safe coordinator tests passed for success, missing observed removal, stale
+acknowledgement, cancellation, failed eject worker and failed presence query.
+The final Windows run also verified that same-disk transactions serialize while
+another disk remains configurable. Native CI confirmation remains required.
+
+Loaded VM build 0.4.239.1 (`fe54353`) under Verifier `0x209bb` corrected the GPT
+reserved-partition preview. W: held 8 MiB pending in a runtime-only 256 MiB
+Fast/Deferred cache; `disk eject W:` drained it and Windows accepted removal, but
+the device remained online. The CLI returned nonzero because disappearance was
+not observed. This is INCOMPLETE orderly-eject qualification. Proxmox detach of
+only `vm-109-disk-5` reported a controller hot-unplug error; guest event 1000 showed
+a veto (type 13), followed by event 1010 confirming disk/volume surprise removal.
+Two `qcachelab` System event 157 packets survived with zero pending-byte snapshots.
+Their message resources are absent; raw XML/binary is the collected evidence.
+
+The backing volume remained intact. Live reattachment did not add it to QEMU;
+after preserving evidence and an explicitly authorized orderly VM shutdown/start,
+the same volume GUID reappeared on spare SATA1. All 8 MiB matched SHA-256
+`A4E1A7A878555AEED5B189E1A5E93586FD147CBE595B18F9E47EA0DDACFC6D6F`.
+W: had no cache, Q:'s saved 2 GiB Fast task restored healthy. This proves the
+drained file survived that sequence; it does not prove dirty surprise containment,
+live reconnect, cancelled-query restoration or lower-operation races.
+
+Evidence retained on the VM in `C:\QueueCache-Results\Disconnect-20260929`:
+`DeviceManagement.evtx`, `System.evtx`, `target-pnp.json`, `qcache-surprise.xml`,
+`oracle.json`, `reconnect-oracle.json`; hypervisor task/config evidence remains
+private. Earlier W: plan-70 `quick` run
+`QueueCache-Verify-20260929-170517-fd6cbcc40537477bbdabe6a9ad32db09` completed 1/1
+with FINISHED/status/results/log/raw checks and clean restoration; TRIM checks
+were SKIP on this bus. The new plan-71 removal case still needs an exact-build VM
+run. Read-only preview on the SATA1 connection reports Windows does not identify
+the disposable disk as removable/ejectable; its disk number is now 1. This bus
+cannot qualify orderly eject. Two-volume, fault, dirty surprise, FAT32/ReFS, changed-letter identity and
+repeated-cycle qualification remain open.

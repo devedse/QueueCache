@@ -12,7 +12,7 @@ public static class CacheScenarios
     public static Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, IProgress<string>? progress = null,
         CancellationToken token = default) => Task.Run<IReadOnlyList<CheckResult>>(() =>
     {
-        using var gate = ConfigurationGate.Enter();
+        using var gate = ConfigurationGate.Enter(target.Instance);
         using var device = new CacheDevice(target.Device, writable: true);
         var original = device.GetWriteCacheState();
         ConfigurationManager.EnsureHealthy(original);

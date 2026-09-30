@@ -118,6 +118,12 @@ Check(DiskEjection.SafetyReason(ejectableDisk with { IsPaging = true }) is not n
 Check(DiskEjection.SafetyReason(ejectableDisk with { IsBoot = true }) is not null, "boot disk cannot be ejected");
 Check(DiskEjection.SafetyReason(ejectableDisk with { PartitionCount = 2 }) is not null, "unlettered partition cannot be silently omitted from eject preparation");
 Check(DiskEjection.SafetyReason(ejectableDisk with { Volumes = ["R:", "R:"], PartitionCount = 2 }) is not null, "duplicate volume cannot be counted twice");
+var ejectVolume = new VolumeDescription("R:", "test", "NTFS", 1L << 30,
+    @"\\?\Volume{00000000-0000-0000-0000-000000000001}\", 3, "disk", "test-removable", 8L << 30, false, false, false);
+Check(DiskEjection.SameMountedVolume(ejectVolume, ejectVolume), "rollback recognizes unchanged mounted volume");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { Volume = "S:" }), "rollback refuses a reassigned drive letter");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { DiskNumber = 4 }), "rollback refuses a remapped disk");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000002}\" }), "rollback refuses a replacement volume");
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");
