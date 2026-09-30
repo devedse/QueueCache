@@ -1840,3 +1840,20 @@ run. Read-only preview on the SATA1 connection reports Windows does not identify
 the disposable disk as removable/ejectable; its disk number is now 1. This bus
 cannot qualify orderly eject. Two-volume, fault, dirty surprise, FAT32/ReFS, changed-letter identity and
 repeated-cycle qualification remain open.
+
+### Direct removal admission and ownership audit, 2026-09-30
+
+Implementation: `QcCacheDisconnect` now publishes Gone while holding the RAM
+admission Mutex for both surprise and direct final removal, publishes a coherent
+pending snapshot and wakes cache/drainer/paging waiters. Dispatch rejects later
+data/control traffic before bypass lanes, continues PnP/power/close/cleanup
+handling, and forwards surprise notification promptly. Duplicate query preserves
+the first pre-query Enabled setting; failed lower cancel does not reopen it.
+Existing lower IRPs retain ownership until actual completion; no timeout permits
+freeing them. The lock/lifetime map is in `DRIVE_DISCONNECT_OWNERSHIP_AUDIT.md`.
+
+Verification: source audit only for this follow-up. Native CI and targeted VM
+qualification remain required, especially direct remove without query, query
+cancel/veto, copied/pinned requests at the cutoff and lower callbacks in flight.
+The prior host tests do not verify these native transitions. Explicit preparation
+protocol, versioned lifecycle counters and the remaining removal matrix are open.

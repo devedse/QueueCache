@@ -830,6 +830,12 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     {
         if (stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
         {
+#if QCACHE_CACHE_DRIVER
+            // Final removal also occurs without a successful query or a prior
+            // surprise notification. Do not wait for unavailable storage to
+            // drain before publishing the admission cutoff.
+            QcCacheDisconnect(&ext->Cache, nullptr);
+#endif
 #if QCACHE_SERIALIZED_IO
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
@@ -857,14 +863,13 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
         if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL)
         {
-            if (!InterlockedExchange(&ext->Cache.Gone, TRUE))
+            QC_STATE removalSnapshot;
+            if (QcCacheDisconnect(&ext->Cache, &removalSnapshot))
             {
                 // The cache IOCTL disappears with the volume. Keep a one-shot
                 // event in the Windows System log for post-removal diagnosis.
                 // Dirty bytes are a snapshot of possible volatile loss, not a
                 // claim that this many bytes were lost on the physical disk.
-                QC_STATE removalSnapshot;
-                QcCacheSnapshot(&ext->Cache, &removalSnapshot);
                 const ULONGLONG pending = removalSnapshot.DirtyBytes;
                 auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(
                     device, static_cast<UCHAR>(sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG))));
@@ -879,9 +884,13 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                     IoWriteErrorLogEntry(entry);
                 }
             }
-            KeSetEvent(&ext->Cache.Changed, IO_NO_INCREMENT, FALSE);
-            KeSetEvent(&ext->Cache.Wake, IO_NO_INCREMENT, FALSE);
+            // A notification cannot be vetoed and must reach the lower stack
+            // promptly, independently of the request worker's lower-I/O wait.
+            irp->IoStatus.Status = STATUS_SUCCESS;
+            return Forward(ext, irp);
         }
+        if (ext->Cache.Gone)
+            return Forward(ext, irp); // Still handle PnP, including cancel/cleanup sequencing.
         if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
         {
             KIRQL irql;
@@ -935,6 +944,18 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             return Complete(irp, status, irp->IoStatus.Information);
         }
     }
+#if QCACHE_CACHE_DRIVER
+    if (ext->Cache.Gone)
+    {
+        if (stack->MajorFunction == IRP_MJ_POWER || stack->MajorFunction == IRP_MJ_CLEANUP ||
+            stack->MajorFunction == IRP_MJ_CLOSE)
+            return Forward(ext, irp);
+        // Reject before observation, paging-file and inactive direct bypasses.
+        // None may admit a new data/control operation after the cutoff.
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        return Complete(irp, STATUS_DEVICE_NOT_CONNECTED);
+    }
+#endif
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;

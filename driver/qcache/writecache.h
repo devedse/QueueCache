@@ -408,6 +408,8 @@ FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
 }
 NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT self, PDEVICE_OBJECT lower);
 void QcCacheDestroy(QC_CACHE* cache);
+// PASSIVE_LEVEL PnP transition, serialized with RAM admission. Never waits for lower I/O.
+bool QcCacheDisconnect(QC_CACHE* cache, QC_STATE* snapshot);
 void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);

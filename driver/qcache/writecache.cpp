@@ -1336,6 +1336,22 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
     ReleaseCache(c);
     return status;
 }
+bool QcCacheDisconnect(QC_CACHE* c, QC_STATE* snapshot)
+{
+    // Read/Write admission checks Gone while holding Mutex. Taking the same
+    // lock makes this the cutoff: previously pinned/copied requests retain
+    // their ownership, but later requests cannot start from RAM.
+    AcquireCache(c);
+    const bool first = !InterlockedExchange(&c->Gone, TRUE);
+    Publish(c);
+    if (snapshot)
+        *snapshot = c->State;
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    WakeDrainers(c);
+    ReleaseCache(c);
+    KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+    return first;
+}
 void QcCacheDestroy(QC_CACHE* c)
 {
     AcquireCache(c);
@@ -2822,6 +2838,10 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     }
     if (c->Gone)
     {
+        if ((stack->MajorFunction == IRP_MJ_PNP && !QcTrackedUsageNotification(stack)) ||
+            stack->MajorFunction == IRP_MJ_POWER || stack->MajorFunction == IRP_MJ_CLEANUP ||
+            stack->MajorFunction == IRP_MJ_CLOSE)
+            return OriginalIo(c, irp);
         const auto status = STATUS_DEVICE_NOT_CONNECTED;
         if (QcTrackedUsageNotification(stack))
         {
@@ -2942,8 +2962,12 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         // worker. Keep admission disabled through the PnP transaction, including
         // the interval between our successful query and final removal.
         AcquireCache(c);
+        const BOOLEAN wasPending = c->QueryRemovePending;
         const BOOLEAN wasEnabled = c->Enabled;
         ReleaseCache(c);
+        // Preserve the original pre-query setting on duplicate queries.
+        if (wasPending)
+            return OriginalIo(c, irp);
         auto status = QcCacheBarrier(c, TRUE, QcOrderedBarrier, irp);
         if (NT_SUCCESS(status))
             status = OriginalIo(c, irp);
@@ -2963,7 +2987,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     {
         const auto status = OriginalIo(c, irp);
         AcquireCache(c);
-        if (c->QueryRemovePending)
+        if (NT_SUCCESS(status) && c->QueryRemovePending)
         {
             if (!c->Gone && NT_SUCCESS(c->State.LastError))
                 c->Enabled = c->QueryRemoveWasEnabled;
