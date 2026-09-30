@@ -34,12 +34,13 @@ eject explicitly drains/disables all supported lettered volumes first.
 | Lock | Protected state | Nesting / waits |
 |---|---|---|
 | QueueLock (spin) | CSQ, Closing, Routing, DirectCount, caller ownership and worker metadata | Released before cache Mutex acquisition, blocking waits and lower calls. Dispatch snapshot reads may take SnapshotLock while QueueLock is held. |
-| Cache Mutex (push lock) | RAM slots, Enabled, query state, generation, barriers and cache snapshots | Publish takes SnapshotLock inside Mutex. Lower completion waits release Mutex. |
+| Cache Mutex (push lock) | RAM slots, Enabled, query state, generation, barriers and cache snapshots | Publish takes SnapshotLock inside Mutex. Enable briefly takes QueueLock inside Mutex for its usage-path admission check, then releases QueueLock before Publish. Lower completion waits release Mutex. |
 | SnapshotLock (spin) | Coherent public snapshots | No acquisition of Mutex or lower calls while held. |
 | PagingLock (spin) | Offload entries, queue count, stop flag | Released before Read/Write processing, completion and thread waits. |
 | Management mutex | Cooperating CLI/UI mutations on one physical PnP identity | Thread-affine; no await while held. Other disks use separate mutexes. It does not serialize external or older clients. |
 
-Review must preserve these directions. No spin lock permits a passive wait.
+Review must preserve these directions: Mutex may take QueueLock, but QueueLock
+must never wait for Mutex. No spin lock permits a passive wait.
 Queue admission and RAM admission have separate ownership boundaries; neither
 permits freeing requests already owned below.
 

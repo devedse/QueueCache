@@ -1881,3 +1881,65 @@ PnP identity, physical size and volume membership; case differences are accepted
 This prevents a replacement disk at the same letter from inheriting an earlier
 eject confirmation. Managed build and protocol/desktop tests pass; Windows VM
 execution of the new preview binding remains unverified.
+
+### CI and cached NTFS checkpoint, 2026-09-30
+
+Implementation commits: `925dc48` (maintained removal suite and per-disk gates),
+`9103f2b` (direct/surprise admission cutoff and ownership audit), `b9c6dbb`
+(desktop identity/refresh), `5bd2073` (confirmed eject identity binding). CI native
+Debug/Release and Windows host contracts passed through `5bd2073`; this is build
+verification, not removal-race qualification.
+
+VM build 0.4.243.1 (`9103f2b`) was loaded under Verifier `0x209bb`, confirmed by
+module load count 1/unload count 0. Registered/loaded module filename matches
+SHA-256 `CB07097679FAF288E806D84B95ECFA02D9D0A106FC42137373AAA815D820F79E`.
+The volume registration is topmost on all volumes, absent on disks, with no
+registration problems. Q:'s saved task restored successfully.
+
+Plan-71 removal run
+`QueueCache-Verify-20260930-140253-4b9d5ad434674cee98e2b923a68e1203`
+finished INCOMPLETE 0/1 at preflight because SATA1 is not Windows-ejectable. No
+cache preparation or physical removal occurred. FINISHED/status/summary/results/
+log and exact worker error were inspected.
+
+A temporary runtime-only 256 MiB Fast/Idle cache on W: was then verified by
+`QueueCache-Verify-20260930-140353-7775a062bc8c4fc9909ac720e7484c2f`:
+COMPLETED 1/1, live unbuffered read/overwrite, random overwrite, explicit drain/
+reopen, copy/rename and settings/health PASS. File-level TRIM is SKIP (Win32 326),
+as are the suite's declared exclusions. Raw evidence shows RAM accepted writes,
+not merely an uncached file run. Restoration readiness is true; six exact control
+trace samples show zero errors, lower-attempt counters and a clean disabled
+boundary. Quick has no interval measurement files. Restored runtime policy and
+budget matched, then the temporary cache was removed. Q: remained healthy;
+C:/T:/W: have no cache. FINISHED/status/summary/results/log/raw and restoration
+snapshots were inspected. This is a normal cached-file regression, not proof of
+new removal/cancel/lower-callback paths.
+
+### Removal topology / veto checkpoint, 2026-09-30
+
+Implementation: structured Windows veto results preserve native codes, disk
+presence and rollback failures. The maintained runner restores a confirmed-present
+veto, while uncertain outcomes still defer restoration. Eject preview now resolves
+at most the immediate dedicated storage adapter and verifies all descendants and
+removal relations. Related normal/hidden volumes are owned only after native
+single-disk extent checks; instance names are never parsed to infer ownership.
+Preview exposes relation results and extent evidence. Shared/unknown scopes refuse.
+
+Verification: on CI build 0.4.247.1 (`5bd2073`) under Verifier 0x209bb, the VirtIO
+disk-node request in
+`QueueCache-Verify-20260930-141853-0973fc409d77408d9c01b3697441012a`
+was vetoed (Configuration Manager 23, veto 8) after 8,396,800 dirty bytes were
+prepared. No removal occurred; eject rollback drained/resumed the original cache.
+The older runner correctly deferred its uncertain worker outcome; supported
+verify-recover restored the original unconfigured W: state. This is veto evidence,
+not successful removal. Raw original outcome and recovery remain preserved.
+A subsequent read-only locally published preview resolved both volume extents
+through normal/hidden interfaces and accepted only this disk's dedicated adapter.
+This preview is diagnostic evidence, not CI driver removal qualification.
+Linux protocol checks, desktop fixtures and Windows host runner/protocol
+contracts pass for the new resolver and structured veto handling. Verification
+plan 72 records the topology/veto contract change. Matching CI VM removal
+qualification remains pending. Exact recovery evidence shows readiness true,
+three telemetry samples with zero dirty/inflight/error counters, successful owned
+worker exits and an unconfigured clean final runtime (budget zero). Recovery uses
+its recovery-result marker; it does not create a normal suite FINISHED/report set.

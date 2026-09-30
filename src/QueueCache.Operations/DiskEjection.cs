@@ -8,14 +8,19 @@ namespace QueueCache.Operations;
 
 public sealed record DiskEjectPreview(int DiskNumber, string Instance, string Name, IReadOnlyList<string> Volumes,
     bool Ejectable, string? UnsupportedReason, long DiskBytes = 0,
-    IReadOnlyDictionary<string, string>? VolumeIds = null);
+    IReadOnlyDictionary<string, string>? VolumeIds = null, string? RemovalInstance = null, string[]? RemovalMembers = null,
+    RemovalRelationQuery[]? RemovalRelations = null, RemovalVolumeExtent[]? RemovalVolumes = null);
 public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName,
-    bool RemovalObserved, uint PresenceResult = 0);
+    bool RemovalObserved, uint PresenceResult = 0, string[]? RollbackErrors = null);
+public sealed class DiskEjectVetoException(DiskEjectResult result) : IOException(
+    $"Windows refused safe removal (Configuration Manager {result.ConfigurationManagerResult}, veto {result.VetoType}: {result.VetoName}).")
+{
+    public DiskEjectResult Result { get; internal set; } = result;
+}
 
 /// <summary>One physical-disk eject, including every lettered volume on the disk.</summary>
 public static class DiskEjection
 {
-    private const uint EjectSupported = 0x2, Removable = 0x4;
     private const uint Capabilities = 0x10; // CM_DRP_CAPABILITIES
 
     [SupportedOSPlatform("windows")]
@@ -37,6 +42,7 @@ public static class DiskEjection
     internal static DiskEjectPreview Preview(DiskDescription disk)
     {
         var reason = SafetyReason(disk);
+        DeviceRemovalScope.Scope? scope = null;
         if (reason is null)
         {
             var code = CM_Locate_DevNodeW(out var node, disk.Instance, 0);
@@ -48,11 +54,15 @@ public static class DiskEjection
                 code = CM_Get_DevNode_Registry_PropertyW(node, Capabilities, out _, out var flags, ref length, 0);
                 if (code != 0 || length != sizeof(uint))
                     reason = $"Windows cannot read this disk's removal capability (Configuration Manager {code}).";
-                else if ((flags & (EjectSupported | Removable)) == 0)
-                    reason = "Windows does not identify this disk as removable or ejectable.";
+                else
+                {
+                    try { scope = DeviceRemovalScope.Resolve(node, disk.Instance, flags, disk.Number, disk.Bytes); }
+                    catch (Exception ex) when (ex is IOException or NotSupportedException or System.ComponentModel.Win32Exception) { reason = ex.Message; }
+                }
             }
         }
-        return new(disk.Number, disk.Instance, disk.Name, disk.Volumes, reason is null, reason);
+        return new(disk.Number, disk.Instance, disk.Name, disk.Volumes, reason is null, reason,
+            RemovalInstance: scope?.Instance, RemovalMembers: scope?.Members, RemovalRelations: scope?.Relations, RemovalVolumes: scope?.Volumes);
     }
 
     internal static string? SafetyReason(DiskDescription disk)
@@ -77,6 +87,9 @@ public static class DiskEjection
     internal static void ValidatePreview(DiskEjectPreview expected, DiskEjectPreview current)
     {
         if (expected.DiskNumber != current.DiskNumber || expected.DiskBytes != current.DiskBytes ||
+            string.IsNullOrWhiteSpace(expected.RemovalInstance) || expected.RemovalMembers is null || current.RemovalMembers is null ||
+            !string.Equals(expected.RemovalInstance, current.RemovalInstance, StringComparison.OrdinalIgnoreCase) ||
+            !(expected.RemovalMembers ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(current.RemovalMembers ?? []) ||
             !expected.Instance.Equals(current.Instance, StringComparison.OrdinalIgnoreCase) ||
             !expected.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(current.Volumes) ||
             expected.VolumeIds is null || current.VolumeIds is null ||
@@ -167,13 +180,16 @@ public static class DiskEjection
                 target.ValidateCurrent(token);
             token.ThrowIfCancellationRequested();
             progress?.Report("Requesting safe removal from Windows");
-            var locate = CM_Locate_DevNodeW(out var node, preview.Instance, 0);
+            var locate = CM_Locate_DevNodeW(out var node, preview.RemovalInstance ?? preview.Instance, 0);
             if (locate != 0)
                 throw new IOException($"The disk disappeared before eject (Configuration Manager {locate}).");
             var veto = new StringBuilder(260);
             var result = CM_Request_Device_EjectW(node, out var vetoType, veto, (uint)veto.Capacity, 0);
             if (result != 0)
-                throw new IOException($"Windows refused safe removal (Configuration Manager {result}, veto {vetoType}: {veto}).");
+            {
+                var presenceAfterVeto = CM_Locate_DevNodeW(out _, preview.Instance, 0);
+                throw new DiskEjectVetoException(new(preview, result, vetoType, veto.ToString(), false, presenceAfterVeto));
+            }
             // Configuration Manager can accept a request before device removal
             // becomes visible. Report that distinction rather than claiming a
             // vanished disk from its return code alone.
@@ -196,10 +212,11 @@ public static class DiskEjection
             }
             return new(preview, result, vetoType, veto.ToString(), removed, presence);
         }
-        catch
+        catch (Exception failure)
         {
             // A veto is not a removal. Restore only a still-present matching
             // volume; never enable a different disk that inherited its letter.
+            var rollbackErrors = new List<string>();
             foreach (var (item, wasEnabled) in disabled.Where(d => d.WasEnabled))
             {
                 try
@@ -212,9 +229,13 @@ public static class DiskEjection
                 }
                 catch (Exception ex)
                 {
-                    progress?.Report($"Could not resume {item.Volume} after refused eject: {ex.Message}");
+                    var detail = $"Could not resume {item.Volume} after refused eject: {ex.Message}";
+                    rollbackErrors.Add(detail);
+                    progress?.Report(detail);
                 }
             }
+            if (failure is DiskEjectVetoException vetoFailure)
+                vetoFailure.Result = vetoFailure.Result with { RollbackErrors = rollbackErrors.ToArray() };
             throw;
         }
     }

@@ -27,9 +27,10 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 71)
+## Suites (plan version 72)
 
-Plan 71 adds the opt-in `disk-removal` suite. Its first case covers exactly one
+Plan 72 adds verified removal topology and structured present-disk veto
+restoration to the plan-71 opt-in `disk-removal` suite. Its first case covers exactly one
 unconfigured disposable volume: an 8 MiB Fast/Deferred pending-write oracle,
 Windows safe eject, and operator live reconnect on the same bus, disk number and
 drive letter. It is excluded from `full`. Surprise removal, multiple volumes,
@@ -922,3 +923,21 @@ and regression tests. Do not keep cloning orchestration scripts. Contract tests
 cover unique IDs, completion rules, malformed XML, zero-I/O latency, argument
 preservation, output capture and cancellation/deadlines without touching a driver.
 Runtime testing of new releases still belongs on the VM.
+
+### Removal topology and veto evidence
+
+The orderly removal operation resolves the disk devnode or its immediate,
+ejectable storage adapter only when that adapter has exactly one child matching
+the selected disk. It verifies the complete bounded child/removal-relation scope.
+Related volume-manager devnodes must expose a normal or hidden volume interface
+whose native single-disk extent lies entirely on the selected physical disk.
+Shared adapters, unknown devices, missing interfaces, multiple extents and foreign
+disk extents refuse preparation. Preview records the selected node, scope members,
+relation API results and verified volume extents. An absent optional relation
+property remains result 37 with null devices, distinct from a reported empty list.
+
+A Windows veto is recorded as a structured native result with veto type/name,
+disk presence result and any cache-resume errors. A veto with the original disk
+confirmed present permits normal identity-checked runner restoration and leaves
+the case INCOMPLETE. A failed worker or uncertain disk presence defers restoration
+until inspection and supported recovery. Neither result qualifies removal.

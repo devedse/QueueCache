@@ -531,9 +531,16 @@ public static class VerificationWorker
         if (job.Operation == "disk-removal-eject")
         {
             // No retained volume/cache handle may veto our own request.
-            var expectedEject = new DiskEjectPreview(target.Number, target.Instance, "", [target.Device], true, null,
-                target.DiskBytes, new Dictionary<string, string> { [target.Device] = target.VolumeId });
-            var eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject);
+            var expectedEject = await DiskEjection.PreviewAsync(target.Device);
+            if (expectedEject.DiskNumber != target.Number || expectedEject.DiskBytes != target.DiskBytes ||
+                !expectedEject.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase) ||
+                expectedEject.VolumeIds is null || expectedEject.VolumeIds.Count != 1 ||
+                !expectedEject.VolumeIds.TryGetValue(target.Device, out var volumeId) ||
+                !volumeId.Equals(target.VolumeId, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("The recorded removal target changed before eject preview.");
+            DiskEjectResult eject;
+            try { eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject); }
+            catch (DiskEjectVetoException veto) { eject = veto.Result; }
             RunStorage.AtomicJson(job.Reply, eject);
             return 0;
         }

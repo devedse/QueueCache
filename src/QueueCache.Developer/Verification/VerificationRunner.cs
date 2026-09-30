@@ -336,6 +336,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         }, deadline.Token, options.PreparationFlushSeconds);
                         var eject = JsonSerializer.Deserialize<DiskEjectResult>(await File.ReadAllTextAsync(ejectPath, deadline.Token))
                             ?? throw new InvalidDataException("Missing eject result.");
+                        if (eject.ConfigurationManagerResult != 0)
+                        {
+                            removalUnresolved = eject.PresenceResult != 0;
+                            throw new IOException($"Windows vetoed removal (Configuration Manager {eject.ConfigurationManagerResult}, veto {eject.VetoType}: {eject.VetoName}). " +
+                                string.Join("; ", eject.RollbackErrors ?? []));
+                        }
                         if (!eject.RemovalObserved)
                         {
                             removalUnresolved = eject.PresenceResult != 0;

@@ -127,9 +127,11 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     public static string ParseVolumeId(string volumeName) => VolumeIds.Parse(volumeName);
 
-    private static (int Number, long Start, long Length) ReadExtent(char letter)
+    private static (int Number, long Start, long Length) ReadExtent(char letter) => ReadExtentPath($"\\\\.\\{letter}:");
+
+    private static (int Number, long Start, long Length) ReadExtentPath(string path)
     {
-        using var handle = CreateFileW($"\\\\.\\{letter}:", 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (handle.IsInvalid)
             throw new Win32Exception(Marshal.GetLastWin32Error());
         var buffer = new byte[32];
@@ -144,7 +146,33 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     private static string ReadDiskInstance(int number, string expectedInstance, CancellationToken cancellationToken)
     {
-        var diskInterface = new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b");
+        var path = InterfacePath(new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b"), expectedInstance, cancellationToken);
+        using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var device = new byte[12];
+        if (!DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, device, 12, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (returned != 12 || BinaryPrimitives.ReadInt32LittleEndian(device) != 7 ||
+            BinaryPrimitives.ReadInt32LittleEndian(device.AsSpan(4)) != number)
+            throw new IOException("Recorded disk interface has an unexpected device number/type.");
+        return expectedInstance;
+    }
+
+    internal static (int Number, long Start, long Length) ReadVolumeInstanceExtent(string instance)
+    {
+        // ntddstor.h: hidden/unrecognized partitions have their own interface class.
+        var path = FindInterfacePath(new Guid("53f5630d-b6bf-11d0-94f2-00a0c91efb8b"), instance, CancellationToken.None)
+            ?? FindInterfacePath(new Guid("7f108a28-9833-4b3b-b780-2c6b5fa5c062"), instance, CancellationToken.None)
+            ?? throw new IOException($"Could not resolve a normal or hidden volume interface for {instance}.");
+        return ReadExtentPath(path);
+    }
+
+    private static string InterfacePath(Guid diskInterface, string expectedInstance, CancellationToken cancellationToken) =>
+        FindInterfacePath(diskInterface, expectedInstance, cancellationToken)
+        ?? throw new IOException($"Could not resolve the interface for {expectedInstance}.");
+
+    private static string? FindInterfacePath(Guid diskInterface, string expectedInstance, CancellationToken cancellationToken)
+    {
         var devices = SetupDiGetClassDevsW(ref diskInterface, null, IntPtr.Zero, 0x12);
         if (devices == new IntPtr(-1))
             throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -182,22 +210,13 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
                     if (!MatchesInstance(expectedInstance, instance.ToString()))
                         continue;
                     var path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4)) ?? throw new IOException("Missing disk interface path.");
-                    using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-                    if (handle.IsInvalid)
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the recorded disk interface.");
-                    var device = new byte[12];
-                    if (!DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, device, 12, out var returned, IntPtr.Zero))
-                        throw new Win32Exception(Marshal.GetLastWin32Error());
-                    if (returned != 12 || BinaryPrimitives.ReadInt32LittleEndian(device) != 7 ||
-                        BinaryPrimitives.ReadInt32LittleEndian(device.AsSpan(4)) != number)
-                        throw new IOException("Recorded disk interface has an unexpected device number/type.");
-                    return instance.ToString();
+                    return path;
                 }
                 finally { Marshal.FreeHGlobal(detail); }
             }
         }
         finally { SetupDiDestroyDeviceInfoList(devices); }
-        throw new IOException($"Could not resolve the PnP identity of PhysicalDrive{number}.");
+        return null;
     }
 
     internal static void ValidateExtent(DiskTarget target, (int Number, long Start, long Length) extent)

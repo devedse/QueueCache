@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 71, "plan 71: explicit disposable orderly eject and reconnect handshake");
+        Check(VerificationPlan.Version == 72, "plan 72: verified removal scope and structured present-disk veto restoration");
         var removalOptions = new VerificationOptions("W:", "disk-removal", BudgetMiB: 256,
             DisposableInstance: "test-disposable", DisposableBytes: 8L << 30);
         VerificationPlan.Validate(removalOptions);
@@ -1330,7 +1330,7 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
-            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure" })
+            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure" })
             {
                 var parent = store.PathFor(mode);
                 using var cancellation = new CancellationTokenSource();
@@ -1347,9 +1347,9 @@ internal static class VerificationRunnerTests
                 var exit = await runner.RunAsync(removalOptions with { Volume = "Q:", Output = parent }, progress, cancellation.Token);
                 var directory = Directory.GetDirectories(parent).Single();
                 using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                var expected = mode == "removal-success" ? "COMPLETED" : mode == "removal-unobserved" ? "INCOMPLETE" : "RESTORATION_FAILED";
+                var expected = mode == "removal-success" ? "COMPLETED" : mode is "removal-unobserved" or "removal-veto" ? "INCOMPLETE" : "RESTORATION_FAILED";
                 Check(status.RootElement.GetProperty("Status").GetString() == expected && (exit == 0) == (mode == "removal-success"), "removal coordinator " + mode);
-                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-unobserved"),
+                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-unobserved" or "removal-veto"),
                     "removal restoration requires completed reconnect verification " + mode);
                 Check(File.Exists(Path.Combine(directory, "FINISHED.txt")), "removal completion marker " + mode);
                 OwnedProcess.EnsureStopped(directory);
@@ -1422,7 +1422,8 @@ internal static class VerificationRunnerTests
         };
         if (job.Operation == "disk-removal-eject")
             reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
-                0, 0, "", mode is not ("removal-unobserved" or "removal-presence-failure"), mode == "removal-presence-failure" ? 0x13u : 0);
+                mode == "removal-veto" ? 23u : 0, mode == "removal-veto" ? 8u : 0, mode == "removal-veto" ? "fixture-device" : "",
+                mode is not ("removal-unobserved" or "removal-presence-failure" or "removal-veto"), mode == "removal-presence-failure" ? 0x13u : 0);
         if (job.Operation == "disk-removal-verify")
             reply = new QueueCache.Operations.CheckResult[] { new("fixture-oracle", "PASS", "host-only fixture") };
         if (job.Operation == "capture")

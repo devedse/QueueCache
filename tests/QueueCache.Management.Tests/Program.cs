@@ -125,7 +125,7 @@ Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { Volume = "
 Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { DiskNumber = 4 }), "rollback refuses a remapped disk");
 Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000002}\" }), "rollback refuses a replacement volume");
 var confirmedEject = new DiskEjectPreview(3, "test-removable", "disk", ["R:"], true, null,
-    8L << 30, new Dictionary<string, string> { ["R:"] = ejectVolume.VolumeId });
+    8L << 30, new Dictionary<string, string> { ["R:"] = ejectVolume.VolumeId }, "test-removable", ["test-removable"]);
 DiskEjection.ValidatePreview(confirmedEject, confirmedEject with
 {
     Instance = "TEST-REMOVABLE", Volumes = ["r:"], VolumeIds = new Dictionary<string, string> { ["r:"] = ejectVolume.VolumeId.ToUpperInvariant() }
@@ -134,10 +134,36 @@ foreach (var changed in new[]
 {
     confirmedEject with { DiskNumber = 4 }, confirmedEject with { Instance = "other-disk" },
     confirmedEject with { DiskBytes = 16L << 30 }, confirmedEject with { Volumes = ["R:", "S:"] },
+    confirmedEject with { RemovalInstance = "shared-controller" }, confirmedEject with { RemovalMembers = ["test-removable", "other-disk"] },
     confirmedEject with { VolumeIds = null }, confirmedEject with { VolumeIds = new Dictionary<string, string>() },
     confirmedEject with { VolumeIds = new Dictionary<string, string> { ["R:"] = "{00000000-0000-0000-0000-000000000002}" } }
 })
     RejectIo(() => DiskEjection.ValidatePreview(confirmedEject, changed), "eject refuses changed confirmation identity");
+Check(DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 6, ["DISK-A"], "disk-a"),
+    "one ejectable storage adapter child is bound to its disk");
+Check(!DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 6, ["disk-a", "disk-b"], "disk-a") &&
+      !DeviceRemovalScope.IsDedicatedAdapter("bridge-class", 6, ["disk-a"], "disk-a") &&
+      !DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 4, ["disk-a"], "disk-a"),
+    "a shared adapter, bridge or non-ejectable parent is never selected");
+DeviceRemovalScope.ValidateRelations(new HashSet<string>(["disk-a", "adapter-a"], StringComparer.OrdinalIgnoreCase), ["DISK-A"]);
+try
+{
+    DeviceRemovalScope.ValidateRelations(new HashSet<string>(["disk-a", "adapter-a"], StringComparer.OrdinalIgnoreCase), ["disk-b"]);
+    throw new Exception("Unrelated removal relation was accepted.");
+}
+catch (NotSupportedException) { }
+DeviceRemovalScope.ValidateVolumeExtent(3, 8589934592, (3, 17408, 16759808));
+foreach (var extent in new[] { (2, 17408L, 16759808L), (3, -1L, 1L), (3, 0L, 0L), (3, 8589934591L, 2L), (3, 1L, long.MaxValue) })
+{
+    try { DeviceRemovalScope.ValidateVolumeExtent(3, 8589934592, extent); throw new Exception("Unsafe related-volume extent accepted."); }
+    catch (NotSupportedException) { }
+}
+var absentRelation = DeviceRemovalScope.DecodeRelations("disk-a", 4, 0x25, null);
+Check(absentRelation.ConfigurationManagerResult == 0x25 && absentRelation.Devices is null,
+    "optional absent relation preserves its API result without inventing a count");
+Check(DeviceRemovalScope.DecodeRelations("disk-a", 4, 0, ['\0']).Devices is { Length: 0 }, "reported empty relations are distinct from absent properties");
+RejectIo(() => DeviceRemovalScope.DecodeRelations("disk-a", 4, 0x0D, null), "missing device cannot be treated as an absent relation property");
+RejectIo(() => DeviceRemovalScope.DecodeRelations("disk-a", 4, 0, null), "successful missing relation buffer is rejected");
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");
