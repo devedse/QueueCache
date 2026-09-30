@@ -2010,3 +2010,18 @@ CrystalDiskMark 9.0.3 Default completed all eight scores on Q:, five 1 GiB runs,
 2 GiB Fast/Idle cache, Verifier enabled. Full scores, IOPS, latency, provenance
 and limitations are in WINDOWS_EJECT_AND_CDM_20260930.md. This is measured output,
 not a controlled performance acceptance verdict.
+
+### Performance investigation follow-up, 2026-09-30
+
+Implementation: no driver, runtime-default or workload-contract changes.
+Verification: historical 0.4.219.1 CDM-shaped results used Verifier off and
+prewarmed files; the latest GUI Default run used Verifier 0x209bb. A maintained
+plan-74 selected write-performance run on loaded 0.4.249.1, same CDM DiskSpd
+hash and 2048 MiB budget, completed 3/3 with clean restoration:
+`QueueCache-Verify-20260930-184356-d3b405509bc34e79aca0c0a643827b0b`.
+Random Q1 Idle timing-off median was 94.529 MB/s; working caller path, zero new
+capacity waits/errors in the recorded intervals, readiness true and coverage
+complete. All final/raw evidence inspected. This reproduces the low speed;
+Verifier overhead is a hypothesis, not an isolated cause or accepted regression
+verdict. Matched Verifier-off measurement requires a planned restart and remains
+pending. See PERFORMANCE_INVESTIGATION_20260930.md for comparisons and limits.
