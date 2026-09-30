@@ -2025,3 +2025,34 @@ complete. All final/raw evidence inspected. This reproduces the low speed;
 Verifier overhead is a hypothesis, not an isolated cause or accepted regression
 verdict. Matched Verifier-off measurement requires a planned restart and remains
 pending. See PERFORMANCE_INVESTIGATION_20260930.md for comparisons and limits.
+
+### Approved Verifier-off follow-up, 2026-09-30
+
+Implementation: no source/default changes. Owner approved the benchmark restart
+and restoring Verifier afterwards. Loaded 0.4.249.1 kernel-module path/hash, same
+CDM DiskSpd hash and original Q: identity/profile were confirmed after reboot.
+Runtime Verifier reported no verified drivers during measurement.
+
+Verification: actual CDM Default, 5 × 1 GiB, completed all eight scores. Random
+Q1 returned to 1327/1074 MB/s read/write; Q32 reached 1791/1403 MB/s. Identical
+maintained random Q1 Idle/timing-off run
+`QueueCache-Verify-20260930-200812-c19de70a9d634c3f9fe237964eb0d2d7`
+completed 3/3 with clean restoration; median 973.255 MB/s versus Verifier-on
+94.529 MB/s (10.30×). The focused sequential Q8 write run
+`QueueCache-Verify-20260930-201147-2e87df2dd0534faaa041ab030fcd2a07`
+also completed 3/3 with clean restoration, median 15449.857 MB/s. Caller service
+and large-write copy offloads respectively advance; neither collection has new
+capacity waits/errors. All raw/final/ready/interval/control evidence read.
+
+Conclusion: Verifier explains the main random slowdown; queued sequential GUI
+and focused write scores remain below older custom CLI measurements. Historical
+preparation/scoring/observer and VM/host conditions are uncontrolled. No matched
+older-driver bisect was performed; the residual sequential gap remains open.
+Full throughput/IOPS/latency and commands: PERFORMANCE_INVESTIGATION_20260930.md.
+
+Post-benchmark restoration: second approved planned restart confirmed runtime
+Verifier 0x209bb, resetonbootfail, intended module load 1/unload 0. Saved Q:
+profile was preserved and reapplied through `policy restore`; final 2048 MiB
+Fast/Idle cache is active, clean and error-free. No CDM/verification workloads
+remain; disposable disk still detached with backing preserved. This planned
+restart does not qualify data survival in the earlier incomplete removal case.

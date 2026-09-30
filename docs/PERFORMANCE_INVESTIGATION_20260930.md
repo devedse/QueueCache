@@ -96,5 +96,140 @@ added 13,943 lifetime waits before the first score snapshot. Those remained
 unchanged throughout all three collection intervals. They do not establish a
 capacity-related score regression.
 
-The Verifier-off matched comparison remains pending. No driver source or defaults
+At this initial checkpoint the Verifier-off matched comparison was pending; the
+approved follow-up below supplies it. No driver source or defaults
 were changed to improve a score, and the disposable removal disk remains detached.
+
+## Approved restart and Verifier-off measurements
+
+The owner authorized restarting the VM and restoring Verifier afterwards. Q: was
+drained before `verifier /reset`; a planned Windows restart then completed.
+Runtime `verifier /query` reports no verified drivers. Native loaded-module
+enumeration (with debug privilege scoped to the inspecting process) reports the
+same 0.4.249.1 module and exact SHA-256 recorded above; this is loaded-image-path
+evidence, not an inference from a version string. The same saved Q: GUID/disk
+identity and 2048 MiB Fast/Idle profile restored successfully. No driver was
+installed or upgraded.
+
+### Actual CDM GUI: same Default profile, five 1 GiB runs
+
+Both GUI runs used CDM 9.0.3 x64, five repetitions, 1 GiB, Q:, Admin, five-second
+measurement and interval. The off run followed the approved reboot; therefore
+boot/cache history is an additional difference. Q: usage rose from 31 to 37 GiB
+because the maintained diagnostic workload files are retained.
+
+| Workload | Verifier on read MB/s | Verifier off read MB/s | Verifier on write MB/s | Verifier off write MB/s | Read increase | Write increase |
+|---|---:|---:|---:|---:|---:|---:|
+| SEQ 1 MiB Q8 T1 | 13188.047 | 23366.587 | 13724.662 | 18452.028 | 1.77× | 1.34× |
+| SEQ 1 MiB Q1 T1 | 8165.327 | 15422.490 | 6934.433 | 12919.344 | 1.89× | 1.86× |
+| RND 4 KiB Q32 T1 | 77.030 | 1790.783 | 69.959 | 1402.940 | 23.25× | 20.05× |
+| RND 4 KiB Q1 T1 | 115.577 | 1327.235 | 94.561 | 1073.774 | 11.48× | 11.36× |
+
+| Workload | Off read IOPS | Off write IOPS | Off read latency µs | Off write latency µs |
+|---|---:|---:|---:|---:|
+| SEQ 1 MiB Q8 T1 | 22284.1 | 17597.2 | 167.37 | 278.17 |
+| SEQ 1 MiB Q1 T1 | 14708.0 | 12320.8 | 67.72 | 80.73 |
+| RND 4 KiB Q32 T1 | 437202.9 | 342514.6 | 37.50 | 9.44 |
+| RND 4 KiB Q1 T1 | 324032.0 | 262151.9 | 3.01 | 3.74 |
+
+The complete export is preserved at
+`C:\QueueCache-Results\CDM-Default-VerifierOff-20260930\result.txt` and privately
+on the controlling host. Export timestamp: 22:07:04 guest local / 20:07:04 UTC.
+The completed All-button screenshot and clipboard export were inspected. The app
+was closed and temporary interactive launch/export tasks removed.
+
+### Matching maintained random-write Q1 diagnostic
+
+The identical command, budget, case filter, repetitions, five-second duration,
+plan-74 locally published runner and DiskSpd hash were reused. Exact off run:
+`QueueCache-Verify-20260930-200812-c19de70a9d634c3f9fe237964eb0d2d7`.
+It completed 3/3 with successful independent restoration at 20:10:41 UTC.
+
+| Repetition | Off write MB/s | Off IOPS | Off write p99 ms | New capacity waits / errors |
+|---|---:|---:|---:|---:|
+| 1 | 973.255 | 237611.18 | 0.016 | 0 / 0 |
+| 2 | 973.638 | 237704.59 | 0.015 | 0 / 0 |
+| 3 | 949.334 | 231771.06 | 0.016 | 0 / 0 |
+
+Median increases from 94.529 to **973.255 MB/s (10.30×)**. Caller-path writes
+advance in every collection interval; all three have zero new capacity waits or
+errors. Readiness is true; 52/51/51 samples cover the recorded workload intervals,
+with maximum gaps 0.231/0.232/0.242 seconds. All final reports and 369 nonempty raw
+files, control traces, recovery/restoration state and worker exits were inspected
+and preserved. Every owned child exited successfully. Final restored Q: is clean
+and active with its original configuration. These selected measurements are not
+the full performance matrix and MEASURED is not an acceptance threshold verdict.
+
+### Interpretation
+
+The restart/Verifier-off experiment strongly supports Verifier instrumentation
+as the main cause of the large random-I/O slowdown. Random Q1 GUI numbers return
+to the previous range; Q32 reads exceed it, while Q32 writes remain below the
+previous 1555–1648 MB/s range. Sequential Q8 read/write remain below the historical
+prewarmed CLI numbers (approximately 37/21 GB/s). Different preparation/scoring
+and VM/host conditions still prevent a precise historical regression verdict.
+Verifier alone should not be claimed to explain every remaining difference.
+
+### What Driver Verifier does and how to control it
+
+Verifier is Windows' driver testing tool. It checks kernel-driver memory use,
+locking, execution-level rules and I/O behavior; violations can intentionally
+stop Windows to expose the bug. These extra checks can impose substantial
+overhead. QueueCache uses it for correctness tests; performance comparisons
+should record its state explicitly. See
+[Microsoft's Driver Verifier guide](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/driver-verifier).
+
+Run commands from an elevated terminal. To disable it, run `verifier /reset` and
+restart Windows. To enable standard checks for one installed driver, run
+`verifier /standard /driver QueueCache-0.4.249.1-A31F6D68C608.sys` and restart.
+Use the actual installed driver's filename after an upgrade. `verifier /query`
+shows current runtime verification; `verifier /querysettings` shows configured
+settings, which may still require a restart. The reset command can return a
+nonzero reboot-required result after successfully clearing the configuration;
+the configured state and post-restart runtime state were both checked here.
+
+### Remaining sequential Q8 write measurement
+
+Because queued sequential GUI scores remained below history, the maintained
+runner measured only `sequential-write-q8-Idle-timingFalse`, with the same budget,
+DiskSpd hash, three repetitions and five-second scoring duration. Exact run:
+`QueueCache-Verify-20260930-201147-2e87df2dd0534faaa041ab030fcd2a07`.
+It completed 3/3 with clean restoration at 20:14:05 UTC.
+
+| Repetition | Off write MB/s | Off IOPS | Write p99 ms | Copy offloads during collection | New capacity waits / errors |
+|---|---:|---:|---:|---:|---:|
+| 1 | 15781.173 | 15050.10 | 0.587 | 151123 | 0 / 0 |
+| 2 | 14107.219 | 13453.69 | 0.557 | 141036 | 0 / 0 |
+| 3 | 15449.857 | 14734.13 | 0.600 | 152451 | 0 / 0 |
+
+All three readiness files are true; 51 samples per repetition cover the exact
+intervals, with maximum gaps 0.235/0.240/0.242 seconds. Final reports, all 369
+nonempty raw files, control traces, recovery/restored state and successful owned
+worker exits were read and preserved. Counter differences include warmup/close,
+not just the scoring span. This establishes that large-write copy offloading
+works, without capacity/error stalls during collection. It does not explain
+the remaining throughput gap. Historical custom CLI preparation, observer cost
+and VM/host conditions are still uncontrolled; no older driver was installed
+for a same-session bisect. The sequential historical gap remains an open
+performance investigation, not a proven regression in the removal code.
+
+### Restoration after measurement
+
+After both off runs, Q: was flushed before restoring the original Verifier
+configuration: `/flags 0x209bb /driver QueueCache-0.4.249.1-A31F6D68C608.sys`,
+with `/bootmode resetonbootfail`. A second approved planned restart was issued.
+After the second restart, runtime `verifier /query` confirmed 0x209bb and the
+same module, load 1/unload 0. The original reset-on-boot-failure policy was restored.
+The first startup observation found the saved Q: profile intact but its runtime
+cache not yet active; the supported `qcache policy restore` was used to reapply
+that saved profile. Final cache state is recorded below. No cache defaults or driver
+source changed. The disposable eject-test backing disk stayed detached.
+
+Final checks: Q: is active Fast/Idle with its original 2048 MiB budget, zero
+dirty/in-flight bytes, zero errors and an unchanged saved profile. Runtime
+Verifier is 0x209bb with the intended CI module loaded once and never unloaded
+in this boot. No benchmark processes or temporary CDM tasks remain. A read-only
+Proxmox configuration check confirms virtio2 absent and the eject-test backing
+disk preserved in unused storage. The final restart was for restoring Verifier,
+not recovery of the incomplete removal case. Its earlier raw evidence remains
+unchanged and data survival has not become verified.
