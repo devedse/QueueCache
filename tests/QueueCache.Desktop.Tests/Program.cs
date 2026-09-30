@@ -97,6 +97,25 @@ Check(!RawButton("Cache settings").IsEnabled && !RawButton("Pause").IsEnabled, "
 Check(RawButton("Remove cache").IsEnabled && RawButton("Flush now").IsEnabled, "a cached unformatted volume can be flushed and removed");
 Check(rawCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.Contains("no file system") == true), "the card says why settings are unavailable");
 fixture.RawVolumeHasCache = false;
+// Re-enumeration can retain a volume GUID while changing its physical disk
+// number. An older pending read must not update the replacement card.
+var retiredRead = new TaskCompletionSource<WriteCacheState>();
+fixture.PendingDisk = retiredRead;
+var retiredSample = Invoke("Sample");
+fixture.PendingDisk = null;
+fixture.Volumes[0] = fixture.Volumes[0] with { DiskNumber = 7 };
+Invoke("Refresh").GetAwaiter().GetResult();
+Dispatcher.UIThread.RunJobs();
+Check(window.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.StartsWith("Disk 7  ") == true),
+    "a changed disk number rebuilds volume cards even when the GUID is unchanged");
+retiredRead.SetResult(fixture.State with { Instance = 99 });
+Dispatcher.UIThread.RunJobs();
+Check(retiredSample.IsCompleted, "a retired attachment sample settles without blocking refresh");
+var currentSystemCard = window.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "C:")
+    .GetVisualAncestors().OfType<Border>().First(b => b.Child is StackPanel);
+Check(currentSystemCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text == "Available") &&
+      !currentSystemCard.GetVisualDescendants().OfType<Button>().Any(b => Equals(b.Content, "Cache settings")),
+    "a late sample from a retired card cannot publish live counters onto its replacement");
 window.Close();
 var newState = fixture.State with { Flags = fixture.State.Flags | 4096, BudgetBytes = 0, ReservedBytes = 0, Options = null };
 var newSettings = new CacheSettingsWindow(fixture.Volumes[1], newState, false);

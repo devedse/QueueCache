@@ -30,29 +30,31 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.Run<IReadOnlyList<SavedConfiguration>>(SavedConfigurations.List);
     public Task<WriteCacheState> ReadAsync(VolumeDescription volume) => Task.Run(() =>
     {
+        ValidateVolume(volume);
         using var device = new CacheDevice(volume.Volume);
         var state = device.GetWriteCacheState();
-        return state.SupportsPerformance ? state with
+        var sampled = state.SupportsPerformance ? state with
         {
             Performance = device.GetPerformance()
         } : state;
+        ValidateVolume(volume);
+        return sampled;
     });
+    private static void ValidateVolume(VolumeDescription volume)
+    {
+        if (!DiskTarget.ReadVolumeId(volume.Volume[0]).Equals(volume.VolumeId, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("This drive letter now identifies a different volume. Refresh the volume list.");
+    }
     public bool IsPersistent(VolumeDescription volume) => SavedConfigurations.IsSaved(volume.VolumeId);
     public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
         // Choosing Fast in the editor is the desktop's explicit volatility acknowledgement.
         await CacheTasks.SaveAsync(volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress);
     public Task SetEnabledAsync(string volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume, enabled, persistent);
-    public Task FlushAsync(VolumeDescription volume) => Task.Run(() =>
-    {
-        using var device = new CacheDevice(volume.Volume, true);
-        device.Control(WriteCacheAction.Flush);
-    });
+    public async Task FlushAsync(VolumeDescription volume) =>
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.Flush, expectedVolumeId: volume.VolumeId);
     // Clean blocks only: no drain, no effect on pending writes.
-    public Task DropCleanAsync(VolumeDescription volume) => Task.Run(() =>
-    {
-        using var device = new CacheDevice(volume.Volume, true);
-        device.Control(WriteCacheAction.DropClean);
-    });
+    public async Task DropCleanAsync(VolumeDescription volume) =>
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.DropClean, expectedVolumeId: volume.VolumeId);
     public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);
     public Task<DiskEjectPreview> PreviewEjectAsync(string volume) => DiskEjection.PreviewAsync(volume);
     public Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress) => DiskEjection.EjectAsync(volume, progress);

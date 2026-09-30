@@ -78,4 +78,4 @@ Neither observation establishes external Windows orderly-eject coverage.
 
 - [Surprise-removal handling](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/handling-an-irp-mn-surprise-removal-request): stop new I/O, continue PnP/power/close/cleanup handling, and forward the notification.
 - [Remove-lock ownership](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-remove-locks): final deletion follows outstanding owners.
-- [IoQueueWorkItem device lifetime](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-ioqueueworkitem): device reference while the callback runs.
+- [Work-item device references](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/releasing-driver-allocated-resources): device reference while the callback runs.

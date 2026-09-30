@@ -1857,3 +1857,17 @@ qualification remain required, especially direct remove without query, query
 cancel/veto, copied/pinned requests at the cutoff and lower callbacks in flight.
 The prior host tests do not verify these native transitions. Explicit preparation
 protocol, versioned lifecycle counters and the remaining removal matrix are open.
+
+### Desktop removal refresh checkpoint, 2026-09-30
+
+Implementation: inventory signatures include disk number and physical/volume size;
+retired-card sampling failures are ignored like retired successes. The Windows
+sampling service checks the volume GUID before and after reading live telemetry.
+Flush/Clear read cache use the per-disk management gate and bind the expected
+volume GUID, including unformatted cached volumes.
+
+Verification: managed solution builds without warnings. Desktop fixtures pass,
+including a re-enumerated volume with an unchanged GUID/new disk number and a
+late sample from the retired card that cannot update its replacement. The native
+Windows GUID checks still require Windows service integration verification;
+settings dialogs/other mutations across reconnect remain a review item.

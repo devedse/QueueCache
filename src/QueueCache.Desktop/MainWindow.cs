@@ -307,6 +307,8 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex)
         {
+            if (closed || !views.Contains(card))
+                return;
             card.State = null;
             card.Badge.Text = "Not connected";
             card.Description.Text = "This volume is unavailable or its QueueCache filter is not responding. Refresh after reconnecting it.";
@@ -355,7 +357,7 @@ public sealed class MainWindow : Window
     private bool Persistent(Card card) => card.State?.BudgetBytes is null or 0 || service.IsPersistent(card.Volume);
     // Identity, not size or label: a changed GUID, letter or disk rebuilds the cards.
     private static string Signature(IEnumerable<VolumeDescription> volumes) =>
-        string.Join("|", volumes.Select(v => $"{v.Volume}/{v.VolumePath}/{v.Instance}/{v.FileSystem}"));
+        string.Join("|", volumes.Select(v => $"{v.Volume}/{v.VolumePath}/{v.Instance}/{v.DiskNumber}/{v.Bytes}/{v.DiskBytes}/{v.FileSystem}"));
     internal static string Describe(VolumeDescription volume) =>
         $"{(string.IsNullOrEmpty(volume.FileSystem) ? "Unformatted" : volume.FileSystem)}  /  {volume.SizeGiB:0.##} GiB  /  disk {volume.DiskNumber} ({volume.DiskName})" +
         (volume.IsBoot || volume.IsSystem ? "  /  Windows" : "") + (volume.IsPaging ? "  /  paging file" : "");

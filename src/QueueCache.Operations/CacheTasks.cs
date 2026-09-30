@@ -7,9 +7,12 @@ namespace QueueCache.Operations;
 public static class CacheTasks
 {
     public static async Task<WriteCacheState> ControlAsync(string volume, WriteCacheAction action,
-        ulong budgetBytes = 0, ulong value = 0, bool enableAfter = false, CancellationToken token = default)
+        ulong budgetBytes = 0, ulong value = 0, bool enableAfter = false, CancellationToken token = default,
+        string? expectedVolumeId = null)
     {
         var target = await DiskTarget.InspectAsync(DevicePath.NormalizeVolume(volume)[4..], token, requireFileSystem: false);
+        if (expectedVolumeId is not null && !target.VolumeId.Equals(expectedVolumeId, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The selected volume has been replaced; refresh before changing its cache.");
         return await Task.Run(() =>
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
