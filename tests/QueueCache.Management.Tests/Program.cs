@@ -124,6 +124,20 @@ Check(DiskEjection.SameMountedVolume(ejectVolume, ejectVolume), "rollback recogn
 Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { Volume = "S:" }), "rollback refuses a reassigned drive letter");
 Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { DiskNumber = 4 }), "rollback refuses a remapped disk");
 Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000002}\" }), "rollback refuses a replacement volume");
+var confirmedEject = new DiskEjectPreview(3, "test-removable", "disk", ["R:"], true, null,
+    8L << 30, new Dictionary<string, string> { ["R:"] = ejectVolume.VolumeId });
+DiskEjection.ValidatePreview(confirmedEject, confirmedEject with
+{
+    Instance = "TEST-REMOVABLE", Volumes = ["r:"], VolumeIds = new Dictionary<string, string> { ["r:"] = ejectVolume.VolumeId.ToUpperInvariant() }
+});
+foreach (var changed in new[]
+{
+    confirmedEject with { DiskNumber = 4 }, confirmedEject with { Instance = "other-disk" },
+    confirmedEject with { DiskBytes = 16L << 30 }, confirmedEject with { Volumes = ["R:", "S:"] },
+    confirmedEject with { VolumeIds = null }, confirmedEject with { VolumeIds = new Dictionary<string, string>() },
+    confirmedEject with { VolumeIds = new Dictionary<string, string> { ["R:"] = "{00000000-0000-0000-0000-000000000002}" } }
+})
+    RejectIo(() => DiskEjection.ValidatePreview(confirmedEject, changed), "eject refuses changed confirmation identity");
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");

@@ -244,7 +244,7 @@ public sealed class MainWindow : Window
         if (!await dialog.ShowDialog<bool>(this))
             return;
         var progress = new Progress<string>(value => Dispatcher.UIThread.Post(() => message.Text = value));
-        var result = await service.EjectAsync(volume, progress);
+        var result = await service.EjectAsync(volume, progress, preview);
         message.Text = result.RemovalObserved
             ? $"Windows removed disk {result.Disk.DiskNumber}."
             : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal is not yet observed. Check device state before disconnecting it; affected caches remain disabled.";

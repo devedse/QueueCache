@@ -7,7 +7,8 @@ using QueueCache.Management;
 namespace QueueCache.Operations;
 
 public sealed record DiskEjectPreview(int DiskNumber, string Instance, string Name, IReadOnlyList<string> Volumes,
-    bool Ejectable, string? UnsupportedReason);
+    bool Ejectable, string? UnsupportedReason, long DiskBytes = 0,
+    IReadOnlyDictionary<string, string>? VolumeIds = null);
 public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName,
     bool RemovalObserved, uint PresenceResult = 0);
 
@@ -24,7 +25,12 @@ public static class DiskEjection
         var found = inventory.Where(d => d.Volumes.Contains(volume, StringComparer.OrdinalIgnoreCase)).ToArray();
         if (found.Length != 1)
             throw new IOException($"{volume} must identify exactly one present physical disk.");
-        return Preview(found[0]);
+        var preview = Preview(found[0]);
+        var mounted = (await VolumeCatalog.ListAsync(token)).Where(v => v.DiskNumber == preview.DiskNumber).ToArray();
+        if (mounted.Any(v => !v.Instance.Equals(preview.Instance, StringComparison.OrdinalIgnoreCase)) ||
+            !mounted.Select(v => v.Volume).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(preview.Volumes))
+            throw new IOException("The disk's mounted-volume identities changed during preview.");
+        return preview with { DiskBytes = found[0].Bytes, VolumeIds = mounted.ToDictionary(v => v.Volume, v => v.VolumeId, StringComparer.OrdinalIgnoreCase) };
     }
 
     [SupportedOSPlatform("windows")]
@@ -68,10 +74,26 @@ public static class DiskEjection
         current.Instance.Equals(expected.Instance, StringComparison.OrdinalIgnoreCase) &&
         current.DiskNumber == expected.DiskNumber && current.Bytes == expected.Bytes;
 
+    internal static void ValidatePreview(DiskEjectPreview expected, DiskEjectPreview current)
+    {
+        if (expected.DiskNumber != current.DiskNumber || expected.DiskBytes != current.DiskBytes ||
+            !expected.Instance.Equals(current.Instance, StringComparison.OrdinalIgnoreCase) ||
+            !expected.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(current.Volumes) ||
+            expected.VolumeIds is null || current.VolumeIds is null ||
+            expected.VolumeIds.Count != expected.Volumes.Count || current.VolumeIds.Count != current.Volumes.Count ||
+            expected.VolumeIds.Any(pair => !current.VolumeIds.Any(live =>
+                live.Key.Equals(pair.Key, StringComparison.OrdinalIgnoreCase) &&
+                live.Value.Equals(pair.Value, StringComparison.OrdinalIgnoreCase))))
+            throw new IOException("The disk or volumes changed after eject preview. Refresh and confirm the current disk.");
+    }
+
     [SupportedOSPlatform("windows")]
-    public static async Task<DiskEjectResult> EjectAsync(string volume, IProgress<string>? progress = null, CancellationToken token = default)
+    public static async Task<DiskEjectResult> EjectAsync(string volume, IProgress<string>? progress = null, CancellationToken token = default,
+        DiskEjectPreview? expected = null)
     {
         var preview = await PreviewAsync(volume, token);
+        if (expected is not null)
+            ValidatePreview(expected, preview);
         if (!preview.Ejectable)
             throw new NotSupportedException(preview.UnsupportedReason);
         var original = await VolumeCatalog.ListAsync(token);
@@ -102,6 +124,7 @@ public static class DiskEjection
         foreach (var target in targets)
             target.ValidateCurrent(token);
         var beforePreparation = PreviewAsync(volume, token).GetAwaiter().GetResult();
+        ValidatePreview(preview, beforePreparation);
         if (!beforePreparation.Ejectable || beforePreparation.DiskNumber != preview.DiskNumber ||
             !string.Equals(beforePreparation.Instance, preview.Instance, StringComparison.OrdinalIgnoreCase) ||
             !beforePreparation.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(preview.Volumes))
@@ -136,6 +159,7 @@ public static class DiskEjection
             // Repeat identity resolution after preparation. Never apply the previous
             // disk number to an unrelated disk that has acquired the same letter.
             var current = PreviewAsync(volume, token).GetAwaiter().GetResult();
+            ValidatePreview(preview, current);
             if (!current.Ejectable || !string.Equals(current.Instance, preview.Instance, StringComparison.OrdinalIgnoreCase) ||
                 current.DiskNumber != preview.DiskNumber || !current.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(preview.Volumes))
                 throw new IOException("The disk changed during eject preparation. Eject was not requested.");

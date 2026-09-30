@@ -531,7 +531,9 @@ public static class VerificationWorker
         if (job.Operation == "disk-removal-eject")
         {
             // No retained volume/cache handle may veto our own request.
-            var eject = await DiskEjection.EjectAsync(target.Device);
+            var expectedEject = new DiskEjectPreview(target.Number, target.Instance, "", [target.Device], true, null,
+                target.DiskBytes, new Dictionary<string, string> { [target.Device] = target.VolumeId });
+            var eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject);
             RunStorage.AtomicJson(job.Reply, eject);
             return 0;
         }

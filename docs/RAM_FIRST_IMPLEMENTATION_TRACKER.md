@@ -1871,3 +1871,13 @@ including a re-enumerated volume with an unchanged GUID/new disk number and a
 late sample from the retired card that cannot update its replacement. The native
 Windows GUID checks still require Windows service integration verification;
 settings dialogs/other mutations across reconnect remain a review item.
+
+Eject confirmation follow-up: the desktop passes its confirmed preview to the
+shared operation. Preview now records physical size and each volume GUID;
+execution validates those identities before preparation and again before native
+eject. The removal worker binds the recorded target through the same check.
+Host tests reject replaced GUIDs, missing identity data, changed disk number,
+PnP identity, physical size and volume membership; case differences are accepted.
+This prevents a replacement disk at the same letter from inheriting an earlier
+eject confirmation. Managed build and protocol/desktop tests pass; Windows VM
+execution of the new preview binding remains unverified.
