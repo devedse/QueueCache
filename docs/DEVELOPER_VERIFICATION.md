@@ -27,10 +27,11 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 72)
+## Suites (plan version 73)
 
-Plan 72 adds verified removal topology and structured present-disk veto
-restoration to the plan-71 opt-in `disk-removal` suite. Its first case covers exactly one
+Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
+disable and filesystem flush before orderly-removal acceptance. Plan 72 added
+verified topology and structured present-disk veto restoration to the plan-71 opt-in `disk-removal` suite. Its first case covers exactly one
 unconfigured disposable volume: an 8 MiB Fast/Deferred pending-write oracle,
 Windows safe eject, and operator live reconnect on the same bus, disk number and
 drive letter. It is excluded from `full`. Surprise removal, multiple volumes,
@@ -941,3 +942,13 @@ disk presence result and any cache-resume errors. A veto with the original disk
 confirmed present permits normal identity-checked runner restoration and leaves
 the case INCOMPLETE. A failed worker or uncertain disk presence defers restoration
 until inspection and supported recovery. Neither result qualifies removal.
+
+Plan 73 records before/disabled cache snapshots and native lower I/O attempt
+counters for the affected volume in the eject result, before its handles close.
+The 8 MiB pending-write case requires matching volume identity and cache lifetime,
+nonzero pending bytes before preparation, clean disabled state, successful
+filesystem flush, and advancing lower write/flush attempt counters. Missing
+attribution is unsupported rather than zero-filled. These are volume lifetime
+counter differences during controlled preparation, not process-wide score windows.
+Successful reconnect/oracle verification permits restoration even if preparation
+evidence is incomplete; the case still cannot pass.

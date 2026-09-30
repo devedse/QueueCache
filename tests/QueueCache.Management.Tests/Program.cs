@@ -158,6 +158,41 @@ foreach (var extent in new[] { (2, 17408L, 16759808L), (3, -1L, 1L), (3, 0L, 0L)
     try { DeviceRemovalScope.ValidateVolumeExtent(3, 8589934592, extent); throw new Exception("Unsafe related-volume extent accepted."); }
     catch (NotSupportedException) { }
 }
+var removalPending = new WriteCacheState(1, 0, 1UL << 30, 256UL << 20, 0, 8UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 };
+var removalDisabled = removalPending with { Flags = 0, DirtyBytes = 0 };
+var lowerBefore = new CacheAttribution(0, 10, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+var lowerAfter = lowerBefore with { LowerWriteAttempts = 11, LowerFlushAttempts = 3 };
+var preparedEject = new DiskEjectPreparation("R:", ejectVolume.VolumeId, removalPending, removalDisabled, lowerBefore, lowerAfter, true);
+DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, [preparedEject]);
+RejectIo(() => DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, null), "missing removal preparation is not evidence of durability");
+foreach (var broken in new[]
+{
+    preparedEject with { BeforeLower = null }, preparedEject with { DisabledLower = null },
+    preparedEject with { DisabledLower = lowerBefore },
+    preparedEject with { DisabledLower = lowerAfter with { LowerFlushAttempts = 2 } },
+    preparedEject with { DisabledLower = lowerAfter with { LowerWriteAttempts = 10 } },
+    preparedEject with { DisabledLower = lowerAfter with { LowerFlushAttempts = 1 } },
+    preparedEject with { VolumeId = "replacement" }, preparedEject with { FileSystemFlushed = false },
+    preparedEject with { Before = removalPending with { DirtyBytes = 0 } },
+    preparedEject with { Before = removalPending with { Instance = 0 } },
+    preparedEject with { Disabled = removalDisabled with { Errors = 1 } },
+    preparedEject with { Disabled = removalDisabled with { BudgetBytes = 0 } },
+    preparedEject with { Disabled = removalDisabled with { Flags = 1 } },
+    preparedEject with { Disabled = removalDisabled with { Instance = 5 } },
+    preparedEject with { Disabled = removalDisabled with { DirtyBytes = 4096 } },
+    preparedEject with { Disabled = removalDisabled with { InFlightBytes = 4096 } }
+}) RejectIo(() => DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, [broken]), "incomplete removal durability evidence is rejected");
+if (OperatingSystem.IsWindows())
+{
+    var selected = new DiskTarget('R', 3, 1L << 30, "test-removable") { DiskBytes = 8L << 30, VolumeId = ejectVolume.VolumeId };
+    CacheTasks.ValidateSelection(selected, ejectVolume);
+    foreach (var replacement in new[]
+    {
+        selected with { Number = 4 }, selected with { Instance = "other-disk" },
+        selected with { DiskBytes = 16L << 30 }, selected with { Bytes = 2L << 30 },
+        selected with { VolumeId = "replacement-guid" }, selected with { Letter = 'S' }
+    }) RejectIo(() => CacheTasks.ValidateSelection(replacement, ejectVolume), "desktop mutation rejects stale disk/volume selection");
+}
 var absentRelation = DeviceRemovalScope.DecodeRelations("disk-a", 4, 0x25, null);
 Check(absentRelation.ConfigurationManagerResult == 0x25 && absentRelation.Devices is null,
     "optional absent relation preserves its API result without inventing a count");

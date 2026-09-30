@@ -1943,3 +1943,45 @@ qualification remains pending. Exact recovery evidence shows readiness true,
 three telemetry samples with zero dirty/inflight/error counters, successful owned
 worker exits and an unconfigured clean final runtime (budget zero). Recovery uses
 its recovery-result marker; it does not create a normal suite FINISHED/report set.
+
+### Orderly evidence refinement, 2026-09-30
+
+Implementation: plan 73 captures volume state and lower-attempt counters around
+cache disable plus filesystem flush success. Removal acceptance requires matching
+identity/lifetime, pending writes, clean disabled state, advancing lower write and
+flush attempts and the reconnect hash oracle. Missing counters remain unsupported.
+A verified reconnect allows restoration even when durability evidence is missing,
+but cannot turn that incomplete case into PASS. Pure rejection and maintained
+runner contracts cover absent, unchanged/regressed counters and invalid states.
+
+VM verification on build 0.4.249.1 (`1752b13`), Verifier 0x209bb, loaded module
+`QueueCache-0.4.249.1-A31F6D68C608.sys`, load 1/unload 0, SHA-256
+`A31F6D68C608A94B09B0A45AD8F1BD08D1494783E4E2895AFBF3595401755F91`:
+`QueueCache-Verify-20260930-152732-c06e5ce0a2de454d88733777e86e8be7`
+prepared 8,396,800 dirty bytes with zero drained bytes, then Windows accepted eject
+(native result 0) and disk absence was observed (presence 13). The exact owned
+workers exited successfully. Live reattachment is currently blocked by a Proxmox
+orphan throttle object: the API token cannot execute the root-only cleanup.
+The backing disk is preserved; no guest reset/reboot occurred during this case.
+The reconnect deadline expired at 15:43:03 UTC: FINISHED/status/summary/results/log
+and all 34 raw files were inspected. The run finished RESTORATION_FAILED because
+reconnect was unresolved; no recovery writes or VM reset were attempted. The owner
+subsequently detached the disk and instructed that it stay detached. Do not retry
+reattachment or recovery without a new owner instruction. This is successful native
+eject evidence but not a successful reconnect case. Plan-73 durability refinement
+has not run on the VM. Future reconnect timeouts now report the specific missing
+phase instead of only an opaque cancellation error.
+
+Desktop implementation follow-up: Save/settings, pause/resume, cache removal,
+flush and drop-clean now pass the selected VolumeDescription through shared
+operations. Native discovery must match GUID, PnP identity, disk number, physical
+and volume sizes before mutation; the recorded target is checked again under the
+per-disk gate. Host contracts reject replaced GUIDs, devices, letters, disk numbers
+and lengths. This closes stale-dialog binding beyond flush/drop-clean. Real Windows
+UI transactions across reconnect remain a VM verification gap.
+
+Final host verification for plan 73 and the desktop binding follow-up: Linux
+protocol tests and desktop fixtures passed; the Windows self-contained management
+protocol/runner contracts passed, including missing preparation evidence and
+selection-identity rejection. These tests perform no native driver workloads.
+The delivery/review packet is docs/DRIVE_DISCONNECT_DELIVERY_SUMMARY.md.

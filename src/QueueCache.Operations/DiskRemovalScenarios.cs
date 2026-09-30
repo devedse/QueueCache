@@ -7,6 +7,28 @@ namespace QueueCache.Operations;
 public sealed record DiskRemovalOracle(DiskTarget Target, string File, int Length, string Sha256,
     WriteCacheState BeforeRemoval, DateTimeOffset Prepared);
 
+public static class DiskRemovalEvidence
+{
+    public static void ValidatePreparation(string volume, string volumeId, long volumeBytes, DiskEjectPreparation[]? preparation)
+    {
+        if (preparation is not { Length: 1 })
+            throw new IOException("Missing exact single-volume removal preparation evidence.");
+        var p = preparation[0];
+        if (!p.Volume.Equals(volume, StringComparison.OrdinalIgnoreCase) ||
+            !p.VolumeId.Equals(volumeId, StringComparison.OrdinalIgnoreCase) ||
+            p.Before.DeviceBytes != (ulong)volumeBytes || p.Disabled.DeviceBytes != (ulong)volumeBytes ||
+            !p.Before.Enabled || p.Before.DirtyBytes < (8UL << 20) || p.Before.BudgetBytes == 0 ||
+            p.Before.Instance == 0 || p.Disabled.Instance != p.Before.Instance ||
+            p.Disabled.BudgetBytes != p.Before.BudgetBytes || p.Disabled.Errors != p.Before.Errors || p.Before.LastError != 0 || p.Disabled.LastError != 0 ||
+            p.Disabled.Enabled || p.Disabled.DirtyBytes != 0 || p.Disabled.InFlightBytes != 0 || !p.FileSystemFlushed ||
+            p.BeforeLower is null || p.DisabledLower is null ||
+            p.DisabledLower.LowerWriteAttempts <= p.BeforeLower.LowerWriteAttempts ||
+            p.DisabledLower.LowerFlushAttempts <= p.BeforeLower.LowerFlushAttempts)
+            throw new IOException("Orderly removal lacks matching pending-write, completed drain and lower-flush preparation evidence.");
+    }
+
+}
+
 /// <summary>The first removal qualification: one disposable volume, Fast pending writes,
 /// orderly Windows eject, then an operator reconnect on the same bus and letter.</summary>
 [SupportedOSPlatform("windows")]

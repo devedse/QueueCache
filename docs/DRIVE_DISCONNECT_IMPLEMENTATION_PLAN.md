@@ -1,6 +1,6 @@
 # Drive disconnection implementation plan
 
-Status: implementation in progress, 2026-09-29. The checklist below remains the acceptance contract; source changes alone do not mark the VM cases complete.
+Status: implementation delivered in stages; qualification incomplete, 2026-09-30. The checklist below remains the acceptance contract; source changes alone do not mark the VM cases complete.
 
 Audience: implementation and subsequent independent review.
 Baseline inspected: branch `volume-filter`, verification plan 70. Re-read current source and AGENTS.md before starting; do not overwrite concurrent changes or assume these line locations remain current.
@@ -157,3 +157,30 @@ Provide: commit/CI identifiers; driver hash and loaded identity; lifecycle/lock/
 - [IRP_MN_REMOVE_DEVICE](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/irp-mn-remove-device): removal sequences, including startup failure; final remove cannot be vetoed. Do not synthesize PnP remove IRPs.
 - [Handling CANCEL_REMOVE](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/handling-an-irp-mn-cancel-remove-device-request): restore pre-query state with lower-stack completion ordering.
 - [Device Fundamentals PnP tests](https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnp-tests--device-fundamentals-): possible supplementary query/cancel/removal coverage. These do not replace the cache's data oracles.
+
+## 12. Current delivery and review handoff (2026-09-30)
+
+Implemented: atomic Gone admission cutoff for surprise/direct final removal;
+query drain/disable with lower-veto and successful-cancel state restoration;
+durable surprise event; shared physical-disk eject with bounded dedicated-adapter
+resolution and native volume-extent scope proof; CLI preview/eject; desktop disk
+eject, disconnected profiles, stale sample rejection and mutation identity binding;
+per-disk configuration gates; maintained orderly pending-write/reconnect suite
+(plan 73), structured veto restoration and preparation lower-attempt evidence.
+Ownership review is in DRIVE_DISCONNECT_OWNERSHIP_AUDIT.md; exact implementation
+and independent verification status is in RAM_FIRST_IMPLEMENTATION_TRACKER.md.
+
+VM evidence covers ordinary cached NTFS operations, a real disk-node veto with
+supported recovery, and successful Windows dedicated-adapter eject with pending
+Fast writes. The latter reconnect failed in host hotplug handling and the run is
+RESTORATION_FAILED; it is not a passed removal/reconnect case. The owner requested
+that the detached disk stay detached. No further host attach/recovery is authorized
+by this checkpoint.
+
+Remaining acceptance gates: explicit driver prepare/cancel capability if native
+volume query routing is inadequate; full versioned lifecycle diagnostics; external
+Windows eject routing; successful live reconnect with plan-73 durability evidence;
+two-volume ejection; dirty/queued/capacity/lower-I/O surprise races; Strict/durable
+baseline, attachment identity variations and ten-cycle orderly/surprise matrices.
+The current source audit does not prove every lower callback ordering. Do not
+label this feature fully qualified until these gates have real evidence.

@@ -10,8 +10,10 @@ public sealed record DiskEjectPreview(int DiskNumber, string Instance, string Na
     bool Ejectable, string? UnsupportedReason, long DiskBytes = 0,
     IReadOnlyDictionary<string, string>? VolumeIds = null, string? RemovalInstance = null, string[]? RemovalMembers = null,
     RemovalRelationQuery[]? RemovalRelations = null, RemovalVolumeExtent[]? RemovalVolumes = null);
+public sealed record DiskEjectPreparation(string Volume, string VolumeId, WriteCacheState Before, WriteCacheState Disabled,
+    CacheAttribution? BeforeLower, CacheAttribution? DisabledLower, bool FileSystemFlushed);
 public sealed record DiskEjectResult(DiskEjectPreview Disk, uint ConfigurationManagerResult, uint VetoType, string VetoName,
-    bool RemovalObserved, uint PresenceResult = 0, string[]? RollbackErrors = null);
+    bool RemovalObserved, uint PresenceResult = 0, string[]? RollbackErrors = null, DiskEjectPreparation[]? Preparation = null);
 public sealed class DiskEjectVetoException(DiskEjectResult result) : IOException(
     $"Windows refused safe removal (Configuration Manager {result.ConfigurationManagerResult}, veto {result.VetoType}: {result.VetoName}).")
 {
@@ -102,7 +104,7 @@ public static class DiskEjection
 
     [SupportedOSPlatform("windows")]
     public static async Task<DiskEjectResult> EjectAsync(string volume, IProgress<string>? progress = null, CancellationToken token = default,
-        DiskEjectPreview? expected = null)
+        DiskEjectPreview? expected = null, bool capturePreparation = false)
     {
         var preview = await PreviewAsync(volume, token);
         if (expected is not null)
@@ -123,12 +125,12 @@ public static class DiskEjection
                 throw new IOException($"{item.Volume} has an ambiguous or changed disk extent. Eject was not requested.");
             targets.Add(target);
         }
-        return await Task.Run(() => EjectPrepared(volume, preview, affected, targets, progress, token), token);
+        return await Task.Run(() => EjectPrepared(volume, preview, affected, targets, progress, token, capturePreparation), token);
     }
 
     [SupportedOSPlatform("windows")]
     private static DiskEjectResult EjectPrepared(string volume, DiskEjectPreview preview,
-        VolumeDescription[] affected, IReadOnlyList<DiskTarget> targets, IProgress<string>? progress, CancellationToken token)
+        VolumeDescription[] affected, IReadOnlyList<DiskTarget> targets, IProgress<string>? progress, CancellationToken token, bool capturePreparation)
     {
         // ConfigurationGate is a thread-affine mutex: no await while it is held.
         // QUERY_REMOVE closes admission for native eject; explicit Disable also
@@ -143,6 +145,7 @@ public static class DiskEjection
             !beforePreparation.Volumes.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(preview.Volumes))
             throw new IOException("The disk changed before eject preparation.");
         var disabled = new List<(VolumeDescription Volume, bool WasEnabled)>();
+        var preparation = new List<DiskEjectPreparation>();
         try
         {
             foreach (var item in affected)
@@ -153,11 +156,16 @@ public static class DiskEjection
                 if (cache.GetStatistics().PagingPathCount != 0)
                     throw new NotSupportedException($"{item.Volume} hosts a paging, hibernation or crash-dump path. Eject was not requested.");
                 var before = cache.GetWriteCacheState();
+                var beforeLower = capturePreparation ? cache.GetDiagnostics().Attribution
+                    ?? throw new NotSupportedException("Removal verification requires lower I/O attempt diagnostics.") : null;
                 if (before.BudgetBytes > 0)
                 {
                     cache.Control(WriteCacheAction.Disable);
                     disabled.Add((item, before.Enabled));
                 }
+                if (capturePreparation)
+                    preparation.Add(new(item.Volume, item.VolumeId, before, cache.GetWriteCacheState(),
+                        beforeLower, cache.GetDiagnostics().Attribution, false));
             }
             foreach (var item in affected)
             {
@@ -168,6 +176,11 @@ public static class DiskEjection
                 using var handle = CreateFileW(@"\\.\" + item.Volume, 0xC0000000, 7, IntPtr.Zero, 3, 0, IntPtr.Zero);
                 if (handle.IsInvalid || !FlushFileBuffers(handle))
                     throw new IOException($"Windows could not flush {item.Volume} (Win32 {Marshal.GetLastWin32Error()}). Eject was not requested.");
+                if (capturePreparation)
+                {
+                    var index = preparation.FindIndex(p => p.Volume == item.Volume);
+                    preparation[index] = preparation[index] with { FileSystemFlushed = true };
+                }
             }
             // Repeat identity resolution after preparation. Never apply the previous
             // disk number to an unrelated disk that has acquired the same letter.
@@ -188,7 +201,7 @@ public static class DiskEjection
             if (result != 0)
             {
                 var presenceAfterVeto = CM_Locate_DevNodeW(out _, preview.Instance, 0);
-                throw new DiskEjectVetoException(new(preview, result, vetoType, veto.ToString(), false, presenceAfterVeto));
+                throw new DiskEjectVetoException(new(preview, result, vetoType, veto.ToString(), false, presenceAfterVeto, Preparation: capturePreparation ? preparation.ToArray() : null));
             }
             // Configuration Manager can accept a request before device removal
             // becomes visible. Report that distinction rather than claiming a
@@ -210,7 +223,7 @@ public static class DiskEjection
                 }
                 Thread.Sleep(250);
             }
-            return new(preview, result, vetoType, veto.ToString(), removed, presence);
+            return new(preview, result, vetoType, veto.ToString(), removed, presence, Preparation: capturePreparation ? preparation.ToArray() : null);
         }
         catch (Exception failure)
         {

@@ -539,7 +539,7 @@ public static class VerificationWorker
                 !volumeId.Equals(target.VolumeId, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("The recorded removal target changed before eject preview.");
             DiskEjectResult eject;
-            try { eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject); }
+            try { eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject, capturePreparation: true); }
             catch (DiskEjectVetoException veto) { eject = veto.Result; }
             RunStorage.AtomicJson(job.Reply, eject);
             return 0;

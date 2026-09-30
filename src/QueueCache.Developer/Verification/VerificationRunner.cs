@@ -359,8 +359,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         var ackPath = storage.PathFor("reconnect-ack.json");
                         using var reconnectDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
                         reconnectDeadline.CancelAfter(TimeSpan.FromMinutes(15));
-                        while (!File.Exists(ackPath))
-                            await Task.Delay(500, reconnectDeadline.Token);
+                        try
+                        {
+                            while (!File.Exists(ackPath))
+                                await Task.Delay(500, reconnectDeadline.Token);
+                        }
+                        catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
+                        {
+                            throw new IOException("The 15-minute live reconnect deadline expired. Windows removal was observed, but the original disk was not verified after reconnect; restoration remains deferred.");
+                        }
                         var ack = JsonSerializer.Deserialize<DiskReconnectAcknowledgement>(await File.ReadAllTextAsync(ackPath, reconnectDeadline.Token))
                             ?? throw new InvalidDataException("Missing reconnect acknowledgement.");
                         DiskRemovalHandshake.Validate(ack, runId, original.Target);
@@ -368,6 +375,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(verifyReply, deadline.Token))
                             ?? throw new InvalidDataException("Missing reconnect oracle checks.");
                         removalUnresolved = false;
+                        DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
                         storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
                         return null;
                     }

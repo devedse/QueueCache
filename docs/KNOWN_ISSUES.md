@@ -195,8 +195,10 @@ are not implemented.
 The `volume-filter` branch now has a source implementation for whole-disk safe
 eject and an ordered volume QUERY_REMOVE drain. A `qcache disk eject` request
 first disables and drains every lettered data volume on the disk. This is still
-experimental: the first live preview on a disposable GPT SCSI disk exposed a
-partition-count bug, which has a source fix awaiting exact-build VM validation.
+experimental: GPT metadata counting and dedicated-adapter scope checks are
+implemented. CI build 0.4.249.1 accepted Windows eject with 8 MiB of pending Fast
+writes and observed disk absence. The live reconnect failed in Proxmox hotplug
+handling; the maintained case finished RESTORATION_FAILED and remains unqualified.
 External Windows eject routing, veto/cancel, surprise removal under in-flight I/O,
 reconnect and FAT32/ReFS removal have not passed the maintained VM matrix. A
 successful host build or an empty dirty counter must not be read as that proof.

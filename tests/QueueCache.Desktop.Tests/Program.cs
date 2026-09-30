@@ -214,13 +214,13 @@ sealed class Fixture : ICacheTaskService
         });
     }
     public bool IsPersistent(VolumeDescription volume) => true;
-    public Task SetEnabledAsync(string volume, bool enabled, bool persistent)
+    public Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent)
     {
         if (!enabled)
             Pauses++;
         return Task.CompletedTask;
     }
-    public Task RemoveAsync(string volume)
+    public Task RemoveAsync(VolumeDescription volume)
     {
         Removes++;
         return Task.CompletedTask;
@@ -231,6 +231,6 @@ sealed class Fixture : ICacheTaskService
         CleanDrops++;
         return Task.CompletedTask;
     }
-    public Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
+    public Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
     public Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token) => throw new NotSupportedException("Fixture never opens disks.");
 }

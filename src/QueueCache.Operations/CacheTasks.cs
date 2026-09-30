@@ -6,13 +6,23 @@ namespace QueueCache.Operations;
 [SupportedOSPlatform("windows")]
 public static class CacheTasks
 {
+    internal static void ValidateSelection(DiskTarget target, VolumeDescription? expected)
+    {
+        if (expected is not null && (!expected.Volume.Equals(target.Device, StringComparison.OrdinalIgnoreCase) ||
+            !expected.VolumeId.Equals(target.VolumeId, StringComparison.OrdinalIgnoreCase) ||
+            !expected.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase) ||
+            expected.DiskNumber != target.Number || expected.Bytes != target.Bytes || expected.DiskBytes != target.DiskBytes))
+            throw new IOException("The selected disk or volume changed; refresh before changing its cache.");
+    }
+
     public static async Task<WriteCacheState> ControlAsync(string volume, WriteCacheAction action,
         ulong budgetBytes = 0, ulong value = 0, bool enableAfter = false, CancellationToken token = default,
-        string? expectedVolumeId = null)
+        string? expectedVolumeId = null, VolumeDescription? expected = null)
     {
         var target = await DiskTarget.InspectAsync(DevicePath.NormalizeVolume(volume)[4..], token, requireFileSystem: false);
         if (expectedVolumeId is not null && !target.VolumeId.Equals(expectedVolumeId, StringComparison.OrdinalIgnoreCase))
             throw new IOException("The selected volume has been replaced; refresh before changing its cache.");
+        ValidateSelection(target, expected);
         return await Task.Run(() =>
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
@@ -23,10 +33,11 @@ public static class CacheTasks
             return device.GetWriteCacheState();
         }, token);
     }
-    public static async Task RemoveAsync(string volume, CancellationToken token = default, bool preserveSaved = false)
+    public static async Task RemoveAsync(string volume, CancellationToken token = default, bool preserveSaved = false, VolumeDescription? expected = null)
     {
         // Draining and freeing a cache is safe on any volume, including one without a file system.
         var target = await DiskTarget.InspectAsync(volume, token, requireFileSystem: false);
+        ValidateSelection(target, expected);
         await Task.Run(() =>
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
@@ -40,11 +51,12 @@ public static class CacheTasks
         }, token);
     }
     public static async Task<WriteCacheState> SaveAsync(string volume, CacheConfiguration configuration, bool persistent,
-        bool acceptVolatileFlush, IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false)
+        bool acceptVolatileFlush, IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false, VolumeDescription? expected = null)
     {
         if (persistent && preserveSaved)
             throw new ArgumentException("Cannot save a configuration while preserving the saved profile unchanged.");
         var target = await DiskTarget.InspectAsync(volume, token);
+        ValidateSelection(target, expected);
         return await Task.Run(() =>
         {
             // One management transaction across CLI/UI processes, including persistence.
@@ -59,9 +71,10 @@ public static class CacheTasks
         }, token);
     }
 
-    public static async Task SetEnabledAsync(string volume, bool enabled, bool persistent, CancellationToken token = default, bool preserveSaved = false)
+    public static async Task SetEnabledAsync(string volume, bool enabled, bool persistent, CancellationToken token = default, bool preserveSaved = false, VolumeDescription? expected = null)
     {
         var target = await DiskTarget.InspectAsync(volume, token);
+        ValidateSelection(target, expected);
         await Task.Run(() =>
         {
             using var gate = ConfigurationGate.Enter(target.Instance);

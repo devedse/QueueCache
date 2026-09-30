@@ -183,13 +183,13 @@ public sealed class MainWindow : Window
         actions.Children.Add(card.Settings);
         card.Settings.Background = Accent;
         card.Settings.Foreground = Brushes.White;
-        card.Pause = VolumeAction("Pause", () => service.SetEnabledAsync(Letter(card), !(card.State?.Enabled ?? false), Persistent(card)));
+        card.Pause = VolumeAction("Pause", () => service.SetEnabledAsync(card.Volume, !(card.State?.Enabled ?? false), Persistent(card)));
         actions.Children.Add(card.Pause);
         card.Flush = VolumeAction("Flush now", () => service.FlushAsync(card.Volume));
         actions.Children.Add(card.Flush);
         card.DropClean = VolumeAction("Clear read cache", async () => { await service.DropCleanAsync(card.Volume); message.Text = "Cached clean blocks released. Pending writes were not touched."; });
         actions.Children.Add(card.DropClean);
-        card.Remove = VolumeAction("Remove cache", async () => { message.Text = "Draining and removing cache…"; await service.RemoveAsync(Letter(card)); });
+        card.Remove = VolumeAction("Remove cache", async () => { message.Text = "Draining and removing cache…"; await service.RemoveAsync(card.Volume); });
         actions.Children.Add(card.Remove);
         content.Children.Add(actions);
         content.Children.Add(card.Operation);
@@ -339,7 +339,7 @@ public sealed class MainWindow : Window
         if (result is null)
             return;
         message.Text = "Applying cache settings…";
-        await service.SaveAsync(Letter(card), result.Configuration, result.Persistent, new Progress<string>(text => message.Text = text));
+        await service.SaveAsync(card.Volume, result.Configuration, result.Persistent, new Progress<string>(text => message.Text = text));
         message.Text = "Cache settings saved.";
     }
     private async Task Test(Card card, bool benchmark)

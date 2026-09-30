@@ -13,11 +13,11 @@ public interface ICacheTaskService
     Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>([]);
     Task<WriteCacheState> ReadAsync(VolumeDescription volume);
     bool IsPersistent(VolumeDescription volume);
-    Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
-    Task SetEnabledAsync(string volume, bool enabled, bool persistent);
+    Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
+    Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent);
     Task FlushAsync(VolumeDescription volume);
     Task DropCleanAsync(VolumeDescription volume);
-    Task RemoveAsync(string volume);
+    Task RemoveAsync(VolumeDescription volume);
     Task<DiskEjectPreview> PreviewEjectAsync(string volume) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
@@ -46,16 +46,16 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
             throw new IOException("This drive letter now identifies a different volume. Refresh the volume list.");
     }
     public bool IsPersistent(VolumeDescription volume) => SavedConfigurations.IsSaved(volume.VolumeId);
-    public async Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
+    public async Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) =>
         // Choosing Fast in the editor is the desktop's explicit volatility acknowledgement.
-        await CacheTasks.SaveAsync(volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress);
-    public Task SetEnabledAsync(string volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume, enabled, persistent);
+        await CacheTasks.SaveAsync(volume.Volume, configuration, persistent, configuration.Preset == CachePreset.Fast, progress, expected: volume);
+    public Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent) => CacheTasks.SetEnabledAsync(volume.Volume, enabled, persistent, expected: volume);
     public async Task FlushAsync(VolumeDescription volume) =>
-        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.Flush, expectedVolumeId: volume.VolumeId);
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.Flush, expected: volume);
     // Clean blocks only: no drain, no effect on pending writes.
     public async Task DropCleanAsync(VolumeDescription volume) =>
-        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.DropClean, expectedVolumeId: volume.VolumeId);
-    public Task RemoveAsync(string volume) => CacheTasks.RemoveAsync(volume);
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.DropClean, expected: volume);
+    public Task RemoveAsync(VolumeDescription volume) => CacheTasks.RemoveAsync(volume.Volume, expected: volume);
     public Task<DiskEjectPreview> PreviewEjectAsync(string volume) => DiskEjection.PreviewAsync(volume);
     public Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => DiskEjection.EjectAsync(volume, progress, expected: expected);
     public async Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token)
