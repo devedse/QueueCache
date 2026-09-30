@@ -25,13 +25,14 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 73;
+    public const int Version = 74;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
         "disk-removal",
+        "disk-removal-windows",
         "system-preflight",
         "system-files",
         "system-post-restart",
@@ -81,6 +82,7 @@ public static class VerificationPlan
     {
         "quick" => [new("file-integrity", "files")],
         "disk-removal" => [new("disk-orderly-eject-reconnect", "disk-removal")],
+        "disk-removal-windows" => [new("disk-windows-eject-reconnect", "disk-removal")],
         "system-preflight" => [new("system-preflight", "system-preflight")],
         "system-files" => [new("system-file-create", "system-file-create")],
         "system-post-restart" => [new("system-file-verify", "system-file-verify")],
@@ -297,7 +299,7 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
-        if (options.Suite == "disk-removal")
+        if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
                 throw new ArgumentException("disk-removal requires --disposable-instance and --disposable-bytes for the disposable physical disk.");

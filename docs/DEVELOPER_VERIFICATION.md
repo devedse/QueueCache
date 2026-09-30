@@ -27,7 +27,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 73)
+## Suites (plan version 74)
 
 Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
 disable and filesystem flush before orderly-removal acceptance. Plan 72 added
@@ -952,3 +952,16 @@ attribution is unsupported rather than zero-filled. These are volume lifetime
 counter differences during controlled preparation, not process-wide score windows.
 Successful reconnect/oracle verification permits restoration even if preparation
 evidence is incomplete; the case still cannot pass.
+
+Plan 74 adds `disk-removal-windows`: the same explicit disposable target, pending
+8 MiB Fast/Deferred oracle and live reconnect contract, but requests the native
+Windows eject API directly while the cache is still enabled/dirty. No product
+disable, release or filesystem flush is issued before native eject. A final
+read-only state/diagnostic snapshot proves that precondition and its handle closes
+before the request. This qualifies the native Windows PnP path on the tested bus;
+it is separate from the product preparation/lower-counter case and does not
+claim that the tray UI itself was automated. Both suites stay excluded from full.
+
+Plan 74 also generates unique cryptographic oracle bytes for each removal case,
+so a previous run's data cannot stand in for newly acknowledged pending writes.
+Old raw runs and hashes remain unchanged.

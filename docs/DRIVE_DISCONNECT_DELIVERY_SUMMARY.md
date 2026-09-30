@@ -111,3 +111,13 @@ For exact implementation/verification checkpoints use
 RAM_FIRST_IMPLEMENTATION_TRACKER.md. For ownership use
 DRIVE_DISCONNECT_OWNERSHIP_AUDIT.md. The original acceptance contract remains in
 DRIVE_DISCONNECT_IMPLEMENTATION_PLAN.md; these gaps must not be marked complete.
+
+## Follow-up: native Windows eject and default CDM
+
+The subsequent user-requested plan-74 native Windows eject case accepted removal
+with enabled cache and 8,437,760 pending bytes, without product preparation.
+Proxmox again blocked live reconnect; this remains RESTORATION_FAILED with no
+data-survival verdict. The backing disk is preserved and detached. CrystalDiskMark
+Default completed all eight scores with five 1 GiB runs and the existing Q: cache.
+Exact evidence, implementation/VM gaps and full benchmark numbers are recorded in
+[WINDOWS_EJECT_AND_CDM_20260930.md](WINDOWS_EJECT_AND_CDM_20260930.md).

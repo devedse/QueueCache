@@ -34,6 +34,7 @@ internal static class VerificationCommands
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
+              disk-removal-windows Native Windows eject while cache remains dirty/enabled, then live reconnect; no product preparation. Same disposable identity requirements.
               disk-removal       One disposable volume: Fast pending-write oracle, Windows eject, operator reconnect. Explicit disk identity and budget 256..512 MiB required; excludes surprise removal.
               system-preflight  Read-only C: identity/state check; no workload or cache changes.
                                  Requires explicit VM acknowledgement, disk identity and off-disk output.
@@ -98,8 +99,8 @@ internal static class VerificationCommands
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
         var oracle = new Option<string?>("--oracle") { Description = "system-post-restart only: prior system-files oracle.json on a separate physical disk." };
-        var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal only: exact PnP instance of the disposable physical disk to eject." };
-        var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal only: exact physical disk byte size. Results must be on another disk." };
+        var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal suites only: exact PnP instance of the disposable physical disk to eject." };
+        var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter,
             systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes })

@@ -528,7 +528,7 @@ public static class VerificationWorker
             RunStorage.AtomicJson(job.Reply, new { Target = target, Output = output, Preview = preview });
             return 0;
         }
-        if (job.Operation == "disk-removal-eject")
+        if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
         {
             // No retained volume/cache handle may veto our own request.
             var expectedEject = await DiskEjection.PreviewAsync(target.Device);
@@ -538,6 +538,28 @@ public static class VerificationWorker
                 !expectedEject.VolumeIds.TryGetValue(target.Device, out var volumeId) ||
                 !volumeId.Equals(target.VolumeId, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("The recorded removal target changed before eject preview.");
+            if (job.Operation == "disk-removal-eject-windows")
+            {
+                // Observe and close the handle. No Disable, Flush, Release or
+                // filesystem flush is issued by this test before native eject.
+                using (var observed = new CacheDevice(target.Device))
+                {
+                    var state = observed.GetWriteCacheState();
+                    if (!state.Enabled || state.DirtyBytes < (8UL << 20) || state.LastError != 0)
+                        throw new IOException("Native Windows eject requires the active dirty-cache precondition.");
+                    RunStorage.AtomicJson(job.Reply + ".before.json", new WindowsEjectPrecondition(target, state,
+                        observed.GetDiagnostics(), DateTimeOffset.UtcNow));
+                }
+                target.ValidateCurrent();
+                var current = await DiskEjection.PreviewAsync(target.Device);
+                if (!current.Ejectable || current.RemovalInstance != expectedEject.RemovalInstance ||
+                    current.RemovalMembers is null || expectedEject.RemovalMembers is null ||
+                    !current.RemovalMembers.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(expectedEject.RemovalMembers))
+                    throw new IOException("Native Windows eject scope changed before request.");
+                target.ValidateCurrent();
+                RunStorage.AtomicJson(job.Reply, WindowsDiskEjection.Request(current));
+                return 0;
+            }
             DiskEjectResult eject;
             try { eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject, capturePreparation: true); }
             catch (DiskEjectVetoException veto) { eject = veto.Result; }

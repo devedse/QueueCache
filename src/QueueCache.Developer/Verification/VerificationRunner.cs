@@ -275,7 +275,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             else
             {
-                if (options.Suite == "disk-removal")
+                if (options.Suite is "disk-removal" or "disk-removal-windows")
                     await Worker(new WorkerJob("disk-removal-preflight", options.Volume, storage.PathFor("removal-preflight.json")) with
                     {
                         DisposableInstance = options.DisposableInstance,
@@ -330,12 +330,20 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         // a verified reconnect settles the outcome.
                         removalUnresolved = true;
                         storage.Write("removal-requested.json", new { Phase = "RequestingRemoval", Target = original.Target, At = DateTimeOffset.UtcNow });
-                        var ejectPath = await Worker(Job("disk-removal-eject") with
+                        var ejectPath = await Worker(Job(options.Suite == "disk-removal-windows" ? "disk-removal-eject-windows" : "disk-removal-eject") with
                         {
                             Reply = storage.PathFor(test.Id + ".eject.json")
                         }, deadline.Token, options.PreparationFlushSeconds);
                         var eject = JsonSerializer.Deserialize<DiskEjectResult>(await File.ReadAllTextAsync(ejectPath, deadline.Token))
                             ?? throw new InvalidDataException("Missing eject result.");
+                        if (options.Suite == "disk-removal-windows")
+                        {
+                            var nativeBefore = JsonSerializer.Deserialize<WindowsEjectPrecondition>(await File.ReadAllTextAsync(ejectPath + ".before.json", deadline.Token))
+                                ?? throw new InvalidDataException("Missing native Windows eject precondition.");
+                            if (nativeBefore.Target != original.Target || !nativeBefore.State.Enabled ||
+                                nativeBefore.State.DirtyBytes < (8UL << 20) || nativeBefore.State.LastError != 0 || nativeBefore.State.Instance == 0)
+                                throw new IOException("Native Windows removal did not prove the active dirty-cache precondition.");
+                        }
                         if (eject.ConfigurationManagerResult != 0)
                         {
                             removalUnresolved = eject.PresenceResult != 0;
@@ -370,12 +378,13 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         }
                         var ack = JsonSerializer.Deserialize<DiskReconnectAcknowledgement>(await File.ReadAllTextAsync(ackPath, reconnectDeadline.Token))
                             ?? throw new InvalidDataException("Missing reconnect acknowledgement.");
-                        DiskRemovalHandshake.Validate(ack, runId, original.Target);
+                        DiskRemovalHandshake.Validate(ack, runId, original.Target, test.Id);
                         var verifyReply = await Worker(Job("disk-removal-verify") with { OraclePath = oraclePath }, deadline.Token);
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(verifyReply, deadline.Token))
                             ?? throw new InvalidDataException("Missing reconnect oracle checks.");
                         removalUnresolved = false;
-                        DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
+                        if (options.Suite != "disk-removal-windows")
+                            DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
                         storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
                         return null;
                     }

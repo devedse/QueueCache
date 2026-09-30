@@ -46,7 +46,11 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 73, "plan 73: orderly removal requires recorded lower durability attempts");
+        Check(VerificationPlan.Version == 74, "plan 74: independent dirty native Windows eject qualification");
+        var windowsRemovalCases = VerificationPlan.Integrity(options with { Suite = "disk-removal-windows" });
+        Check(windowsRemovalCases.Count == 1 && windowsRemovalCases[0].Id == "disk-windows-eject-reconnect" &&
+            !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Id == "disk-windows-eject-reconnect"),
+            "native Windows eject remains a distinct opt-in case outside full");
         var removalOptions = new VerificationOptions("W:", "disk-removal", BudgetMiB: 256,
             DisposableInstance: "test-disposable", DisposableBytes: 8L << 30);
         VerificationPlan.Validate(removalOptions);
@@ -1330,7 +1334,7 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
-            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation" })
+            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
             {
                 var parent = store.PathFor(mode);
                 using var cancellation = new CancellationTokenSource();
@@ -1344,12 +1348,12 @@ internal static class VerificationRunnerTests
                     var ack = ready.RootElement.GetProperty("Acknowledgement").Deserialize<DiskReconnectAcknowledgement>()!;
                     RunStorage.AtomicJson(Path.Combine(directory, "reconnect-ack.json"), mode == "removal-stale" ? ack with { RunId = "old-run" } : ack);
                 });
-                var exit = await runner.RunAsync(removalOptions with { Volume = "Q:", Output = parent }, progress, cancellation.Token);
+                var exit = await runner.RunAsync(removalOptions with { Volume = "Q:", Output = parent, Suite = mode.StartsWith("removal-windows-") ? "disk-removal-windows" : "disk-removal" }, progress, cancellation.Token);
                 var directory = Directory.GetDirectories(parent).Single();
                 using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                var expected = mode == "removal-success" ? "COMPLETED" : mode is "removal-unobserved" or "removal-veto" or "removal-missing-preparation" ? "INCOMPLETE" : "RESTORATION_FAILED";
-                Check(status.RootElement.GetProperty("Status").GetString() == expected && (exit == 0) == (mode == "removal-success"), "removal coordinator " + mode);
-                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-unobserved" or "removal-veto" or "removal-missing-preparation"),
+                var expected = mode is "removal-success" or "removal-windows-success" ? "COMPLETED" : mode is "removal-unobserved" or "removal-veto" or "removal-missing-preparation" ? "INCOMPLETE" : "RESTORATION_FAILED";
+                Check(status.RootElement.GetProperty("Status").GetString() == expected && (exit == 0) == (mode is "removal-success" or "removal-windows-success"), "removal coordinator " + mode);
+                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-windows-success" or "removal-unobserved" or "removal-veto" or "removal-missing-preparation"),
                     "removal restoration requires completed reconnect verification " + mode);
                 Check(File.Exists(Path.Combine(directory, "FINISHED.txt")), "removal completion marker " + mode);
                 OwnedProcess.EnsureStopped(directory);
@@ -1420,7 +1424,7 @@ internal static class VerificationRunnerTests
         {
             Fake = true
         };
-        if (job.Operation == "disk-removal-eject")
+        if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
             reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
                 mode == "removal-veto" ? 23u : 0, mode == "removal-veto" ? 8u : 0, mode == "removal-veto" ? "fixture-device" : "",
                 mode is not ("removal-unobserved" or "removal-presence-failure" or "removal-veto"), mode == "removal-presence-failure" ? 0x13u : 0, Preparation: mode == "removal-missing-preparation" ? null :
@@ -1428,6 +1432,10 @@ internal static class VerificationRunnerTests
                     new(0, 0, 50UL << 30, 256UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
                     new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
                     new(0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), true)]);
+        if (job.Operation == "disk-removal-eject-windows" && mode != "removal-windows-missing-before")
+            RunStorage.AtomicJson(job.Reply + ".before.json", new WindowsEjectPrecondition(job.Expected!,
+                new(1, 0, 50UL << 30, 256UL << 20, 0, 8UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
+                new(0, 0, 0, 0, 0, 0, 0, 0, 0), DateTimeOffset.UtcNow));
         if (job.Operation == "disk-removal-verify")
             reply = new QueueCache.Operations.CheckResult[] { new("fixture-oracle", "PASS", "host-only fixture") };
         if (job.Operation == "capture")

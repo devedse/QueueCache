@@ -1985,3 +1985,28 @@ protocol tests and desktop fixtures passed; the Windows self-contained managemen
 protocol/runner contracts passed, including missing preparation evidence and
 selection-identity rejection. These tests perform no native driver workloads.
 The delivery/review packet is docs/DRIVE_DISCONNECT_DELIVERY_SUMMARY.md.
+
+### Native Windows eject and default CDM checkpoint, 2026-09-30
+
+Implementation: plan 74 adds the maintained opt-in `disk-removal-windows` suite.
+It records enabled/dirty cache state, closes observation handles and requests the
+native eject API without product preparation. Missing precondition proof fails;
+reconnect still requires the exact disk/volume and fresh-instance/hash oracle.
+Final topology revalidation and unique cryptographic oracle bytes are implemented.
+
+Verification: Linux and Windows management/runner contracts passed; managed
+Release build has zero warnings/errors. On loaded CI 0.4.249.1 under Verifier
+0x209bb, native eject accepted W: with 8,437,760 dirty bytes, enabled cache and
+zero drained bytes. Removal was observed; same-slot Proxmox reattachment failed
+on orphan throttle-drive-virtio2. The exact run
+`QueueCache-Verify-20260930-174817-7361fc07ecb34be9aa87d1f462c4557d`
+finished RESTORATION_FAILED at 18:03:35 UTC; all 35 nonempty raw files and final
+reports were read/preserved. Data survival and native query/drain routing remain
+unverified. Final scope/unique-oracle refinements were added after VM publish and
+are host-covered only. The disposable disk is detached with backing preserved;
+no reset/reboot/recovery writes occurred.
+
+CrystalDiskMark 9.0.3 Default completed all eight scores on Q:, five 1 GiB runs,
+2 GiB Fast/Idle cache, Verifier enabled. Full scores, IOPS, latency, provenance
+and limitations are in WINDOWS_EJECT_AND_CDM_20260930.md. This is measured output,
+not a controlled performance acceptance verdict.

@@ -43,7 +43,7 @@ public static class DiskRemovalScenarios
         Directory.CreateDirectory(workDirectory);
         var path = Path.Combine(workDirectory, "orderly-eject.bin");
         var bytes = new byte[8 << 20];
-        new Random(91229).NextBytes(bytes);
+        RandomNumberGenerator.Fill(bytes); // Unique oracle bytes for every removal case.
         using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
         {
             file.Write(bytes);
