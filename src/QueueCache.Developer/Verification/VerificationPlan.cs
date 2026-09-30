@@ -13,7 +13,12 @@ public sealed record PerformanceCase(
     bool ApplicationFlush = false,
     string Workload = "interference",
     bool Resident = false,
-    bool Timing = true);
+    bool Timing = true,
+    bool WarmResident = false,
+    bool PrecomputedWriteBuffer = false)
+{
+    public string WriteBufferArgument => PrecomputedWriteBuffer ? "-Z1M" : "-Zr";
+}
 
 public sealed record DrainDecisionCase(
     string Id,
@@ -25,7 +30,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 74;
+    public const int Version = 77;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
@@ -51,6 +56,7 @@ public static class VerificationPlan
         "trim-diagnostic",
         "trim-file",
         "write-performance",
+        "sequential-resident",
         "flush-interference",
         "performance",
         "full"
@@ -122,6 +128,16 @@ public static class VerificationPlan
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
         var cases = new List<PerformanceCase>();
+
+        if (options.Suite == "sequential-resident")
+        {
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (workload, precomputed) in new[] { ("sequential-read", false), ("sequential-write", false), ("sequential-write", true) })
+                cases.Add(new($"{NextNumber(cases)}-r{repeat}-{workload}-q8-warm{(precomputed ? "-precomputed" : "")}",
+                    "Automatic", "Idle", 0, 8, false, repeat, Workload: workload,
+                    Resident: true, Timing: false, WarmResident: true, PrecomputedWriteBuffer: precomputed));
+            return options.CaseFilter is null ? cases : cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+        }
 
         if (options.Suite == "write-performance")
         {
@@ -299,6 +315,8 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (options.Suite == "sequential-resident" && options.BudgetMiB != 2048)
+            throw new ArgumentException("sequential-resident requires --budget-mib 2048 for its fixed 1 GiB prewarmed file.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
@@ -309,8 +327,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance or drain-decision and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance, sequential-resident or drain-decision and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -325,13 +343,13 @@ public static class VerificationPlan
         }
 
         if (options.CaseFilter is not null &&
-            (options.Suite == "write-performance" ? Performance(options).Count : DrainDecision(options).Count) == 0)
+            (options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "drain-decision"))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision"))
         {
             return;
         }

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 74, "plan 74: independent dirty native Windows eject qualification");
+        Check(VerificationPlan.Version == 77, "plan 77: verified resident sequential scores distinguish per-I/O and precomputed random buffers");
         var windowsRemovalCases = VerificationPlan.Integrity(options with { Suite = "disk-removal-windows" });
         Check(windowsRemovalCases.Count == 1 && windowsRemovalCases[0].Id == "disk-windows-eject-reconnect" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Id == "disk-windows-eject-reconnect"),
@@ -986,6 +986,30 @@ internal static class VerificationRunnerTests
         Check(writes.All(c => c.Resident && !c.Writer && c.DelayMs == 0), "write matrix isolated fitting file, no injected delay");
         Check(writes.Count(c => c.Timing) == 36 && writes.Count(c => c.Drain == "Idle") == 24, "write matrix timing and policy controls");
         Check(writes.Where(c => c.Workload == "random-write").All(c => c.QueueDepth is 1 or 32), "CDM random write queue depths");
+        var sequential = VerificationPlan.Performance(options with { Suite = "sequential-resident" });
+        Check(sequential.Count == 9 && sequential.Select(c => c.Id).Distinct().Count() == 9 &&
+            sequential.All(c => c.WarmResident && c.Resident && !c.Timing && c.QueueDepth == 8 && c.Drain == "Idle"),
+            "prewarmed sequential suite has nine isolated read/write cases");
+        Check(sequential.Count(c => c.Workload == "sequential-read") == 3 &&
+            !VerificationPlan.Performance(options with { Suite = "full" }).Any(c => c.WarmResident),
+            "prewarmed read/write suite remains opt-in outside full");
+        Check(sequential.Count(c => c.PrecomputedWriteBuffer && c.Workload == "sequential-write" && c.WriteBufferArgument == "-Z1M") == 3 &&
+            sequential.Where(c => !c.PrecomputedWriteBuffer).All(c => c.WriteBufferArgument == "-Zr") &&
+            writes.All(c => c.WriteBufferArgument == "-Zr"), "buffer comparison preserves existing write matrix payload generation");
+        Check(VerificationPlan.Performance(options with { Suite = "sequential-resident", CaseFilter = "precomputed" }).Count == 3,
+            "precomputed write selection is a complete three-case subset");
+        var warmState = new QueueCache.Management.WriteCacheState(8161, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
+            { Instance = 4, CleanReadBytes = 1UL << 30, ReadHitBytes = 10UL << 30 };
+        var warmed = warmState with { ReadHitBytes = 12UL << 30 };
+        WarmResidentEvidence.ValidateFirstPass(1L << 30, 1UL << 30);
+        Reject(() => WarmResidentEvidence.ValidateFirstPass(800L << 20, 1UL << 30));
+        WarmResidentEvidence.Validate(warmState, warmed, 2L << 30, 1UL << 30);
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { ReadMissBytes = 4096 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { ReadHitBytes = 11UL << 30 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { Instance = 5 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 4096 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 0, DirtyBytes = 600UL << 20, InFlightBytes = 500UL << 20 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed, 0, 1UL << 30));
         var selection = options with { Suite = "write-performance", CaseFilter = "random-write-q1-Idle-timingFalse" };
         var selectedWrites = VerificationPlan.Performance(selection);
         Check(selectedWrites.Count == 3 && selectedWrites.SequenceEqual(writes.Where(test => test.Id.Contains(selection.CaseFilter))),

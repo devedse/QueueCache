@@ -2056,3 +2056,43 @@ profile was preserved and reapplied through `policy restore`; final 2048 MiB
 Fast/Idle cache is active, clean and error-free. No CDM/verification workloads
 remain; disposable disk still detached with backing preserved. This planned
 restart does not qualify data survival in the earlier incomplete removal case.
+
+
+### Latest-build warmed sequential reproduction, 2026-09-30
+
+Implementation: plans 75–77 add the opt-in maintained `sequential-resident`
+suite, requiring a fixed fitting 1 GiB file and 2048 MiB budget. A complete cold
+read pass and a second stable/retained zero-miss RAM-hit pass must succeed before
+scoring. Readiness and interval coverage remain strict. Plan 77 distinguishes
+per-I/O (`-Zr`) and precomputed (`-Z1M`) random write buffers with immutable
+case IDs; three repeats define nine cases, excluded from full. Existing 72-case
+write-performance remains unchanged. Host contracts cover insufficient warmup,
+misses/hits/retention/identity, in-flight double counting, case selection and
+buffer arguments. No native performance code or defaults changed.
+
+Verification: Linux and Windows host-safe contracts passed; managed Release
+build had zero warnings/errors. Latest-at-start signed CI 0.4.259.1 loaded
+module path/hash matched its artifact after approved installation/restart;
+Verifier was off. Plan 75 run
+`QueueCache-Verify-20260930-203416-e78ae9299b8b41539f22a68970a7047b`
+failed its cold residency preparation, was cleanly restored and preserved.
+Plan 76 run `QueueCache-Verify-20260930-204030-f95dbd5c55834e9a9f2a42d62267cd00`
+completed 6/6; read median 36,185 MB/s, fresh-random write median 16,521 MB/s.
+Plan 77 `precomputed` subset
+`QueueCache-Verify-20260930-205241-8657fa00c7c342e99769827220a2145d`
+completed 3/3, write median **21,406 MB/s**. Both exact collections have full
+raw/final/ready/interval/ownership/control/recovery/restored evidence inspected,
+zero new score-observation capacity waits/errors and clean restoration. Neither
+combines incomplete repetitions or asserts the full plan-77 matrix ran.
+Requested 36k/21k peaks are reproduced. CrystalDiskMark uses precomputed random
+write buffers, while the established write-performance suite generates fresh
+random data per I/O; comparisons must preserve this distinction. A new actual
+GUI benchmark and matched old-driver bisect were not performed.
+See SEQUENTIAL_PEAK_REPRODUCTION_20260930.md for all repetitions and limitations.
+
+Post-benchmark restoration: approved planned restart restored Verifier 0x209bb,
+resetonbootfail, current CI driver load 1/unload 0 and matching signed-artifact
+hash. Q: saved 2048 MiB Fast/Idle profile is Active, clean and error-free. No
+owned benchmark process remains. Read-only Proxmox check confirms unused eject
+backing vm-109-disk-5 is preserved and detached. This restart is a planned
+benchmark-state restoration, not automatic recovery or a removal-path proof.

@@ -192,7 +192,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" ? VerificationPlan.Performance(options) : [];
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
@@ -683,6 +683,20 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (resident.CleanReadBytes + resident.CleanWriteBytes < ((ulong)options.BudgetMiB / 4 << 20))
                 throw new IOException("Warm hot set is not fully resident; do not interpret this as a cache-hit interference test.");
         }
+        if (scenario.WarmResident)
+        {
+            var file = Path.Combine(workDirectory, "resident.dat");
+            var coldWarm = await Disk(scenario.Id + "-warm1", file, ["-b1M", "-o8", "-t1", "-w0", "-d10", "-W0"], token);
+            WarmResidentEvidence.ValidateFirstPass(coldWarm.Bytes, (ulong)options.BudgetMiB / 2 << 20);
+            var warmBefore = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-warm-before.json") }, token);
+            var warmScore = await Disk(scenario.Id + "-warm2", file, ["-b1M", "-o8", "-t1", "-w0", "-d3", "-W0"], token);
+            var warmAfter = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-warm-after.json") }, token);
+            using var beforeWarm = JsonDocument.Parse(await File.ReadAllTextAsync(warmBefore, token));
+            using var afterWarm = JsonDocument.Parse(await File.ReadAllTextAsync(warmAfter, token));
+            WarmResidentEvidence.Validate(beforeWarm.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!,
+                afterWarm.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!, warmScore.Bytes,
+                (ulong)options.BudgetMiB / 2 << 20);
+        }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
         await Worker(Job("snapshot") with
         {
@@ -721,12 +735,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             var arguments = scenario.Workload == "interference" ? new List<string> { "-b4K", "-r4K", "-o8", "-t2", "-w0" } :
                 new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", "-t1",
-                    scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", "-Zr" };
+                    scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", scenario.WriteBufferArgument };
             if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
                 arguments.Add("-r4K");
             // A fixed five-second warmup exercises the fitting working set before scoring.
             // Unlike interference, this is not a promise that every block is resident.
-            arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident ? "-W5" : "-W0"]);
+            arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident && !scenario.WarmResident ? "-W5" : "-W0"]);
             var score = await Disk(scenario.Id + "-reader", scenario.Workload == "interference" ? hot : Path.Combine(workDirectory, scenario.Resident ? "resident.dat" : "writer.dat"),
                 arguments.ToArray(), children.Token);
             if (writer is not null)

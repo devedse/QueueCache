@@ -193,3 +193,16 @@ this run. Keep timing modes separate during optimization; do not treat diagnosti
 overhead as a release regression. This does not isolate its CPU or locking cause.
 Off-mode storage throughput and tails vary widely. Fast cached sequential numbers
 represent volatile RAM acknowledgement/repeated overwrites, not durable disk speed.
+
+
+## Latest-build sequential reproduction, 2026-09-30
+
+Loaded signed CI 0.4.259.1, Verifier off, same CDM bundled DiskSpd hash and
+2048 MiB Fast/Idle, reproduced warmed sequential Q8/T1 read median **36,185 MB/s**
+and precomputed-random write median **21,406 MB/s**. All three repetitions,
+resident proof, exact run IDs and restored Verifier state are recorded in
+[SEQUENTIAL_PEAK_REPRODUCTION_20260930.md](SEQUENTIAL_PEAK_REPRODUCTION_20260930.md).
+The maintained fresh-random-per-I/O write variant measured median 16,521 MB/s;
+its `-Zr` generator has additional CPU overhead compared with CrystalDiskMark's
+precomputed-buffer write shape. These are different workload contracts and must
+remain separately reported. No native performance code/defaults were changed.

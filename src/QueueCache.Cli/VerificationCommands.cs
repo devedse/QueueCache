@@ -61,6 +61,9 @@ internal static class VerificationCommands
               performance        Repeated allocation/drain/queue-depth, delay and off/on workload matrix.
                                  Requires DiskSpd; 204 cases at defaults.
               full               Integrity + performance + flush matrix; 218 cases at defaults.
+              sequential-resident Prewarmed fitting-file sequential 1M Q8 read/write, timing off.
+                                  Requires DiskSpd and --budget-mib 2048; 9 cases at defaults.
+                                  Compares fresh per-I/O and precomputed random write buffers.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
@@ -94,7 +97,7 @@ internal static class VerificationCommands
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
-        var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance or drain-decision: case-sensitive ID substring. A selected run is not the complete matrix." };
+        var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance, sequential-resident or drain-decision: case-sensitive ID substring. A selected run is not the complete matrix." };
         var systemInstance = new Option<string?>("--system-instance") { Description = "System suites: exact expected C: physical-disk PnP instance ID." };
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };

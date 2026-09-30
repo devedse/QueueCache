@@ -27,7 +27,7 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 74)
+## Suites (plan version 77)
 
 Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
 disable and filesystem flush before orderly-removal acceptance. Plan 72 added
@@ -433,6 +433,7 @@ Preserve prior raw results and their scope.
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
+| `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -965,3 +966,52 @@ claim that the tray UI itself was automated. Both suites stay excluded from full
 Plan 74 also generates unique cryptographic oracle bytes for each removal case,
 so a previous run's data cannot stand in for newly acknowledged pending writes.
 Old raw runs and hashes remain unchanged.
+
+## Prewarmed sequential Q8 read/write (plan 77)
+
+`sequential-resident` is an opt-in focused suite, excluded from `full`. It requires
+`--budget-mib 2048` and uses a unique 1 GiB `resident.dat`, Fast/Idle at default
+parallelism 2, 1 MiB requests, Q8/T1, detailed timing off. Three repetitions
+produce nine distinct cases: reads, writes generating fresh random data per I/O
+(`-Zr`), and writes using a precomputed 1 MiB random buffer (`-Z1M`).
+`--case-filter sequential-read` selects reads; `precomputed` selects the three
+precomputed-buffer writes. `sequential-write` selects both write variants. This does not change the 72-case
+write-performance contract.
+
+```powershell
+qcache developer verify Q: --suite sequential-resident --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```
+
+Each case drains/drops prior clean blocks, applies its configuration, and reads
+the fitting file sequentially twice (ten seconds then three seconds, no hidden
+DiskSpd warmup). The first pass must complete at least a full file read.
+The second pass must read at least the full file, record enough new RAM-hit bytes
+for all its completed bytes, produce zero new read-miss bytes, retain at least
+the file size, and keep the same healthy cache instance/generation. Raw XML and
+before/after state evidence are retained. Missing or insufficient evidence fails
+the case; a merely elapsed warmup does not imply residency. Scoring uses `-W0`,
+with its separate telemetry ready handshake and recorded interval unchanged.
+
+This approximates the earlier prewarmed CLI benchmark conditions while resetting
+residency before every case, rather than warming once for an entire historical
+run. The observer still samples every 200 ms even with detailed timing off.
+Record Verifier and exact loaded CI driver identity. Thresholds remain an external
+comparison; MEASURED means evidence collection completed, not that throughput
+met a target. Preserve all repetitions and report ranges/medians, not only the
+highest score. Prewarm counters include process close and management observations
+and are separate from the scoring interval.
+
+Plan 75's original three-second first pass was insufficient on the test backend
+and was rejected before scoring. Plan 76 preserves that raw failure and requires
+a complete ten-second first pass before the unchanged strict second-pass proof.
+
+Plan 77 adds the separately named `-precomputed` write cases without changing
+existing per-I/O write cases or the 72-case write-performance suite. DiskSpd's
+`-Zr` creates fresh random content for each write and adds generator CPU overhead;
+`-Z1M` generates its random source buffer once. These are distinct workloads:
+do not combine their repetitions. CrystalDiskMark's normal Random setting uses
+block-sized precomputed buffers for writes, as shown in its official
+[DiskBench.cpp](https://github.com/hiyohiyo/CrystalDiskMark/blob/master/DiskBench.cpp).
+The new comparison keeps the exact DiskSpd binary, resident proof and telemetry
+handshake unchanged. [Microsoft's buffer contract](https://github.com/microsoft/diskspd/wiki/command-line-and-parameters)
+explains why scores with and without `-Zr` cannot be treated as identical tests.
