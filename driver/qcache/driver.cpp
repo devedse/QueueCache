@@ -39,6 +39,8 @@ struct QC_EXTENSION
     bool ReadSelectionAllowsFlush;             // Reset cursors when the eligibility changes.
     ULONGLONG QueueDepth, QueueWaitTicks, MaxQueueWaitTicks, ActiveMajor, ActiveSince;
     BOOLEAN CallerActive; // QueueLock: a caller-thread request owns the cache (counted in DirectCount).
+    volatile LONG GeometryState; // EnsureDeviceGeometry: 0 not queried, 1 querying, 2 done.
+    KEVENT GeometryReady;
     ULONG CallerStreak;   // QueueLock: caller-path requests since the last probe via the worker.
     ULONG WorkerWindow;   // QueueLock: candidates still routed to the worker (QcCallerPathWorkerWindow).
 #endif
@@ -46,6 +48,11 @@ struct QC_EXTENSION
 static WCHAR ExpectedDriverKey[512];
 static UNICODE_STRING AllowedDriverKey;
 static BOOLEAN ClassCoverage;
+// Lab bisection aid for the volume-filter branch (service value DiagnosticMode, read
+// once at load): 1 = attach as a pure pass-through filter (no cache, no threads),
+// 2 = do not mirror DO_POWER_PAGABLE, 4 = skip paging classification at dispatch,
+// 8 = never query the length/geometry (see EnsureDeviceGeometry).
+static ULONG DiagnosticMode;
 extern "C" DRIVER_INITIALIZE DriverEntry;
 DRIVER_ADD_DEVICE QcAddDevice;
 DRIVER_DISPATCH QcDispatch;
@@ -515,6 +522,11 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
 }
 // Paging-thread callback for an offloaded original read. Its remove-lock
 // reference was taken in QcDispatch and is released exactly once here.
+// A forwarded control completes in the lower device; only the remove lock remains ours.
+static void ReleaseForwardedRequest(PVOID context, PIRP irp)
+{
+    IoReleaseRemoveLock(&static_cast<QC_EXTENSION*>(context)->RemoveLock, irp);
+}
 static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -523,6 +535,9 @@ static void CompleteOffloadedRead(PVOID context, PIRP irp, NTSTATUS status)
     Complete(irp, status, bytes);
 }
 #endif
+static void EnsureDeviceGeometry(QC_EXTENSION* ext);
+static void RefreshDeviceLength(QC_EXTENSION* ext);
+static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp);
 static void RequestWorker(PVOID context)
 {
     auto ext = static_cast<QC_EXTENSION*>(context);
@@ -543,13 +558,17 @@ static void RequestWorker(PVOID context)
             // A control request closes direct admission under QueueLock. Complete
             // older direct I/O before any queued request changes cache state.
             KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
+            EnsureDeviceGeometry(ext);
+            if (BeyondKnownEnd(ext, irp))
+                RefreshDeviceLength(ext);
 #if QCACHE_CACHE_DRIVER
             bool transferred;
             auto status = QcCacheProcess(&ext->Cache, irp, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0),
                                          &transferred);
             if (transferred)
             {
-                // An offloaded-read thread completes it and releases its remove lock.
+                // An offloaded-read thread or the lower device (a forwarded control)
+                // completes it and releases its remove lock.
                 KeAcquireSpinLock(&ext->QueueLock, &activeIrql);
                 ext->ActiveSince = 0;
                 KeReleaseSpinLock(&ext->QueueLock, activeIrql);
@@ -701,6 +720,85 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 }
 #endif
 
+#if QCACHE_SERIALIZED_IO
+// Queries the lower device's length and sector size once, on first need, from a
+// PASSIVE_LEVEL thread (a management request's caller or the request worker).
+// Sending these queries from the IRP_MN_START_DEVICE handler of the boot volume
+// (below: snapshots, BitLocker, the volume manager) reset the machine during boot.
+// Reads the lower device's current length (PASSIVE_LEVEL only). A volume can be
+// extended or shrunk while the filter is loaded.
+static void QueryDeviceLength(QC_EXTENSION* ext)
+{
+    KEVENT event;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    GET_LENGTH_INFORMATION length = {};
+    IO_STATUS_BLOCK iosb = {};
+    auto query = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
+    if (!query)
+        return;
+    auto queryStatus = IoCallDriver(ext->Lower, query);
+    if (queryStatus == STATUS_PENDING)
+        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length) && length.Length.QuadPart > 0)
+        InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
+}
+
+static void EnsureDeviceGeometry(QC_EXTENSION* ext)
+{
+    if (ext->GeometryState == 2 || (DiagnosticMode & 8) || KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    if (InterlockedCompareExchange(&ext->GeometryState, 1, 0) != 0)
+    {
+        // Another thread is querying; its result is needed here too.
+        KeWaitForSingleObject(&ext->GeometryReady, Executive, KernelMode, FALSE, nullptr);
+        return;
+    }
+    QueryDeviceLength(ext);
+#if QCACHE_CACHE_DRIVER
+    KEVENT event;
+    KeInitializeEvent(&event, NotificationEvent, FALSE);
+    IO_STATUS_BLOCK iosb = {};
+    DISK_GEOMETRY geometry = {};
+    auto query = IoBuildDeviceIoControlRequest(
+        IOCTL_DISK_GET_DRIVE_GEOMETRY, ext->Lower, nullptr, 0, &geometry, sizeof(geometry), FALSE, &event, &iosb);
+    if (query)
+    {
+        auto queryStatus = IoCallDriver(ext->Lower, query);
+        if (queryStatus == STATUS_PENDING)
+            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
+            ext->Cache.SectorBytes = geometry.BytesPerSector;
+    }
+#endif
+    // Retry on a later request if the length could not be read.
+    InterlockedExchange(&ext->GeometryState, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0) > 0 ? 2 : 0);
+    KeSetEvent(&ext->GeometryReady, IO_NO_INCREMENT, FALSE);
+    if (ext->GeometryState == 0)
+        KeClearEvent(&ext->GeometryReady);
+}
+
+// After the first query, re-reads the length: a management request reports the
+// current volume size, and a read or write beyond the known end (the file system
+// extending the volume) is judged against the new length rather than refused.
+static void RefreshDeviceLength(QC_EXTENSION* ext)
+{
+    if (ext->GeometryState != 2 || (DiagnosticMode & 8) || KeGetCurrentIrql() != PASSIVE_LEVEL)
+        return;
+    QueryDeviceLength(ext);
+}
+
+static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction != IRP_MJ_READ && stack->MajorFunction != IRP_MJ_WRITE)
+        return false;
+    const auto size = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
+    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    return offset >= 0 && (offset > size || stack->Parameters.Read.Length > static_cast<ULONGLONG>(size - offset));
+}
+#endif
+
 NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 {
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
@@ -708,14 +806,36 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     if (!NT_SUCCESS(status))
         return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (DiagnosticMode & 1)
+    {
+        IoSkipCurrentIrpStackLocation(irp);
+        if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
+        {
+            IoReleaseRemoveLockAndWait(&ext->RemoveLock, irp);
+            auto lower = ext->Lower;
+            status = IoCallDriver(lower, irp);
+            IoDetachDevice(lower);
+            IoDeleteDevice(device);
+            return status;
+        }
+        status = IoCallDriver(ext->Lower, irp);
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        return status;
+    }
 #if QCACHE_CACHE_DRIVER
     // Record paging traffic before routing selection, including disabled pass-through.
-    const bool pagingFile = QcCacheRecordPagingIo(&ext->Cache, irp);
+    const bool pagingFile = (DiagnosticMode & 4) ? false : QcCacheRecordPagingIo(&ext->Cache, irp);
 #endif
     if (stack->MajorFunction == IRP_MJ_PNP)
     {
         if (stack->MinorFunction == IRP_MN_REMOVE_DEVICE)
         {
+#if QCACHE_CACHE_DRIVER
+            // Final removal also occurs without a successful query or a prior
+            // surprise notification. Do not wait for unavailable storage to
+            // drain before publishing the admission cutoff.
+            QcCacheDisconnect(&ext->Cache, nullptr);
+#endif
 #if QCACHE_SERIALIZED_IO
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
@@ -743,10 +863,34 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
         if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL)
         {
-            InterlockedExchange(&ext->Cache.Gone, TRUE);
-            KeSetEvent(&ext->Cache.Changed, IO_NO_INCREMENT, FALSE);
-            KeSetEvent(&ext->Cache.Wake, IO_NO_INCREMENT, FALSE);
+            QC_STATE removalSnapshot;
+            if (QcCacheDisconnect(&ext->Cache, &removalSnapshot))
+            {
+                // The cache IOCTL disappears with the volume. Keep a one-shot
+                // event in the Windows System log for post-removal diagnosis.
+                // Dirty bytes are a snapshot of possible volatile loss, not a
+                // claim that this many bytes were lost on the physical disk.
+                const ULONGLONG pending = removalSnapshot.DirtyBytes;
+                auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(
+                    device, static_cast<UCHAR>(sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG))));
+                if (entry)
+                {
+                    RtlZeroMemory(entry, sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG));
+                    entry->ErrorCode = STATUS_DEVICE_NOT_CONNECTED;
+                    entry->FinalStatus = STATUS_DEVICE_NOT_CONNECTED;
+                    entry->DumpDataSize = 2 * sizeof(ULONG);
+                    entry->DumpData[0] = static_cast<ULONG>(pending);
+                    entry->DumpData[1] = static_cast<ULONG>(pending >> 32);
+                    IoWriteErrorLogEntry(entry);
+                }
+            }
+            // A notification cannot be vetoed and must reach the lower stack
+            // promptly, independently of the request worker's lower-I/O wait.
+            irp->IoStatus.Status = STATUS_SUCCESS;
+            return Forward(ext, irp);
         }
+        if (ext->Cache.Gone)
+            return Forward(ext, irp); // Still handle PnP, including cancel/cleanup sequencing.
         if (stack->MinorFunction == IRP_MN_QUERY_STOP_DEVICE || stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
         {
             KIRQL irql;
@@ -761,6 +905,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             }
             return routed ? QueueRequest(ext, irp) : Forward(ext, irp);
         }
+        if (stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE)
+            return QueueRequest(ext, irp); // Restore the state saved by QUERY_REMOVE, even if routing went idle.
         if (stack->MinorFunction == IRP_MN_QUERY_PNP_DEVICE_STATE)
             return ForwardQueryPnpState(ext, irp);
 #endif
@@ -792,51 +938,37 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             if (status == STATUS_PENDING)
                 KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
             status = irp->IoStatus.Status;
-            if (NT_SUCCESS(status))
-            {
-                GET_LENGTH_INFORMATION length = {};
-                IO_STATUS_BLOCK iosb = {};
-                KeClearEvent(&event);
-                auto query = IoBuildDeviceIoControlRequest(
-                    IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
-                if (query)
-                {
-                    auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING)
-                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length))
-                        InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
-                }
-#if QCACHE_CACHE_DRIVER
-                DISK_GEOMETRY geometry = {};
-                iosb = {};
-                KeClearEvent(&event);
-                query = IoBuildDeviceIoControlRequest(IOCTL_DISK_GET_DRIVE_GEOMETRY,
-                                                      ext->Lower,
-                                                      nullptr,
-                                                      0,
-                                                      &geometry,
-                                                      sizeof(geometry),
-                                                      FALSE,
-                                                      &event,
-                                                      &iosb);
-                if (query)
-                {
-                    auto queryStatus = IoCallDriver(ext->Lower, query);
-                    if (queryStatus == STATUS_PENDING)
-                        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-                    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
-                        ext->Cache.SectorBytes = geometry.BytesPerSector;
-                }
-#endif
-            }
+            // Length and sector size are queried later (EnsureDeviceGeometry): the same
+            // queries sent to the boot volume from this start handler reset the machine.
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             return Complete(irp, status, irp->IoStatus.Information);
         }
     }
+#if QCACHE_CACHE_DRIVER
+    if (ext->Cache.Gone)
+    {
+        if (stack->MajorFunction == IRP_MJ_POWER || stack->MajorFunction == IRP_MJ_CLEANUP ||
+            stack->MajorFunction == IRP_MJ_CLOSE)
+            return Forward(ext, irp);
+        // Reject before observation, paging-file and inactive direct bypasses.
+        // None may admit a new data/control operation after the cutoff.
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        return Complete(irp, STATUS_DEVICE_NOT_CONNECTED);
+    }
+#endif
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
+#if QCACHE_SERIALIZED_IO
+        // QueueCache management requests report and validate the device length.
+        if (DEVICE_TYPE_FROM_CTL_CODE(code) == DEVICE_TYPE_FROM_CTL_CODE(IOCTL_QCACHE_GET_DEVICE_DATA))
+        {
+            const bool known = ext->GeometryState == 2;
+            EnsureDeviceGeometry(ext);
+            if (known)
+                RefreshDeviceLength(ext);
+        }
+#endif
 #if QCACHE_CACHE_DRIVER
         if (code == IOCTL_QCACHE_STATE_V3)
         {
@@ -1034,6 +1166,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         // must not hold up subsequent cache admission behind DirectIdle.
         return Forward(ext, irp);
     }
+    if ((stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
+        QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode))
+        return Forward(ext, irp); // See observation.h: shadow-copy controls after flush-and-hold.
 #if QCACHE_CACHE_DRIVER
     // Paging-file blocks are never cached (registration drains and drops clean data,
     // and paging-file writes are never admitted), so this I/O needs no ordering
@@ -1198,9 +1333,16 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
         IoDeleteDevice(device);
         return status;
     }
-    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO);
-    // All harness code/data is nonpageable; do not advertise pageable power dispatch.
+    // Volume stacks (volume.sys, volsnap) are power-pageable: a filter above a
+    // pageable driver must be pageable too, so power IRPs arrive at PASSIVE_LEVEL.
+    // Our dispatch handles power at PASSIVE_LEVEL; its code stays nonpageable.
+    device->Flags |= ext->Lower->Flags & (DO_DIRECT_IO | DO_BUFFERED_IO | ((DiagnosticMode & 2) ? 0 : DO_POWER_PAGABLE));
     device->Characteristics |= ext->Lower->Characteristics;
+    if (DiagnosticMode & 1)
+    {
+        device->Flags &= ~DO_DEVICE_INITIALIZING;
+        return STATUS_SUCCESS;
+    }
 #if QCACHE_CACHE_DRIVER
     status = QcCacheInitialize(&ext->Cache, device, ext->Lower);
     if (NT_SUCCESS(status))
@@ -1219,12 +1361,14 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     ext->Cache.RoutingLock = &ext->QueueLock;
 #endif
     KeInitializeEvent(&ext->DirectIdle, NotificationEvent, TRUE);
+    KeInitializeEvent(&ext->GeometryReady, NotificationEvent, FALSE);
     InitializeListHead(&ext->Pending);
     ext->ReadSelection.Reset(&ext->Pending);
     KeInitializeEvent(&ext->WorkAvailable, NotificationEvent, FALSE);
 #if QCACHE_CACHE_DRIVER
     ext->Cache.ServiceReads = ServiceCachedReads;
     ext->Cache.CompleteRequest = CompleteOffloadedRead;
+    ext->Cache.ReleaseRequest = ReleaseForwardedRequest;
     ext->Cache.ServiceContext = ext;
     ext->Cache.RequestAvailable = &ext->WorkAvailable;
 #endif
@@ -1282,6 +1426,14 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
         auto classValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
         ClassCoverage = classValue->Type == REG_DWORD && classValue->DataLength == sizeof(ULONG) &&
                         *reinterpret_cast<ULONG*>(classValue->Data) == 1;
+    }
+    UNICODE_STRING diagnosticName = RTL_CONSTANT_STRING(L"DiagnosticMode");
+    if (NT_SUCCESS(ZwQueryValueKey(
+            key, &diagnosticName, KeyValuePartialInformation, classBuffer, sizeof(classBuffer), &classRequired)))
+    {
+        auto diagnosticValue = reinterpret_cast<KEY_VALUE_PARTIAL_INFORMATION*>(classBuffer);
+        if (diagnosticValue->Type == REG_DWORD && diagnosticValue->DataLength == sizeof(ULONG))
+            DiagnosticMode = *reinterpret_cast<ULONG*>(diagnosticValue->Data);
     }
     ZwClose(key);
     if (!NT_SUCCESS(status))

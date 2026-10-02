@@ -14,7 +14,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? WorkDirectory = null, int BudgetMiB = 1024, string? ReadyFile = null,
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, bool RequireImageEvidence = false,
-    string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false);
+    string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
+    string? DisposableInstance = null, long? DisposableBytes = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -26,7 +27,7 @@ public static class VerificationWorker
     {
         if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
             throw new IOException("File-only verification excludes boot/system/paging disks.");
-        if (inventory.Number != target.Number || inventory.Bytes != target.Bytes ||
+        if (inventory.Number != target.Number || inventory.Bytes != target.DiskBytes ||
             !string.Equals(inventory.Instance, target.Instance, StringComparison.OrdinalIgnoreCase))
             throw new IOException("File-only target identity changed.");
     }
@@ -141,7 +142,9 @@ public static class VerificationWorker
         return delta;
     }
     public static string Profiles() => JsonSerializer.Serialize(SavedConfigurations.List().OrderBy(p => p.Instance));
-    public static void FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
+    /// <summary>Returns the state once the cache is disabled: the point at which every pending byte must have
+    /// been drained. Later states of a re-enabled cache can legitimately hold new writes from Windows.</summary>
+    public static WriteCacheState FlushForRestoration(Action flushVolume, Action flushCache, Action disableCache,
         Func<WriteCacheState> snapshot, Action<string, WriteCacheState> record)
     {
         record("before-volume-flush", snapshot());
@@ -150,10 +153,15 @@ public static class VerificationWorker
         flushCache();
         record("after-cache-flush", snapshot());
         disableCache();
-        record("after-cache-disable", snapshot());
+        var drained = snapshot();
+        record("after-cache-disable", drained);
+        return drained;
     }
+    /// <param name="drained">The state when the cache was disabled during restoration: nothing may be pending
+    /// or in flight there. A restored cache that is enabled again (Fast or Strict) can already hold new writes
+    /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
-        WriteCacheState restored, string profiles, ulong timing)
+        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -161,8 +169,14 @@ public static class VerificationWorker
             if (!EqualityComparer<T>.Default.Equals(expected, actual))
                 mismatches.Add($"{name}: expected {JsonSerializer.Serialize(expected)}, actual {JsonSerializer.Serialize(actual)}");
         }
-        Compare(nameof(restored.DirtyBytes), 0UL, restored.DirtyBytes);
-        Compare(nameof(restored.InFlightBytes), 0UL, restored.InFlightBytes);
+        Compare("DirtyBytes when disabled", 0UL, drained.DirtyBytes);
+        Compare("InFlightBytes when disabled", 0UL, drained.InFlightBytes);
+        Compare("Enabled when disabled", false, drained.Enabled);
+        if (!restored.Enabled)
+        {
+            Compare(nameof(restored.DirtyBytes), 0UL, restored.DirtyBytes);
+            Compare(nameof(restored.InFlightBytes), 0UL, restored.InFlightBytes);
+        }
         Compare(nameof(restored.Errors), original.State.Errors, restored.Errors);
         Compare(nameof(restored.Instance), original.State.Instance, restored.Instance);
         Compare(nameof(original.Profiles), original.Profiles, profiles);
@@ -235,8 +249,7 @@ public static class VerificationWorker
                 {
                     if (before.Enabled || before.BudgetBytes != 0 || before.DirtyBytes != 0 || before.InFlightBytes != 0)
                         throw new IOException("Active system verification must start with C: disabled, released and clean.");
-                    if (SavedConfigurations.List().Any(profile =>
-                            profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase)))
+                    if (SavedConfigurations.IsSaved(target.VolumeId))
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
                         systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName));
@@ -250,9 +263,9 @@ public static class VerificationWorker
                     if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName ||
                         original.State.Enabled || original.State.BudgetBytes != 0)
                         throw new IOException("System recovery identity or disabled/released baseline changed.");
-                    FlushForRestoration(() =>
+                    var systemDrained = FlushForRestoration(() =>
                     {
-                        using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                        using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
                         volume.Flush();
                     }, () => systemDevice.Control(WriteCacheAction.Flush), () => systemDevice.Control(WriteCacheAction.Disable),
                         systemDevice.GetWriteCacheState,
@@ -263,7 +276,7 @@ public static class VerificationWorker
                         systemDevice.SetOptions(original.State.Options);
                     var restored = systemDevice.GetWriteCacheState();
                     RunStorage.AtomicJson(job.Reply, restored);
-                    var mismatches = RestorationMismatches(original, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
+                    var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
                     var requiredOracles = job.ImageOraclePaths ?? [];
@@ -495,6 +508,64 @@ public static class VerificationWorker
             ReportFailures(checks, Console.Error);
             return checks.All(check => check.Result != "FAIL") ? 0 : 1;
         }
+        if (job.Operation == "disk-removal-preflight")
+        {
+            var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
+            ValidateFileTarget(target, inventory);
+            if (!string.Equals(target.Instance, job.DisposableInstance, StringComparison.OrdinalIgnoreCase) ||
+                target.DiskBytes != job.DisposableBytes)
+                throw new IOException("Disposable physical disk identity does not match the explicit removal target.");
+            var output = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!));
+            output.ValidateCurrent();
+            if (output.Number == target.Number || output.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Removal evidence and oracle must reside on another physical disk.");
+            var preview = await DiskEjection.PreviewAsync(target.Device);
+            if (!preview.Ejectable || preview.Volumes.Count != 1)
+                throw new NotSupportedException(preview.UnsupportedReason ?? "The first removal suite requires exactly one lettered data volume.");
+            using var cache = new CacheDevice(target.Device);
+            if (cache.GetWriteCacheState().BudgetBytes != 0 || SavedConfigurations.IsSaved(target.VolumeId))
+                throw new IOException("Removal verification requires an unconfigured disposable volume without a saved profile.");
+            RunStorage.AtomicJson(job.Reply, new { Target = target, Output = output, Preview = preview });
+            return 0;
+        }
+        if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
+        {
+            // No retained volume/cache handle may veto our own request.
+            var expectedEject = await DiskEjection.PreviewAsync(target.Device);
+            if (expectedEject.DiskNumber != target.Number || expectedEject.DiskBytes != target.DiskBytes ||
+                !expectedEject.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase) ||
+                expectedEject.VolumeIds is null || expectedEject.VolumeIds.Count != 1 ||
+                !expectedEject.VolumeIds.TryGetValue(target.Device, out var volumeId) ||
+                !volumeId.Equals(target.VolumeId, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("The recorded removal target changed before eject preview.");
+            if (job.Operation == "disk-removal-eject-windows")
+            {
+                // Observe and close the handle. No Disable, Flush, Release or
+                // filesystem flush is issued by this test before native eject.
+                using (var observed = new CacheDevice(target.Device))
+                {
+                    var state = observed.GetWriteCacheState();
+                    if (!state.Enabled || state.DirtyBytes < (8UL << 20) || state.LastError != 0)
+                        throw new IOException("Native Windows eject requires the active dirty-cache precondition.");
+                    RunStorage.AtomicJson(job.Reply + ".before.json", new WindowsEjectPrecondition(target, state,
+                        observed.GetDiagnostics(), DateTimeOffset.UtcNow));
+                }
+                target.ValidateCurrent();
+                var current = await DiskEjection.PreviewAsync(target.Device);
+                if (!current.Ejectable || current.RemovalInstance != expectedEject.RemovalInstance ||
+                    current.RemovalMembers is null || expectedEject.RemovalMembers is null ||
+                    !current.RemovalMembers.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(expectedEject.RemovalMembers))
+                    throw new IOException("Native Windows eject scope changed before request.");
+                target.ValidateCurrent();
+                RunStorage.AtomicJson(job.Reply, WindowsDiskEjection.Request(current));
+                return 0;
+            }
+            DiskEjectResult eject;
+            try { eject = await DiskEjection.EjectAsync(target.Device, expected: expectedEject, capturePreparation: true); }
+            catch (DiskEjectVetoException veto) { eject = veto.Result; }
+            RunStorage.AtomicJson(job.Reply, eject);
+            return 0;
+        }
         Stage("target validated; opening cache device");
         using var device = new CacheDevice(target.Device, writable: true);
         Stage("cache device opened; validating device length");
@@ -504,11 +575,25 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "disk-removal-prepare":
+                result = DiskRemovalScenarios.Prepare(target, device, job.WorkDirectory!, job.BudgetMiB);
+                break;
+            case "disk-removal-verify":
+                var removalOracle = JsonSerializer.Deserialize<DiskRemovalOracle>(await File.ReadAllTextAsync(job.OraclePath!))
+                    ?? throw new InvalidDataException("Missing removal oracle.");
+                if (removalOracle.Target != target)
+                    throw new IOException("Removal oracle target identity changed.");
+                result = DiskRemovalScenarios.Verify(removalOracle, device);
+                break;
             case "capture":
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
                 if (inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0)
                     throw new IOException("Verification excludes boot/system/paging disks.");
+                // Only the supported registration is verified: topmost volume filter on every volume, none on disks.
+                var registrationProblems = DriverRegistration.Inspect().Problems();
+                if (registrationProblems.Count != 0)
+                    throw new IOException("Filter registration is not the supported volume-filter registration: " + string.Join(" ", registrationProblems));
                 var state = device.GetWriteCacheState();
                 ConfigurationManager.EnsureHealthy(state);
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
@@ -549,10 +634,10 @@ public static class VerificationWorker
                         original = original with { State = original.State with { Errors = current.Errors } };
                     }
                 }
-                FlushForRestoration(() =>
+                var drainedState = FlushForRestoration(() =>
                 {
                     Stage("flushing filesystem volume before cache drain");
-                    using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.Bytes, writable: true);
+                    using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true);
                     volume.Flush();
                 }, () =>
                 {
@@ -574,13 +659,28 @@ public static class VerificationWorker
                 else
                 {
                     ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
-                    ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                    // Available RAM on a small machine dips while other programs run; a moment later
+                    // the original budget fits again. Wait for it rather than leave the cache shrunk.
+                    var memoryWait = Stopwatch.StartNew();
+                    while (true)
+                    {
+                        try
+                        {
+                            ConfigurationManager.Apply(target, CacheConfiguration.FromState(original.State), true);
+                            break;
+                        }
+                        catch (InsufficientMemoryForCacheException) when (memoryWait.Elapsed < TimeSpan.FromMinutes(2))
+                        {
+                            Stage("waiting for enough available RAM to restore the original budget");
+                            Thread.Sleep(2000);
+                        }
+                    }
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
-                var mismatches = RestorationMismatches(original, restored, restoredProfiles, restoredTiming);
+                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
@@ -629,6 +729,19 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, profileChecks);
                 ReportFailures(profileChecks, Console.Error);
                 return profileChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache":
+                var volumeChecks = job.Operation switch
+                {
+                    "volume-registration" => VolumeScenarios.Registration(target, device),
+                    "volume-raw-disk-commands" => VolumeScenarios.RawDiskCommands(target, device, job.WorkDirectory!),
+                    "volume-shared-disk" => VolumeScenarios.SharedDisk(target, device, job.WorkDirectory!),
+                    "volume-resize" => VolumeScenarios.Resize(target, job.WorkDirectory!),
+                    "volume-snapshot" => VolumeScenarios.Snapshot(target, device, job.WorkDirectory!),
+                    _ => TrimScenarios.Run(target, device, job.WorkDirectory!)
+                };
+                RunStorage.AtomicJson(job.Reply, volumeChecks);
+                ReportFailures(volumeChecks, Console.Error);
+                return volumeChecks.Count > 0 && volumeChecks.All(c => c.Result is "PASS" or "SKIP") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);

@@ -9,9 +9,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $backupPath = (Resolve-Path -LiteralPath $BackupFile).Path
 $backup = Get-Content -LiteralPath $backupPath -Raw | ConvertFrom-Json
-if (-not $ConfirmRestore -or $backup.Version -ne 1 -or -not $backup.CreatedUtc -or $null -eq $backup.ClassUpperFilters -or $null -eq $backup.Devices)
+# Version 3: the Volume class UpperFilters and the service values before installation.
+if (-not $ConfirmRestore -or $backup.Version -ne 3 -or -not $backup.CreatedUtc -or $null -eq $backup.VolumeClassUpperFilters)
 {
-    throw 'A version-1 QueueCache registration backup and explicit -ConfirmRestore are required.'
+    throw 'A version-3 QueueCache registration backup and explicit -ConfirmRestore are required.'
 }
 
 $mountName = 'QueueCacheRecovery'
@@ -42,50 +43,18 @@ try
         $systemRoot = 'Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet'
     }
 
-    $classPath = Join-Path $systemRoot 'Control\Class\{4d36e967-e325-11ce-bfc1-08002be10318}'
-    if (-not (Test-Path -LiteralPath $classPath)) { throw 'Disk class registry key is missing.' }
-    # Validate every recorded target before changing any registration. A stale or
-    # malformed per-device key must not leave only the class filter restored.
-    $deviceTargets = @(
-        foreach ($device in @($backup.Devices))
-        {
-            if ($device.DriverKey -notmatch '^\{[0-9A-Fa-f-]{36}\}\\[0-9]{4}$' -or $null -eq $device.UpperFilters)
-            {
-                throw 'Backup contains an invalid disk driver key or filter list.'
-            }
-            $devicePath = Join-Path (Join-Path $systemRoot 'Control\Class') $device.DriverKey
-            if (-not (Test-Path -LiteralPath $devicePath))
-            {
-                throw "Recorded disk registry key is absent: $($device.DriverKey)"
-            }
-            [pscustomobject]@{ Path = $devicePath; Filters = [string[]]@($device.UpperFilters | Where-Object { $_ }) }
-        }
-    )
-    [string[]]$classFilters = @($backup.ClassUpperFilters | Where-Object { $_ })
-    if ($PSCmdlet.ShouldProcess($classPath, "restore disk-class UpperFilters from $backupPath"))
+    $volumeClassPath = Join-Path $systemRoot 'Control\Class\{71a27cdd-812a-11d0-bec7-08002be2092f}'
+    if (-not (Test-Path -LiteralPath $volumeClassPath)) { throw 'Volume class registry key is missing.' }
+    [string[]]$volumeFilters = @($backup.VolumeClassUpperFilters | Where-Object { $_ })
+    if ($PSCmdlet.ShouldProcess($volumeClassPath, "restore volume-class UpperFilters from $backupPath"))
     {
-        if ($classFilters.Count)
+        if ($volumeFilters.Count)
         {
-            New-ItemProperty -LiteralPath $classPath -Name UpperFilters -PropertyType MultiString -Value $classFilters -Force | Out-Null
+            New-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value $volumeFilters -Force | Out-Null
         }
         else
         {
-            Remove-ItemProperty -LiteralPath $classPath -Name UpperFilters -ErrorAction SilentlyContinue
-        }
-    }
-
-    foreach ($device in $deviceTargets)
-    {
-        if ($PSCmdlet.ShouldProcess($device.Path, 'restore per-device UpperFilters'))
-        {
-            if ($device.Filters.Count)
-            {
-                New-ItemProperty -LiteralPath $device.Path -Name UpperFilters -PropertyType MultiString -Value $device.Filters -Force | Out-Null
-            }
-            else
-            {
-                Remove-ItemProperty -LiteralPath $device.Path -Name UpperFilters -ErrorAction SilentlyContinue
-            }
+            Remove-ItemProperty -LiteralPath $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue
         }
     }
 

@@ -42,3 +42,19 @@ static_assert(!QcObservationCode(IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES));
 static_assert(!QcObservationCode(IOCTL_SCSI_PASS_THROUGH));
 static_assert(!QcObservationCode(IOCTL_STORAGE_RESET_DEVICE));
 static_assert(!QcObservationCode(IOCTL_STORAGE_FIRMWARE_DOWNLOAD));
+
+// volsnap (device type 0x53). Only flush-and-hold must be ordered behind the cache's
+// pending writes (it drains them, so a shadow copy contains data that was pending in
+// RAM). Its other controls (commit, release-writes, ...) arrive while volsnap holds
+// every write and need no ordering against cached data: they are forwarded at
+// dispatch, never queued behind a request that waits for a held write (found on the
+// VM: the hold timed out and the snapshot failed).
+constexpr ULONG QcVolsnapFlushAndHoldWrites = 0x53C000; // IOCTL_VOLSNAP_FLUSH_AND_HOLD_WRITES
+constexpr bool QcSnapshotControlWithoutDrain(ULONG code)
+{
+    return DEVICE_TYPE_FROM_CTL_CODE(code) == 0x53 && code != QcVolsnapFlushAndHoldWrites;
+}
+static_assert(!QcSnapshotControlWithoutDrain(QcVolsnapFlushAndHoldWrites));
+static_assert(QcSnapshotControlWithoutDrain(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES, seen on the VM
+static_assert(QcSnapshotControlWithoutDrain(0x53C038)); // seen on the VM during a snapshot
+

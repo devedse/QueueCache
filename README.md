@@ -20,9 +20,15 @@ Remaining work is ordered in the [next phase plan](docs/NEXT_PHASE_PLAN.md).
 
 ## Product model
 
-The filter is registered with the disk class but starts inactive. Installation
-does not allocate RAM or enable caching. A new task is explicitly created for a
-volume; only a saved, identity-matched profile is restored at startup.
+QueueCache caches volumes. Installation registers the filter once as the topmost
+volume filter (directly below the file system), which covers every volume after a
+restart, including volumes created later. It starts inactive: installation does not
+allocate RAM or enable caching. A task is explicitly created for one volume (NTFS, ReFS, FAT32 or exFAT; FAT32 and exFAT
+have no journal, so a crash with Fast-mode data in RAM can damage them), and
+each volume has its own cache, also when several volumes share a disk. Only a
+saved profile whose volume (GUID), disk and size still match is restored at
+startup. Commands that disk tools send to the physical disk (health/SMART queries,
+SCSI/ATA pass-through) never reach the cache. See [volume filtering](docs/VOLUME_FILTER.md).
 
 New tasks default to:
 
@@ -43,7 +49,7 @@ See [cache policies](docs/CACHE_POLICIES.md) for the complete contract.
 Run these from an elevated terminal on the test machine:
 
 ```powershell
-qcache disk list
+qcache volume list
 qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --save
 qcache policy apply Q: --budget-mib 256 --preset Strict --save
 qcache policy status Q: --json
@@ -54,25 +60,34 @@ qcache policy resume Q:
 qcache policy remove Q:
 ```
 
-`--save` writes an administrator-only machine profile. Applying without `--save`
+`qcache volume list` shows each lettered volume with its disk, whether the filter is
+loaded, and its cache task; it exits 1 if the filter registration is not the
+supported one. `--save` writes an administrator-only machine profile for that volume
+(named by the volume GUID, so it follows the volume, not the letter). Applying without `--save`
 removes the saved profile unless `--runtime-only` is used. Pause drains while
 preserving the task; Remove drains, releases RAM and removes its saved profile.
 Files are never deleted by task removal.
 
-The desktop uses the same management library. Selecting Fast in its task editor is
+The desktop uses the same management library and shows one card per volume,
+grouped under its disk. Selecting Fast in its task editor is
 the explicit volatility acknowledgement. Closing the desktop does not stop the
 driver or change a task.
 
 ## Verification
 
 The supported current-boot runner is `qcache developer verify`. Use an elevated
-terminal, stop competing storage workloads and select a clean non-OS physical
-disk. Do not substitute private scripts for maintained scenarios.
+terminal, stop competing storage workloads and select a volume on a clean non-OS
+physical disk. Do not substitute private scripts for maintained scenarios. The
+volume-filter suites (`volumes`, `trim-cache`) and the raw `write-tests` use the lab
+VHDX from `qcache developer lab-disk create` (see developer verification).
 
 ```powershell
 qcache developer verify Q: --suite quick --output C:\QueueCache-Results
 qcache developer verify Q: --suite policies --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
+qcache developer verify V: --suite volumes --output C:\QueueCache-Results
+qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
 qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
 ```
 

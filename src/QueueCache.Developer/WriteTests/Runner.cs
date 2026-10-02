@@ -12,7 +12,8 @@ public static class Runner
 {
     public static async Task<int> RunAsync(string[] args)
     {
-        // Explicitly destructive lab tool. Fixed region, no partition table writes, no file-system formatting.
+        // Explicitly destructive lab tool. Fixed region of an unformatted (RAW) volume, written through the
+        // volume handle (the cache filter's position). No partition table writes, no file-system formatting.
         ulong requestedSeed = 0;
         if (args.Length >= 2 && args[^2] == "--seed")
         {
@@ -21,7 +22,8 @@ public static class Runner
             args = args[..^2];
         }
         if (!OperatingSystem.IsWindows() || args.Length is not (4 or 5 or 6) ||
-            !int.TryParse(args[0], out var diskNumber) || diskNumber <= 0 ||
+            args[0] is not { Length: 2 } || !char.IsAsciiLetter(args[0][0]) || args[0][1] != ':' ||
+            !Guid.TryParseExact(args[2], "B", out _) ||
             !long.TryParse(args[1], out var expectedSize) || expectedSize < (4L << 30) ||
             args[3] is not ("--write-disposable-region" or "--write-and-read-disposable-region" or "--verify-only" or "--verify-base-prefix" or "--write-dirty-prefix" or "--verify-dirty-prefix" or "--write-through-check" or "--write-concurrent-check" or "--write-toggle-check" or "--write-cancellation-check" or "--write-performance-check"))
         {
@@ -48,13 +50,15 @@ public static class Runner
         if (patternSeed == 0 && args[3] is "--write-through-check" or "--write-concurrent-check" or "--write-toggle-check" or "--write-cancellation-check")
             patternSeed = BinaryPrimitives.ReadUInt64LittleEndian(Guid.NewGuid().ToByteArray()) | 1UL;
         bool writing = args[3].StartsWith("--write-", StringComparison.Ordinal), exerciseCache = args[3] == "--write-and-read-disposable-region";
+        var volume = $"{char.ToUpperInvariant(args[0][0])}:";
         try
         {
-            // Inspect the live disk inside the executable, not only in an optional wrapper.
+            // Inspect the live volume and its disk inside the executable, not only in an optional wrapper.
             var probe = new ProcessStartInfo("powershell.exe") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
             probe.ArgumentList.Add("-NoProfile");
             probe.ArgumentList.Add("-Command");
-            probe.ArgumentList.Add($"$ErrorActionPreference='Stop'; $d=Get-Disk -Number {diskNumber}; $c=Get-CimInstance Win32_DiskDrive -Filter 'Index={diskNumber}'; [pscustomobject]@{{Size=[long]$d.Size; Boot=$d.IsBoot; System=$d.IsSystem; Raw=($d.PartitionStyle -eq 'RAW'); Partitions=$d.NumberOfPartitions; Logical=$d.LogicalSectorSize; Physical=$d.PhysicalSectorSize; Instance=$c.PNPDeviceID}} | ConvertTo-Json -Compress");
+            // Only the validated ASCII letter enters this script.
+            probe.ArgumentList.Add($"$ErrorActionPreference='Stop'; $v=Get-Volume -DriveLetter {volume[0]}; $p=@(Get-Partition -DriveLetter {volume[0]}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); [pscustomobject]@{{Size=[long]$p[0].Size; FileSystem=[string]$v.FileSystem; VolumePath=[string]$v.Path; DiskNumber=[int]$d.Number; Boot=$d.IsBoot; System=$d.IsSystem; PartitionBoot=$p[0].IsBoot; PartitionSystem=$p[0].IsSystem; Logical=$d.LogicalSectorSize; Physical=$d.PhysicalSectorSize; Instance=$c.PNPDeviceID}} | ConvertTo-Json -Compress");
             using var process = Process.Start(probe) ?? throw new IOException("Cannot inspect disk.");
             var output = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
@@ -67,25 +71,30 @@ public static class Runner
             if (process.ExitCode != 0)
                 throw new IOException(await error);
             var identity = JsonSerializer.Deserialize<Identity>(await output) ?? throw new IOException("Missing disk identity.");
-            if (identity.Size != expectedSize || identity.Boot || identity.System || !identity.Raw || identity.Partitions != 0 ||
-                !string.Equals(identity.Instance, args[2], StringComparison.OrdinalIgnoreCase) ||
+            // RAW = no file system recognised it: no files can be damaged. The disk must not hold Windows.
+            if (identity.Size != expectedSize || identity.Boot || identity.System || identity.PartitionBoot || identity.PartitionSystem ||
+                identity.FileSystem is not ("" or "RAW") || identity.DiskNumber <= 0 ||
+                !string.Equals(Operations.DiskTarget.ParseVolumeId(identity.VolumePath), args[2], StringComparison.OrdinalIgnoreCase) ||
                 identity.Logical is not (512 or 4096) || identity.Physical is not (512 or 4096))
-                throw new IOException("Disk identity/empty-secondary/alignment guard refused target.");
-            var properties = DeviceFilters.Inspect(identity.Instance);
+                throw new IOException("Volume identity/unformatted-non-OS/alignment guard refused target.");
+            var diskNumber = identity.DiskNumber;
+            var registration = Operations.DriverRegistration.Inspect();
             Console.WriteLine(JsonSerializer.Serialize(new
             {
+                volume,
                 identity,
-                properties,
+                registration,
+                registrationProblems = registration.Problems(),
                 regionStart,
                 regionLength
             }));
             WriteCacheState? cacheBefore = null;
             if (exerciseCache || args[3] is "--write-dirty-prefix" or "--write-through-check" or "--write-concurrent-check" or "--write-toggle-check" or "--write-cancellation-check" or "--write-performance-check")
             {
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}");
+                using var cache = new CacheDevice(volume);
                 cacheBefore = cache.GetWriteCacheState();
                 if (!cacheBefore.Enabled || cacheBefore.Faulted || cacheBefore.DirtyBytes != 0)
-                    throw new IOException("Cache exercise requires a healthy enabled, initially clean cache.");
+                    throw new IOException($"Cache exercise requires a healthy enabled, initially clean cache on {volume} (for example: qcache start {volume} 256).");
             }
 
             // An independent in-memory oracle. Pattern is stable across processes/reboots.
@@ -96,8 +105,8 @@ public static class Runner
             {
                 if (cacheBefore!.BudgetBytes != (4 << 20))
                     throw new IOException("Performance comparison requires the same 4 MiB budget throughout.");
-                using var disk = new RawDisk(diskNumber, expectedSize, true);
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}", writable: true);
+                using var disk = new RawDisk(volume, diskNumber, expectedSize, true);
+                using var cache = new CacheDevice(volume, writable: true);
                 cache.Control(WriteCacheAction.LabDelay, value: 0);
                 cache.Control(WriteCacheAction.LabFault, value: 0);
                 foreach (var size in new[] { 2 << 20, regionLength })
@@ -156,9 +165,9 @@ public static class Runner
             {
                 if (cacheBefore!.PayloadCapacity < (2 << 20) || cacheBefore.PayloadCapacity > (8 << 20) || cacheBefore.PayloadCapacity % blockSize != 0)
                     throw new IOException("Cancellation test requires 2–8 MiB usable cache, divisible by 64 KiB.");
-                using var ordinary = new RawDisk(diskNumber, expectedSize, true);
-                using var cancelledDisk = new RawDisk(diskNumber, expectedSize, true);
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}", writable: true);
+                using var ordinary = new RawDisk(volume, diskNumber, expectedSize, true);
+                using var cancelledDisk = new RawDisk(volume, diskNumber, expectedSize, true);
+                using var cache = new CacheDevice(volume, writable: true);
                 const int cancelledOffset = regionLength - blockSize;
                 var originalTarget = ordinary.Read(regionStart + cancelledOffset, blockSize);
                 if (originalTarget.AsSpan().SequenceEqual(oracle.AsSpan(cancelledOffset, blockSize)))
@@ -177,7 +186,7 @@ public static class Runner
                         {
                             if (!OperatingSystem.IsWindows())
                                 throw new PlatformNotSupportedException();
-                            using var control = new CacheDevice($"PhysicalDrive{diskNumber}", writable: true);
+                            using var control = new CacheDevice(volume, writable: true);
                             control.Control(WriteCacheAction.Flush);
                         });
                         if (!SpinWait.SpinUntil(() => OperatingSystem.IsWindows() && cache.GetWriteCacheState().Draining, 1000))
@@ -222,7 +231,7 @@ public static class Runner
                 try
                 {
                     for (var i = 0; i < workers; i++)
-                        handles.Add(new RawDisk(diskNumber, expectedSize, true));
+                        handles.Add(new RawDisk(volume, diskNumber, expectedSize, true));
                     for (var i = 0; i < regionLength; i += blockSize)
                         if (handles[0].Read(regionStart + i, blockSize).AsSpan().SequenceEqual(oracle.AsSpan(i, blockSize)))
                             throw new IOException("Concurrent oracle must differ from existing disk data.");
@@ -241,7 +250,7 @@ public static class Runner
                     {
                         if (!OperatingSystem.IsWindows())
                             throw new PlatformNotSupportedException();
-                        using var cache = new CacheDevice($"PhysicalDrive{diskNumber}", writable: true);
+                        using var cache = new CacheDevice(volume, writable: true);
                         var count = 0;
                         do
                         {
@@ -261,7 +270,7 @@ public static class Runner
                     for (var i = 0; i < regionLength; i += blockSize)
                         if (!handles[0].Read(regionStart + i, blockSize).AsSpan().SequenceEqual(oracle.AsSpan(i, blockSize)))
                             throw new IOException($"Final concurrent oracle mismatch at {i}.");
-                    using var stateHandle = new CacheDevice($"PhysicalDrive{diskNumber}");
+                    using var stateHandle = new CacheDevice(volume);
                     var after = stateHandle.GetWriteCacheState();
                     var accepted = after.AcceptedBytes - cacheBefore!.AcceptedBytes;
                     if (completedBytes != regionLength || after.Faulted || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
@@ -289,7 +298,7 @@ public static class Runner
             {
                 if (cacheBefore!.PayloadCapacity < (ulong)prefixBytes)
                     throw new IOException("Dirty prefix must fit in the configured cache.");
-                using (var disk = new RawDisk(diskNumber, expectedSize, true))
+                using (var disk = new RawDisk(volume, diskNumber, expectedSize, true))
                 {
                     // Reject an idempotent test before issuing ANY write: every block must be novel.
                     for (var i = 0; i < prefixBytes; i += blockSize)
@@ -299,7 +308,7 @@ public static class Runner
                         disk.Write(regionStart + i, oracle.AsSpan(i, blockSize));
                 }
                 // No FlushFileBuffers and no post-write data read. Closing the raw handle must not be mistaken for a flush.
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}");
+                using var cache = new CacheDevice(volume);
                 var dirty = cache.GetWriteCacheState();
                 if (dirty.Faulted || dirty.DirtyBytes == 0 || dirty.AcceptedBytes - cacheBefore.AcceptedBytes != (ulong)prefixBytes)
                     throw new IOException("Could not establish acknowledged dirty data for reboot test; use a bounded lab drain delay.");
@@ -321,9 +330,9 @@ public static class Runner
                 if (cacheBefore!.PayloadCapacity < pendingBytes)
                     throw new IOException("Write-through test needs at least 2 MiB usable cache.");
                 // Open both handles before dirtying data: handle metadata queries must not become the tested barrier.
-                using var ordinary = new RawDisk(diskNumber, expectedSize, true);
-                using var through = new RawDisk(diskNumber, expectedSize, true, writeThrough: true);
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}");
+                using var ordinary = new RawDisk(volume, diskNumber, expectedSize, true);
+                using var through = new RawDisk(volume, diskNumber, expectedSize, true, writeThrough: true);
+                using var cache = new CacheDevice(volume);
                 for (var i = 0; i < pendingBytes + blockSize; i += blockSize)
                     if (ordinary.Read(regionStart + i, blockSize).AsSpan().SequenceEqual(oracle.AsSpan(i, blockSize)))
                         throw new IOException("Write-through oracle must differ from existing disk data.");
@@ -359,7 +368,7 @@ public static class Runner
             }
             if (prefixBytes != 0)
             {
-                using var disk = new RawDisk(diskNumber, expectedSize, false);
+                using var disk = new RawDisk(volume, diskNumber, expectedSize, false);
                 for (var i = 0; i < prefixBytes; i += blockSize)
                     if (!disk.Read(regionStart + i, blockSize).AsSpan().SequenceEqual(oracle.AsSpan(i, blockSize)))
                         throw new IOException($"Recovered accepted-write prefix mismatch at {i}.");
@@ -375,7 +384,7 @@ public static class Runner
                 return 0;
             }
             var watch = Stopwatch.StartNew();
-            using (var disk = new RawDisk(diskNumber, expectedSize, writing))
+            using (var disk = new RawDisk(volume, diskNumber, expectedSize, writing))
             {
                 if (writing)
                 {
@@ -408,17 +417,20 @@ public static class Runner
                 if (writing)
                     disk.Flush();
             }
-            using (var reopened = new RawDisk(diskNumber, expectedSize, false))
+            using (var reopened = new RawDisk(volume, diskNumber, expectedSize, false))
                 for (var i = 0; i < regionLength; i += blockSize)
                     if (!reopened.Read(regionStart + i, blockSize).AsSpan().SequenceEqual(oracle.AsSpan(i, blockSize)))
                         throw new IOException($"Reopened data mismatch at region offset {i}.");
             if (cacheBefore is not null)
             {
-                using var cache = new CacheDevice($"PhysicalDrive{diskNumber}");
+                using var cache = new CacheDevice(volume);
                 var after = cache.GetWriteCacheState();
+                // 64 MiB base plus 2 MiB of 4 KiB overwrites are admitted. An overwrite of a block that is still
+                // pending is merged in RAM (Idle/Balanced/Deferred), so between 64 MiB and everything admitted drains.
+                var drained = after.DrainedBytes - cacheBefore.DrainedBytes;
                 if (after.Faulted || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
                     after.AcceptedBytes - cacheBefore.AcceptedBytes != 69206016 ||
-                    after.DrainedBytes - cacheBefore.DrainedBytes != 69206016 || after.CacheReadBytes <= cacheBefore.CacheReadBytes ||
+                    drained < regionLength || drained > 69206016 || after.CacheReadBytes <= cacheBefore.CacheReadBytes ||
                     after.Flushes <= cacheBefore.Flushes)
                     throw new IOException("Cache counters do not prove admission, RAM reads, full drain and flush.");
                 Console.WriteLine(JsonSerializer.Serialize(new
@@ -433,6 +445,7 @@ public static class Runner
                 result = "PASS",
                 mode = args[3],
                 patternSeed,
+                volume,
                 diskNumber,
                 regionStart,
                 regionLength,
@@ -456,18 +469,20 @@ public static class Runner
     }
 }
 
-internal sealed record Identity(long Size, bool Boot, bool System, bool Raw, int Partitions, uint Logical, uint Physical, string Instance);
+internal sealed record Identity(long Size, string FileSystem, string VolumePath, int DiskNumber, bool Boot, bool System,
+    bool PartitionBoot, bool PartitionSystem, uint Logical, uint Physical, string Instance);
 
 internal sealed class RawDisk : IDisposable
 {
     private readonly SafeFileHandle handle;
     private readonly IntPtr buffer;
     private readonly bool writable;
-    public RawDisk(int number, long expectedSize, bool write, bool writeThrough = false)
+    /// <summary>Unbuffered handle on the volume (\\.\X:), the stack position of the cache filter.</summary>
+    public RawDisk(string volume, int number, long expectedSize, bool write, bool writeThrough = false)
     {
         writable = write;
         // No Windows file cache; VirtualAlloc is allocation-granularity aligned.
-        handle = Native.CreateFileW($"\\\\.\\PhysicalDrive{number}", write ? 0xC0000000u : 0x80000000u, 3,
+        handle = Native.CreateFileW(DevicePath.NormalizeVolume(volume), write ? 0xC0000000u : 0x80000000u, 3,
             IntPtr.Zero, 3, 0x20000000u | (writeThrough ? 0x80000000u : 0), IntPtr.Zero);
         if (handle.IsInvalid)
         {
@@ -481,13 +496,13 @@ internal sealed class RawDisk : IDisposable
             if (!Native.DeviceIoControl(handle, 0x7405c, IntPtr.Zero, 0, length, 8, out var count, IntPtr.Zero))
                 throw new Win32Exception();
             if (count != 8 || BinaryPrimitives.ReadInt64LittleEndian(length) != expectedSize)
-                throw new IOException("Opened disk length changed.");
-            // Check the opened handle's device number, not just the name passed to CreateFile.
+                throw new IOException("Opened volume length changed.");
+            // Check the opened handle's disk number, not just the name passed to CreateFile.
             var id = new byte[12];
             if (!Native.DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, id, 12, out count, IntPtr.Zero))
                 throw new Win32Exception();
-            if (count != 12 || BinaryPrimitives.ReadInt32LittleEndian(id.AsSpan(4)) != number)
-                throw new IOException("Opened device number mismatch.");
+            if (count != 12 || BinaryPrimitives.ReadInt32LittleEndian(id) != 7 || BinaryPrimitives.ReadInt32LittleEndian(id.AsSpan(4)) != number)
+                throw new IOException("Opened volume is not on the expected disk.");
             buffer = Native.VirtualAlloc(IntPtr.Zero, 65536, 0x3000, 4);
             if (buffer == IntPtr.Zero)
                 throw new Win32Exception();

@@ -14,8 +14,21 @@ internal static class Commands
         var root = new RootCommand("QueueCache disk cache. Fast mode is volatile; this build uses a test-signed driver.");
         var policy = new Command("policy", "Cache configuration, state and persistence.");
         root.Subcommands.Add(policy);
-        var disks = new Command("disk", "Disk inventory and filter registration (separate from cache policy).");
-        var diskList = new Command("list", "Show volumes, physical drive, GiB and boot/system status.");
+        var volumes = new Command("volume", "Volumes QueueCache can cache (one cache per volume), and the filter registration.");
+        var volumeList = new Command("list", "Show each lettered volume, its disk, whether the filter is loaded, and its cache task.");
+        volumeList.SetAction(async (_, token) =>
+        {
+            var problems = DriverRegistration.Inspect().Problems();
+            Console.WriteLine(problems.Count == 0 ? "Filter registration: every volume (topmost volume filter)." : "Filter registration: " + string.Join(" ", problems));
+            var saved = SavedConfigurations.List();
+            foreach (var item in await VolumeCatalog.ListAsync(token))
+                Console.WriteLine($"{item.Display} | {VolumeStatus(item, saved)}");
+            return problems.Count == 0 ? 0 : 1;
+        });
+        volumes.Subcommands.Add(volumeList);
+        root.Subcommands.Add(volumes);
+        var disks = new Command("disk", "Physical disks and the volumes on them.");
+        var diskList = new Command("list", "Show each disk with its lettered volumes, GiB and Windows status.");
         diskList.SetAction(async (_, token) =>
         {
             foreach (var disk in await DiskCatalog.ListAsync(token))
@@ -23,22 +36,31 @@ internal static class Commands
             return 0;
         });
         disks.Subcommands.Add(diskList);
-        foreach (var attach in new[] { true, false })
+        var eject = new Command("eject", "Safely eject the entire physical disk containing this volume. Every volume on the disk is flushed first.");
+        var ejectVolume = new Argument<string>("volume") { Description = "A lettered volume on the disk to eject, e.g. R:." };
+        ValidateVolume(ejectVolume);
+        var previewEject = new Option<bool>("--preview") { Description = "Show the disk, affected volumes and Windows eject capability without changing anything." };
+        eject.Arguments.Add(ejectVolume);
+        eject.Options.Add(previewEject);
+        eject.SetAction(async (p, token) =>
         {
-            var command = new Command(attach ? "attach" : "detach", "Select/remove this disk's filter. Reboot required; does not enable caching.");
-            var drive = new Argument<string>("volume");
-            ValidateVolume(drive);
-            command.Arguments.Add(drive);
-            command.SetAction(async (p, token) =>
+            var selected = p.GetValue(ejectVolume)!;
+            if (p.GetValue(previewEject))
             {
-                Console.WriteLine(await DriverRegistration.ChangeAsync(p.GetValue(drive)!, attach, token));
-                return 0;
-            });
-            disks.Subcommands.Add(command);
-        }
+                var found = await DiskEjection.PreviewAsync(selected, token);
+                Console.WriteLine(JsonSerializer.Serialize(found, JsonOptions));
+                return found.Ejectable ? 0 : 1;
+            }
+            var result = await DiskEjection.EjectAsync(selected, new ConsoleProgress(), token);
+            Console.WriteLine(result.RemovalObserved
+                ? $"Windows removed disk {result.Disk.DiskNumber} ({string.Join(", ", result.Disk.Volumes)})."
+                : $"Windows accepted eject of disk {result.Disk.DiskNumber}, but removal was not observed within five seconds. Check device state before disconnecting it; affected caches remain disabled.");
+            return result.RemovalObserved ? 0 : 1;
+        });
+        disks.Subcommands.Add(eject);
         root.Subcommands.Add(disks);
         var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
-        var volume = new Argument<string>("volume") { Description = "NTFS volume, e.g. Q:" };
+        var volume = new Argument<string>("volume") { Description = "Lettered volume with a file system (NTFS, ReFS, FAT32, exFAT), e.g. Q:. Each volume has its own cache, also when several share one disk." };
         ValidateVolume(volume);
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 4096 };
         var preset = new Option<CachePreset>("--preset") { DefaultValueFactory = _ => CachePreset.Fast };
@@ -79,7 +101,15 @@ internal static class Commands
             configuration.Validate(accepted); // Validate before opening a disk. Fast requires explicit CLI acknowledgement.
             if (p.GetValue(save) && p.GetValue(runtimeOnly))
                 throw new ArgumentException("--save and --runtime-only cannot be combined.");
-            var state = await CacheTasks.SaveAsync(p.GetValue(volume)!, configuration, p.GetValue(save), accepted,
+            var selectedVolume = p.GetValue(volume)!;
+            try
+            {
+                var fileSystem = new DriveInfo(selectedVolume + "\\").DriveFormat;
+                if (FileSystems.IsMounted(fileSystem) && !FileSystems.IsJournaled(fileSystem) && configuration.Preset == CachePreset.Fast)
+                    Console.Error.WriteLine($"Warning: {selectedVolume} ({fileSystem}) {FileSystems.NoJournalWarning}");
+            }
+            catch (IOException) { } // Unformatted: Apply below reports it.
+            var state = await CacheTasks.SaveAsync(selectedVolume, configuration, p.GetValue(save), accepted,
                 new ConsoleProgress(), token, p.GetValue(runtimeOnly));
             Console.WriteLine(JsonSerializer.Serialize(state, JsonOptions));
             return 0;
@@ -101,7 +131,7 @@ internal static class Commands
                 else
                 {
                     var target = await DiskTarget.InspectAsync(selected, token);
-                    var persistent = SavedConfigurations.List().Any(profile => profile.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase));
+                    var persistent = SavedConfigurations.IsSaved(target.VolumeId);
                     await CacheTasks.SetEnabledAsync(selected, name == "resume", persistent, token, p.GetValue(transient));
                 }
                 Console.WriteLine($"Cache task {name} completed.");
@@ -112,7 +142,7 @@ internal static class Commands
         var profiles = new Command("profiles", "Show saved machine configurations without applying them.");
         profiles.SetAction(_ => { Console.WriteLine(JsonSerializer.Serialize(SavedConfigurations.List(), JsonOptions)); return 0; });
         policy.Subcommands.Add(profiles);
-        var restore = new Command("restore", "Apply saved profiles only when volume, PnP identity and size still match. Used by the installer startup task.");
+        var restore = new Command("restore", "Apply saved profiles only when the volume (GUID), its disk's PnP identity and its size still match. Used by the installer startup task.");
         restore.SetAction(async (_, token) =>
         {
             var results = await SavedConfigurations.RestoreAsync(new ConsoleProgress(), token);
@@ -167,26 +197,6 @@ internal static class Commands
         Add("status", ["device"], ["--json"], policy, "cache-status");
         Add("configure", ["device", "value"], [], policy);
         Add("set", ["device", "preset"], ["--accept-volatile-flush"], policy, "policy");
-        var filter = new Command("lab-filter", "Internal guarded installer integration.");
-        foreach (var action in new[] { "inspect", "add", "remove" })
-        {
-            var command = new Command(action);
-            var instance = new Argument<string>("instance");
-            command.Arguments.Add(instance);
-            var service = new Argument<string>("service");
-            var marker = new Option<bool>("--lab-installer");
-            if (action != "inspect")
-            {
-                command.Arguments.Add(service);
-                command.Options.Add(marker);
-            }
-            command.SetAction(p => compatibility(action == "inspect"
-                ? ["lab-filter", action, p.GetValue(instance)!]
-                : p.GetValue(marker) ? ["lab-filter", action, p.GetValue(instance)!, p.GetValue(service)!, "--lab-installer"]
-                : ["lab-filter", action, p.GetValue(instance)!, p.GetValue(service)!]));
-            filter.Subcommands.Add(command);
-        }
-        root.Subcommands.Add(filter);
         root.Subcommands.Add(DeveloperCommands.Create(compatibility));
         return root;
 
@@ -203,6 +213,22 @@ internal static class Commands
                 .Concat(options.Where(o => p.GetValue(o)).Select(o => o.Name)).ToArray()));
             (parent ?? root).Subcommands.Add(command);
         }
+    }
+    private static string VolumeStatus(VolumeDescription volume, IReadOnlyList<SavedConfiguration> saved)
+    {
+        var profile = saved.Any(p => p.Matches(volume.VolumeId)) ? " | saved for startup" : "";
+        try
+        {
+            using var device = new CacheDevice(volume.Volume);
+            var state = device.GetWriteCacheState();
+            return state.BudgetBytes == 0 ? "no cache" + profile
+                : $"{state.BudgetBytes >> 20} MiB {(state.UnsafeDefer ? "Fast" : "Strict")} cache, {state.RuntimeStatus}{profile}";
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50)
+        {
+            return "filter not loaded (restart Windows after installing)" + profile;
+        }
+        catch (Exception ex) { return "state unavailable: " + ex.Message + profile; }
     }
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static void ValidateVolume(Argument<string> argument) => argument.Validators.Add(result =>

@@ -1,7 +1,17 @@
 # Active system-disk operation map
 
-Updated: 2026-09-24. This is the A07/T023 map of paths that can reach the current
-disk filter. It records implemented behavior and gaps. C: is a normal product
+Updated: 2026-09-24 (volume filter note 2026-09-28). This is the A07/T023 map of
+paths that can reach the filter. It records implemented behavior and gaps.
+
+Since the volume filter ([volume filtering](VOLUME_FILTER.md)) the filter sits on
+C:'s volume stack, directly below NTFS and above `volsnap`, BitLocker (`fvevol`),
+`iorate`, ReadyBoost (`rdyboost`) and `volmgr`; offsets are volume offsets and
+page-file ranges are the target volume's own. Requests to the physical disk
+(pass-through, SMART, firmware polls) no longer reach it. The paths below are
+unchanged in the driver; where a row says "disk", read "the cached volume". Crash
+dumps and hibernation still write through the dump stack below every filter.
+The length and sector size are queried on first need from a PASSIVE_LEVEL thread,
+never from `IRP_MN_START_DEVICE` (on the boot volume that reset the machine). C: is a normal product
 target; normal activation is implemented, not proof of complete system-disk
 correctness. Source references name the owning function rather than a historical
 test wrapper.
@@ -41,11 +51,11 @@ race cannot explain an older build's incident.
 | Surprise removal/final remove | Surprise removal marks the cache gone and wakes waiters; later destruction reports and releases any volatile dirty data because the lower device is already unavailable. Final remove closes admission, waits remove locks and worker exit, attempts its removal barrier, destroys cache state, detaches and deletes the device. | No false persistence promise on surprise loss. Normal removal ordering exists. | T053 lifetime/single-completion proof; A13 hot-remove scope decision. |
 | Storage controls and TRIM | Read-only observation controls bypass the worker without draining. Other controls are ordered; media-changing/unknown controls drain then invalidate clean data. METHOD_NEITHER and raw controller pass-through are rejected from the system worker because caller pointers/context cannot be preserved there. | Conservative ordering; file-level TRIM is unsupported on the current VM. | T056 supported-control/TRIM scope. |
 | Direct/buffered data | The filter copies the lower device's direct/buffered flags. Cache buffers are nonpaged; data mapping uses the request MDL when present. All dispatch/cache code is nonpageable. | Necessary foundation, not memory-pressure qualification. | T053 allocation/pin/progress and A09 bounded memory-pressure exercise. |
-| Saved-profile startup | Installer task runs `qcache policy restore` as SYSTEM after a 30-second startup delay. Restore validates schema, volume, PnP identity, disk size, policy and volatile-flush acknowledgement, then uses the same unrestricted public Apply path. | Exact 0.4.87.1 task completed successfully with fixed 4 GiB C: pagefile, dump registration and a passing post-restart oracle. | Broader startup failure, power and servicing matrix remains. |
+| Saved-profile startup | Installer task runs `qcache policy restore` as SYSTEM after a 30-second startup delay. Restore validates schema, volume GUID, the disk's PnP identity, volume size, policy and volatile-flush acknowledgement, then uses the same unrestricted public Apply path. | Exact 0.4.87.1 task completed successfully with fixed 4 GiB C: pagefile, dump registration and a passing post-restart oracle. | Broader startup failure, power and servicing matrix remains. |
 
 ## Paging-read ownership and wait order (plan 38, T082)
 
-Threads per disk: one request worker (sole foreground owner of admission,
+Threads per cached volume: one request worker (sole foreground owner of admission,
 controls and fences), up to four drainers, and one paging-read thread.
 
 - Ownership: after CSQ removal the worker either completes a request or, for an

@@ -21,7 +21,17 @@ Check(window.Icon is not null, "application window icon is embedded");
 Dispatcher.UIThread.RunJobs();
 using (var frame = window.CaptureRenderedFrame() ?? throw new Exception("No rendered dashboard frame.")) frame.Save(Path.Combine(output, "dashboard.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
 var labels = window.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();
-Check(labels.Contains("Active") && labels.Contains("Available"), "active and available disks render");
+Check(labels.Contains("Active") && labels.Contains("Available"), "active and available volumes render");
+Check(labels.Count(t => t?.StartsWith("Disk ") == true) == 2 && labels.Any(t => t?.Contains("each volume has its own cache") == true), "volumes are grouped under their disk; a shared disk says each volume has its own cache");
+Check(window.GetVisualDescendants().OfType<Button>().Count(b => Equals(b.Content, "Safely eject disk 1")) == 1 &&
+      !window.GetVisualDescendants().OfType<Button>().Any(b => Equals(b.Content, "Safely eject disk 0")),
+    "the disk group offers one safe-eject action, never on the system disk");
+Check(labels.Contains("Q: Games") && labels.Contains("C:") && labels.Contains("R:"), "one card per lettered volume");
+Check(labels.Any(t => t?.Contains("not formatted") == true), "an unformatted volume explains why it cannot be cached");
+Check(labels.Any(t => t?.Contains("FAT32 has no journal") == true), "a FAT32 volume can be cached and warns that it has no journal");
+Check(labels.Any(t => t?.Contains("SAVED VOLUMES NOT CONNECTED") == true && t?.Contains("Unavailable") == false) &&
+      labels.Any(t => t?.Contains("T: · {00000000-0000-0000-0000-000000000005} · Unavailable") == true),
+    "a disconnected saved volume is shown without invented live cache counters");
 Check(!labels.Any(t => t?.Contains("Inspect") == true), "no manual inspect step");
 // Colour keys use the same brushes the bar and chart draw with.
 var swatches = window.GetVisualDescendants().OfType<Border>().Where(b => b.Width == 11 && b.Background is not null).ToArray();
@@ -30,7 +40,7 @@ var colours = swatches.Select(b => (b.Background as Avalonia.Media.ISolidColorBr
 Check(new[] { "#3489DB", "#087F8C", "#9A66CC", "#E8F1F2" }.All(hex => colours.Contains(Avalonia.Media.Color.Parse(hex))), "legend colours match the occupancy palette");
 var buttons = window.GetVisualDescendants().OfType<Button>().ToArray();
 var inventoryReads = fixture.InventoryReads;
-buttons.Single(b => Equals(b.Content, "Refresh disks")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+buttons.Single(b => Equals(b.Content, "Refresh volumes")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Dispatcher.UIThread.RunJobs();
 Check(fixture.InventoryReads == inventoryReads + 1, "manual inventory refresh remains immediate between fallback scans");
 Check((DateTimeOffset)typeof(MainWindow).GetField("nextInventory", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)! > DateTimeOffset.UtcNow.AddSeconds(100), "inventory fallback is independent of fast telemetry interval");
@@ -50,41 +60,75 @@ Check(fixture.Removes == 1, "Remove uses draining task operation");
 fixture.PendingFlush = new();
 buttons.Single(b => Equals(b.Content, "Flush now") && b.IsVisible).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Dispatcher.UIThread.RunJobs();
-Check(!pause.IsEnabled, "same-disk mutations disabled during pending Flush");
-Check(buttons.Single(b => Equals(b.Content, "Add cache")).IsEnabled, "another disk remains configurable during pending Flush");
+Check(!pause.IsEnabled, "same-volume mutations disabled during pending Flush");
+var addButtons = buttons.Where(b => Equals(b.Content, "Add cache")).ToArray();
+Check(addButtons.Length == 3 && addButtons[0].IsEnabled, "another volume remains configurable during pending Flush");
+Check(addButtons[1].IsEnabled, "a FAT32 volume can get a cache");
+Check(!addButtons[2].IsEnabled, "an unformatted volume cannot get a cache");
 var duringFlush = fixture.DataReads;
 Invoke("Sample").GetAwaiter().GetResult();
 Check(fixture.DataReads > duringFlush, "telemetry continues during pending Flush");
 fixture.PendingFlush.SetResult();
 fixture.PendingFlush = null;
 Dispatcher.UIThread.RunJobs();
-Check(pause.IsEnabled, "disk actions re-enabled after Flush completion");
+Check(pause.IsEnabled, "volume actions re-enabled after Flush completion");
 fixture.PendingInventory = new();
 var discovery = Invoke("Refresh");
 fixture.PendingDisk = new();
 var blockedSample = Invoke("Sample");
 var reads = fixture.DataReads;
 Invoke("Sample").GetAwaiter().GetResult();
-Check(fixture.DataReads > reads, "healthy disk keeps sampling while inventory and another disk are stalled");
-Check(fixture.BlockedReads == 1, "only one outstanding request per stalled disk");
+Check(fixture.DataReads > reads, "healthy volume keeps sampling while inventory and another volume are stalled");
+Check(fixture.BlockedReads == 1, "only one outstanding request per stalled volume");
 fixture.PendingDisk.SetResult(fixture.State);
 fixture.PendingDisk = null;
-fixture.PendingInventory.SetResult(fixture.Disks);
+fixture.PendingInventory.SetResult(fixture.Volumes);
 fixture.PendingInventory = null;
 Dispatcher.UIThread.RunJobs();
 Check(blockedSample.IsCompleted && discovery.IsCompleted, "pending sampling/discovery finish independently");
+// A cache left on an unformatted volume (raw developer tests) can be flushed and removed, not reconfigured.
+fixture.RawVolumeHasCache = true;
+Invoke("Sample").GetAwaiter().GetResult();
+Dispatcher.UIThread.RunJobs();
+var rawCard = window.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "R:").GetVisualAncestors().OfType<Border>()
+    .First(b => b.Child is StackPanel);
+Button RawButton(string label) => rawCard.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
+Check(!RawButton("Cache settings").IsEnabled && !RawButton("Pause").IsEnabled, "a cached unformatted volume cannot be reconfigured or paused");
+Check(RawButton("Remove cache").IsEnabled && RawButton("Flush now").IsEnabled, "a cached unformatted volume can be flushed and removed");
+Check(rawCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.Contains("no file system") == true), "the card says why settings are unavailable");
+fixture.RawVolumeHasCache = false;
+// Re-enumeration can retain a volume GUID while changing its physical disk
+// number. An older pending read must not update the replacement card.
+var retiredRead = new TaskCompletionSource<WriteCacheState>();
+fixture.PendingDisk = retiredRead;
+var retiredSample = Invoke("Sample");
+fixture.PendingDisk = null;
+fixture.Volumes[0] = fixture.Volumes[0] with { DiskNumber = 7 };
+Invoke("Refresh").GetAwaiter().GetResult();
+Dispatcher.UIThread.RunJobs();
+Check(window.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.StartsWith("Disk 7  ") == true),
+    "a changed disk number rebuilds volume cards even when the GUID is unchanged");
+retiredRead.SetResult(fixture.State with { Instance = 99 });
+Dispatcher.UIThread.RunJobs();
+Check(retiredSample.IsCompleted, "a retired attachment sample settles without blocking refresh");
+var currentSystemCard = window.GetVisualDescendants().OfType<TextBlock>().Single(t => t.Text == "C:")
+    .GetVisualAncestors().OfType<Border>().First(b => b.Child is StackPanel);
+Check(currentSystemCard.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text == "Available") &&
+      !currentSystemCard.GetVisualDescendants().OfType<Button>().Any(b => Equals(b.Content, "Cache settings")),
+    "a late sample from a retired card cannot publish live counters onto its replacement");
 window.Close();
 var newState = fixture.State with { Flags = fixture.State.Flags | 4096, BudgetBytes = 0, ReservedBytes = 0, Options = null };
-var newSettings = new CacheSettingsWindow(fixture.Disks[1], newState, false);
+var newSettings = new CacheSettingsWindow(fixture.Volumes[1], newState, false);
 newSettings.Show();
 Dispatcher.UIThread.RunJobs();
 Check(newSettings.GetVisualDescendants().OfType<ComboBox>().Any(c => Equals(c.SelectedItem, "Idle")), "new cache editor selects Idle alpha default");
 newSettings.Close();
-var settings = new CacheSettingsWindow(fixture.Disks[1], fixture.State with { Flags = fixture.State.Flags | 4096 }, true);
+var settings = new CacheSettingsWindow(fixture.Volumes[1], fixture.State with { Flags = fixture.State.Flags | 4096 }, true);
 settings.Show();
 Dispatcher.UIThread.RunJobs();
 using (var frame = settings.CaptureRenderedFrame() ?? throw new Exception("No settings frame.")) frame.Save(Path.Combine(output, "settings.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
 Check(!settings.GetVisualDescendants().OfType<CheckBox>().Any(), "no consent checkboxes");
+Check(settings.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text?.StartsWith("Q: Games  /  NTFS") == true), "settings name the volume and its disk");
 var memory = settings.GetVisualDescendants().OfType<ComboBox>().First();
 Check(memory.SelectedIndex == 4, "existing 4 GiB memory selected");
 memory.SelectedIndex = 5;
@@ -109,7 +153,7 @@ Check(Visible("Deferred:") && Visible("Maximum dirty age") && !Visible("Start pr
 Check(settings.GetVisualDescendants().OfType<NumericUpDown>().Any(n => n.Maximum == 3600000), "one-hour age available on capable driver");
 Check(marks.Length >= 8 && marks.All(m => ToolTip.GetTip(m!) is TextBlock { Text.Length: > 40 }), "each help badge carries explanatory hover text");
 settings.Close();
-Console.WriteLine("Desktop fixture checks passed; no real disk operations performed.");
+Console.WriteLine("Desktop fixture checks passed; no real volume or disk operations performed.");
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
 static void Check(bool result, string description)
 {
@@ -120,7 +164,14 @@ static void Check(bool result, string description)
 
 sealed class Fixture : ICacheTaskService
 {
-    public DiskDescription[] Disks = [new(0, "System SSD", 100L << 30, "fixture-system", ["C:"], true, true), new(1, "Game library SSD", 200L << 30, "fixture-data", ["Q:"], false, false)];
+    // C: alone on disk 0; Q: (NTFS) and R: (unformatted) share disk 1.
+    public VolumeDescription[] Volumes =
+    [
+        new("C:", "", "NTFS", 99L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000001}\", 0, "System SSD", "fixture-system", 100L << 30, true, false, true),
+        new("Q:", "Games", "NTFS", 150L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000002}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false),
+        new("S:", "Stick", "FAT32", 16L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000004}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false),
+        new("R:", "", "", 49L << 30, @"\\?\Volume{00000000-0000-0000-0000-000000000003}\", 1, "Game library SSD", "fixture-data", 200L << 30, false, false, false)
+    ];
     public WriteCacheState State = new(929 | 1024, 0, 200UL << 30, 4UL << 30, 4UL << 30, 1536UL << 20, 256UL << 10, 4000UL << 20, 1, 2UL << 30, 512UL << 20, 0, 0, 0, 0, 1536UL << 20)
     {
         Options = new(Drain: DrainAlgorithm.Eager),
@@ -132,24 +183,28 @@ sealed class Fixture : ICacheTaskService
         GlobalReservedBytes = 4UL << 30
     };
     public int Pauses, Removes, CleanDrops, DataReads, BlockedReads, InventoryReads;
-    public TaskCompletionSource<IReadOnlyList<DiskDescription>>? PendingInventory;
+    public bool RawVolumeHasCache;
+    public TaskCompletionSource<IReadOnlyList<VolumeDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingDisk;
     public TaskCompletionSource? PendingFlush;
-    public Task<IReadOnlyList<DiskDescription>> ListAsync()
+    public Task<IReadOnlyList<VolumeDescription>> ListAsync()
     {
         InventoryReads++;
-        return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<DiskDescription>>(Disks);
+        return PendingInventory?.Task ?? Task.FromResult<IReadOnlyList<VolumeDescription>>(Volumes);
     }
-    public Task<WriteCacheState> ReadAsync(DiskDescription disk)
+    public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>(
+        [new SavedConfiguration(2, "T:", "fixture-removed", 8L << 30,
+            new CacheConfiguration(256, CachePreset.Strict), false, "{00000000-0000-0000-0000-000000000005}")]);
+    public Task<WriteCacheState> ReadAsync(VolumeDescription volume)
     {
-        if (disk.Number == 0 && PendingDisk is not null)
+        if (volume.Volume == "C:" && PendingDisk is not null)
         {
             BlockedReads++;
             return PendingDisk.Task;
         }
-        if (disk.Number == 1)
+        if (volume.Volume == "Q:")
             DataReads++;
-        return Task.FromResult(disk.Number == 1 ? State : State with
+        return Task.FromResult(volume.Volume == "Q:" || volume.Volume == "R:" && RawVolumeHasCache ? State : State with
         {
             Flags = 256,
             BudgetBytes = 0,
@@ -158,24 +213,24 @@ sealed class Fixture : ICacheTaskService
             PayloadCapacity = 0
         });
     }
-    public bool IsPersistent(DiskDescription disk) => true;
-    public Task SetEnabledAsync(string volume, bool enabled, bool persistent)
+    public bool IsPersistent(VolumeDescription volume) => true;
+    public Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent)
     {
         if (!enabled)
             Pauses++;
         return Task.CompletedTask;
     }
-    public Task RemoveAsync(string volume)
+    public Task RemoveAsync(VolumeDescription volume)
     {
         Removes++;
         return Task.CompletedTask;
     }
-    public Task FlushAsync(DiskDescription disk) => PendingFlush?.Task ?? Task.CompletedTask;
-    public Task DropCleanAsync(DiskDescription disk)
+    public Task FlushAsync(VolumeDescription volume) => PendingFlush?.Task ?? Task.CompletedTask;
+    public Task DropCleanAsync(VolumeDescription volume)
     {
         CleanDrops++;
         return Task.CompletedTask;
     }
-    public Task SaveAsync(string volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
+    public Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
     public Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token) => throw new NotSupportedException("Fixture never opens disks.");
 }

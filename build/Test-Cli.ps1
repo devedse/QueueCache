@@ -9,7 +9,7 @@ if ($CliPath)
 {
     $cli = (Resolve-Path -LiteralPath $CliPath).Path
 }
-foreach ($arguments in @(@('--help'), @('apply', '--help'), @('policy', '--help'), @('policy', 'apply', '--help'), @('policy', 'enable', '--help'), @('policy', 'set', '--help'), @('disk', 'list', '--help'), @('disk', 'attach', '--help'), @('test', '--help'), @('benchmark', '--help'), @('--version')))
+foreach ($arguments in @(@('--help'), @('apply', '--help'), @('policy', '--help'), @('policy', 'apply', '--help'), @('policy', 'enable', '--help'), @('policy', 'set', '--help'), @('volume', '--help'), @('volume', 'list', '--help'), @('disk', 'list', '--help'), @('test', '--help'), @('benchmark', '--help'), @('--version')))
 {
     & $cli @arguments
     if ($LASTEXITCODE)
@@ -50,13 +50,8 @@ foreach ($name in @('pause', 'resume', 'remove'))
         throw 'Invalid task volume must fail before disk access.'
     }
 }
-& $cli disk attach 'Q:\not-a-volume' 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 2)
-{
-    throw 'Invalid attachment target must fail during parsing.'
-}
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'inspect')))
+foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
 {
     & $cli @command --help
     if ($LASTEXITCODE)
@@ -67,14 +62,16 @@ foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 
 foreach ($arguments in @(
         @('developer', 'verify', 'Q:', '--suite', 'not-a-suite'),
         @('developer', 'verify', 'Q:', '--detach'),
-        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'unknown-mode'),
-        @('developer', 'write-tests', '0', '4294967296', 'invalid', 'write-disposable-region'),
-        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'write-dirty-prefix', '--prefix-bytes', '65536'),
-        @('developer', 'write-tests', '1', '4294967296', 'invalid', 'verify-base-prefix', '--prefix-bytes', '1'),
+        @('developer', 'write-tests', 'X:', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'unknown-mode'),
+        @('developer', 'write-tests', 'PhysicalDrive1', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'write-disposable-region'),
+        @('developer', 'write-tests', 'X:', '4294967296', 'invalid', 'write-disposable-region'),
+        @('developer', 'write-tests', 'X:', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'write-dirty-prefix', '--prefix-bytes', '65536'),
+        @('developer', 'write-tests', 'X:', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'verify-base-prefix', '--prefix-bytes', '1'),
         @('developer', 'file-tests', 'Q', '1', '4294967296', 'invalid', 'verify-files', '--run-id', 'invalid'),
         @('developer', 'file-tests', 'Q', '1', '4294967296', 'invalid', 'test-coalescing', '--size-mib', '64'),
         @('developer', 'file-tests', 'Q', '0', '4294967296', 'invalid', 'write-new-files'),
-        @('developer', 'test', '-1', '4294967296', 'invalid')
+        @('developer', 'test', 'PhysicalDrive1', '4294967296', '{00000000-0000-0000-0000-000000000001}'),
+        @('developer', 'test', 'Q:', '4294967296', 'invalid')
     ))
 {
     & $cli @arguments 2>&1 | Out-Host

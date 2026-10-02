@@ -596,7 +596,62 @@ static void CallLowerAndWait(QC_CACHE* c, PIRP irp, UCHAR major, KEVENT* complet
     if (offWorker)
         KeWaitForSingleObject(&call.Returned, Executive, KernelMode, FALSE, nullptr);
 }
-static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true)
+// A control that can change the device is forwarded after the barrier has drained
+// every earlier write, but the request worker does not wait for it. The lower device
+// may need this volume to finish it: preparing a shadow copy, volsnap creates its
+// diff-area file on the same volume, and NTFS's log write for that file queued behind
+// a worker waiting for the control (found on the VM: every process start then hung).
+static NTSTATUS ForwardedControlCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto c = static_cast<QC_CACHE*>(context);
+    if (irp->PendingReturned)
+        IoMarkIrpPending(irp);
+    InterlockedDecrement(&c->ControlsInFlight);
+    c->ReleaseRequest(c->ServiceContext, irp);
+    return STATUS_CONTINUE_COMPLETION;
+}
+struct QC_FORWARD
+{
+    PIO_WORKITEM Item;
+    PDEVICE_OBJECT Lower;
+    PIRP Irp;
+};
+static IO_WORKITEM_ROUTINE ForwardControlItem;
+static void ForwardControlItem(PDEVICE_OBJECT, PVOID context)
+{
+    auto forward = static_cast<QC_FORWARD*>(context);
+    auto item = forward->Item;
+    // Lower drivers can page-fault inside IoCallDriver; never on the request worker.
+    IoCallDriver(forward->Lower, forward->Irp);
+    ExFreePoolWithTag(forward, Tag);
+    IoFreeWorkItem(item);
+}
+static constexpr NTSTATUS QcControlForwarded = STATUS_PENDING;
+static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService = true);
+static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp)
+{
+    if (!c->ReleaseRequest || !c->Self)
+        return OriginalIo(c, irp);
+    auto forward = static_cast<QC_FORWARD*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(QC_FORWARD), Tag));
+    auto item = forward ? IoAllocateWorkItem(c->Self) : nullptr;
+    if (!item)
+    {
+        if (forward)
+            ExFreePoolWithTag(forward, Tag);
+        return OriginalIo(c, irp); // Allocation failed: the previous, waiting path.
+    }
+    const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
+    IoCopyCurrentIrpStackLocationToNext(irp);
+    IoSetCompletionRoutine(irp, ForwardedControlCompletion, c, TRUE, TRUE, TRUE);
+    InterlockedIncrement(&c->ControlsInFlight);
+    QcCacheRecordLowerAttempt(c, major, irp);
+    forward->Item = item;
+    forward->Lower = c->Lower;
+    forward->Irp = irp;
+    IoQueueWorkItem(item, ForwardControlItem, DelayedWorkQueue, forward);
+    return QcControlForwarded; // The lower device completes irp; do not touch it again.
+}
+static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService)
 {
     const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
     KEVENT completed;
@@ -1093,6 +1148,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
 {
     RtlZeroMemory(c, sizeof(*c));
     c->Lower = lower;
+    c->Self = self;
     // Failing attach on the boot disk would stop Windows; forward inline instead.
     c->LowerCallItem = IoAllocateWorkItem(self);
     c->Head = c->Tail = c->FreeHead = NoSlot;
@@ -1280,6 +1336,22 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
     ReleaseCache(c);
     return status;
 }
+bool QcCacheDisconnect(QC_CACHE* c, QC_STATE* snapshot)
+{
+    // Read/Write admission checks Gone while holding Mutex. Taking the same
+    // lock makes this the cutoff: previously pinned/copied requests retain
+    // their ownership, but later requests cannot start from RAM.
+    AcquireCache(c);
+    const bool first = !InterlockedExchange(&c->Gone, TRUE);
+    Publish(c);
+    if (snapshot)
+        *snapshot = c->State;
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    WakeDrainers(c);
+    ReleaseCache(c);
+    KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+    return first;
+}
 void QcCacheDestroy(QC_CACHE* c)
 {
     AcquireCache(c);
@@ -1431,6 +1503,13 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     const auto command = *static_cast<QC_COMMAND*>(irp->AssociatedIrp.SystemBuffer);
     if (command.Version != 1 || command.Size != sizeof(command) || command.Reserved || size <= 0)
         return STATUS_INVALID_PARAMETER;
+    // A successful QUERY_REMOVE holds admission closed until removal or cancel.
+    // An operator command queued behind that query must not reopen the cache.
+    AcquireCache(c);
+    const BOOLEAN removePending = c->QueryRemovePending;
+    ReleaseCache(c);
+    if (removePending)
+        return STATUS_DEVICE_BUSY;
     if (command.Action == QcConfigure)
         return Configure(c, command.BudgetBytes);
     if (command.Action == QcRelease)
@@ -2188,7 +2267,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
     // Only the request worker keeps misses; paging reads never do (DistinctPages).
     PUCHAR staging = nullptr;
-    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c);
+    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
+        !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
     if (!full)
     {
         c->Performance.Phase = QcLowerReadPhase;
@@ -2758,6 +2838,10 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     }
     if (c->Gone)
     {
+        if ((stack->MajorFunction == IRP_MJ_PNP && !QcTrackedUsageNotification(stack)) ||
+            stack->MajorFunction == IRP_MJ_POWER || stack->MajorFunction == IRP_MJ_CLEANUP ||
+            stack->MajorFunction == IRP_MJ_CLOSE)
+            return OriginalIo(c, irp);
         const auto status = STATUS_DEVICE_NOT_CONNECTED;
         if (QcTrackedUsageNotification(stack))
         {
@@ -2798,9 +2882,11 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
     {
         auto code = stack->Parameters.DeviceIoControl.IoControlCode;
-        // Neither-I/O and raw controller pass-through may contain uncaptured user pointers.
-        // They cannot safely be forwarded from a system worker in another process context.
-        if ((code & 3) == METHOD_NEITHER || DEVICE_TYPE_FROM_CTL_CODE(code) == FILE_DEVICE_CONTROLLER)
+        // Neither-I/O and raw controller pass-through from an application may contain
+        // uncaptured user pointers, which are not valid on this system worker. Kernel
+        // components on a volume stack (snapshots, encryption) send kernel pointers.
+        if (irp->RequestorMode != KernelMode &&
+            ((code & 3) == METHOD_NEITHER || DEVICE_TYPE_FROM_CTL_CODE(code) == FILE_DEVICE_CONTROLLER))
             return STATUS_NOT_SUPPORTED;
     }
     if (stack->MajorFunction == IRP_MJ_SHUTDOWN)
@@ -2868,6 +2954,47 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
             QcCacheRecordUsage(c, stack->Parameters.UsageNotification.Type, FALSE);
         QcCacheRecordUsageCompletion(c, stack->Parameters.UsageNotification.Type,
             stack->Parameters.UsageNotification.InPath, status);
+        return status;
+    }
+    if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_QUERY_REMOVE_DEVICE)
+    {
+        // This IRP is ordered behind all earlier cached writes by the request
+        // worker. Keep admission disabled through the PnP transaction, including
+        // the interval between our successful query and final removal.
+        AcquireCache(c);
+        const BOOLEAN wasPending = c->QueryRemovePending;
+        const BOOLEAN wasEnabled = c->Enabled;
+        ReleaseCache(c);
+        // Preserve the original pre-query setting on duplicate queries.
+        if (wasPending)
+            return OriginalIo(c, irp);
+        auto status = QcCacheBarrier(c, TRUE, QcOrderedBarrier, irp);
+        if (NT_SUCCESS(status))
+            status = OriginalIo(c, irp);
+        AcquireCache(c);
+        if (NT_SUCCESS(status))
+        {
+            c->QueryRemovePending = TRUE;
+            c->QueryRemoveWasEnabled = wasEnabled;
+        }
+        else if (!c->Gone && NT_SUCCESS(c->State.LastError))
+            c->Enabled = wasEnabled;
+        Publish(c);
+        ReleaseCache(c);
+        return status;
+    }
+    if (stack->MajorFunction == IRP_MJ_PNP && stack->MinorFunction == IRP_MN_CANCEL_REMOVE_DEVICE)
+    {
+        const auto status = OriginalIo(c, irp);
+        AcquireCache(c);
+        if (NT_SUCCESS(status) && c->QueryRemovePending)
+        {
+            if (!c->Gone && NT_SUCCESS(c->State.LastError))
+                c->Enabled = c->QueryRemoveWasEnabled;
+            c->QueryRemovePending = FALSE;
+            Publish(c);
+        }
+        ReleaseCache(c);
         return status;
     }
     // Suspended (after shutdown or leaving D0) only blocks re-enabling the cache.
@@ -2951,6 +3078,15 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         Publish(c);
         ReleaseCache(c);
     }
+    // Shadow copies: volsnap's flush-and-hold drains the cache (the snapshot then contains
+    // data that was pending in RAM); its other controls, notably release-writes, arrive
+    // while volsnap holds every write. Draining then would wait for writes that only that
+    // release lets through (found on the VM: the hold timed out and the snapshot failed).
+    const bool snapshotControl = (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL ||
+                                  stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL) &&
+                                 QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode);
+    if (snapshotControl)
+        dirty = false;
     auto status = dirty || stack->MajorFunction == IRP_MJ_PNP ? QcCacheBarrier(c, stack->MajorFunction == IRP_MJ_PNP, QcOrderedBarrier, irp)
                                                               : STATUS_SUCCESS;
     // Unknown commands can modify media (including unsupported TRIM shapes).
@@ -2961,6 +3097,8 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     ReleaseCache(c);
     if (!NT_SUCCESS(status))
         return status;
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
+        return ForwardControl(c, irp);
     return OriginalIo(c, irp);
 }
 // Request-worker entry point. Offloaded reads run concurrently with the worker,
@@ -3028,5 +3166,7 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
     AcquireCache(c);
     c->OffloadBlocked = FALSE;
     ReleaseCache(c);
+    // A forwarded media-changing control: the lower device completes it.
+    *transferred = control && status == QcControlForwarded;
     return status;
 }

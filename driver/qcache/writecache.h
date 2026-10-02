@@ -329,6 +329,9 @@ struct QC_CACHE
     PUCHAR DrainBuffer;
     ULONG Capacity, Head, Tail, FreeHead, Count, SectorBytes, DrainCapacity;
     BOOLEAN Enabled, Barrier, Suspended, Stop, ResumeEnabled;
+    // Request worker owns these fields. QUERY_REMOVE drains and disables the
+    // cache; CANCEL_REMOVE (or a lower veto) restores only the prior enablement.
+    BOOLEAN QueryRemovePending, QueryRemoveWasEnabled;
     BOOLEAN UnsafeDefer;
     BOOLEAN TrimPaused;
     // One foreground paging write owns this range until its lower completion.
@@ -376,6 +379,12 @@ struct QC_CACHE
     LONGLONG ActiveWriteStart, ActiveWriteEnd;
     // Completes an offloaded original IRP and releases its remove lock.
     void (*CompleteRequest)(PVOID, PIRP, NTSTATUS);
+    // Releases the remove lock of a forwarded control when the lower device completes it.
+    void (*ReleaseRequest)(PVOID, PIRP);
+    PDEVICE_OBJECT Self;
+    // Media-changing controls forwarded without waiting and not yet completed below.
+    // While any is in flight, read misses are not kept (they could predate its change).
+    volatile LONG ControlsInFlight;
     ULONG DelayMs, InjectFault;
     // Lab range gate. State/range/hold under Mutex; sequences written once each.
     ULONG LabGateState, LabGateHoldMs, LabGateMode; // Mode: 0 success, 1 report failure, 2 short transfer.
@@ -399,6 +408,8 @@ FORCEINLINE bool QcTrackedUsageNotification(PIO_STACK_LOCATION stack)
 }
 NTSTATUS QcCacheInitialize(QC_CACHE* cache, PDEVICE_OBJECT self, PDEVICE_OBJECT lower);
 void QcCacheDestroy(QC_CACHE* cache);
+// PASSIVE_LEVEL PnP transition, serialized with RAM admission. Never waits for lower I/O.
+bool QcCacheDisconnect(QC_CACHE* cache, QC_STATE* snapshot);
 void QcCacheSnapshot(QC_CACHE* cache, QC_STATE* output);
 void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);

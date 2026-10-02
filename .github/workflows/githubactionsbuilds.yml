@@ -101,7 +101,7 @@ jobs:
           name: QueueCache ${{ needs.generate_version_number.outputs.version }} — test-signed
           prerelease: true
           generate_release_notes: true
-          body: 'Development build with new disk-class coverage and cache-task UI. Installation registers the filter for all disks after reboot; caching stays off unless explicitly configured or restored from saved settings. VM validation of class-wide attachment, boot/paging and multiple-disk lifecycle is pending. Test-signing prerequisites apply. Successful CI is not kernel correctness certification.'
+          body: 'Development build. QueueCache caches volumes: installation registers the filter as the topmost volume filter, which covers every volume after a restart; each volume has its own cache, and caching stays off unless configured or restored from a saved per-volume profile. Commands sent to a physical disk (health and SMART tools, SCSI/ATA pass-through) never reach the cache. Test-signing prerequisites apply. Successful CI is not kernel correctness certification; see docs/VOLUME_FILTER.md for the VM verification record.'
           files: |
             release/**/*.exe
             release/**/*.zip

@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-27. This is the authoritative execution tracker. Detailed
+Last updated: 2026-09-28. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -259,6 +259,26 @@ pagefile saved-startup regression without the earlier process corruption.
 | A15 / T061-T063 | FALSE | Environment/endurance/final performance qualification planned. | Frozen-candidate support matrix and long-run evidence pending. |
 | A16 / T064-T066 | FALSE | Production release/support process planned. | Support collection, staged rollout, recovery and owner release decision pending. |
 
+### Volume filter batch, 2026-09-28 (branch `volume-filter`, PR #2)
+
+QueueCache caches volumes instead of disks ([VOLUME_FILTER.md](VOLUME_FILTER.md)).
+Verification on the VM (16 GB since 2026-09-28) with standard Driver Verifier on
+0.4.219.1 (`7a18a57`) unless stated. Lab disk: `qcache developer lab-disk` VHDX with
+V: and W: (NTFS) and X: (unformatted).
+
+| Item | Implementation | Verification |
+|---|---|---|
+| V1 volume registration | Topmost Volume-class upper filter; installer backup version 3; no disk-class or per-disk registration; no migration code (owner decision) (`d7033f9`, `d61af51`). | `volumes/volume-registration` PASS on V: and Q:; uninstall drained Q:'s 2 GiB cache, removed only QueueCache from the class list, Windows booted without the filter; reinstall restored Q:'s saved profile at startup (0.4.213.1 -> 0.4.217.1); `Recover-Registration.ps1` restored backups on copies of the SYSTEM hive. |
+| V2 boot | Length/sector size read on first need, never from start-up (`e7150b7`). | Every volume, including C:, boots (0.4.187.1 onward); saved-C:-profile soak: see V9. |
+| V3 per-volume profiles, CLI, desktop | Profiles named by volume GUID; `qcache volume list`; one desktop card per volume grouped by disk; RAW volumes can be flushed/removed only (`b9680c2`, `7134514`). | Host and desktop fixture tests; desktop checked on the VM console (0.4.191.1); `volumes/volume-shared-disk` profile check PASS. |
+| V4 raw disk commands | Nothing to implement: they no longer reach the filter. | `volumes/volume-raw-disk-commands` PASS on the VirtIO disk (Q:) and the VHDX (V:): descriptor, geometry and SCSI INQUIRY with 16 MiB pending and 8 MiB clean; nothing drained, flushed or evicted. |
+| V5 shared disk | One cache per volume (unchanged driver design). | `volumes/volume-shared-disk` PASS: V: 256 MiB and W: 128 MiB accept only their own data; flushing V: leaves W:'s pending data. |
+| V6 resize | Length re-read per management request and before judging a request beyond the known end (`6ae1e0c`). | Before the fix extending W: past its size failed (Invalid Parameter). `volumes/volume-resize` PASS: shrink 1 GiB and extend back with 32 MiB pending; driver length follows; bytes exact. |
+| V7 shadow copies | Media-changing controls forwarded without holding the worker (`fcc0c4c`); only flush-and-hold drains; other volsnap controls bypass the queue (`0909d93`, `7a18a57`). | Found a system-wide freeze (0.4.207.1, local kernel debugger: volsnap's diff-area write queued behind the waiting worker) and then 10 s hold time-outs. `volumes/volume-snapshot` PASS on V: and Q:: the snapshot holds the 32 MiB that were pending in RAM, exact. |
+| V8 TRIM | Unchanged driver (`97b8f4f`). | `trim-cache` PASS on the VHDX: pending dropped, clean released, TRIM during a drain accounted for. |
+| V10 other file systems | NTFS-only guard removed; FAT32/exFAT no-journal warning; cluster-area offset for FAT test ranges and page files; `lab-disk create --file-system` (`f009b3f`, `27cfcf9`). | FAT32 and ReFS (Dev Drive) lab disks on 0.4.229.1 under Driver Verifier: every maintained suite PASS (snapshot/resize/TRIM SKIP where Windows lacks the feature). Found and fixed: FAT snapshot is unsupported (SKIP), ReFS reports 2 TRIM ranges, ReFS takes a volume offline after injected write errors (remount). Open: fewer caller-thread requests on ReFS (performance, KNOWN_ISSUES). |
+| V9 suites on a volume | Maintained suites unchanged; raw tests (`developer test`, `write-tests`) address a volume. | V: `quick`, `policies`, `paging-coherence`, `ordering-faults`, `app-write-profile`, `pressure` PASS; Q: `policies` PASS; `write-tests` (base, concurrent, toggle, write-through, verify) and `developer test` PASS on X:/V:. Saved-C:-profile restart soak (512 MiB C: profile, system-files / paging recognition / post-restart byte check each cycle): 10/10 PASS under Driver Verifier; in 2 cycles paging recognition was UNEXERCISED (with 16 GB the applied pressure caused no page-file I/O). CrystalDiskMark 9.0.3 DiskSpd on Q: (2 GiB Fast/Idle, Verifier off, 3 runs): SEQ1M Q8T1 36.6-37.2 / 20.6-21.4 GB/s, SEQ1M Q1T1 12.6-14.4 / 13.2-13.8 GB/s, RND4K Q32T1 1,576-1,638 / 1,555-1,648 MB/s, RND4K Q1T1 1,230-1,328 / 1,023-1,073 MB/s (disk filter 0.4.169.1: 36.4-36.8/21.0-21.6 GB/s, RND4K Q1 1,004-1,019/851-858 MB/s). |
+
 ### Normal-use batch, 2026-09-27
 
 | Item | Implementation | Verification |
@@ -268,7 +288,7 @@ pagefile saved-startup regression without the earlier process corruption.
 | N3 fixed reservation | Design decision recorded: no shrinking. | n/a |
 | N4 drain defaults | Default parallelism 2 (plan 56). Bounded flush dropped after analysis. | Two `drain-decision` runs (0.4.139.1, 0.4.148.1). |
 | N5 paging-file I/O | Recognised paging-file requests forwarded from dispatch, bypassing the worker; Diagnostics V12 counter (plan 55, `8833f67`/`cb29d5a`). | VERIFIED on 0.4.146.1: every recognised request bypassed the worker in all 20 Driver Verifier soak cycles. |
-| N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | Compile-time mask checks only. Not VM-verified: Windows on the VM sends no TRIM (Windows 11 + VirtIO SCSI GET LBA STATUS problem, 2026-09-28; retrim fails on uncached C: too and works on a filtered VHDX). See KNOWN_ISSUES. |
+| N6 TRIM | Any number of sector-aligned ranges; trimmed unwritten sectors discarded, partly trimmed blocks keep their other sectors; conservative path only for unknown flags/malformed input (`97b8f4f`). | VERIFIED on a VHDX (`trim-cache`, plan 64, 0.4.211.1-0.4.219.1 under Driver Verifier). SATA test disk T: (2026-09-29): retrim through a Fast cache with 112 MiB pending kept every byte (file-level TRIM unavailable: not thin-provisioned). The VM's VirtIO disks still cannot TRIM (Windows 11 + VirtIO SCSI GET LBA STATUS problem). See KNOWN_ISSUES. |
 | N7 special requests | Pass-through after shutdown/power-down (existing), work-item lower calls for PnP/shutdown/disk controls, plus N5. | Driver Verifier soaks above. |
 | N8 status display | CLI and desktop label live values vs totals since boot; stale desktop data greyed out (existing). | Desktop fixture tests pass; desktop visuals not checked on the VM. |
 
@@ -1742,3 +1762,337 @@ Restoration succeeded, dirty/error zero. Healthy timing-off random Q1 samples we
 ~80–83 MB/s; several other cells stalled, with active write/drain phase and no
 capacity throttles. Exact broad-barrier trigger is not yet captured. These facts
 justify investigation, not a complete before/after performance claim.
+
+### Drive disconnection handoff, 2026-09-29
+
+Owner reopened orderly eject and unexpected removal for implementation planning.
+[Detailed implementation handoff](DRIVE_DISCONNECT_IMPLEMENTATION_PLAN.md) defines
+driver lifecycle/ownership work, CLI and desktop eject, reconnect identity, and a
+maintained removal verification suite. Fast-mode unflushed data survival after an
+unexpected unplug is explicitly not promised.
+
+- Implementation: source checkpoint on `volume-filter` adds an ordered QUERY_REMOVE
+  drain/disable boundary, CANCEL_REMOVE restoration, a one-shot surprise-removal
+  Windows error-log packet, shared whole-disk eject preview/operation, CLI command,
+  desktop disk action and unavailable saved-profile display. Eject rejects protected,
+  ambiguous or unlettered layouts and revalidates PnP/volume identity. The eject
+  operation explicitly disables/drains each affected cache before asking Windows
+  for removal; a Windows veto attempts identity-checked rollback.
+- Verification: host management and desktop fixtures pass. A disposable 8 GiB
+  `drive-scsi2` NTFS disk was attached to VM 109 and formatted as W: after exact
+  identity checks. No orderly eject or physical hot-unplug has yet passed. Native
+  CI build and loaded-driver verification are separate gates; do not infer either
+  from host success. External Windows-eject routing, error-log collection, veto,
+  reconnect, two-volume, fault, FAT32/ReFS and surprise-removal cases remain open.
+  The first W: preview on 0.4.233.1 correctly found the new disk but refused it:
+  the initial partition count included the hidden 16 MiB GPT Microsoft Reserved
+  partition. Inventory now excludes only that metadata partition from the
+  lettered-volume count; a new CI build and live preview must confirm the fix.
+- Next: qualify the loaded build on W:, implement the maintained removal suite and
+  remaining lifecycle/ownership work, then independent review. Virtual-drive
+  feature stays postponed.
+
+### Drive disconnection source and VM checkpoint, 2026-09-30
+
+Implementation: plan 71 adds the opted-in `disk-removal` orderly-eject/reconnect
+case to the foreground runner. It requires exact disposable physical disk
+identity, one initially unconfigured volume, a separate evidence disk, pending
+Fast bytes and observed Windows removal. Reconnect uses a run/case/disk/volume
+acknowledgement; a stale/missing acknowledgement or unknown eject outcome defers restoration. The oracle
+requires a fresh empty cache lifetime and byte match. This first case does not
+cover surprise removal or the full handoff matrix. Disk extent checks and rollback
+identity checks were tightened. Configuration mutexes are now per physical disk;
+CLI low-level mutations use the same transaction gate. Surprise-event pending
+bytes use the synchronized published snapshot. No ordinary admission path changed.
+
+Verification: host managed build and protocol/desktop fixtures passed; Windows
+host-safe coordinator tests passed for success, missing observed removal, stale
+acknowledgement, cancellation, failed eject worker and failed presence query.
+The final Windows run also verified that same-disk transactions serialize while
+another disk remains configurable. Native CI confirmation remains required.
+
+Loaded VM build 0.4.239.1 (`fe54353`) under Verifier `0x209bb` corrected the GPT
+reserved-partition preview. W: held 8 MiB pending in a runtime-only 256 MiB
+Fast/Deferred cache; `disk eject W:` drained it and Windows accepted removal, but
+the device remained online. The CLI returned nonzero because disappearance was
+not observed. This is INCOMPLETE orderly-eject qualification. Proxmox detach of
+only `vm-109-disk-5` reported a controller hot-unplug error; guest event 1000 showed
+a veto (type 13), followed by event 1010 confirming disk/volume surprise removal.
+Two `qcachelab` System event 157 packets survived with zero pending-byte snapshots.
+Their message resources are absent; raw XML/binary is the collected evidence.
+
+The backing volume remained intact. Live reattachment did not add it to QEMU;
+after preserving evidence and an explicitly authorized orderly VM shutdown/start,
+the same volume GUID reappeared on spare SATA1. All 8 MiB matched SHA-256
+`A4E1A7A878555AEED5B189E1A5E93586FD147CBE595B18F9E47EA0DDACFC6D6F`.
+W: had no cache, Q:'s saved 2 GiB Fast task restored healthy. This proves the
+drained file survived that sequence; it does not prove dirty surprise containment,
+live reconnect, cancelled-query restoration or lower-operation races.
+
+Evidence retained on the VM in `C:\QueueCache-Results\Disconnect-20260929`:
+`DeviceManagement.evtx`, `System.evtx`, `target-pnp.json`, `qcache-surprise.xml`,
+`oracle.json`, `reconnect-oracle.json`; hypervisor task/config evidence remains
+private. Earlier W: plan-70 `quick` run
+`QueueCache-Verify-20260929-170517-fd6cbcc40537477bbdabe6a9ad32db09` completed 1/1
+with FINISHED/status/results/log/raw checks and clean restoration; TRIM checks
+were SKIP on this bus. The new plan-71 removal case still needs an exact-build VM
+run. Read-only preview on the SATA1 connection reports Windows does not identify
+the disposable disk as removable/ejectable; its disk number is now 1. This bus
+cannot qualify orderly eject. Two-volume, fault, dirty surprise, FAT32/ReFS, changed-letter identity and
+repeated-cycle qualification remain open.
+
+### Direct removal admission and ownership audit, 2026-09-30
+
+Implementation: `QcCacheDisconnect` now publishes Gone while holding the RAM
+admission Mutex for both surprise and direct final removal, publishes a coherent
+pending snapshot and wakes cache/drainer/paging waiters. Dispatch rejects later
+data/control traffic before bypass lanes, continues PnP/power/close/cleanup
+handling, and forwards surprise notification promptly. Duplicate query preserves
+the first pre-query Enabled setting; failed lower cancel does not reopen it.
+Existing lower IRPs retain ownership until actual completion; no timeout permits
+freeing them. The lock/lifetime map is in `DRIVE_DISCONNECT_OWNERSHIP_AUDIT.md`.
+
+Verification: source audit only for this follow-up. Native CI and targeted VM
+qualification remain required, especially direct remove without query, query
+cancel/veto, copied/pinned requests at the cutoff and lower callbacks in flight.
+The prior host tests do not verify these native transitions. Explicit preparation
+protocol, versioned lifecycle counters and the remaining removal matrix are open.
+
+### Desktop removal refresh checkpoint, 2026-09-30
+
+Implementation: inventory signatures include disk number and physical/volume size;
+retired-card sampling failures are ignored like retired successes. The Windows
+sampling service checks the volume GUID before and after reading live telemetry.
+Flush/Clear read cache use the per-disk management gate and bind the expected
+volume GUID, including unformatted cached volumes.
+
+Verification: managed solution builds without warnings. Desktop fixtures pass,
+including a re-enumerated volume with an unchanged GUID/new disk number and a
+late sample from the retired card that cannot update its replacement. The native
+Windows GUID checks still require Windows service integration verification;
+settings dialogs/other mutations across reconnect remain a review item.
+
+Eject confirmation follow-up: the desktop passes its confirmed preview to the
+shared operation. Preview now records physical size and each volume GUID;
+execution validates those identities before preparation and again before native
+eject. The removal worker binds the recorded target through the same check.
+Host tests reject replaced GUIDs, missing identity data, changed disk number,
+PnP identity, physical size and volume membership; case differences are accepted.
+This prevents a replacement disk at the same letter from inheriting an earlier
+eject confirmation. Managed build and protocol/desktop tests pass; Windows VM
+execution of the new preview binding remains unverified.
+
+### CI and cached NTFS checkpoint, 2026-09-30
+
+Implementation commits: `925dc48` (maintained removal suite and per-disk gates),
+`9103f2b` (direct/surprise admission cutoff and ownership audit), `b9c6dbb`
+(desktop identity/refresh), `5bd2073` (confirmed eject identity binding). CI native
+Debug/Release and Windows host contracts passed through `5bd2073`; this is build
+verification, not removal-race qualification.
+
+VM build 0.4.243.1 (`9103f2b`) was loaded under Verifier `0x209bb`, confirmed by
+module load count 1/unload count 0. Registered/loaded module filename matches
+SHA-256 `CB07097679FAF288E806D84B95ECFA02D9D0A106FC42137373AAA815D820F79E`.
+The volume registration is topmost on all volumes, absent on disks, with no
+registration problems. Q:'s saved task restored successfully.
+
+Plan-71 removal run
+`QueueCache-Verify-20260930-140253-4b9d5ad434674cee98e2b923a68e1203`
+finished INCOMPLETE 0/1 at preflight because SATA1 is not Windows-ejectable. No
+cache preparation or physical removal occurred. FINISHED/status/summary/results/
+log and exact worker error were inspected.
+
+A temporary runtime-only 256 MiB Fast/Idle cache on W: was then verified by
+`QueueCache-Verify-20260930-140353-7775a062bc8c4fc9909ac720e7484c2f`:
+COMPLETED 1/1, live unbuffered read/overwrite, random overwrite, explicit drain/
+reopen, copy/rename and settings/health PASS. File-level TRIM is SKIP (Win32 326),
+as are the suite's declared exclusions. Raw evidence shows RAM accepted writes,
+not merely an uncached file run. Restoration readiness is true; six exact control
+trace samples show zero errors, lower-attempt counters and a clean disabled
+boundary. Quick has no interval measurement files. Restored runtime policy and
+budget matched, then the temporary cache was removed. Q: remained healthy;
+C:/T:/W: have no cache. FINISHED/status/summary/results/log/raw and restoration
+snapshots were inspected. This is a normal cached-file regression, not proof of
+new removal/cancel/lower-callback paths.
+
+### Removal topology / veto checkpoint, 2026-09-30
+
+Implementation: structured Windows veto results preserve native codes, disk
+presence and rollback failures. The maintained runner restores a confirmed-present
+veto, while uncertain outcomes still defer restoration. Eject preview now resolves
+at most the immediate dedicated storage adapter and verifies all descendants and
+removal relations. Related normal/hidden volumes are owned only after native
+single-disk extent checks; instance names are never parsed to infer ownership.
+Preview exposes relation results and extent evidence. Shared/unknown scopes refuse.
+
+Verification: on CI build 0.4.247.1 (`5bd2073`) under Verifier 0x209bb, the VirtIO
+disk-node request in
+`QueueCache-Verify-20260930-141853-0973fc409d77408d9c01b3697441012a`
+was vetoed (Configuration Manager 23, veto 8) after 8,396,800 dirty bytes were
+prepared. No removal occurred; eject rollback drained/resumed the original cache.
+The older runner correctly deferred its uncertain worker outcome; supported
+verify-recover restored the original unconfigured W: state. This is veto evidence,
+not successful removal. Raw original outcome and recovery remain preserved.
+A subsequent read-only locally published preview resolved both volume extents
+through normal/hidden interfaces and accepted only this disk's dedicated adapter.
+This preview is diagnostic evidence, not CI driver removal qualification.
+Linux protocol checks, desktop fixtures and Windows host runner/protocol
+contracts pass for the new resolver and structured veto handling. Verification
+plan 72 records the topology/veto contract change. Matching CI VM removal
+qualification remains pending. Exact recovery evidence shows readiness true,
+three telemetry samples with zero dirty/inflight/error counters, successful owned
+worker exits and an unconfigured clean final runtime (budget zero). Recovery uses
+its recovery-result marker; it does not create a normal suite FINISHED/report set.
+
+### Orderly evidence refinement, 2026-09-30
+
+Implementation: plan 73 captures volume state and lower-attempt counters around
+cache disable plus filesystem flush success. Removal acceptance requires matching
+identity/lifetime, pending writes, clean disabled state, advancing lower write and
+flush attempts and the reconnect hash oracle. Missing counters remain unsupported.
+A verified reconnect allows restoration even when durability evidence is missing,
+but cannot turn that incomplete case into PASS. Pure rejection and maintained
+runner contracts cover absent, unchanged/regressed counters and invalid states.
+
+VM verification on build 0.4.249.1 (`1752b13`), Verifier 0x209bb, loaded module
+`QueueCache-0.4.249.1-A31F6D68C608.sys`, load 1/unload 0, SHA-256
+`A31F6D68C608A94B09B0A45AD8F1BD08D1494783E4E2895AFBF3595401755F91`:
+`QueueCache-Verify-20260930-152732-c06e5ce0a2de454d88733777e86e8be7`
+prepared 8,396,800 dirty bytes with zero drained bytes, then Windows accepted eject
+(native result 0) and disk absence was observed (presence 13). The exact owned
+workers exited successfully. Live reattachment is currently blocked by a Proxmox
+orphan throttle object: the API token cannot execute the root-only cleanup.
+The backing disk is preserved; no guest reset/reboot occurred during this case.
+The reconnect deadline expired at 15:43:03 UTC: FINISHED/status/summary/results/log
+and all 34 raw files were inspected. The run finished RESTORATION_FAILED because
+reconnect was unresolved; no recovery writes or VM reset were attempted. The owner
+subsequently detached the disk and instructed that it stay detached. Do not retry
+reattachment or recovery without a new owner instruction. This is successful native
+eject evidence but not a successful reconnect case. Plan-73 durability refinement
+has not run on the VM. Future reconnect timeouts now report the specific missing
+phase instead of only an opaque cancellation error.
+
+Desktop implementation follow-up: Save/settings, pause/resume, cache removal,
+flush and drop-clean now pass the selected VolumeDescription through shared
+operations. Native discovery must match GUID, PnP identity, disk number, physical
+and volume sizes before mutation; the recorded target is checked again under the
+per-disk gate. Host contracts reject replaced GUIDs, devices, letters, disk numbers
+and lengths. This closes stale-dialog binding beyond flush/drop-clean. Real Windows
+UI transactions across reconnect remain a VM verification gap.
+
+Final host verification for plan 73 and the desktop binding follow-up: Linux
+protocol tests and desktop fixtures passed; the Windows self-contained management
+protocol/runner contracts passed, including missing preparation evidence and
+selection-identity rejection. These tests perform no native driver workloads.
+The delivery/review packet is docs/DRIVE_DISCONNECT_DELIVERY_SUMMARY.md.
+
+### Native Windows eject and default CDM checkpoint, 2026-09-30
+
+Implementation: plan 74 adds the maintained opt-in `disk-removal-windows` suite.
+It records enabled/dirty cache state, closes observation handles and requests the
+native eject API without product preparation. Missing precondition proof fails;
+reconnect still requires the exact disk/volume and fresh-instance/hash oracle.
+Final topology revalidation and unique cryptographic oracle bytes are implemented.
+
+Verification: Linux and Windows management/runner contracts passed; managed
+Release build has zero warnings/errors. On loaded CI 0.4.249.1 under Verifier
+0x209bb, native eject accepted W: with 8,437,760 dirty bytes, enabled cache and
+zero drained bytes. Removal was observed; same-slot Proxmox reattachment failed
+on orphan throttle-drive-virtio2. The exact run
+`QueueCache-Verify-20260930-174817-7361fc07ecb34be9aa87d1f462c4557d`
+finished RESTORATION_FAILED at 18:03:35 UTC; all 35 nonempty raw files and final
+reports were read/preserved. Data survival and native query/drain routing remain
+unverified. Final scope/unique-oracle refinements were added after VM publish and
+are host-covered only. The disposable disk is detached with backing preserved;
+no reset/reboot/recovery writes occurred.
+
+CrystalDiskMark 9.0.3 Default completed all eight scores on Q:, five 1 GiB runs,
+2 GiB Fast/Idle cache, Verifier enabled. Full scores, IOPS, latency, provenance
+and limitations are in WINDOWS_EJECT_AND_CDM_20260930.md. This is measured output,
+not a controlled performance acceptance verdict.
+
+### Performance investigation follow-up, 2026-09-30
+
+Implementation: no driver, runtime-default or workload-contract changes.
+Verification: historical 0.4.219.1 CDM-shaped results used Verifier off and
+prewarmed files; the latest GUI Default run used Verifier 0x209bb. A maintained
+plan-74 selected write-performance run on loaded 0.4.249.1, same CDM DiskSpd
+hash and 2048 MiB budget, completed 3/3 with clean restoration:
+`QueueCache-Verify-20260930-184356-d3b405509bc34e79aca0c0a643827b0b`.
+Random Q1 Idle timing-off median was 94.529 MB/s; working caller path, zero new
+capacity waits/errors in the recorded intervals, readiness true and coverage
+complete. All final/raw evidence inspected. This reproduces the low speed;
+Verifier overhead is a hypothesis, not an isolated cause or accepted regression
+verdict. Matched Verifier-off measurement requires a planned restart and remains
+pending. See PERFORMANCE_INVESTIGATION_20260930.md for comparisons and limits.
+
+### Approved Verifier-off follow-up, 2026-09-30
+
+Implementation: no source/default changes. Owner approved the benchmark restart
+and restoring Verifier afterwards. Loaded 0.4.249.1 kernel-module path/hash, same
+CDM DiskSpd hash and original Q: identity/profile were confirmed after reboot.
+Runtime Verifier reported no verified drivers during measurement.
+
+Verification: actual CDM Default, 5 × 1 GiB, completed all eight scores. Random
+Q1 returned to 1327/1074 MB/s read/write; Q32 reached 1791/1403 MB/s. Identical
+maintained random Q1 Idle/timing-off run
+`QueueCache-Verify-20260930-200812-c19de70a9d634c3f9fe237964eb0d2d7`
+completed 3/3 with clean restoration; median 973.255 MB/s versus Verifier-on
+94.529 MB/s (10.30×). The focused sequential Q8 write run
+`QueueCache-Verify-20260930-201147-2e87df2dd0534faaa041ab030fcd2a07`
+also completed 3/3 with clean restoration, median 15449.857 MB/s. Caller service
+and large-write copy offloads respectively advance; neither collection has new
+capacity waits/errors. All raw/final/ready/interval/control evidence read.
+
+Conclusion: Verifier explains the main random slowdown; queued sequential GUI
+and focused write scores remain below older custom CLI measurements. Historical
+preparation/scoring/observer and VM/host conditions are uncontrolled. No matched
+older-driver bisect was performed; the residual sequential gap remains open.
+Full throughput/IOPS/latency and commands: PERFORMANCE_INVESTIGATION_20260930.md.
+
+Post-benchmark restoration: second approved planned restart confirmed runtime
+Verifier 0x209bb, resetonbootfail, intended module load 1/unload 0. Saved Q:
+profile was preserved and reapplied through `policy restore`; final 2048 MiB
+Fast/Idle cache is active, clean and error-free. No CDM/verification workloads
+remain; disposable disk still detached with backing preserved. This planned
+restart does not qualify data survival in the earlier incomplete removal case.
+
+
+### Latest-build warmed sequential reproduction, 2026-09-30
+
+Implementation: plans 75–77 add the opt-in maintained `sequential-resident`
+suite, requiring a fixed fitting 1 GiB file and 2048 MiB budget. A complete cold
+read pass and a second stable/retained zero-miss RAM-hit pass must succeed before
+scoring. Readiness and interval coverage remain strict. Plan 77 distinguishes
+per-I/O (`-Zr`) and precomputed (`-Z1M`) random write buffers with immutable
+case IDs; three repeats define nine cases, excluded from full. Existing 72-case
+write-performance remains unchanged. Host contracts cover insufficient warmup,
+misses/hits/retention/identity, in-flight double counting, case selection and
+buffer arguments. No native performance code or defaults changed.
+
+Verification: Linux and Windows host-safe contracts passed; managed Release
+build had zero warnings/errors. Latest-at-start signed CI 0.4.259.1 loaded
+module path/hash matched its artifact after approved installation/restart;
+Verifier was off. Plan 75 run
+`QueueCache-Verify-20260930-203416-e78ae9299b8b41539f22a68970a7047b`
+failed its cold residency preparation, was cleanly restored and preserved.
+Plan 76 run `QueueCache-Verify-20260930-204030-f95dbd5c55834e9a9f2a42d62267cd00`
+completed 6/6; read median 36,185 MB/s, fresh-random write median 16,521 MB/s.
+Plan 77 `precomputed` subset
+`QueueCache-Verify-20260930-205241-8657fa00c7c342e99769827220a2145d`
+completed 3/3, write median **21,406 MB/s**. Both exact collections have full
+raw/final/ready/interval/ownership/control/recovery/restored evidence inspected,
+zero new score-observation capacity waits/errors and clean restoration. Neither
+combines incomplete repetitions or asserts the full plan-77 matrix ran.
+Requested 36k/21k peaks are reproduced. CrystalDiskMark uses precomputed random
+write buffers, while the established write-performance suite generates fresh
+random data per I/O; comparisons must preserve this distinction. A new actual
+GUI benchmark and matched old-driver bisect were not performed.
+See SEQUENTIAL_PEAK_REPRODUCTION_20260930.md for all repetitions and limitations.
+
+Post-benchmark restoration: approved planned restart restored Verifier 0x209bb,
+resetonbootfail, current CI driver load 1/unload 0 and matching signed-artifact
+hash. Q: saved 2048 MiB Fast/Idle profile is Active, clean and error-free. No
+owned benchmark process remains. Read-only Proxmox check confirms unused eject
+backing vm-109-disk-5 is preserved and detached. This restart is a planned
+benchmark-state restoration, not automatic recovery or a removal-path proof.

@@ -9,26 +9,37 @@ using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations;
 
-/// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.</summary>
+/// <summary>Validated single-volume target. No guessed disk numbers or raw test writes.
+/// The cache filters the volume: <see cref="Device"/> is the volume and <see cref="Bytes"/> its length,
+/// which the driver reports as its device length. <see cref="Number"/>, <see cref="Instance"/> and
+/// <see cref="DiskBytes"/> identify the physical disk that holds it.</summary>
 [SupportedOSPlatform("windows")]
 public sealed record DiskTarget(char Letter, int Number, long Bytes, string Instance,
     bool IsBoot = false, bool IsSystem = false, bool IsPaging = false)
 {
     public string Root => $"{Letter}:\\";
-    public string Device => $"PhysicalDrive{Number}";
+    public string Device => $"{Letter}:";
+    /// <summary>Size of the physical disk holding the volume.</summary>
+    public long DiskBytes { get; init; }
+    /// <summary>Volume GUID, e.g. {fa32f514-...}: stable across drive-letter changes; identifies saved profiles.</summary>
+    public string VolumeId { get; init; } = "";
 
     // Pagefile configuration can change IsPaging across a restart. The other
     // fields identify the volume, physical disk and required system role.
     public static void ValidateRecordedSystemTarget(DiskTarget recorded, DiskTarget current)
     {
         if (recorded.Letter != current.Letter || recorded.Number != current.Number ||
-            recorded.Bytes != current.Bytes ||
+            recorded.Bytes != current.Bytes || recorded.DiskBytes != current.DiskBytes ||
+            (recorded.VolumeId.Length != 0 && !string.Equals(recorded.VolumeId, current.VolumeId, StringComparison.OrdinalIgnoreCase)) ||
             !string.Equals(recorded.Instance, current.Instance, StringComparison.OrdinalIgnoreCase) ||
             recorded.IsBoot != current.IsBoot || recorded.IsSystem != current.IsSystem)
             throw new IOException("System oracle target identity changed.");
     }
 
-    public static async Task<DiskTarget> InspectAsync(string volume, CancellationToken cancellationToken = default)
+    /// <param name="requireFileSystem">False only for removing a cache task, which is safe on any volume (for
+    /// example one a raw test left on an unformatted volume); creating or changing a task needs a mounted file
+    /// system (NTFS, ReFS, FAT32, exFAT, ...).</param>
+    public static async Task<DiskTarget> InspectAsync(string volume, CancellationToken cancellationToken = default, bool requireFileSystem = true)
     {
         if (volume.Length != 2 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':')
             throw new ArgumentException("Select an explicit volume such as Q:, not a directory or raw disk.");
@@ -64,30 +75,63 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
         if (process.ExitCode != 0)
             throw new IOException(await stderr);
-        var target = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
-        if (target.Number < 0 || target.Bytes <= 0 || string.IsNullOrWhiteSpace(target.Instance) || target.Letter != letter)
+        // The inventory reports the disk size as Bytes; the target's Bytes is the volume.
+        var disk = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
+        if (disk.Number < 0 || disk.Bytes <= 0 || string.IsNullOrWhiteSpace(disk.Instance) || disk.Letter != letter)
             throw new IOException("Invalid disk identity.");
-        if (!string.Equals(new DriveInfo(target.Root).DriveFormat, "NTFS", StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Only NTFS volumes are currently supported.");
+        var extent = ReadExtent(letter);
+        var target = disk with { Bytes = extent.Length, DiskBytes = disk.Bytes, VolumeId = ReadVolumeId(letter) };
+        if (requireFileSystem)
+        {
+            string format;
+            try
+            {
+                format = new DriveInfo(target.Root).DriveFormat;
+            }
+            catch (IOException ex)
+            {
+                throw new IOException($"{letter}: has no file system Windows can read (it may be unformatted). Format it first.", ex);
+            }
+            if (!FileSystems.IsMounted(format))
+                throw new IOException($"{letter}: has no file system Windows can read (it may be unformatted). Format it first.");
+        }
         target.CheckExtents();
         return target;
     }
 
     public void CheckExtents() => ValidateExtent(this, ReadExtent(Letter));
 
-    public void ValidateCurrent(CancellationToken cancellationToken = default)
+    public void ValidateCurrent(CancellationToken cancellationToken = default, bool requireFileSystem = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (VolumeId.Length != 0 && !string.Equals(ReadVolumeId(Letter), VolumeId, StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"{Letter}: is now a different volume; refusing operation.");
         var extent = ReadExtent(Letter);
         // Reject a remapped volume before opening even the previously recorded disk.
         ValidateExtent(this, extent);
-        ValidateMountedIdentity(this, extent, ReadDiskInstance(Number, Instance, cancellationToken),
-            new DriveInfo(Root).DriveFormat);
+        var instance = ReadDiskInstance(Number, Instance, cancellationToken);
+        if (!MatchesInstance(Instance, instance))
+            throw new IOException("Disk identity changed; refusing operation.");
+        if (requireFileSystem)
+            ValidateMountedIdentity(this, extent, instance, new DriveInfo(Root).DriveFormat);
     }
 
-    private static (int Number, long Start, long Length) ReadExtent(char letter)
+    /// <summary>The volume GUID mounted at this letter ({...}), from the mount manager.</summary>
+    public static string ReadVolumeId(char letter)
     {
-        using var handle = CreateFileW($"\\\\.\\{letter}:", 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        var name = new StringBuilder(64);
+        if (!GetVolumeNameForVolumeMountPointW($"{letter}:\\", name, name.Capacity))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return ParseVolumeId(name.ToString());
+    }
+
+    public static string ParseVolumeId(string volumeName) => VolumeIds.Parse(volumeName);
+
+    private static (int Number, long Start, long Length) ReadExtent(char letter) => ReadExtentPath($"\\\\.\\{letter}:");
+
+    private static (int Number, long Start, long Length) ReadExtentPath(string path)
+    {
+        using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (handle.IsInvalid)
             throw new Win32Exception(Marshal.GetLastWin32Error());
         var buffer = new byte[32];
@@ -102,7 +146,33 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     private static string ReadDiskInstance(int number, string expectedInstance, CancellationToken cancellationToken)
     {
-        var diskInterface = new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b");
+        var path = InterfacePath(new Guid("53f56307-b6bf-11d0-94f2-00a0c91efb8b"), expectedInstance, cancellationToken);
+        using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var device = new byte[12];
+        if (!DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, device, 12, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (returned != 12 || BinaryPrimitives.ReadInt32LittleEndian(device) != 7 ||
+            BinaryPrimitives.ReadInt32LittleEndian(device.AsSpan(4)) != number)
+            throw new IOException("Recorded disk interface has an unexpected device number/type.");
+        return expectedInstance;
+    }
+
+    internal static (int Number, long Start, long Length) ReadVolumeInstanceExtent(string instance)
+    {
+        // ntddstor.h: hidden/unrecognized partitions have their own interface class.
+        var path = FindInterfacePath(new Guid("53f5630d-b6bf-11d0-94f2-00a0c91efb8b"), instance, CancellationToken.None)
+            ?? FindInterfacePath(new Guid("7f108a28-9833-4b3b-b780-2c6b5fa5c062"), instance, CancellationToken.None)
+            ?? throw new IOException($"Could not resolve a normal or hidden volume interface for {instance}.");
+        return ReadExtentPath(path);
+    }
+
+    private static string InterfacePath(Guid diskInterface, string expectedInstance, CancellationToken cancellationToken) =>
+        FindInterfacePath(diskInterface, expectedInstance, cancellationToken)
+        ?? throw new IOException($"Could not resolve the interface for {expectedInstance}.");
+
+    private static string? FindInterfacePath(Guid diskInterface, string expectedInstance, CancellationToken cancellationToken)
+    {
         var devices = SetupDiGetClassDevsW(ref diskInterface, null, IntPtr.Zero, 0x12);
         if (devices == new IntPtr(-1))
             throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -140,27 +210,19 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
                     if (!MatchesInstance(expectedInstance, instance.ToString()))
                         continue;
                     var path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4)) ?? throw new IOException("Missing disk interface path.");
-                    using var handle = CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-                    if (handle.IsInvalid)
-                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the recorded disk interface.");
-                    var device = new byte[12];
-                    if (!DeviceIoControl(handle, 0x2d1080, IntPtr.Zero, 0, device, 12, out var returned, IntPtr.Zero))
-                        throw new Win32Exception(Marshal.GetLastWin32Error());
-                    if (returned != 12 || BinaryPrimitives.ReadInt32LittleEndian(device) != 7 ||
-                        BinaryPrimitives.ReadInt32LittleEndian(device.AsSpan(4)) != number)
-                        throw new IOException("Recorded disk interface has an unexpected device number/type.");
-                    return instance.ToString();
+                    return path;
                 }
                 finally { Marshal.FreeHGlobal(detail); }
             }
         }
         finally { SetupDiDestroyDeviceInfoList(devices); }
-        throw new IOException($"Could not resolve the PnP identity of PhysicalDrive{number}.");
+        return null;
     }
 
     internal static void ValidateExtent(DiskTarget target, (int Number, long Start, long Length) extent)
     {
-        if (extent.Number != target.Number || extent.Start < 0 || extent.Length <= 0 || extent.Start > target.Bytes - extent.Length)
+        if (extent.Number != target.Number || extent.Start < 0 || extent.Length <= 0 ||
+            extent.Length != target.Bytes || extent.Start > target.DiskBytes - extent.Length)
             throw new IOException("Volume extents do not match the selected disk.");
     }
 
@@ -173,16 +235,19 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         ValidateExtent(target, extent);
         if (!string.Equals(instance, target.Instance, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Disk identity changed; refusing operation.");
-        if (!string.Equals(format, "NTFS", StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Only NTFS volumes are currently supported.");
+        if (!FileSystems.IsMounted(format))
+            throw new IOException("The volume no longer has a mounted file system.");
     }
 
     internal static void ValidateDeviceLength(DiskTarget target, ulong bytes)
     {
         if (bytes != (ulong)target.Bytes)
-            throw new IOException("Disk length changed; refusing operation.");
+            throw new IOException("Volume length changed; refusing operation.");
     }
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPointW(string mountPoint, StringBuilder volumeName, int length);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]

@@ -32,7 +32,7 @@ public static class SystemPreflightGuard
         string expectedInstance, long expectedBytes)
     {
         if (target.Letter != 'C' || !target.IsBoot || !target.IsSystem ||
-            target.Bytes != expectedBytes ||
+            target.DiskBytes != expectedBytes ||
             !string.Equals(target.Instance, expectedInstance, StringComparison.OrdinalIgnoreCase))
             throw new IOException("C: boot/system disk identity does not match the explicit expected target.");
         if (output.Number == target.Number ||

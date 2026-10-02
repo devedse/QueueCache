@@ -8,8 +8,8 @@ using QueueCache.Management;
 namespace QueueCache.Operations;
 
 /// <summary>
-/// T085 verification aid: the current disk ranges of every paging file (pagefile.sys, swapfile.sys and configured
-/// paging files) on one physical disk. The driver recognises paging-file requests by file object, not by these
+/// T085 verification aid: the current volume ranges of every paging file (pagefile.sys, swapfile.sys and
+/// configured paging files) on the target volume, the device the driver filters. The driver recognises paging-file requests by file object, not by these
 /// ranges. They are sent as an observe-only reference set so recognition misses can be counted.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -27,9 +27,9 @@ public static class SpecialFileMap
             if (drive.DriveType is not (DriveType.Fixed or DriveType.Removable))
                 continue;
             var letter = char.ToUpperInvariant(drive.Name[0]);
-            var extents = VolumeExtents(letter);
-            if (extents.All(extent => extent.Disk != target.Number))
+            if (letter != target.Letter)
                 continue;
+            var extents = VolumeExtents(letter);
             if (extents.Count != 1)
                 throw new NotSupportedException($"Volume {letter}: spans several disk extents.");
             var root = $"{letter}:\\";
@@ -46,7 +46,8 @@ public static class SpecialFileMap
                 if (!File.Exists(path))
                     continue;
                 files.Add(path);
-                ranges.AddRange(FileDiskRanges(path, root, extents[0].Start));
+                // The driver filters the volume: ranges are volume offsets (cluster area start + cluster * size).
+                ranges.AddRange(FileDiskRanges(path, root, ClusterAreaOffset(root)));
             }
         }
         return new(files, SpecialRangeMap.Normalize(ranges));
@@ -74,6 +75,31 @@ public static class SpecialFileMap
         for (var index = 0; index < count; index++)
             extents.Add(new(BitConverter.ToInt32(output, 8 + index * 24), BitConverter.ToInt64(output, 16 + index * 24)));
         return extents;
+    }
+
+    /// <summary>Volume byte offset of cluster 0: zero on NTFS and ReFS; after the reserved sectors and FAT
+    /// tables on FAT32 and exFAT (FSCTL_GET_RETRIEVAL_POINTER_BASE).</summary>
+    internal static long ClusterAreaOffset(SafeFileHandle volume, uint bytesPerSector)
+    {
+        var output = new byte[8];
+        if (DeviceIoControl(volume, 0x00090234 /* FSCTL_GET_RETRIEVAL_POINTER_BASE */, null, 0, output, 8, out var returned, IntPtr.Zero) &&
+            returned >= 8)
+            return BitConverter.ToInt64(output, 0) * bytesPerSector;
+        var error = Marshal.GetLastWin32Error();
+        // A file system without the control counts clusters from the volume start.
+        if (error is 1 or 50)
+            return 0;
+        throw new Win32Exception(error, "Cannot read the volume's cluster area offset.");
+    }
+
+    private static long ClusterAreaOffset(string root)
+    {
+        if (!GetDiskFreeSpaceW(root, out _, out var bytesPerSector, out _, out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        using var volume = CreateFileW(@"\\.\" + root.TrimEnd('\\'), 0, 7, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (volume.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open volume " + root);
+        return ClusterAreaOffset(volume, bytesPerSector);
     }
 
     private static IEnumerable<DiskRange> FileDiskRanges(string path, string root, long partitionStart)

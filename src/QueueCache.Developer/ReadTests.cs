@@ -9,14 +9,18 @@ namespace QueueCache.Developer;
 [SupportedOSPlatform("windows")]
 public static class ReadTests
 {
-    public static async Task<int> RunAsync(int number, long expectedBytes, string instance, bool attached, CancellationToken token)
+    /// <summary>Read-only pass-through check on one volume, named by letter, exact size and volume GUID.
+    /// Reads through the volume handle, the same stack position file-system reads use.</summary>
+    public static async Task<int> RunAsync(string volume, long expectedBytes, string volumeId, bool attached, CancellationToken token)
     {
-        if (number < 0 || expectedBytes < (2L << 30) || string.IsNullOrWhiteSpace(instance))
+        if (volume is not { Length: 2 } || !char.IsAsciiLetter(volume[0]) || volume[1] != ':' || expectedBytes < (2L << 30) ||
+            !Guid.TryParseExact(volumeId, "B", out _))
             return 2;
-        var disk = (await DiskCatalog.ListAsync(token)).Single(d => d.Number == number);
-        if (disk.Bytes != expectedBytes || !disk.Instance.Equals(instance, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Disk identity/size mismatch.");
-        using var control = new CacheDevice(disk.Device);
+        var disk = (await VolumeCatalog.ListAsync(token)).SingleOrDefault(v => v.Volume.Equals(volume, StringComparison.OrdinalIgnoreCase))
+            ?? throw new IOException($"{volume} is not a lettered fixed volume on one disk.");
+        if (disk.Bytes != expectedBytes || !disk.VolumeId.Equals(volumeId, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Volume identity/size mismatch.");
+        using var control = new CacheDevice(disk.Volume);
         CacheStatistics? Snapshot()
         {
             try
@@ -31,9 +35,11 @@ public static class ReadTests
             catch (Win32Exception ex) when (!attached && ex.NativeErrorCode == 1) { return null; }
         }
         var before = Snapshot();
-        using (var stream = new FileStream(DevicePath.Normalize(disk.Device), FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536))
+        using (var stream = new FileStream(DevicePath.NormalizeVolume(disk.Volume), FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536))
         {
-            foreach (var offset in new[] { 0L, 1L << 20, 1L << 30, expectedBytes - 65536 })
+            // Through a mounted file system's volume handle Windows limits reads to the file system's size
+            // (NTFS: one sector short of the partition), so the last probe starts 1 MiB before the end.
+            foreach (var offset in new[] { 0L, 1L << 20, 1L << 30, expectedBytes - (1L << 20) })
             {
                 token.ThrowIfCancellationRequested();
                 var first = new byte[65536];
@@ -43,16 +49,16 @@ public static class ReadTests
                 stream.Position = offset;
                 stream.ReadExactly(second);
                 if (!first.AsSpan().SequenceEqual(second))
-                    throw new IOException($"Repeated reads differ at {offset}; use an idle disk.");
+                    throw new IOException($"Repeated reads differ at {offset}; use an idle volume.");
             }
         }
         var after = Snapshot();
         if (before is not null && after is not null && (after.ReadBytes - before.ReadBytes < 524288 || after.WrittenBytes != before.WrittenBytes))
-            throw new IOException("Unexpected I/O counters; use an idle disk.");
+            throw new IOException("Unexpected I/O counters; use an idle volume.");
         Console.WriteLine(JsonSerializer.Serialize(new
         {
             result = "PASS",
-            disk,
+            volume = disk,
             attached,
             bytesRead = 524288,
             writesIssued = 0,

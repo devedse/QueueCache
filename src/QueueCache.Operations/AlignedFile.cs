@@ -95,7 +95,8 @@ internal sealed class AlignedFile : IDisposable
         // FSCTL_FILE_LEVEL_TRIM: file-relative ranges, NEVER a raw disk IOCTL.
         if (!DeviceIoControl(handle, 0x98208, input, 24, output, 4, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (returned != 4 || BinaryPrimitives.ReadUInt32LittleEndian(output) != 1)
+        // NumRangesProcessed counts the file system's own pieces: ReFS reports 2 for one requested range.
+        if (returned != 4 || BinaryPrimitives.ReadUInt32LittleEndian(output) == 0)
             throw new IOException("Incomplete file trim.");
     }
     /// <summary>Cancels this handle's pending I/O from another thread. False: nothing was pending.</summary>

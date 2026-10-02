@@ -9,7 +9,17 @@ qcache developer verify Q: --suite quick
 qcache developer verify Q: --suite paging-coherence --output C:\QueueCache-Results
 qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+# Volume-filter suites on the lab VHDX (see "Volume-filter lab disk" below)
+qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
+qcache developer verify V: --suite volumes --output C:\QueueCache-Results
+qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
 ```
+
+The target is always a volume (`Q:`): QueueCache filters volumes, and every volume
+has its own cache. Every suite that changes cache settings first requires the
+supported registration (`qcache developer driver registration`): QueueCache as the
+last Volume-class upper filter, not on the disk class, every volume covered, no
+lab `DiagnosticMode`.
 
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
@@ -17,7 +27,123 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 63)
+## Suites (plan version 77)
+
+Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
+disable and filesystem flush before orderly-removal acceptance. Plan 72 added
+verified topology and structured present-disk veto restoration to the plan-71 opt-in `disk-removal` suite. Its first case covers exactly one
+unconfigured disposable volume: an 8 MiB Fast/Deferred pending-write oracle,
+Windows safe eject, and operator live reconnect on the same bus, disk number and
+drive letter. It is excluded from `full`. Surprise removal, multiple volumes,
+letter/number changes, fault races and repeated-cycle qualification remain open.
+
+```powershell
+qcache developer verify W: --suite disk-removal --budget-mib 256 --disposable-instance '<exact disk PnP ID>' --disposable-bytes 8589934592 --output C:\QueueCache-Results
+```
+
+The output directory must already exist on another physical disk. Obtain the
+identity with `qcache disk eject W: --preview` and the physical size with
+`Get-Disk`; confirm that it is the dedicated disposable disk. The runner refuses
+boot/system/special-file paths, saved profiles, existing caches and ambiguous
+layouts. A successful Windows API return without observed device disappearance
+is INCOMPLETE. After observed removal, `removal-ready.json` records the exact
+run/case/disk/volume identities and an acknowledgement template. Reconnect that
+disk externally, then atomically write the template as `reconnect-ack.json` in
+that run directory. The foreground runner waits at most 15 minutes, validates the
+acknowledgement, requires a fresh empty cache lifetime and compares all oracle
+bytes before restoration. An unknown eject outcome (including a worker failure
+or presence-query error), stale acknowledgement or incomplete reconnect
+defers restoration and reports RESTORATION_FAILED; preserve evidence, reconnect
+the recorded target and use `verify-recover` after owned workers have stopped.
+The runner never invokes a hypervisor, reboots, formats or repairs the target.
+
+Plan 70, from the first FAT32 and ReFS runs: `volume-snapshot` is SKIP when Windows
+does not take shadow copies of the file system (FAT32/exFAT: Win32_ShadowCopy.Create
+4); file-level TRIM accepts the file system reporting more than one processed range
+(ReFS reports 2 for one); on ReFS `policies/foreground-background` records the share
+of requests on the caller's thread instead of requiring 90% (ReFS splits requests,
+KNOWN_ISSUES) and `ordering-faults` remounts the volume afterwards (ReFS takes a volume
+offline after the injected write failures, as for real disk errors).
+
+Plan 69: the target volume may use any file system Windows mounts (NTFS, ReFS,
+FAT32, exFAT), not only NTFS. File offsets of test ranges and page files now add the
+volume's cluster-area offset (`FSCTL_GET_RETRIEVAL_POINTER_BASE`: zero on NTFS and
+ReFS, after the FAT tables on FAT32/exFAT); without it gated cases would target the
+wrong range on FAT. `volume-resize` stays NTFS-only (Windows cannot shrink ReFS or
+FAT). `qcache developer lab-disk create --file-system NTFS|ReFS|FAT32|exFAT` builds
+the lab volumes with that file system (ReFS as a Dev Drive, 50 GiB each).
+
+Plan 68: `volume-snapshot` records the cache every 200 ms while the shadow copy is
+created (queue, active request phase and age, pending/in-flight bytes, last barrier
+control), and a shadow copy that Windows cannot create on the cached volume is a FAIL
+with those samples (it was SKIP in plan 67; an uncached volume on the VM snapshots
+fine, so a failure means the cache interfered). `volume-shared-disk` checks the bytes
+the flush of the first volume wrote instead of requiring zero pending bytes.
+
+Plan 67 adds `volumes/volume-snapshot`. Shadow copies (System Restore, backup and
+imaging tools) are taken by `volsnap`, below the cache. With 32 MiB pending in a
+256 MiB Fast/Deferred cache on the target, a client-accessible shadow copy is
+created (`Win32_ShadowCopy.Create`); the file read from the snapshot device must be
+exact and the cache must have drained the pending data before the snapshot. The
+shadow copy is deleted afterwards.
+
+Plan 66 adds `volumes/volume-resize` (found on the VM: extending a cached volume
+beyond the length the driver had learned failed with Invalid Parameter; fixed by
+re-reading the length). On the lab disk only (a volume labelled `QC-Lab-2` on the
+same virtual disk as the target, otherwise SKIP): with 32 MiB pending in a 128 MiB
+Fast/Deferred cache, the volume is shrunk by 1 GiB and extended back to its original
+size. The driver's length must follow both changes (the extend goes beyond the length
+it re-read after the shrink), the file system must grow again, a file written
+before and one written after must read back exact from the disk, and no error may
+be recorded. The volume is left at its original size without a cache task.
+
+Plan 65 changes how restoration proves the drain. Restoration flushes the file
+system and the cache, then disables the cache; that disabled state must have
+nothing pending or in flight. Afterwards the original settings are re-applied, and
+a cache that is enabled again may already hold new writes from Windows (on Q:, 8 KiB
+of NTFS metadata arrived within a second in a plan-64 run and failed restoration
+although everything had drained). Pending bytes must still be zero when the
+restored cache stays disabled. Budget, preset, options, timing, error count,
+instance and saved profiles are compared exactly, as before.
+
+Plan 64 adds two suites for the volume filter, both outside `full` because they need
+the lab disk:
+
+- `volumes` (three cases). `volume-registration`: the registration is the supported
+  one, the driver's device length equals the volume length, the physical disk
+  rejects a QueueCache request (no disk-level filter), and the filter answers on
+  every lettered fixed volume. `volume-raw-disk-commands`: with 16 MiB pending
+  (Fast, Deferred, one-hour age) and 8 MiB clean, a storage device-descriptor
+  query, a drive-geometry query and a SCSI INQUIRY pass-through (SKIP-noted when the
+  storage driver refuses pass-through) go to `\\.\PhysicalDriveN`; nothing may be
+  drained, flushed or evicted and no error recorded; both files must then read
+  back exact from the disk. `volume-shared-disk`: a second NTFS volume on the same
+  disk (without a cache task or saved profile, otherwise SKIP) gets its own 128 MiB
+  cache beside the target's 256 MiB; each accepts only its own 32 MiB file,
+  flushing one leaves the other's pending data undrained, both read back exact; a
+  version-2 profile saved for the second volume leaves the target's profile alone
+  and is removed again. The second volume is left without a cache task.
+- `trim-cache`: file-level TRIM with the cache running (Fast, Deferred). Pending
+  writes in the trimmed range are dropped (discarded counter, nothing drained),
+  clean copies are released, and a TRIM during an in-flight drain (300 ms lab delay)
+  waits for the issued write; untrimmed guards and a full rewrite read back exact
+  from the disk. A disk that rejects TRIM makes the case SKIP.
+
+Both suites may finish `COMPLETED_WITH_SKIPS`; a skipped case is not a pass. Plan
+64 also makes every cache-changing suite refuse an unsupported registration at
+capture.
+
+### Volume-filter lab disk
+
+`qcache developer lab-disk create <path.vhdx> [--letters V,W,X] [--size-gib 24]`
+creates a new expandable VHDX (diskpart), attaches it and partitions only that
+disk: two 8 GiB NTFS volumes (`QC-Lab-1`, `QC-Lab-2`) and one unformatted volume
+with the rest. It refuses an existing file and letters in use. Windows does not
+reattach a VHDX after a restart: run `lab-disk attach <path.vhdx>`. `lab-disk detach`
+refuses while any of its volumes has a cache task. The command prints the exact
+`write-tests` arguments for the unformatted volume. A VHDX accepts TRIM, so the
+`trim-cache` suite runs there even where the VM's own disks cannot TRIM (known
+issues). Keep the VHDX file on a volume without a cache task (C: on the lab VM).
 
 Plan 63 adds `policies/settings-rollback/lab-fault-6` and `-7` (N1 on the real
 driver). From 64 MiB Fast/Idle with a file cached, the lab fault makes the next
@@ -302,9 +428,12 @@ Preserve prior raw results and their scope.
 | `drain-decision` | Focused T050 comparison: deterministic 25%-of-budget file payload plus recorded bounded filesystem metadata, no-drain controls, fitting random writes and cold random reads, and drain parallelism 1/2/4. Three repeats produce 24 immutable cases with alternating order and identical payload bytes within each matched repetition. Records workload scores, exact flush interval, lower-write attempts/completions, driver drain-phase timing, capacity waits, pending bytes and raw telemetry; disables cache and verifies every seeded payload byte after each drain case. Requires DiskSpd. Not included in `full`. |
 | `trim-diagnostic` | Existing file-integrity workload on fresh files with cache routing enabled, then disabled; records exact file-level TRIM rejection codes and restores original settings. No DiskSpd. Filter remains attached; unsupported TRIM stays SKIP. Not included in `full`. |
 | `trim-file` | Driver-independent file-only probe: new 3 MiB file, middle 1 MiB TRIM, untouched guards and flushed rewrite oracle. Rejects boot/system/paging disks and changed disk identity. No cache controls, recovery snapshot or driver telemetry; restoration is explicitly not required. Unsupported TRIM is top-level SKIP with run status COMPLETED_WITH_SKIPS (diagnostic collected, not correctness passed). Not in `full`. |
+| `volumes` | Plans 64/66/67: `volume-registration`, `volume-raw-disk-commands`, `volume-shared-disk`, `volume-resize` and `volume-snapshot` (above). Needs the lab disk for the shared-disk case (SKIP otherwise). No DiskSpd. Not in `full`. |
+| `trim-cache` | Plan 64: TRIM of pending, clean and in-flight data with guard and rewrite oracles (above). Needs a disk that accepts TRIM (lab VHDX); SKIP otherwise. No DiskSpd. Not in `full`. |
 | `flush-interference` | Automatic/Fixed50 × requested application flush/control × repetitions. Eager, QD128 writer, 25 ms lower-write delay, hot reader. `--repeats 2` gives eight cases. |
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
+| `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -777,7 +906,7 @@ The delay hook is cleared to zero; **start with no armed delay/fault hooks** bec
 the protocol cannot capture their original values. The runner never resets faults,
 formats, deletes test data, reboots, or touches OS-disk caching. Recovery is bounded
 and can fail; inspect its evidence rather than assuming the old configuration won.
-Only one runner/recovery may own a physical disk. Do not change the same cache from
+Only one runner/recovery may own a physical disk (volumes on one disk share the lease). Do not change the same cache from
 the UI, CLI or another test during a run; the lease does not lock out those clients.
 
 ## Scope and maintenance
@@ -796,3 +925,93 @@ and regression tests. Do not keep cloning orchestration scripts. Contract tests
 cover unique IDs, completion rules, malformed XML, zero-I/O latency, argument
 preservation, output capture and cancellation/deadlines without touching a driver.
 Runtime testing of new releases still belongs on the VM.
+
+### Removal topology and veto evidence
+
+The orderly removal operation resolves the disk devnode or its immediate,
+ejectable storage adapter only when that adapter has exactly one child matching
+the selected disk. It verifies the complete bounded child/removal-relation scope.
+Related volume-manager devnodes must expose a normal or hidden volume interface
+whose native single-disk extent lies entirely on the selected physical disk.
+Shared adapters, unknown devices, missing interfaces, multiple extents and foreign
+disk extents refuse preparation. Preview records the selected node, scope members,
+relation API results and verified volume extents. An absent optional relation
+property remains result 37 with null devices, distinct from a reported empty list.
+
+A Windows veto is recorded as a structured native result with veto type/name,
+disk presence result and any cache-resume errors. A veto with the original disk
+confirmed present permits normal identity-checked runner restoration and leaves
+the case INCOMPLETE. A failed worker or uncertain disk presence defers restoration
+until inspection and supported recovery. Neither result qualifies removal.
+
+Plan 73 records before/disabled cache snapshots and native lower I/O attempt
+counters for the affected volume in the eject result, before its handles close.
+The 8 MiB pending-write case requires matching volume identity and cache lifetime,
+nonzero pending bytes before preparation, clean disabled state, successful
+filesystem flush, and advancing lower write/flush attempt counters. Missing
+attribution is unsupported rather than zero-filled. These are volume lifetime
+counter differences during controlled preparation, not process-wide score windows.
+Successful reconnect/oracle verification permits restoration even if preparation
+evidence is incomplete; the case still cannot pass.
+
+Plan 74 adds `disk-removal-windows`: the same explicit disposable target, pending
+8 MiB Fast/Deferred oracle and live reconnect contract, but requests the native
+Windows eject API directly while the cache is still enabled/dirty. No product
+disable, release or filesystem flush is issued before native eject. A final
+read-only state/diagnostic snapshot proves that precondition and its handle closes
+before the request. This qualifies the native Windows PnP path on the tested bus;
+it is separate from the product preparation/lower-counter case and does not
+claim that the tray UI itself was automated. Both suites stay excluded from full.
+
+Plan 74 also generates unique cryptographic oracle bytes for each removal case,
+so a previous run's data cannot stand in for newly acknowledged pending writes.
+Old raw runs and hashes remain unchanged.
+
+## Prewarmed sequential Q8 read/write (plan 77)
+
+`sequential-resident` is an opt-in focused suite, excluded from `full`. It requires
+`--budget-mib 2048` and uses a unique 1 GiB `resident.dat`, Fast/Idle at default
+parallelism 2, 1 MiB requests, Q8/T1, detailed timing off. Three repetitions
+produce nine distinct cases: reads, writes generating fresh random data per I/O
+(`-Zr`), and writes using a precomputed 1 MiB random buffer (`-Z1M`).
+`--case-filter sequential-read` selects reads; `precomputed` selects the three
+precomputed-buffer writes. `sequential-write` selects both write variants. This does not change the 72-case
+write-performance contract.
+
+```powershell
+qcache developer verify Q: --suite sequential-resident --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```
+
+Each case drains/drops prior clean blocks, applies its configuration, and reads
+the fitting file sequentially twice (ten seconds then three seconds, no hidden
+DiskSpd warmup). The first pass must complete at least a full file read.
+The second pass must read at least the full file, record enough new RAM-hit bytes
+for all its completed bytes, produce zero new read-miss bytes, retain at least
+the file size, and keep the same healthy cache instance/generation. Raw XML and
+before/after state evidence are retained. Missing or insufficient evidence fails
+the case; a merely elapsed warmup does not imply residency. Scoring uses `-W0`,
+with its separate telemetry ready handshake and recorded interval unchanged.
+
+This approximates the earlier prewarmed CLI benchmark conditions while resetting
+residency before every case, rather than warming once for an entire historical
+run. The observer still samples every 200 ms even with detailed timing off.
+Record Verifier and exact loaded CI driver identity. Thresholds remain an external
+comparison; MEASURED means evidence collection completed, not that throughput
+met a target. Preserve all repetitions and report ranges/medians, not only the
+highest score. Prewarm counters include process close and management observations
+and are separate from the scoring interval.
+
+Plan 75's original three-second first pass was insufficient on the test backend
+and was rejected before scoring. Plan 76 preserves that raw failure and requires
+a complete ten-second first pass before the unchanged strict second-pass proof.
+
+Plan 77 adds the separately named `-precomputed` write cases without changing
+existing per-I/O write cases or the 72-case write-performance suite. DiskSpd's
+`-Zr` creates fresh random content for each write and adds generator CPU overhead;
+`-Z1M` generates its random source buffer once. These are distinct workloads:
+do not combine their repetitions. CrystalDiskMark's normal Random setting uses
+block-sized precomputed buffers for writes, as shown in its official
+[DiskBench.cpp](https://github.com/hiyohiyo/CrystalDiskMark/blob/master/DiskBench.cpp).
+The new comparison keeps the exact DiskSpd binary, resident proof and telemetry
+handshake unchanged. [Microsoft's buffer contract](https://github.com/microsoft/diskspd/wiki/command-line-and-parameters)
+explains why scores with and without `-Zr` cannot be treated as identical tests.

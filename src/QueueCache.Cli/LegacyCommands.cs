@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using QueueCache.Management;
+using QueueCache.Operations;
 
 namespace QueueCache.Cli;
 
@@ -16,10 +17,10 @@ internal static class LegacyCommands
         if (args.Length == 0 || args is ["--help"] or ["help"])
         {
             Console.WriteLine("""
-        QueueCache experimental lab controller
+        QueueCache experimental lab controller (every <device> is a volume such as D:)
           qcache list
-          qcache status <D:|PhysicalDrive1> [--json]
-          qcache watch <D:|PhysicalDrive1>
+          qcache status <D:> [--json]
+          qcache watch <D:>
           qcache cache-status <device> [--json]
           qcache diagnostics <device>
           qcache policy <device> strict
@@ -46,19 +47,6 @@ internal static class LegacyCommands
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); };
         try
         {
-            // Compatibility installer plumbing. Product safety/identity gates live in packaging/Install-Driver.ps1.
-            if (args is ["lab-filter", "inspect", var instance])
-            {
-                Console.WriteLine(JsonSerializer.Serialize(DeviceFilters.Inspect(instance)));
-                return 0;
-            }
-            if (args.Length == 5 && args[0] == "lab-filter" && args[1] is "add" or "remove")
-            {
-                if (args[4] != "--lab-installer")
-                    throw new ArgumentException("Use the lab installer with disk safety checks.");
-                Console.WriteLine(JsonSerializer.Serialize(DeviceFilters.Change(args[2], args[3], args[1] == "add")));
-                return 0;
-            }
             if (args is ["list"])
             {
                 foreach (var name in CacheDevice.EnumerateDevices())
@@ -74,9 +62,9 @@ internal static class LegacyCommands
             }
             if (args is ["policy", _, "strict"] or ["policy", _, "unsafe-defer", "--accept-volatile-flush"])
             {
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(WriteCacheAction.FlushPolicy, value: args[2] == "strict" ? 0UL : 1UL);
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1], WriteCacheAction.FlushPolicy,
+                    value: args[2] == "strict" ? 0UL : 1UL, token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 if (args[2] != "strict")
                     Console.WriteLine("WARNING: successful OS flush/write-through no longer promises persistence. Normal shutdown and qcache flush/disable still drain. Abrupt failure can corrupt the filesystem.");
                 return 0;
@@ -90,9 +78,9 @@ internal static class LegacyCommands
             }
             if (args.Length == 2 && args[0] is "enable" or "flush" or "disable" or "retry" or "drop-clean")
             {
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(Enum.Parse<WriteCacheAction>(args[0].Replace("-", ""), ignoreCase: true));
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1],
+                    Enum.Parse<WriteCacheAction>(args[0].Replace("-", ""), ignoreCase: true), token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 return 0;
             }
             if (args.Length == 3 && args[0] is "configure" or "start" or "lab-delay" or "lab-fault")
@@ -104,12 +92,10 @@ internal static class LegacyCommands
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
                 if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11)
                     throw new ArgumentException("Lab hook value is outside its range.");
-                using var device = new CacheDevice(args[1], writable: true);
-                device.Control(configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
-                    configure ? amount * 1048576 : 0, configure ? 0 : amount);
-                if (args[0] == "start")
-                    device.Control(WriteCacheAction.Enable);
-                Console.WriteLine(RenderCache(device.GetWriteCacheState()));
+                var state = await CacheTasks.ControlAsync(args[1],
+                    configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
+                    configure ? amount * 1048576 : 0, configure ? 0 : amount, enableAfter: args[0] == "start", token: stop.Token);
+                Console.WriteLine(RenderCache(state));
                 return 0;
             }
             if (args.Length is 2 or 3 && args[0] == "status" && (args.Length == 2 || args[2] == "--json"))
@@ -168,6 +154,12 @@ internal static class LegacyCommands
             return 2;
         }
         catch (OperationCanceledException) when (stop.IsCancellationRequested) { return 0; }
+        // Distinct exit code: the volume's stack has no QueueCache filter (not loaded yet), so it has no cache.
+        catch (Win32Exception ex) when (ex.NativeErrorCode is 1 or 50)
+        {
+            Console.Error.WriteLine($"No QueueCache filter answers on this device ({ex.Message}).");
+            return 4;
+        }
         catch (Exception ex) when (ex is Win32Exception or IOException or ArgumentException)
         {
             Console.Error.WriteLine(ex.Message);

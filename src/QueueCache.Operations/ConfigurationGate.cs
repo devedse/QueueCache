@@ -1,4 +1,6 @@
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace QueueCache.Operations;
 
@@ -6,13 +8,17 @@ namespace QueueCache.Operations;
 [SupportedOSPlatform("windows")]
 internal sealed class ConfigurationGate : IDisposable
 {
-    private readonly Mutex mutex = new(false, @"Global\QueueCache.Configuration");
-    private ConfigurationGate()
+    private readonly Mutex mutex;
+    internal static string NameFor(string instance) => @"Global\QueueCache.Configuration.Disk." +
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(instance.ToUpperInvariant())));
+    private ConfigurationGate(string instance)
     {
+        if (string.IsNullOrWhiteSpace(instance)) throw new ArgumentException("A stable disk identity is required.");
+        mutex = new(false, NameFor(instance));
     }
-    public static ConfigurationGate Enter()
+    public static ConfigurationGate Enter(string instance)
     {
-        var gate = new ConfigurationGate();
+        var gate = new ConfigurationGate(instance);
         try
         {
             try

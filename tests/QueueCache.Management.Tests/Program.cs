@@ -99,15 +99,106 @@ Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configura
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
 Check(MemoryBudget.RequiredSystemHeadroom(8UL << 30) == 2UL << 30, "8 GiB host keeps 2 GiB application/OS headroom");
 Check(MemoryBudget.RequiredSystemHeadroom(32UL << 30) == 8UL << 30, "larger host keeps 25% application/OS headroom");
-var profile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30, new(), true);
-var existingProfile = new SavedConfiguration(1, "Q:", "test-device-identity", 200L << 30,
-    new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) }, false);
+const string volumeGuid = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}";
+var profile = new SavedConfiguration(2, "Q:", "test-device-identity", 150L << 30, new(), true, volumeGuid);
+var existingProfile = profile with
+{
+    Configuration = new CacheConfiguration(2048, CachePreset.Strict, false) { Options = new(Drain: DrainAlgorithm.Eager, Parallelism: 4) },
+    VolatileFlushAccepted = false
+};
 var existingJson = System.Text.Json.JsonSerializer.Serialize(existingProfile);
 var existingRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(existingJson)!;
 existingRoundTrip.Validate();
 Check(existingRoundTrip == existingProfile && existingRoundTrip.Configuration.Options.Drain == DrainAlgorithm.Eager,
     "saved Strict/Eager profile survives new defaults exactly");
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
+var ejectableDisk = new DiskDescription(3, "Removable", 8L << 30, "test-removable", ["R:"], false, false, PartitionCount: 1);
+Check(DiskEjection.SafetyReason(ejectableDisk) is null, "one unprotected lettered partition is eligible for an eject capability check");
+Check(DiskEjection.SafetyReason(ejectableDisk with { IsPaging = true }) is not null, "paging disk cannot be ejected");
+Check(DiskEjection.SafetyReason(ejectableDisk with { IsBoot = true }) is not null, "boot disk cannot be ejected");
+Check(DiskEjection.SafetyReason(ejectableDisk with { PartitionCount = 2 }) is not null, "unlettered partition cannot be silently omitted from eject preparation");
+Check(DiskEjection.SafetyReason(ejectableDisk with { Volumes = ["R:", "R:"], PartitionCount = 2 }) is not null, "duplicate volume cannot be counted twice");
+var ejectVolume = new VolumeDescription("R:", "test", "NTFS", 1L << 30,
+    @"\\?\Volume{00000000-0000-0000-0000-000000000001}\", 3, "disk", "test-removable", 8L << 30, false, false, false);
+Check(DiskEjection.SameMountedVolume(ejectVolume, ejectVolume), "rollback recognizes unchanged mounted volume");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { Volume = "S:" }), "rollback refuses a reassigned drive letter");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { DiskNumber = 4 }), "rollback refuses a remapped disk");
+Check(!DiskEjection.SameMountedVolume(ejectVolume, ejectVolume with { VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000002}\" }), "rollback refuses a replacement volume");
+var confirmedEject = new DiskEjectPreview(3, "test-removable", "disk", ["R:"], true, null,
+    8L << 30, new Dictionary<string, string> { ["R:"] = ejectVolume.VolumeId }, "test-removable", ["test-removable"]);
+DiskEjection.ValidatePreview(confirmedEject, confirmedEject with
+{
+    Instance = "TEST-REMOVABLE", Volumes = ["r:"], VolumeIds = new Dictionary<string, string> { ["r:"] = ejectVolume.VolumeId.ToUpperInvariant() }
+});
+foreach (var changed in new[]
+{
+    confirmedEject with { DiskNumber = 4 }, confirmedEject with { Instance = "other-disk" },
+    confirmedEject with { DiskBytes = 16L << 30 }, confirmedEject with { Volumes = ["R:", "S:"] },
+    confirmedEject with { RemovalInstance = "shared-controller" }, confirmedEject with { RemovalMembers = ["test-removable", "other-disk"] },
+    confirmedEject with { VolumeIds = null }, confirmedEject with { VolumeIds = new Dictionary<string, string>() },
+    confirmedEject with { VolumeIds = new Dictionary<string, string> { ["R:"] = "{00000000-0000-0000-0000-000000000002}" } }
+})
+    RejectIo(() => DiskEjection.ValidatePreview(confirmedEject, changed), "eject refuses changed confirmation identity");
+Check(DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 6, ["DISK-A"], "disk-a"),
+    "one ejectable storage adapter child is bound to its disk");
+Check(!DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 6, ["disk-a", "disk-b"], "disk-a") &&
+      !DeviceRemovalScope.IsDedicatedAdapter("bridge-class", 6, ["disk-a"], "disk-a") &&
+      !DeviceRemovalScope.IsDedicatedAdapter("{4d36e97b-e325-11ce-bfc1-08002be10318}", 4, ["disk-a"], "disk-a"),
+    "a shared adapter, bridge or non-ejectable parent is never selected");
+DeviceRemovalScope.ValidateRelations(new HashSet<string>(["disk-a", "adapter-a"], StringComparer.OrdinalIgnoreCase), ["DISK-A"]);
+try
+{
+    DeviceRemovalScope.ValidateRelations(new HashSet<string>(["disk-a", "adapter-a"], StringComparer.OrdinalIgnoreCase), ["disk-b"]);
+    throw new Exception("Unrelated removal relation was accepted.");
+}
+catch (NotSupportedException) { }
+DeviceRemovalScope.ValidateVolumeExtent(3, 8589934592, (3, 17408, 16759808));
+foreach (var extent in new[] { (2, 17408L, 16759808L), (3, -1L, 1L), (3, 0L, 0L), (3, 8589934591L, 2L), (3, 1L, long.MaxValue) })
+{
+    try { DeviceRemovalScope.ValidateVolumeExtent(3, 8589934592, extent); throw new Exception("Unsafe related-volume extent accepted."); }
+    catch (NotSupportedException) { }
+}
+var removalPending = new WriteCacheState(1, 0, 1UL << 30, 256UL << 20, 0, 8UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 };
+var removalDisabled = removalPending with { Flags = 0, DirtyBytes = 0 };
+var lowerBefore = new CacheAttribution(0, 10, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+var lowerAfter = lowerBefore with { LowerWriteAttempts = 11, LowerFlushAttempts = 3 };
+var preparedEject = new DiskEjectPreparation("R:", ejectVolume.VolumeId, removalPending, removalDisabled, lowerBefore, lowerAfter, true);
+DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, [preparedEject]);
+RejectIo(() => DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, null), "missing removal preparation is not evidence of durability");
+foreach (var broken in new[]
+{
+    preparedEject with { BeforeLower = null }, preparedEject with { DisabledLower = null },
+    preparedEject with { DisabledLower = lowerBefore },
+    preparedEject with { DisabledLower = lowerAfter with { LowerFlushAttempts = 2 } },
+    preparedEject with { DisabledLower = lowerAfter with { LowerWriteAttempts = 10 } },
+    preparedEject with { DisabledLower = lowerAfter with { LowerFlushAttempts = 1 } },
+    preparedEject with { VolumeId = "replacement" }, preparedEject with { FileSystemFlushed = false },
+    preparedEject with { Before = removalPending with { DirtyBytes = 0 } },
+    preparedEject with { Before = removalPending with { Instance = 0 } },
+    preparedEject with { Disabled = removalDisabled with { Errors = 1 } },
+    preparedEject with { Disabled = removalDisabled with { BudgetBytes = 0 } },
+    preparedEject with { Disabled = removalDisabled with { Flags = 1 } },
+    preparedEject with { Disabled = removalDisabled with { Instance = 5 } },
+    preparedEject with { Disabled = removalDisabled with { DirtyBytes = 4096 } },
+    preparedEject with { Disabled = removalDisabled with { InFlightBytes = 4096 } }
+}) RejectIo(() => DiskRemovalEvidence.ValidatePreparation("R:", ejectVolume.VolumeId, 1L << 30, [broken]), "incomplete removal durability evidence is rejected");
+if (OperatingSystem.IsWindows())
+{
+    var selected = new DiskTarget('R', 3, 1L << 30, "test-removable") { DiskBytes = 8L << 30, VolumeId = ejectVolume.VolumeId };
+    CacheTasks.ValidateSelection(selected, ejectVolume);
+    foreach (var replacement in new[]
+    {
+        selected with { Number = 4 }, selected with { Instance = "other-disk" },
+        selected with { DiskBytes = 16L << 30 }, selected with { Bytes = 2L << 30 },
+        selected with { VolumeId = "replacement-guid" }, selected with { Letter = 'S' }
+    }) RejectIo(() => CacheTasks.ValidateSelection(replacement, ejectVolume), "desktop mutation rejects stale disk/volume selection");
+}
+var absentRelation = DeviceRemovalScope.DecodeRelations("disk-a", 4, 0x25, null);
+Check(absentRelation.ConfigurationManagerResult == 0x25 && absentRelation.Devices is null,
+    "optional absent relation preserves its API result without inventing a count");
+Check(DeviceRemovalScope.DecodeRelations("disk-a", 4, 0, ['\0']).Devices is { Length: 0 }, "reported empty relations are distinct from absent properties");
+RejectIo(() => DeviceRemovalScope.DecodeRelations("disk-a", 4, 0x0D, null), "missing device cannot be treated as an absent relation property");
+RejectIo(() => DeviceRemovalScope.DecodeRelations("disk-a", 4, 0, null), "successful missing relation buffer is rejected");
 Check(diskLabel.Contains("Q:") && diskLabel.Contains("PhysicalDrive1") && diskLabel.Contains("200 GiB"), "disk label contains volume, physical drive and human-readable capacity");
 Check(new DiskDescription(0, "Boot", 100L << 30, "boot", ["C:"], true, true).Display.Contains("[boot/system]"), "boot disk is labelled, not hidden");
 Check(new DiskDescription(0, "Paging", 100L << 30, "paging", ["C:"], false, false, true).Display.Contains("[paging]"), "paging disk is labelled, not hidden");
@@ -115,12 +206,40 @@ ActivationSafety.ValidateTarget(0);
 ActivationSafety.ValidateTarget(1);
 Reject(() => ActivationSafety.ValidateTarget(-1), "invalid usage-path count");
 profile.Validate();
-Reject(() => (profile with { Version = 2 }).Validate(), "unknown profile version");
+Reject(() => (profile with { Version = 1 }).Validate(), "unknown profile version");
+Reject(() => (profile with { VolumeId = null! }).Validate(), "profile requires the volume GUID");
+Reject(() => (profile with { VolumeId = "0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d" }).Validate(), "volume GUID keeps its braces");
 Reject(() => (profile with { Volume = @"Q:\folder" }).Validate(), "profile requires volume not path");
 Reject(() => (profile with { Instance = "" }).Validate(), "profile requires disk identity");
-Reject(() => (profile with { Bytes = 0 }).Validate(), "profile requires disk size");
+Reject(() => (profile with { Bytes = 0 }).Validate(), "profile requires volume size");
 Reject(() => (profile with { Configuration = null! }).Validate(), "profile requires configuration");
 Reject(() => (profile with { VolatileFlushAccepted = false }).Validate(), "saved fast profile requires acknowledgement");
+Check(profile.Matches(volumeGuid.ToUpperInvariant()) && !profile.Matches("{00000000-0000-0000-0000-000000000002}"), "a profile follows its volume GUID, not the letter");
+profile.CheckIdentity("test-device-identity", volumeGuid, 150L << 30);
+RejectIo(() => profile.CheckIdentity("test-device-identity", volumeGuid, 200L << 30), "restore refuses a changed volume size");
+RejectIo(() => profile.CheckIdentity("test-device-identity", "{00000000-0000-0000-0000-000000000002}", 150L << 30), "restore refuses another volume");
+RejectIo(() => profile.CheckIdentity("other-disk", volumeGuid, 150L << 30), "restore refuses another disk");
+Check(VolumeIds.Parse(@"\\?\Volume{0E0C7F9E-1C1B-4C7E-8D7A-1F9F2A3B4C5D}\") == volumeGuid, "volume GUID parsed from the mount-manager name, lowercase");
+foreach (var invalid in new[] { @"\\?\Volume{0e0c7f9e}\", @"\\.\Q:", @"\\?\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}", "" })
+    RejectIo(() => VolumeIds.Parse(invalid), "reject malformed volume name " + invalid);
+var inventory = VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"Games","FileSystem":"NTFS","Bytes":161061273600,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false},{"Volume":"R:","Label":"","FileSystem":"","Bytes":53687091200,"VolumePath":"\\\\?\\Volume{00000000-0000-0000-0000-000000000002}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false}]""");
+Check(FileSystems.IsMounted("NTFS") && FileSystems.IsMounted("ReFS") && FileSystems.IsMounted("FAT32") && FileSystems.IsMounted("exFAT") &&
+    !FileSystems.IsMounted("RAW") && !FileSystems.IsMounted("") && !FileSystems.IsMounted(null), "any mounted file system can be cached; RAW cannot");
+Check(FileSystems.IsJournaled("NTFS") && FileSystems.IsJournaled("refs") && !FileSystems.IsJournaled("FAT32") && !FileSystems.IsJournaled("exFAT"),
+    "FAT32 and exFAT are flagged as unjournaled");
+Check(inventory.Count == 2 && inventory[0].VolumeId == volumeGuid && inventory[0].HasFileSystem && !inventory[1].HasFileSystem, "volume inventory keeps each volume on a shared disk");
+Check(inventory[0].Display.Contains("Q: Games") && inventory[0].Display.Contains("disk 1") && inventory[1].Display.Contains("RAW"), "volume label names the volume, file system and disk");
+RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"","FileSystem":"NTFS","Bytes":300,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume larger than its disk is refused");
+RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:\\","Label":"","FileSystem":"NTFS","Bytes":100,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume must be a letter");
+// The supported registration: topmost Volume-class filter, not on the disk class, every volume, no lab switches.
+var registration = new FilterRegistration(true, true, ["volsnap", "qcachelab"], ["partmgr"], "unconfigured", 0);
+Check(registration.Problems().Count == 0, "topmost volume registration is healthy");
+Check((registration with { VolumeClassUpperFilters = ["qcachelab", "volsnap"] }).Problems().Count == 1, "a filter above QueueCache is reported");
+Check((registration with { VolumeClassUpperFilters = ["volsnap", "qcachelab", "qcachelab"] }).Problems().Count == 1, "a duplicate registration is reported");
+Check((registration with { DiskClassUpperFilters = ["partmgr", "qcachelab"] }).Problems().Count == 1, "a leftover disk-level registration is reported");
+Check((registration with { AllVolumes = false }).Problems().Count == 1, "a single-volume lab restriction is reported");
+Check((registration with { DiagnosticMode = 8 }).Problems().Count == 1, "a lab diagnostic mode is reported");
+Check((registration with { ServiceInstalled = false, AllVolumes = false }).Problems().Count == 1, "a missing installation is reported once");
 Check(s.Enabled && s.LastError == unchecked((int)0xC000009A), "flags and signed NTSTATUS");
 Check(s.DeviceBytes == 200L << 30 && s.WrittenBytes == 9L << 30, "64-bit byte counters");
 Check(s.QueueMemoryBytes == 3L << 30 && s.MaxQueueBytes == 4L << 30, "cache budgets above 2 GiB");
@@ -133,6 +252,8 @@ Check(DevicePath.Normalize("D:") == @"\\.\D:", "volume normalization");
 Check(DevicePath.Normalize(@"\\.\PhysicalDrive1") == @"\\.\PhysicalDrive1", "disk normalization");
 foreach (var invalid in new[] { @"D:\file.bin", @"\\server\share", "PhysicalDrive-1", "D:\\", "PhysicalDrive1\n" })
     Reject(() => DevicePath.Normalize(invalid), "reject non-device path " + invalid);
+Check(DevicePath.NormalizeVolume("q:") == @"\\.\q:" && DevicePath.NormalizeVolume(@"\\.\Q:") == @"\\.\Q:", "management targets are volumes");
+Reject(() => DevicePath.NormalizeVolume("PhysicalDrive1"), "management rejects a whole disk");
 Console.WriteLine("All protocol/path regression checks passed.");
 var cacheData = new byte[WriteCacheState.WireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(cacheData, 1);
@@ -405,16 +526,16 @@ diagnosticsBytes[0] = 1;
 BinaryPrimitives.WriteUInt64LittleEndian(diagnosticsBytes.AsSpan(16), 10);
 Reject(() => CacheDiagnostics.Decode(diagnosticsBytes), "deferred count exceeds requests");
 Console.WriteLine("Flush-policy/diagnostics protocol regression checks passed.");
-if (OperatingSystem.IsWindows())
-{
-    Check(DeviceFilters.Plan(["one", "two"], true).SequenceEqual(["one", "two", "qcachelab"]), "append lab filter");
-    Check(DeviceFilters.Plan(["one", "QCACHELAB", "two"], true).SequenceEqual(["one", "QCACHELAB", "two"]), "idempotent registration");
-    Check(DeviceFilters.Plan(["one", "QCACHELAB", "two"], false).SequenceEqual(["one", "two"]), "remove only lab filter");
-    Check(DeviceFilters.Plan([], false).Length == 0, "empty removal");
-    Console.WriteLine("Filter-list regression checks passed (no device changes).");
-}
-
 static void Check(bool value, string label) { if (!value) throw new Exception("FAIL: " + label); }
+static void RejectIo(Action action, string label)
+{
+    try
+    {
+        action();
+    }
+    catch (IOException) { return; }
+    throw new Exception("FAIL: " + label);
+}
 static void Reject(Action action, string label)
 {
     try

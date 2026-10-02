@@ -25,8 +25,63 @@ internal static class VerificationRunnerTests
             catch (Exception e) when (e is ArgumentException or InvalidDataException or System.Xml.XmlException) { return; }
             throw new Exception("Expected rejection.");
         }
+        Check(QueueCache.Operations.ConfigurationGate.NameFor("disk-a") == QueueCache.Operations.ConfigurationGate.NameFor("DISK-A") &&
+            QueueCache.Operations.ConfigurationGate.NameFor("disk-a") != QueueCache.Operations.ConfigurationGate.NameFor("disk-b"),
+            "configuration transactions use case-insensitive physical-disk identity");
+        await Task.Run(() =>
+        {
+            using var firstGate = QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-a");
+            var otherDisk = Task.Run(() => { using var gate = QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-b"); });
+            Check(otherDisk.Wait(TimeSpan.FromSeconds(2)), "another disk can configure during an eject transaction");
+        });
+        await Task.Run(() =>
+        {
+            using var started = new ManualResetEventSlim();
+            Task sameDisk;
+            using (QueueCache.Operations.ConfigurationGate.Enter("fixture-disk-a"))
+            {
+                sameDisk = Task.Run(() => { started.Set(); using var gate = QueueCache.Operations.ConfigurationGate.Enter("FIXTURE-DISK-A"); });
+                Check(started.Wait(TimeSpan.FromSeconds(2)) && !sameDisk.Wait(100), "volumes on the same disk serialize their mutations");
+            }
+            Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
+        });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 63, "policies adds settings-rollback on the driver");
+        Check(VerificationPlan.Version == 77, "plan 77: verified resident sequential scores distinguish per-I/O and precomputed random buffers");
+        var windowsRemovalCases = VerificationPlan.Integrity(options with { Suite = "disk-removal-windows" });
+        Check(windowsRemovalCases.Count == 1 && windowsRemovalCases[0].Id == "disk-windows-eject-reconnect" &&
+            !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Id == "disk-windows-eject-reconnect"),
+            "native Windows eject remains a distinct opt-in case outside full");
+        var removalOptions = new VerificationOptions("W:", "disk-removal", BudgetMiB: 256,
+            DisposableInstance: "test-disposable", DisposableBytes: 8L << 30);
+        VerificationPlan.Validate(removalOptions);
+        Reject(() => VerificationPlan.Validate(removalOptions with { DisposableInstance = null }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { DisposableBytes = 0 }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { BudgetMiB = 1024 }));
+        Reject(() => VerificationPlan.Validate(removalOptions with { Suite = "quick" }));
+        Check(VerificationPlan.Integrity(removalOptions).Single().Id == DiskRemovalHandshake.CaseId &&
+            !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "disk-removal"),
+            "removal is explicitly opted in and excluded from full");
+        var reconnectTarget = new QueueCache.Operations.DiskTarget('W', 3, 1L << 30, "test-disposable")
+            { DiskBytes = 8L << 30, VolumeId = "{00000000-0000-0000-0000-000000000001}" };
+        var reconnectAck = new DiskReconnectAcknowledgement("run-one", DiskRemovalHandshake.CaseId,
+            reconnectTarget.Instance, reconnectTarget.VolumeId);
+        DiskRemovalHandshake.Validate(reconnectAck, "run-one", reconnectTarget);
+        foreach (var bad in new[] { reconnectAck with { RunId = "old-run" }, reconnectAck with { CaseId = "other-case" },
+            reconnectAck with { Instance = "replacement-disk" }, reconnectAck with { VolumeId = "replacement-volume" } })
+        {
+            try { DiskRemovalHandshake.Validate(bad, "run-one", reconnectTarget); }
+            catch (IOException) { continue; }
+            throw new Exception("Reconnect handshake accepted stale or replacement identity.");
+        }
+        VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
+        VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
+        Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
+            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk", "volume-resize", "volume-snapshot"]), "volumes runs registration, raw disk commands, a shared disk, a resize and a snapshot as separate cases");
+        Check(VerificationPlan.Integrity(options with { Suite = "trim-cache" }).Single() == new IntegrityCase("trim-cache", "trim-cache"), "trim-cache is one case");
+        Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(test => test.Id.StartsWith("volume-") || test.Id == "trim-cache"),
+            "full does not include the volume or TRIM suites (they need a lab disk)");
+        Check(VerificationRunner.AllowsSkips("volumes") && VerificationRunner.AllowsSkips("trim-cache") && VerificationRunner.AllowsSkips("trim-file") &&
+            !VerificationRunner.AllowsSkips("policies") && !VerificationRunner.AllowsSkips("full"), "only capability-dependent suites may complete with skips");
         Check(QueueCache.Operations.CacheScenarios.VerifySettingsRollback("s", true, "x. The previous settings were restored.",
             true, true, true, true, true, true).Result == "PASS", "settings rollback accepts a verified restore");
         foreach (var bad in new Action[]
@@ -104,6 +159,14 @@ internal static class VerificationRunnerTests
         {
             QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(40, 40, 20), 100);
             Check(false, "caller-path check rejects worker-only service");
+        }
+        catch (IOException) { }
+        Check(QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(20, 20, 0), 100, "ReFS").Contains("40 of 100 on ReFS"),
+            "caller-path check records the ReFS share instead of applying the 90% expectation");
+        try
+        {
+            QueueCache.Operations.CacheScenarios.VerifyCallerPath(new(0, 0, 0), new(0, 0, 0), 100, "ReFS");
+            Check(false, "caller-path check still requires the path to work on ReFS");
         }
         catch (IOException) { }
         Check(VerificationPlan.Integrity(new VerificationOptions("Q:", "paging-coherence"))
@@ -567,7 +630,7 @@ internal static class VerificationRunnerTests
             new("system-active-image-strict", "system-active-image")
         }), "active system-image covers normal Fast and Strict product paths");
         var imageRoot = "C:\\QueueCache-System-0123456789abcdef0123456789abcdef";
-        var imageTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
+        var imageTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true) { DiskBytes = 100L << 30 };
         var fastArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-fast");
         var strictArtifacts = VerificationRunner.SystemImageArtifacts(imageRoot, "system-active-image-strict");
         Check(fastArtifacts.WorkDirectory != strictArtifacts.WorkDirectory &&
@@ -617,8 +680,8 @@ internal static class VerificationRunnerTests
             "passed active image requires post-release byte evidence");
         Check(!VerificationWorker.RequiresSystemImageEvidence([passedImage with { Status = "FAIL" }]),
             "failed active image permits restoration without nonexistent image evidence");
-        var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true);
-        var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS");
+        var systemTarget = new QueueCache.Operations.DiskTarget('C', 0, 100L << 30, "SCSI\\TEST", true, true, true) { DiskBytes = 100L << 30 };
+        var resultsTarget = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "SCSI\\RESULTS") { DiskBytes = 200L << 30 };
         Check(VerificationRunner.IsSystemRecoveryTarget(systemTarget),
             "C boot/system recovery selects guarded system restoration");
         Check(!VerificationRunner.IsSystemRecoveryTarget(resultsTarget),
@@ -823,7 +886,8 @@ internal static class VerificationRunnerTests
                 "structured check failures reach worker stderr with exact details");
         }
         Check(options.DeadlineMinutes == 0, "overall deadline disabled by default");
-        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 200L << 30, "fixture");
+        // A 199 GiB volume (what the volume filter reports) on a 200 GiB disk.
+        var identity = new QueueCache.Operations.DiskTarget('Q', 1, 199L << 30, "fixture") { DiskBytes = 200L << 30 };
         var dataDisk = new QueueCache.Operations.DiskDescription(1, "fixture", 200L << 30, "fixture", ["Q:"], false, false);
         VerificationWorker.ValidateFileTarget(identity, dataDisk);
         foreach (var excluded in new[] { dataDisk with { IsBoot = true }, dataDisk with { IsSystem = true }, dataDisk with { IsPaging = true }, dataDisk with { Bytes = 1 }, dataDisk with { Instance = "other" } })
@@ -840,7 +904,13 @@ internal static class VerificationRunnerTests
         Check(RunStorage.Complete(["trim-file"], skippedTrim, allowSkipped: true), "diagnostic can finish with explicit SKIP");
         Check(!RunStorage.Complete(["trim-file", "missing"], skippedTrim, allowSkipped: true), "diagnostic cannot accept missing cases");
         QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 199L << 30), "FIXTURE", "ntfs");
-        QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
+        QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 199UL << 30);
+        try
+        {
+            QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (1, 1L << 20, 198L << 30), "fixture", "NTFS");
+            throw new Exception("Extent length other than the volume size accepted.");
+        }
+        catch (IOException) { }
         try
         {
             QueueCache.Operations.DiskTarget.ValidateMountedIdentity(identity, (2, 1L << 20, 199L << 30), "fixture", "NTFS");
@@ -849,8 +919,8 @@ internal static class VerificationRunnerTests
         catch (IOException) { }
         try
         {
-            QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 201UL << 30);
-            throw new Exception("Disk-length mismatch accepted.");
+            QueueCache.Operations.DiskTarget.ValidateDeviceLength(identity, 200UL << 30);
+            throw new Exception("Volume-length mismatch accepted.");
         }
         catch (IOException) { }
         try
@@ -916,6 +986,30 @@ internal static class VerificationRunnerTests
         Check(writes.All(c => c.Resident && !c.Writer && c.DelayMs == 0), "write matrix isolated fitting file, no injected delay");
         Check(writes.Count(c => c.Timing) == 36 && writes.Count(c => c.Drain == "Idle") == 24, "write matrix timing and policy controls");
         Check(writes.Where(c => c.Workload == "random-write").All(c => c.QueueDepth is 1 or 32), "CDM random write queue depths");
+        var sequential = VerificationPlan.Performance(options with { Suite = "sequential-resident" });
+        Check(sequential.Count == 9 && sequential.Select(c => c.Id).Distinct().Count() == 9 &&
+            sequential.All(c => c.WarmResident && c.Resident && !c.Timing && c.QueueDepth == 8 && c.Drain == "Idle"),
+            "prewarmed sequential suite has nine isolated read/write cases");
+        Check(sequential.Count(c => c.Workload == "sequential-read") == 3 &&
+            !VerificationPlan.Performance(options with { Suite = "full" }).Any(c => c.WarmResident),
+            "prewarmed read/write suite remains opt-in outside full");
+        Check(sequential.Count(c => c.PrecomputedWriteBuffer && c.Workload == "sequential-write" && c.WriteBufferArgument == "-Z1M") == 3 &&
+            sequential.Where(c => !c.PrecomputedWriteBuffer).All(c => c.WriteBufferArgument == "-Zr") &&
+            writes.All(c => c.WriteBufferArgument == "-Zr"), "buffer comparison preserves existing write matrix payload generation");
+        Check(VerificationPlan.Performance(options with { Suite = "sequential-resident", CaseFilter = "precomputed" }).Count == 3,
+            "precomputed write selection is a complete three-case subset");
+        var warmState = new QueueCache.Management.WriteCacheState(8161, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
+            { Instance = 4, CleanReadBytes = 1UL << 30, ReadHitBytes = 10UL << 30 };
+        var warmed = warmState with { ReadHitBytes = 12UL << 30 };
+        WarmResidentEvidence.ValidateFirstPass(1L << 30, 1UL << 30);
+        Reject(() => WarmResidentEvidence.ValidateFirstPass(800L << 20, 1UL << 30));
+        WarmResidentEvidence.Validate(warmState, warmed, 2L << 30, 1UL << 30);
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { ReadMissBytes = 4096 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { ReadHitBytes = 11UL << 30 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { Instance = 5 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 4096 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 0, DirtyBytes = 600UL << 20, InFlightBytes = 500UL << 20 }, 2L << 30, 1UL << 30));
+        Reject(() => WarmResidentEvidence.Validate(warmState, warmed, 0, 1UL << 30));
         var selection = options with { Suite = "write-performance", CaseFilter = "random-write-q1-Idle-timingFalse" };
         var selectedWrites = VerificationPlan.Performance(selection);
         Check(selectedWrites.Count == 3 && selectedWrites.SequenceEqual(writes.Where(test => test.Id.Contains(selection.CaseFilter))),
@@ -1037,12 +1131,26 @@ internal static class VerificationRunnerTests
             }),
                 "failed flush stops restoration without recording a successful boundary");
         }
-        Check(VerificationWorker.RestorationMismatches(original, healthy, "[]", 0).Count == 0,
+        var drained = healthy with { Flags = healthy.Flags & ~1u, DirtyBytes = 0, InFlightBytes = 0 };
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0).Count == 0,
             "matching restoration accepted");
+        var enabled = healthy with { Flags = 1 };
+        Check(VerificationWorker.RestorationMismatches(original with { State = enabled }, drained, enabled with { DirtyBytes = 8192, InFlightBytes = 4096 }, "[]", 0).Count == 0,
+            "a re-enabled restored cache may already hold new writes from Windows");
         foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]
         {
-            ("DirtyBytes", healthy with { DirtyBytes = 1 }),
-            ("InFlightBytes", healthy with { InFlightBytes = 1 }),
+            ("DirtyBytes when disabled", drained with { DirtyBytes = 1 }),
+            ("InFlightBytes when disabled", drained with { InFlightBytes = 1 }),
+            ("Enabled when disabled", enabled)
+        })
+        {
+            var mismatch = VerificationWorker.RestorationMismatches(original, changed, healthy, "[]", 0);
+            Check(mismatch.Count == 1 && mismatch[0].StartsWith(name + ": expected "), "restoration proves the drain at the disabled boundary: " + name);
+        }
+        Check(!healthy.Enabled && VerificationWorker.RestorationMismatches(original, drained, healthy with { DirtyBytes = 1 }, "[]", 0)
+            .SequenceEqual(["DirtyBytes: expected 0, actual 1"]), "a cache restored as disabled must stay empty");
+        foreach (var (name, changed) in new (string, QueueCache.Management.WriteCacheState)[]
+        {
             ("Errors", healthy with { Errors = 1 }),
             ("Instance", healthy with { Instance = 1 }),
             ("BudgetBytes", healthy with { BudgetBytes = 1 }),
@@ -1051,15 +1159,15 @@ internal static class VerificationRunnerTests
             ("Options", healthy with { Options = new QueueCache.Management.CacheOptions() })
         })
         {
-            var mismatch = VerificationWorker.RestorationMismatches(original, changed, "[]", 0);
+            var mismatch = VerificationWorker.RestorationMismatches(original, drained, changed, "[]", 0);
             Check(mismatch.Count == 1 && mismatch[0].StartsWith(name + ": expected ") && mismatch[0].Contains(", actual "),
                 "restoration preserves and identifies " + name);
         }
-        Check(VerificationWorker.RestorationMismatches(original, healthy, "changed", 1).Count == 2,
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "changed", 1).Count == 2,
             "profile and timing mismatches both retained");
         var originalOptions = new QueueCache.Management.CacheOptions();
         Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
-            healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
+            drained, healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
             "restoration compares option values rather than object identity");
         ApplyRollbackChecks(healthy, Check);
         var reads = 0;
@@ -1250,6 +1358,30 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
+            foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
+            {
+                var parent = store.PathFor(mode);
+                using var cancellation = new CancellationTokenSource();
+                var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                var progress = new InlineProgress(message =>
+                {
+                    if (!message.Contains("Awaiting the same disk and reconnect-ack.json")) return;
+                    var directory = Directory.GetDirectories(parent).Single();
+                    if (mode == "removal-cancel") { cancellation.Cancel(); return; }
+                    using var ready = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "removal-ready.json")));
+                    var ack = ready.RootElement.GetProperty("Acknowledgement").Deserialize<DiskReconnectAcknowledgement>()!;
+                    RunStorage.AtomicJson(Path.Combine(directory, "reconnect-ack.json"), mode == "removal-stale" ? ack with { RunId = "old-run" } : ack);
+                });
+                var exit = await runner.RunAsync(removalOptions with { Volume = "Q:", Output = parent, Suite = mode.StartsWith("removal-windows-") ? "disk-removal-windows" : "disk-removal" }, progress, cancellation.Token);
+                var directory = Directory.GetDirectories(parent).Single();
+                using var status = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                var expected = mode is "removal-success" or "removal-windows-success" ? "COMPLETED" : mode is "removal-unobserved" or "removal-veto" or "removal-missing-preparation" ? "INCOMPLETE" : "RESTORATION_FAILED";
+                Check(status.RootElement.GetProperty("Status").GetString() == expected && (exit == 0) == (mode is "removal-success" or "removal-windows-success"), "removal coordinator " + mode);
+                Check(Directory.GetFiles(directory, "*-restore.job.json").Any() == (mode is "removal-success" or "removal-windows-success" or "removal-unobserved" or "removal-veto" or "removal-missing-preparation"),
+                    "removal restoration requires completed reconnect verification " + mode);
+                Check(File.Exists(Path.Combine(directory, "FINISHED.txt")), "removal completion marker " + mode);
+                OwnedProcess.EnsureStopped(directory);
+            }
             if (Environment.GetEnvironmentVariable("QCACHE_TEST_DISKSPD") is { Length: > 0 } diskspd)
             {
                 var actual = await OwnedProcess.RunAsync(diskspd, ["-c16M", "-b4K", "-o1", "-t1", "-w0", "-d1", "-W0", "-S", "-L", "-Rxml", store.PathFor("fixture.dat")],
@@ -1302,6 +1434,11 @@ internal static class VerificationRunnerTests
         }
         if (mode == "cancel" && job.Operation == "files")
             await Task.Delay(Timeout.Infinite);
+        if (mode == "removal-worker-failure" && job.Operation == "disk-removal-eject")
+        {
+            Console.Error.WriteLine("fixture: eject outcome unknown after worker failure");
+            return 1;
+        }
         if (mode == "check-failure" && job.Operation == "files" || mode == "restore-failure" && job.Operation == "restore" || mode == "capture-failure" && job.Operation == "capture")
         {
             Console.Error.WriteLine("fixture failure detail: Access is denied.");
@@ -1311,8 +1448,22 @@ internal static class VerificationRunnerTests
         {
             Fake = true
         };
+        if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
+            reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
+                mode == "removal-veto" ? 23u : 0, mode == "removal-veto" ? 8u : 0, mode == "removal-veto" ? "fixture-device" : "",
+                mode is not ("removal-unobserved" or "removal-presence-failure" or "removal-veto"), mode == "removal-presence-failure" ? 0x13u : 0, Preparation: mode == "removal-missing-preparation" ? null :
+                [new("Q:", "", new(1, 0, 50UL << 30, 256UL << 20, 0, 8UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
+                    new(0, 0, 50UL << 30, 256UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
+                    new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                    new(0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), true)]);
+        if (job.Operation == "disk-removal-eject-windows" && mode != "removal-windows-missing-before")
+            RunStorage.AtomicJson(job.Reply + ".before.json", new WindowsEjectPrecondition(job.Expected!,
+                new(1, 0, 50UL << 30, 256UL << 20, 0, 8UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
+                new(0, 0, 0, 0, 0, 0, 0, 0, 0), DateTimeOffset.UtcNow));
+        if (job.Operation == "disk-removal-verify")
+            reply = new QueueCache.Operations.CheckResult[] { new("fixture-oracle", "PASS", "host-only fixture") };
         if (job.Operation == "capture")
-            reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only"),
+            reply = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99999, 50L << 30, "fixture-only") { DiskBytes = 50L << 30 },
                 new QueueCache.Management.WriteCacheState(0, 0, 50UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
                 false, "[]", DateTimeOffset.UtcNow, Environment.MachineName);
         RunStorage.AtomicJson(job.Reply, reply);

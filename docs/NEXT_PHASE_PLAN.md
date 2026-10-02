@@ -52,15 +52,15 @@ Details: [WRITE_PERFORMANCE_TRAJECTORY.md](WRITE_PERFORMANCE_TRAJECTORY.md).
 2. **Settings rollback on the driver: DONE (plan 63, 0.4.169.1).** Lab faults 6/7
    fail a resize once; the previous settings were back and the same change
    applied afterwards, under Driver Verifier.
-3. **TRIM on a discard-capable disk (N6): blocked by Windows, not the VM
-   settings.** Discard and SSD emulation are on; Windows 11 stopped sending TRIM
-   to VirtIO SCSI disks after its May 2026 update (KNOWN_ISSUES). Options: test on
-   a VHDX-backed disk inside Windows (works through our filter), and/or a small
-   SATA test disk. Then add a maintained case: trimmed dirty data never reaches
-   the disk, a partly trimmed block keeps its other sectors, no whole-cache wipe.
-3a. **Raw disk commands on a cached disk (new).** Forward read-only SCSI/ATA
-   pass-through and SMART reads from the caller's thread instead of refusing them
-   or draining the cache for them (KNOWN_ISSUES).
+3. **TRIM (N6): DONE on a VHDX (plan 64, `trim-cache`, 0.4.211.1-0.4.219.1).**
+   Pending data in a trimmed range is dropped (never written), clean copies are
+   released, a TRIM during a drain keeps every byte accounted for, guards and
+   rewrites are exact. The VM's VirtIO disks still cannot TRIM (Windows 11 problem,
+   KNOWN_ISSUES); a SATA test disk remains optional.
+3a. **Raw disk commands on a cached disk: DONE by caching volumes instead of disks
+   (branch `volume-filter`, PR #2).** SMART/pass-through never reach the cache
+   (`volumes/volume-raw-disk-commands`). See [volume filtering](VOLUME_FILTER.md),
+   including the six defects the new volume suites found and fixed.
 
 ## Step 2: measure what we have
 

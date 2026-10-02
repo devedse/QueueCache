@@ -483,8 +483,9 @@ public static class PagingCoherenceScenarios
     }
 
     /// <summary>
-    /// Physical disk byte offset of one file byte: the driver gate works in disk offsets, not file offsets.
-    /// Refuses sparse/unallocated clusters and volumes that are not a single disk extent.
+    /// Volume byte offset of one file byte: the driver filters the volume, so its ranges and gates use
+    /// volume offsets, not file offsets. Refuses sparse/unallocated clusters and volumes that are not a
+    /// single disk extent.
     /// </summary>
     internal static long DiskOffsetOf(string path, long fileOffset, string volumeRoot)
     {
@@ -518,7 +519,6 @@ public static class PagingCoherenceScenarios
         }
         if (lcn is null)
             throw new IOException("The owned file range has no retrieval pointer.");
-        long partitionStart;
         using (var volume = new FileStream(@"\\.\" + volumeRoot.TrimEnd('\\'), FileMode.Open, FileAccess.Read,
                    FileShare.ReadWrite))
         {
@@ -528,9 +528,10 @@ public static class PagingCoherenceScenarios
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
             if (BitConverter.ToUInt32(disk, 0) != 1)
                 throw new NotSupportedException("The gated case requires a volume on exactly one disk extent.");
-            partitionStart = BitConverter.ToInt64(disk, 16);
+            // FAT32/exFAT count clusters from the start of their data area, not the volume.
+            return SpecialFileMap.ClusterAreaOffset(volume.SafeFileHandle, bytesPerSector) +
+                lcn.Value * clusterBytes + fileOffset % clusterBytes;
         }
-        return partitionStart + lcn.Value * clusterBytes + fileOffset % clusterBytes;
     }
 
     [DllImport("kernel32.dll", SetLastError = true)]

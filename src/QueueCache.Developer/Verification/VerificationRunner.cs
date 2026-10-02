@@ -75,7 +75,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
-    private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + target.Device;
+    // Leases are per physical disk (one verification per disk), not per cached volume.
+    private static string LeaseKey(DiskTarget target) => $"PhysicalDrive{target.Number}";
+    private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + LeaseKey(target);
 
     private async Task<string> Worker(WorkerJob job, CancellationToken token, int timeoutSeconds = 120)
     {
@@ -131,6 +133,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             throw new InvalidDataException("Worker did not write its result: " + id);
         return job.Reply;
     }
+    /// <summary>Suites whose cases may SKIP on hardware that lacks the capability (TRIM, a second volume on
+    /// the disk). The run then completes as COMPLETED_WITH_SKIPS, never as COMPLETED.</summary>
+    public static bool AllowsSkips(string suite) => suite is "trim-file" or "trim-cache" or "volumes";
     private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original.Target);
 
     public static (string WorkDirectory, string OracleFile) SystemImageArtifacts(string workDirectory, string caseId)
@@ -187,7 +192,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" ? VerificationPlan.Performance(options) : [];
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
@@ -229,6 +234,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
         string? failure = null, restorationFailure = null;
         var captured = false;
+        var removalUnresolved = false;
         var systemCaptured = false;
         FileStream? diskLease = null;
         Semaphore? systemLease = null;
@@ -269,6 +275,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             else
             {
+                if (options.Suite is "disk-removal" or "disk-removal-windows")
+                    await Worker(new WorkerJob("disk-removal-preflight", options.Volume, storage.PathFor("removal-preflight.json")) with
+                    {
+                        DisposableInstance = options.DisposableInstance,
+                        DisposableBytes = options.DisposableBytes
+                    }, deadline.Token);
                 var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json")), deadline.Token);
                 original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
                 target = original.Target;
@@ -277,7 +289,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 var leases = LeaseDirectory;
                 Directory.CreateDirectory(leases);
-                diskLease = new FileStream(Path.Combine(leases, target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
             if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
@@ -306,6 +318,76 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
+                    if (test.Operation == "disk-removal")
+                    {
+                        var oraclePath = storage.PathFor(test.Id + ".oracle.json");
+                        await Worker(Job("disk-removal-prepare") with
+                        {
+                            Reply = oraclePath, WorkDirectory = workDirectory, BudgetMiB = options.BudgetMiB
+                        }, deadline.Token, 180);
+                        // A worker failure or timeout cannot prove that Windows never
+                        // started removal. Defer restoration until a typed result or
+                        // a verified reconnect settles the outcome.
+                        removalUnresolved = true;
+                        storage.Write("removal-requested.json", new { Phase = "RequestingRemoval", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        var ejectPath = await Worker(Job(options.Suite == "disk-removal-windows" ? "disk-removal-eject-windows" : "disk-removal-eject") with
+                        {
+                            Reply = storage.PathFor(test.Id + ".eject.json")
+                        }, deadline.Token, options.PreparationFlushSeconds);
+                        var eject = JsonSerializer.Deserialize<DiskEjectResult>(await File.ReadAllTextAsync(ejectPath, deadline.Token))
+                            ?? throw new InvalidDataException("Missing eject result.");
+                        if (options.Suite == "disk-removal-windows")
+                        {
+                            var nativeBefore = JsonSerializer.Deserialize<WindowsEjectPrecondition>(await File.ReadAllTextAsync(ejectPath + ".before.json", deadline.Token))
+                                ?? throw new InvalidDataException("Missing native Windows eject precondition.");
+                            if (nativeBefore.Target != original.Target || !nativeBefore.State.Enabled ||
+                                nativeBefore.State.DirtyBytes < (8UL << 20) || nativeBefore.State.LastError != 0 || nativeBefore.State.Instance == 0)
+                                throw new IOException("Native Windows removal did not prove the active dirty-cache precondition.");
+                        }
+                        if (eject.ConfigurationManagerResult != 0)
+                        {
+                            removalUnresolved = eject.PresenceResult != 0;
+                            throw new IOException($"Windows vetoed removal (Configuration Manager {eject.ConfigurationManagerResult}, veto {eject.VetoType}: {eject.VetoName}). " +
+                                string.Join("; ", eject.RollbackErrors ?? []));
+                        }
+                        if (!eject.RemovalObserved)
+                        {
+                            removalUnresolved = eject.PresenceResult != 0;
+                            throw new IOException("Windows accepted the eject request, but device removal was not observed. Removal qualification is incomplete.");
+                        }
+                        var runId = Path.GetFileName(storage.DirectoryPath);
+                        var acknowledgement = new DiskReconnectAcknowledgement(runId, test.Id, original.Target.Instance, original.Target.VolumeId);
+                        storage.Write("removal-ready.json", new
+                        {
+                            Phase = "AwaitingReconnect", RunId = runId, CaseId = test.Id,
+                            Target = original.Target, Acknowledgement = acknowledgement,
+                            Instructions = "Reconnect the same disposable disk on the same bus and drive letter, then write Acknowledgement as reconnect-ack.json in this run directory. Do not reboot the guest or format/repair the disk."
+                        });
+                        Log("Removal observed. Awaiting the same disk and reconnect-ack.json; maximum 15 minutes. See removal-ready.json.");
+                        var ackPath = storage.PathFor("reconnect-ack.json");
+                        using var reconnectDeadline = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+                        reconnectDeadline.CancelAfter(TimeSpan.FromMinutes(15));
+                        try
+                        {
+                            while (!File.Exists(ackPath))
+                                await Task.Delay(500, reconnectDeadline.Token);
+                        }
+                        catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
+                        {
+                            throw new IOException("The 15-minute live reconnect deadline expired. Windows removal was observed, but the original disk was not verified after reconnect; restoration remains deferred.");
+                        }
+                        var ack = JsonSerializer.Deserialize<DiskReconnectAcknowledgement>(await File.ReadAllTextAsync(ackPath, reconnectDeadline.Token))
+                            ?? throw new InvalidDataException("Missing reconnect acknowledgement.");
+                        DiskRemovalHandshake.Validate(ack, runId, original.Target, test.Id);
+                        var verifyReply = await Worker(Job("disk-removal-verify") with { OraclePath = oraclePath }, deadline.Token);
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(verifyReply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing reconnect oracle checks.");
+                        removalUnresolved = false;
+                        if (options.Suite != "disk-removal-windows")
+                            DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
+                        storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        return null;
+                    }
                     if (test.Operation == "system-app-session")
                     {
                         var sessionReply = await Worker(Job(test.Operation) with
@@ -361,7 +443,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                         await Worker(Job("configure") with { Configuration = configuration }, deadline.Token);
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
-                    if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile")
+                    if (test.Operation is "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or
+                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;
@@ -395,7 +478,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         }
         finally
         {
-            if (captured)
+            if (captured && removalUnresolved)
+            {
+                restorationFailure = "Removal outcome or reconnect verification is unresolved. Restoration deferred; preserve the disk and evidence, reconnect the exact original target, then use verify-recover.";
+                Log("RESTORATION DEFERRED: " + restorationFailure);
+            }
+            if (captured && !removalUnresolved)
             {
                 progressLabel = $"Restoring | {storage.Results.Count}/{totalCases} recorded";
                 Log("Restoring original runtime state (independent cleanup deadline).");
@@ -437,7 +525,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (ownsSystemLease) systemLease!.Release();
             systemLease?.Dispose();
         }
-        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: options.Suite == "trim-file");
+        var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: AllowsSkips(options.Suite));
         var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
             token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         if (complete && performance.Count > 0)
@@ -595,6 +683,20 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (resident.CleanReadBytes + resident.CleanWriteBytes < ((ulong)options.BudgetMiB / 4 << 20))
                 throw new IOException("Warm hot set is not fully resident; do not interpret this as a cache-hit interference test.");
         }
+        if (scenario.WarmResident)
+        {
+            var file = Path.Combine(workDirectory, "resident.dat");
+            var coldWarm = await Disk(scenario.Id + "-warm1", file, ["-b1M", "-o8", "-t1", "-w0", "-d10", "-W0"], token);
+            WarmResidentEvidence.ValidateFirstPass(coldWarm.Bytes, (ulong)options.BudgetMiB / 2 << 20);
+            var warmBefore = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-warm-before.json") }, token);
+            var warmScore = await Disk(scenario.Id + "-warm2", file, ["-b1M", "-o8", "-t1", "-w0", "-d3", "-W0"], token);
+            var warmAfter = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-warm-after.json") }, token);
+            using var beforeWarm = JsonDocument.Parse(await File.ReadAllTextAsync(warmBefore, token));
+            using var afterWarm = JsonDocument.Parse(await File.ReadAllTextAsync(warmAfter, token));
+            WarmResidentEvidence.Validate(beforeWarm.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!,
+                afterWarm.RootElement.GetProperty("State").Deserialize<WriteCacheState>()!, warmScore.Bytes,
+                (ulong)options.BudgetMiB / 2 << 20);
+        }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
         await Worker(Job("snapshot") with
         {
@@ -633,12 +735,12 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
             var arguments = scenario.Workload == "interference" ? new List<string> { "-b4K", "-r4K", "-o8", "-t2", "-w0" } :
                 new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", "-t1",
-                    scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", "-Zr" };
+                    scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", scenario.WriteBufferArgument };
             if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
                 arguments.Add("-r4K");
             // A fixed five-second warmup exercises the fitting working set before scoring.
             // Unlike interference, this is not a promise that every block is resident.
-            arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident ? "-W5" : "-W0"]);
+            arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident && !scenario.WarmResident ? "-W5" : "-W0"]);
             var score = await Disk(scenario.Id + "-reader", scenario.Workload == "interference" ? hot : Path.Combine(workDirectory, scenario.Resident ? "resident.dat" : "writer.dat"),
                 arguments.ToArray(), children.Token);
             if (writer is not null)
@@ -885,11 +987,11 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         {
             var leases = LeaseDirectory;
             Directory.CreateDirectory(leases);
-            diskLease = new FileStream(Path.Combine(leases, original.Target.Device + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            diskLease = new FileStream(Path.Combine(leases, LeaseKey(original.Target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
         options = systemRecovery
             ? new($"{original.Target.Letter}:", "system-active-image", path,
-                SystemInstance: original.Target.Instance, SystemBytes: original.Target.Bytes, RecoverableVm: true)
+                SystemInstance: original.Target.Instance, SystemBytes: original.Target.DiskBytes, RecoverableVm: true)
             : new($"{original.Target.Letter}:", Output: path);
         fileTarget = systemRecovery ? original.Target : null;
         storage = new RunStorage(path);
@@ -907,7 +1009,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 Recovery = snapshotPath,
                 SystemInstance = systemRecovery ? original.Target.Instance : null,
-                SystemBytes = systemRecovery ? original.Target.Bytes : null,
+                SystemBytes = systemRecovery ? original.Target.DiskBytes : null,
                 RecoverableVm = systemRecovery,
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),

@@ -12,7 +12,7 @@ public sealed record CacheSettingsResult(CacheConfiguration Configuration, bool 
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class CacheSettingsWindow : Window
 {
-    public CacheSettingsWindow(DiskDescription disk, WriteCacheState state, bool persistent, int availableMiB = 4096)
+    public CacheSettingsWindow(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096)
     {
         Icon = AppBranding.CreateIcon();
         Title = state.BudgetBytes == 0 ? "Add cache" : "Cache settings";
@@ -73,8 +73,8 @@ public sealed class CacheSettingsWindow : Window
         var startup = new ToggleSwitch { Content = "Start with Windows", IsChecked = persistent };
         var panel = new StackPanel { Margin = new Thickness(28), Spacing = 12 };
         panel.Children.Add(MainWindow.Text(Title!, 25, null, FontWeight.SemiBold));
-        panel.Children.Add(MainWindow.Text($"{string.Join(" · ", disk.Volumes)}  /  {disk.Device}  /  {disk.SizeGiB:0.##} GiB", 13, MainWindow.Muted));
-        Add(panel, "Total RAM budget", memory, "Total nonpaged RAM reserved for this disk, including block index, descriptors and staging buffers, so usable payload is slightly smaller.");
+        panel.Children.Add(MainWindow.Text($"{volume.Name}  /  {MainWindow.Describe(volume)}", 13, MainWindow.Muted));
+        Add(panel, "Total RAM budget", memory, "Total nonpaged RAM reserved for this volume's cache, including block index, descriptors and staging buffers, so usable payload is slightly smaller.");
         panel.Children.Add(custom);
         Add(panel, "Memory allocation", allocation, "Automatic: shares unused space while protecting resident read data up to half the payload pool. Retained writes yield first; very large writes can temporarily reduce read protection. Fixed: the write share below is reserved for pending and retained writes.");
         Add(panel, "Write share (%)", write, "Fixed allocation only: percentage of the payload pool reserved for writes. This is also the pool the draining percentages below are measured against.");
