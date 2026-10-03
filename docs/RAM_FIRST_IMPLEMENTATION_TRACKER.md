@@ -2118,9 +2118,9 @@ part of the UI implementation.
 
 | Work package | Implementation | Verification |
 |---|---|---|
-| RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, existing cache configuration composition, creation flow, typed VHDX primitives; durable resource catalog outstanding | Management and desktop host contracts passed on Linux; native VHDX primitives not VM-tested |
+| RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, existing cache configuration composition, creation flow, typed VHDX primitives; durable resource catalog outstanding | Management and desktop host contracts passed on Linux and Windows CI Debug/Release; native VHDX primitives not VM-tested |
 | RD02 — native provider / isolated image-transfer prototype | Native provider and staging-isolation proof outstanding | Not run |
-| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Admission predicate compile checks added; native build/VM qualification pending |
+| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Native x64 Debug/Release builds and admission predicate compile checks passed in CI; native VM qualification pending |
 | RD04 — mounted VHDX with existing cache | Not started | Not run |
 | RD05 — pure RAM create/format/stop | Not started | Not run |
 | RD06 — whole-image import and RAM operation | Partial: bounded complete logical-sector transfer and private-publication coordinator; native adapters/provider outstanding | Host tests cover sparse zero regions/tail, aligned short reads, identity change, cancellation and incomplete import; no RAM device tested |
@@ -2137,3 +2137,15 @@ cache uses the shared page allocator and budget helpers now; no RAM provider
 exists yet, so simultaneous cross-driver memory enforcement is not claimed.
 Existing historical cache/driver verification does not qualify
 the new RAM provider, source import, checkpoint commit or power-state contracts.
+
+Source milestone `e64f163e1338e85a7ff443fd34db57b8b9a4b516` on
+`feature/managed-disks`: local managed Release solution build completed with
+zero warnings/errors, and both existing test executables passed with the new
+contracts. [CI run 37103995071](https://github.com/devedse/QueueCache/actions/runs/37103995071)
+passed native Debug/Release builds, Windows host-safe management/desktop tests,
+CLI contracts, package checks and lab installer creation. Exact CI logs were
+inspected; the four existing warnings in untouched cache I/O code remain, with
+no warnings in the extracted shared headers. No driver was installed, test VM
+restarted, or real RAM disk created for this milestone. Existing cache runtime,
+memory-pressure/failure paths and performance with this refactor still need the
+maintained VM runner; the new native modes require RD02–RD11 qualification.
