@@ -6,6 +6,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Desktop;
 
@@ -24,10 +25,12 @@ public sealed class MainWindow : Window
     private bool busy, discovering, closed;
     private DateTimeOffset nextInventory = DateTimeOffset.MinValue;
     private readonly ICacheTaskService service;
+    private readonly IManagedDiskService managedDisks;
     public MainWindow() : this(new WindowsCacheTaskService()) { }
-    public MainWindow(ICacheTaskService service)
+    public MainWindow(ICacheTaskService service, IManagedDiskService? managedDisks = null)
     {
         this.service = service;
+        this.managedDisks = managedDisks ?? new WindowsManagedDiskService();
         Icon = AppBranding.CreateIcon();
         Title = "QueueCache";
         Width = 1080;
@@ -56,6 +59,7 @@ public sealed class MainWindow : Window
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
         controls.Children.Add(frequency);
         controls.Children.Add(Action("Refresh volumes", Refresh));
+        controls.Children.Add(Action("Create disk", CreateDisk));
         Grid.SetColumn(controls, 1);
         heading.Children.Add(controls);
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
@@ -326,6 +330,13 @@ public sealed class MainWindow : Window
         var active = fresh.Count(v => v.State!.Operational);
         var memory = fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes);
         summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} {(views.Count == 1 ? "volume" : "volumes")}";
+    }
+    private async Task CreateDisk()
+    {
+        var result = await new ManagedDiskWindow(managedDisks).ShowDialog<ManagedDiskRuntime?>(this);
+        if (result is null) return;
+        await Refresh();
+        message.Text = $"Managed disk is ready at {result.Volume}.";
     }
     private async Task Edit(Card card)
     {

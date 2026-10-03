@@ -2105,7 +2105,7 @@ RAM cache, and complete VHDX image loaded into RAM. Pure RAM with startup enable
 must create/partition/format a new empty disk at each new Windows startup;
 image-backed and full-image modes preserve their existing filesystem/data.
 
-Planning: [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md) revision 2 contains the
+Planning: [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md) revision 3 contains the
 three-mode UI contract and S01–S64 scenario matrix.
 [RAM_DISK_IMPLEMENTATION_PLAN.md](RAM_DISK_IMPLEMENTATION_PLAN.md) defines the
 native provider, shared kernel RAM budget, broker/ownership, complete logical
@@ -2118,18 +2118,22 @@ part of the UI implementation.
 
 | Work package | Implementation | Verification |
 |---|---|---|
-| RD01 — contracts, resource schema and UI flow | Not started; documented | Not run |
-| RD02 — native provider / isolated image-transfer prototype | Not started; platform gate | Not run |
-| RD03 — RAM provider and one shared memory budget | Not started | Not run |
+| RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, existing cache configuration composition, creation flow, typed VHDX primitives; durable resource catalog outstanding | Management and desktop host contracts passed on Linux; native VHDX primitives not VM-tested |
+| RD02 — native provider / isolated image-transfer prototype | Native provider and staging-isolation proof outstanding | Not run |
+| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Admission predicate compile checks added; native build/VM qualification pending |
 | RD04 — mounted VHDX with existing cache | Not started | Not run |
 | RD05 — pure RAM create/format/stop | Not started | Not run |
-| RD06 — whole-image import and RAM operation | Not started | Not run |
+| RD06 — whole-image import and RAM operation | Partial: bounded complete logical-sector transfer and private-publication coordinator; native adapters/provider outstanding | Host tests cover sparse zero regions/tail, aligned short reads, identity change, cancellation and incomplete import; no RAM device tested |
 | RD07 — consistent checkpoint save/export/recovery | Not started | Not run |
-| RD08 — broker/startup/power/package lifecycle | Not started | Not run |
-| RD09 — completed three-mode UI | Not started | Not run |
-| RD10 — maintained verification integration | Not started | Not run |
+| RD08 — broker/startup/power/package lifecycle | Partial: shared startup decision preserves live/dirty/faulted devices; broker, boot classifier and packaging outstanding | Pure startup decisions host-tested; Windows boot/power paths not run |
+| RD09 — completed three-mode UI | Partial: three-mode creation window, import inspection/identity binding, RAM/capacity and persistence controls; actual activation and remaining actions gated | Existing desktop regressions and new three-mode headless tests passed; rendered preview inspected |
+| RD10 — maintained verification integration | Host contracts added to existing management/desktop executables; native managed-disk runner scenarios outstanding | Host contracts passed; runner workload contract unchanged (plan 77) |
 | RD11 — correctness/performance qualification | Not started | Not run |
 
-This entry records a documentation-only review, not source completion or VM
-qualification. Existing historical cache/driver verification does not qualify
+This entry records an initial implementation milestone, not completion or VM
+qualification. The Windows managed-disk service deliberately refuses creation
+in every mode until the native ownership/lifetime gates are met. The ordinary
+cache uses the shared page allocator and budget helpers now; no RAM provider
+exists yet, so simultaneous cross-driver memory enforcement is not claimed.
+Existing historical cache/driver verification does not qualify
 the new RAM provider, source import, checkpoint commit or power-state contracts.

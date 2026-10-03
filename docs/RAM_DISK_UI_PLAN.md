@@ -1,7 +1,8 @@
 # Managed disks: UI plan and scenario matrix
 
-Status: reviewed proposal, revision 2, 2026-10-03. Documentation only; none of the
-new modes is implemented or qualified. Handoff audience: Luna or Sol.
+Status: reviewed proposal, revision 3, 2026-10-03. Initial shared contracts and
+creation UI are implemented on `feature/managed-disks`; real activation is gated.
+None of the new disk modes is VM-qualified. Handoff audience: Luna or Sol.
 The owner requested three modes and automatic fresh formatting of an unbacked
 RAM disk on every new boot. “Performative it” is interpreted as “format it.”
 

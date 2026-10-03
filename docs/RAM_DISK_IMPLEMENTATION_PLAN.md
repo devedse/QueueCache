@@ -1,9 +1,10 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 1, 2026-10-03. **Plan only: implementation not started; VM verification
-not performed.** This document and [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md)
+Revision 2, 2026-10-03. **Initial shared foundation implemented; native provider,
+broker and real activation remain outstanding. VM verification not performed.**
+This document and [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md)
 replace the earlier two-mode proposal. All three modes are in planned scope.
-Only documentation was changed to prepare this handoff. Execute work packages
+Initial code is on `feature/managed-disks`. Execute remaining work packages
 in dependency order and record implementation and verification separately in
 [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
@@ -72,6 +73,39 @@ New suggested files (names may follow local conventions):
 `StartupCoordinator.cs` under Operations; versioned native protocol bindings under
 Management; `ManagedDiskWizard.cs`, `ManagedDiskCard.cs`, `ManagedDiskService.cs`
 under Desktop. Do not turn the desktop into an interpreter for CLI output.
+
+### Sharing with normal cached volumes
+
+The owner's requirement is to share as much code as practical across normal
+cached volumes and all three managed disk modes. Compose existing components;
+avoid a second cache implementation, memory limit or policy validator. Share
+mechanisms while preserving each mode's durability and storage contracts.
+
+| Concern | Shared component / implementation rule | Current source status |
+|---|---|---|
+| Cached-volume settings | `CacheConfiguration`, `CacheOptions`, existing configuration/identity/drain operations | B definitions contain the existing `CacheConfiguration` directly, including all options; production B backend must call existing operations |
+| Physical headroom | `MemoryBudget.AvailableForReservation` and existing `ValidateIncrease` | Existing cache API delegates to the common estimate; provider activation must use it before authoritative kernel reservation |
+| Locked physical pages | `driver/shared/lockedpages.h`, bounded MDL-backed slabs | Existing cache uses the extracted allocator/free routines; RAM provider must use the same primitives and zero new/released RAM storage |
+| Global accounting | `driver/shared/memorybudget.h`, one authority instance in qcache | Existing cache uses atomic shared helpers and releases reservations after freeing storage; kernel endpoint/owned RAM-provider tokens remain RD03 |
+| Managed disk creation | `ManagedDiskCreationCoordinator`, one typed definition/runtime/progress model | All three modes share capability validation, owned publication and independent cancellation cleanup; native backend remains outstanding |
+| Full logical transfer | `ILogicalDisk` and `LogicalImageTransfer` | Complete sector copy, bounded buffers, hash and read-back verification are shared between import/export; Windows/RAM adapters and consistent freeze/commit remain outstanding |
+| Startup decisions | `ManagedDiskStartup`, authoritative epoch + native generation | One pure decision function preserves live devices; broker and real boot classifier remain RD08 |
+| UI and future CLI | `IManagedDiskService`, Operations assembly | Creation UI calls the common service; shipped Windows implementation allows inspection only and refuses all new activations |
+
+Keep the RAM provider's Windows block-device/SCSI presentation separate from the
+volume filter. A fully reserved dense RAM disk does not need cache eviction or
+dirty-block draining. Ordinary P/I writes, TRIM and flushes must never acquire a
+backing-image dependency. B retains the existing cache's Strict/Fast behavior.
+Extract additional bounds/sector-copy helpers only where both implementations
+actually use them; do not add allocations, indirect calls, full-cache drains or
+image access to an existing hot path just to force a common abstraction.
+
+Compiling a common header into two binaries does **not** share a global counter.
+RD03 must connect RAM-provider reservations to the same authoritative qcache
+instance, including metadata, failure unwinding, rundown and native ownership.
+Host tests and compile-time admission checks do not qualify that unimplemented
+cross-driver protocol or prove native performance. Retain the maintained runner
+and lower-I/O-attempt evidence for the later native implementation.
 
 ## 3. Native provider decision and proof gates
 

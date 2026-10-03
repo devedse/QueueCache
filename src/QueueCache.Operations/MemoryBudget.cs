@@ -15,7 +15,11 @@ public static class MemoryBudget
         Math.Max(MinimumSystemHeadroom, totalPhysical / 4);
 
     [SupportedOSPlatform("windows")]
-    public static ulong AvailableForCache()
+    public static ulong AvailableForCache() => AvailableForReservation();
+
+    /// <summary>Shared cache/RAM-disk headroom estimate; the kernel budget and allocation remain authoritative.</summary>
+    [SupportedOSPlatform("windows")]
+    public static ulong AvailableForReservation()
     {
         var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
         if (!GlobalMemoryStatusEx(ref status))
@@ -30,7 +34,7 @@ public static class MemoryBudget
     [SupportedOSPlatform("windows")]
     public static void ValidateIncrease(ulong current, ulong requested)
     {
-        if (requested > current && requested - current > AvailableForCache())
+        if (requested > current && requested - current > AvailableForReservation())
             throw new InsufficientMemoryForCacheException("Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.");
     }
     [StructLayout(LayoutKind.Sequential)]

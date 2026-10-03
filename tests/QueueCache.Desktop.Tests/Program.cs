@@ -39,6 +39,7 @@ Check(labels.Contains("READABLE FROM RAM") && swatches.Length >= 7, "legend swat
 var colours = swatches.Select(b => (b.Background as Avalonia.Media.ISolidColorBrush)?.Color).ToArray();
 Check(new[] { "#3489DB", "#087F8C", "#9A66CC", "#E8F1F2" }.All(hex => colours.Contains(Avalonia.Media.Color.Parse(hex))), "legend colours match the occupancy palette");
 var buttons = window.GetVisualDescendants().OfType<Button>().ToArray();
+Check(buttons.Any(b => Equals(b.Content, "Create disk")), "dashboard exposes managed disk creation");
 var inventoryReads = fixture.InventoryReads;
 buttons.Single(b => Equals(b.Content, "Refresh volumes")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 Dispatcher.UIThread.RunJobs();
@@ -153,6 +154,7 @@ Check(Visible("Deferred:") && Visible("Maximum dirty age") && !Visible("Start pr
 Check(settings.GetVisualDescendants().OfType<NumericUpDown>().Any(n => n.Maximum == 3600000), "one-hour age available on capable driver");
 Check(marks.Length >= 8 && marks.All(m => ToolTip.GetTip(m!) is TextBlock { Text.Length: > 40 }), "each help badge carries explanatory hover text");
 settings.Close();
+ManagedDiskWindowTests.Run(output);
 Console.WriteLine("Desktop fixture checks passed; no real volume or disk operations performed.");
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
 static void Check(bool result, string description)
