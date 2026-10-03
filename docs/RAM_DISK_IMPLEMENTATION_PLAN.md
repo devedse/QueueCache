@@ -1,7 +1,9 @@
 # Managed disk implementation handoff: Luna / Sol
 
 Revision 2, 2026-10-03. **Initial shared foundation implemented; native provider,
-broker and real activation remain outstanding. VM verification not performed.**
+broker and real activation remain outstanding. Ordinary-cache refactor VM checks
+passed; none of the new managed-disk modes is VM-qualified.** See
+[installed foundation verification](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
 This document and [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md)
 replace the earlier two-mode proposal. All three modes are in planned scope.
 Initial code is on `feature/managed-disks`. Execute remaining work packages
@@ -521,8 +523,10 @@ startup labels and idempotent refresh; keyboard navigation/accessibility.
 
 Commands remain `dotnet run --project tests/QueueCache.Management.Tests -c Release`
 and `dotnet run --project tests/QueueCache.Desktop.Tests -c Release`, plus managed
-solution and native Debug/Release CI builds as appropriate. These commands are future implementation gates; this documentation-only revision
-requires documentation consistency/link checks rather than driver workloads. Host success is not native VM verification.
+solution and native Debug/Release CI builds as appropriate. Implemented foundation
+contracts have passed these host checks; remaining contracts are future gates.
+Host success is not native VM verification. Ordinary-cache VM results are recorded
+separately from the new managed-disk qualification matrix.
 
 Extend `qcache developer verify` with opt-in typed managed-disk suites, proposed
 `ram-disk`, `vhdx-backed`, `image-in-ram` and startup prepare/verify phases.

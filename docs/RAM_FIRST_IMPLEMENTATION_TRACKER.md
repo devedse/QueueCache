@@ -2120,7 +2120,7 @@ part of the UI implementation.
 |---|---|---|
 | RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, existing cache configuration composition, creation flow, typed VHDX primitives; durable resource catalog outstanding | Management and desktop host contracts passed on Linux and Windows CI Debug/Release; native VHDX primitives not VM-tested |
 | RD02 — native provider / isolated image-transfer prototype | Native provider and staging-isolation proof outstanding | Not run |
-| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Native x64 Debug/Release builds and admission predicate compile checks passed in CI; native VM qualification pending |
+| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Native x64 Debug/Release CI passed; installed 0.4.264.1 cache policy/pressure/volume/TRIM checks passed under Verifier, including allocation rollback and reservation restoration; RAM-provider/global-limit contention qualification outstanding |
 | RD04 — mounted VHDX with existing cache | Not started | Not run |
 | RD05 — pure RAM create/format/stop | Not started | Not run |
 | RD06 — whole-image import and RAM operation | Partial: bounded complete logical-sector transfer and private-publication coordinator; native adapters/provider outstanding | Host tests cover sparse zero regions/tail, aligned short reads, identity change, cancellation and incomplete import; no RAM device tested |
@@ -2128,10 +2128,10 @@ part of the UI implementation.
 | RD08 — broker/startup/power/package lifecycle | Partial: shared startup decision preserves live/dirty/faulted devices; broker, boot classifier and packaging outstanding | Pure startup decisions host-tested; Windows boot/power paths not run |
 | RD09 — completed three-mode UI | Partial: three-mode creation window, import inspection/identity binding, RAM/capacity and persistence controls; actual activation and remaining actions gated | Existing desktop regressions and new three-mode headless tests passed; rendered preview inspected |
 | RD10 — maintained verification integration | Host contracts added to existing management/desktop executables; native managed-disk runner scenarios outstanding | Host contracts passed; runner workload contract unchanged (plan 77) |
-| RD11 — correctness/performance qualification | Not started | Not run |
+| RD11 — correctness/performance qualification | Partial: existing maintained cache suites reused without workload changes; native managed-disk qualification outstanding | Shared cache refactor: 9/9 cases, 74 raw PASS, 4 SKIP; no performance comparison or new managed-disk VM qualification |
 
 This entry records an initial implementation milestone, not completion or VM
-qualification. The Windows managed-disk service deliberately refuses creation
+qualification of the new managed-disk modes. The Windows managed-disk service deliberately refuses creation
 in every mode until the native ownership/lifetime gates are met. The ordinary
 cache uses the shared page allocator and budget helpers now; no RAM provider
 exists yet, so simultaneous cross-driver memory enforcement is not claimed.
@@ -2146,6 +2146,36 @@ passed native Debug/Release builds, Windows host-safe management/desktop tests,
 CLI contracts, package checks and lab installer creation. Exact CI logs were
 inspected; the four existing warnings in untouched cache I/O code remain, with
 no warnings in the extracted shared headers. No driver was installed, test VM
-restarted, or real RAM disk created for this milestone. Existing cache runtime,
-memory-pressure/failure paths and performance with this refactor still need the
-maintained VM runner; the new native modes require RD02–RD11 qualification.
+restarted, or real RAM disk created for this initial milestone. The subsequent
+installation below covers existing-cache correctness; performance and new native
+modes still require qualification.
+
+### Managed disks shared-cache VM verification, 2026-10-03
+
+Implementation: no additional source/default/workload changes. Owner approved
+installing the completed build, rebooting and testing. Signed Release x64
+0.4.264.1 from commit `8e29bb159db10660ffcaa73ab07c54059993f66e`
+([CI 37104360105](https://github.com/devedse/QueueCache/actions/runs/37104360105))
+was installed using the existing installer. One planned reboot loaded the intended
+immutable kernel-module path with signed-artifact SHA-256 verified; Driver Verifier
+remained active at `0x209bb`, resetonbootfail, new module load 1 / unload 0.
+
+Verification: plan-77 `quick`, `policies`, `pressure` on disposable SATA T: and
+`volumes`, `trim-cache` on the existing developer lab VHDX completed **9/9 cases,
+74 raw PASS, 4 SKIP, 0 FAIL** with clean independent restoration. Policies included
+both injected allocation failure rollbacks, zero lower-I/O-attempt fitting-write
+intervals and exact concurrent/persisted bytes. Pressure preserved capacity
+backpressure; volumes proved independent sibling caches, harmless physical-disk
+discovery, resize recovery and VSS contents. All three TRIM cases passed, including
+in-flight drain guards. The SATA file-level TRIM case was unsupported and remains
+skipped; the quick run itself preserved zero-cache pass-through state.
+
+All exact final/raw/ownership/recovery/control/restoration evidence was inspected
+and retained privately. Original Q: 2 GiB Fast/Idle profile/settings are unchanged,
+active, clean and error-free; global reservations returned to exactly 2 GiB after
+every suite. Temporary caches are released, lab VHDX returned to detached state,
+and no test workload remains. No performance benchmark/comparison, new FAT32/ReFS
+run, production VHDX wrapper test, native RAM creation or boot/image-save tests were
+performed. Fully controlled old/new completion ordering remains open. Full commands,
+build hashes, exact run IDs, skip reasons and limits:
+[MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).

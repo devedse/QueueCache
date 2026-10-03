@@ -2,7 +2,10 @@
 
 Status: reviewed proposal, revision 3, 2026-10-03. Initial shared contracts and
 creation UI are implemented on `feature/managed-disks`; real activation is gated.
-None of the new disk modes is VM-qualified. Handoff audience: Luna or Sol.
+None of the new disk modes is VM-qualified. The ordinary cache using the shared
+allocator/accounting helpers passed
+[focused VM checks](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
+Handoff audience: Luna or Sol.
 The owner requested three modes and automatic fresh formatting of an unbacked
 RAM disk on every new boot. “Performative it” is interpreted as “format it.”
 
