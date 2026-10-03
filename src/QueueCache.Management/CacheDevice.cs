@@ -22,8 +22,22 @@ public sealed class CacheDevice : IDisposable
     private readonly SafeFileHandle handle;
 
     public CacheDevice(string device, bool writable = false)
+        : this(DevicePath.NormalizeVolume(device), writable, validatedPath: true) { }
+
+    /// <summary>For an already resolved volume identity, including controlled no-letter initialization.</summary>
+    public static CacheDevice OpenVolumeName(string volumeName, bool writable = false)
     {
-        Path = DevicePath.NormalizeVolume(device);
+        const string prefix = @"\\?\Volume";
+        if (!volumeName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !volumeName.EndsWith('\\') ||
+            !Guid.TryParseExact(volumeName[prefix.Length..^1], "B", out var id))
+            throw new ArgumentException("A canonical Windows volume GUID name is required.");
+        return new CacheDevice(prefix + id.ToString("B"), writable, validatedPath: true);
+    }
+
+    private CacheDevice(string path, bool writable, bool validatedPath)
+    {
+        _ = validatedPath;
+        Path = path;
         handle = Native.CreateFileW(Path, writable ? 0xC0000000u : 0, 1 | 2 | 4, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (handle.IsInvalid)
         {

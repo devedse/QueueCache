@@ -61,6 +61,16 @@ Type: files; Name: "{group}\Driver setup or resume after reboot.lnk"
 Type: files; Name: "{app}\setup\Install-Interactive.ps1"
 
 [Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Code: Integer; Controller: String;
+begin
+  Result := '';
+  Controller := ExpandConstant('{app}\controller\qcache.exe');
+  if FileExists(Controller) then
+    if (not Exec(Controller, '--managed-update-preflight', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+      Result := 'QueueCache update preflight failed. Stop or recover every managed disk first, then retry. RAM, images and recovery tools have been retained.';
+end;
+
 function RunDriverSetup(Uninstall: Boolean): Boolean;
 var Code: Integer; Parameters: String;
 begin

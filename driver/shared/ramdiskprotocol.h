@@ -6,7 +6,7 @@ constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 1, QcRamMaxDisks = 32, Q
 enum QC_RAM_ACTION : ULONG
 {
     QcRamCapabilities = 1, QcRamEnumerate, QcRamCreate, QcRamQuery, QcRamRead,
-    QcRamWrite, QcRamPublish, QcRamFreeze, QcRamThaw, QcRamRemove, QcRamSetReadOnly
+    QcRamWrite, QcRamPublish, QcRamFreeze, QcRamThaw, QcRamRemove, QcRamSetReadOnly, QcRamStartupSession
 };
 enum QC_RAM_FLAGS : ULONG { QcRamPublished = 1, QcRamReadOnly = 2, QcRamFrozen = 4 };
 struct QC_RAM_REQUEST

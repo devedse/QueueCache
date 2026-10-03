@@ -9,7 +9,8 @@ public sealed record ManagedImageReference(ImageInspection Identity, LogicalImag
 public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, ManagedDiskRuntime? Runtime = null,
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
     ImageInspection? OriginalSource = null, RamDiskSnapshot? Native = null, int? PhysicalDiskNumber = null,
-    string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false)
+    string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
+    Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0)
 {
     public Guid ResourceId => Definition.ResourceId;
     public void Validate()
@@ -35,10 +36,11 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
 }
 public sealed record ManagedDiskJournal(Guid OperationId, Guid ResourceId, ManagedDiskJournalStage Stage,
     Guid BootEpoch, ulong CreationGeneration, ulong? FrozenGeneration = null,
-    ManagedImageReference? Candidate = null, ManagedImageReference? Previous = null, string? Failure = null)
+    ManagedImageReference? Candidate = null, ManagedImageReference? Previous = null, string? Failure = null, string? CandidatePath = null)
 {
     public void Validate()
     {
+        if (CandidatePath is not null) ManagedDiskPaths.ValidateImagePath(CandidatePath);
         if (OperationId == Guid.Empty || ResourceId == Guid.Empty || !Enum.IsDefined(Stage) ||
             (Stage is ManagedDiskJournalStage.CandidateVerified or ManagedDiskJournalStage.Committed &&
                 (Candidate?.Digest is null || FrozenGeneration is null)))
@@ -47,7 +49,14 @@ public sealed record ManagedDiskJournal(Guid OperationId, Guid ResourceId, Manag
 }
 
 /// <summary>Checksummed records with durable staging and one retained committed predecessor.</summary>
-public sealed class ManagedDiskStore
+public interface IManagedDiskRecordStore
+{
+    ManagedDiskRecord Read(Guid id);
+    void Save(ManagedDiskRecord record);
+    ManagedDiskJournal? ReadJournal(Guid id);
+    void SaveJournal(ManagedDiskJournal journal);
+}
+public sealed class ManagedDiskStore : IManagedDiskRecordStore
 {
     private const int MaximumRecordBytes = 1 << 20;
     private readonly string directory;
@@ -70,6 +79,7 @@ public sealed class ManagedDiskStore
         }
         return records;
     }
+    public bool ContainsResource(Guid id) => File.Exists(PathFor(id, "resource")) || File.Exists(PathFor(id, "resource") + ".previous");
     public ManagedDiskRecord Read(Guid id)
     {
         var record = ReadWithPrevious<ManagedDiskRecord>(PathFor(id, "resource"), out var recovered);

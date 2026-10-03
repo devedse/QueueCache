@@ -27,8 +27,8 @@ internal static class Commands
         });
         volumes.Subcommands.Add(volumeList);
         root.Subcommands.Add(volumes);
-        var disks = new Command("disk", "Physical disks and the volumes on them.");
-        var diskList = new Command("list", "Show each disk with its lettered volumes, GiB and Windows status.");
+        var disks = new Command("disk", "Managed RAM/VHDX disks and physical Windows disk discovery/ejection.");
+        var diskList = new Command("physical-list", "Show each physical disk with its lettered volumes, GiB and Windows status.");
         diskList.SetAction(async (_, token) =>
         {
             foreach (var disk in await DiskCatalog.ListAsync(token))
@@ -58,6 +58,7 @@ internal static class Commands
             return result.RemovalObserved ? 0 : 1;
         });
         disks.Subcommands.Add(eject);
+        ManagedDiskCommands.AddTo(disks);
         root.Subcommands.Add(disks);
         var apply = new Command("apply", "Create or update a cache task. Fast finishes writes/application flushes in RAM; Strict waits for disk flushes.");
         var volume = new Argument<string>("volume") { Description = "Lettered volume with a file system (NTFS, ReFS, FAT32, exFAT), e.g. Q:. Each volume has its own cache, also when several share one disk." };

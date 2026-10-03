@@ -15,7 +15,7 @@ AppBuilder.Configure<App>().UseSkia().UseHeadless(new AvaloniaHeadlessPlatformOp
 var output = args.Length == 0 ? "artifacts/ui-tests" : args[0];
 Directory.CreateDirectory(output);
 var fixture = new Fixture();
-var window = new MainWindow(fixture);
+var window = new MainWindow(fixture, new EmptyManagedFixture());
 window.Show();
 Check(window.Icon is not null, "application window icon is embedded");
 Dispatcher.UIThread.RunJobs();
@@ -155,6 +155,7 @@ Check(settings.GetVisualDescendants().OfType<NumericUpDown>().Any(n => n.Maximum
 Check(marks.Length >= 8 && marks.All(m => ToolTip.GetTip(m!) is TextBlock { Text.Length: > 40 }), "each help badge carries explanatory hover text");
 settings.Close();
 ManagedDiskWindowTests.Run(output);
+ManagedDiskActionsTests.Run(output);
 Console.WriteLine("Desktop fixture checks passed; no real volume or disk operations performed.");
 Task Invoke(string method) => (Task)typeof(MainWindow).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(window, null)!;
 static void Check(bool result, string description)

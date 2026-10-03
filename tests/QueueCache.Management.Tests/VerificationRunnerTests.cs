@@ -46,9 +46,12 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 78, "plan 78 adds isolated managed-provider fixtures without changing existing score workloads");
+        Check(VerificationPlan.Version == 79, "plan 79 adds product managed-disk fixtures without changing existing score workloads");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
+        foreach (var suite in new[] { "ram-disk", "vhdx-backed", "image-in-ram" })
+            Check(VerificationPlan.Integrity(options with { Suite = suite }).Single().Operation == suite &&
+                !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == suite), "product managed fixtures are explicit: " + suite);
         var windowsRemovalCases = VerificationPlan.Integrity(options with { Suite = "disk-removal-windows" });
         Check(windowsRemovalCases.Count == 1 && windowsRemovalCases[0].Id == "disk-windows-eject-reconnect" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Id == "disk-windows-eject-reconnect"),

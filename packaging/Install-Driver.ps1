@@ -83,6 +83,7 @@ try
     Native $controller @('--managed-update-preflight')
     if ($Uninstall)
     {
+        Native $controller @('--managed-service-remove')
         Native $controller @('--managed-provider-remove')
         $volumeInstalled = @((Get-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters) -contains 'qcachelab'
         if ($volumeInstalled)
@@ -241,11 +242,10 @@ public static class QueueCacheCodeIntegrity {
     Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
     & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
     if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
-    $action = New-ScheduledTaskAction -Execute $controller -Argument 'policy restore'
-    $trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'
-    $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
-    Register-ScheduledTask -TaskName QueueCache-Restore -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Native $controller @('--managed-service-install')
+    # One startup coordinator owns managed resources before regular saved profiles.
+    # Start at the required reboot, after the intended native modules are loaded.
+    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
     Write-Output "Driver staged at $destination. Reboot to load automatic volume coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 }

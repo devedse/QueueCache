@@ -1,12 +1,14 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 3, 2026-10-03. **Initial shared foundation implemented; native provider,
-broker and real activation remain outstanding. Ordinary-cache refactor VM checks
-passed; none of the new managed-disk modes is VM-qualified.** See
+Revision 4, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
+action source is implemented on the feature branch. Native lifecycle, startup,
+crash/fault and full product qualification remain outstanding; none of the new
+managed-disk modes is VM-qualified. Ordinary-cache foundation checks passed.** See
 [installed foundation verification](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
 This document and [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md)
 replace the earlier two-mode proposal. All three modes are in planned scope.
-Initial code is on `feature/managed-disks`. Execute remaining work packages
+Implementation is on `feature/managed-disks`; product commands are documented in
+[MANAGED_DISKS.md](MANAGED_DISKS.md). Execute remaining work packages
 in dependency order and record implementation and verification separately in
 [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 
@@ -602,3 +604,4 @@ must not be hidden by a zero counter or a different storage mode.
 - R3: [Attach lifetime flags](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/ne-virtdisk-attach_virtual_disk_flag)
 - R4: [FSCTL_LOCK_VOLUME](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_lock_volume)
 - R5: [ReplaceFileW behavior and limitations](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew)
+- R6: [System power context distinguishes Fast Startup from hibernate resume](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/distinguishing-fast-startup-from-wake-from-hibernation)

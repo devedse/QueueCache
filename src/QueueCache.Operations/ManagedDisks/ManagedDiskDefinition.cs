@@ -97,7 +97,7 @@ public static class ManagedDiskPaths
 
     public static string ValidateLocalDirectory(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || path.Length < 4 || !char.IsAsciiLetter(path[0]) || path[1] != ':' ||
+        if (string.IsNullOrWhiteSpace(path) || path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' ||
             path[2] is not ('\\' or '/') || path.Any(c => c < ' ' || "\"<>|*?".Contains(c)) ||
             path[2..].Contains(':') || path[3..].Split(['\\', '/']).Any(p => p is "." or ".."))
             throw new ArgumentException("Choose an absolute local Windows path without traversal or alternate data streams.");
@@ -117,6 +117,9 @@ public sealed record ManagedDiskCapability(ManagedDiskMode Mode, bool CanStart, 
 public sealed record ImageInspection(string Path, string FileIdentity, Guid DiskId,
     ulong VirtualBytes, ulong AllocatedBytes, uint SectorBytes, bool Differencing)
 {
+    public bool SameImage(ImageInspection other) =>
+        string.Equals(FileIdentity[(FileIdentity.LastIndexOf('|') + 1)..], other.FileIdentity[(other.FileIdentity.LastIndexOf('|') + 1)..], StringComparison.OrdinalIgnoreCase) &&
+        DiskId == other.DiskId && VirtualBytes == other.VirtualBytes && SectorBytes == other.SectorBytes && Differencing == other.Differencing;
     public void ValidateFor(ManagedDiskDefinition definition)
     {
         if (definition.Source != ManagedDiskSource.OpenExisting ||

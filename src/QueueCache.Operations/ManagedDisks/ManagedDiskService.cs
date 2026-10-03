@@ -8,28 +8,24 @@ public interface IManagedDiskService
     Task<ImageInspection> InspectAsync(string path, CancellationToken token = default);
     Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition,
         IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default);
+    Task<IReadOnlyList<ManagedDiskRecord>> ListAsync(CancellationToken token = default) => throw new NotSupportedException("Managed disk listing is unavailable.");
+    Task<ManagedDiskOperationResult> ExecuteAsync(ManagedDiskRequest request,
+        IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default) => throw new NotSupportedException("Managed disk actions are unavailable.");
 }
 
-/// <summary>Inspection is available now. Mutation waits for qualified native ownership and broker lifetime.</summary>
+/// <summary>Both product frontends use the privileged service; inspection remains a read-only operation.</summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsManagedDiskService : IManagedDiskService
 {
-    public Task<IReadOnlyList<ManagedDiskCapability>> CapabilitiesAsync(CancellationToken token = default)
+    private readonly ManagedDiskBrokerClient client = new();
+    public async Task<IReadOnlyList<ManagedDiskCapability>> CapabilitiesAsync(CancellationToken token = default)
     {
-        token.ThrowIfCancellationRequested();
-        return Task.FromResult<IReadOnlyList<ManagedDiskCapability>>([
-            new(ManagedDiskMode.EphemeralRam, false, "RAM disk creation is not available in this build yet."),
-            new(ManagedDiskMode.CachedVhdx, false, "Creating or mounting managed VHDX disks is not available in this build yet."),
-            new(ManagedDiskMode.ImageInRam, false, "Loading and saving a complete VHDX in RAM is not available in this build yet.")
-        ]);
+        try { return await client.CapabilitiesAsync(token); }
+        catch (IOException ex) { return Enum.GetValues<ManagedDiskMode>().Select(mode => new ManagedDiskCapability(mode, false, ex.Message)).ToArray(); }
     }
     public Task<ImageInspection> InspectAsync(string path, CancellationToken token = default) =>
         Task.Run(() => WindowsVirtualDisk.Inspect(path), token);
-    public async Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition,
-        IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default)
-    {
-        definition.Validate();
-        (await CapabilitiesAsync(token)).Single(c => c.Mode == definition.Mode).RequireAvailable();
-        throw new NotSupportedException("The installed managed-disk backend is unavailable.");
-    }
+    public Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition, IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default) => client.CreateAsync(definition, progress, token);
+    public Task<IReadOnlyList<ManagedDiskRecord>> ListAsync(CancellationToken token = default) => client.ListAsync(token);
+    public Task<ManagedDiskOperationResult> ExecuteAsync(ManagedDiskRequest request, IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default) => client.ExecuteAsync(request, progress, token);
 }

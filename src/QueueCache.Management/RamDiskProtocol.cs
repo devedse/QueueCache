@@ -4,7 +4,7 @@ namespace QueueCache.Management;
 
 public enum RamDiskAction : uint
 {
-    Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly
+    Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly, StartupSession
 }
 [Flags]
 public enum RamDiskFlags : uint { None = 0, Published = 1, ReadOnly = 2, Frozen = 4 }
@@ -24,7 +24,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
     {
         if (!Enum.IsDefined(action) || transferBytes < 0 || transferBytes > MaximumTransferBytes ||
             (flags & ~RamDiskFlags.ReadOnly) != 0 || slot >= MaximumDisks || expected?.Slot >= MaximumDisks ||
-            (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create) && expected is null) ||
+            (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create or RamDiskAction.StartupSession) && expected is null) ||
             (action == RamDiskAction.Create && (resource == Guid.Empty || capacity < 16UL << 20 || capacity > 128UL << 30 ||
                 sector is not (512 or 4096) || capacity % (1UL << 20) != 0)) ||
             (action is RamDiskAction.Freeze or RamDiskAction.Thaw && freezeOwner == Guid.Empty))

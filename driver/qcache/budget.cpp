@@ -9,6 +9,15 @@ extern void QcInitializeMemoryBudget();
 static PDEVICE_OBJECT ControlDevice;
 static FAST_MUTEX ReservationLock;
 static LIST_ENTRY Reservations;
+static KSPIN_LOCK StartupLock;
+static GUID StartupBase, StartupEpoch;
+static ULONGLONG StartupTransitions;
+static bool ResumeObserved;
+static constexpr bool FastStartup(ULONG target, ULONG effective)
+{ return target == PowerSystemShutdown && effective == PowerSystemHibernate; }
+static_assert(FastStartup(PowerSystemShutdown, PowerSystemHibernate));
+static_assert(!FastStartup(PowerSystemHibernate, PowerSystemHibernate));
+static_assert(!FastStartup(PowerSystemSleeping3, PowerSystemSleeping3));
 struct RESERVATION
 {
     LIST_ENTRY Link;
@@ -24,6 +33,10 @@ NTSTATUS QcBudgetInitialize(PDRIVER_OBJECT driver)
     ExInitializeFastMutex(&ReservationLock);
     InitializeListHead(&Reservations);
     QcInitializeMemoryBudget();
+    KeInitializeSpinLock(&StartupLock);
+    auto epochStatus = ExUuidCreate(&StartupBase);
+    if (!NT_SUCCESS(epochStatus)) return epochStatus;
+    StartupEpoch = StartupBase;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
     UNICODE_STRING security = RTL_CONSTANT_STRING(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
     auto status = IoCreateDeviceSecure(driver, 0, &name, FILE_DEVICE_UNKNOWN,
@@ -32,6 +45,24 @@ NTSTATUS QcBudgetInitialize(PDRIVER_OBJECT driver)
     return status;
 }
 bool QcBudgetOwnsDevice(PDEVICE_OBJECT device) { return device == ControlDevice; }
+void QcBudgetObserveSystemPower(SYSTEM_POWER_STATE state, SYSTEM_POWER_STATE_CONTEXT context)
+{
+    KIRQL irql; KeAcquireSpinLock(&StartupLock, &irql);
+    if (state != PowerSystemWorking) ResumeObserved = false;
+    else if (!ResumeObserved && context.TargetSystemState >= PowerSystemSleeping1 &&
+        context.TargetSystemState <= PowerSystemShutdown && context.EffectiveSystemState >= PowerSystemSleeping1 &&
+        context.EffectiveSystemState <= PowerSystemShutdown)
+    {
+        ResumeObserved = true;
+        if (FastStartup(context.TargetSystemState, context.EffectiveSystemState))
+        {
+            ++StartupTransitions;
+            StartupEpoch = StartupBase;
+            for (ULONG i = 0; i < 8; ++i) StartupEpoch.Data4[i] ^= static_cast<UCHAR>(StartupTransitions >> (i * 8));
+        }
+    }
+    KeReleaseSpinLock(&StartupLock, irql);
+}
 void QcBudgetDestroy()
 {
     // Provider holds an open file reference until all of its pages are freed.
@@ -54,6 +85,13 @@ NTSTATUS QcBudgetDispatch(PDEVICE_OBJECT, PIRP irp)
         status = STATUS_INVALID_PARAMETER;
         if (request && request->Size == sizeof(*request) && request->Version == 1 && !request->Reserved && request->Owner)
         {
+            if (request->Action == QcBudgetStartupSession)
+            {
+                KIRQL irql; KeAcquireSpinLock(&StartupLock, &irql);
+                request->Token = StartupEpoch; request->Bytes = StartupTransitions;
+                KeReleaseSpinLock(&StartupLock, irql);
+                status = STATUS_SUCCESS; returned = sizeof(*request); goto Complete;
+            }
             GUID newToken{};
             if (request->Action == QcBudgetReserve)
             {

@@ -81,6 +81,43 @@ foreach ($arguments in @(
     }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
+foreach ($name in @('create', 'list', 'status', 'physical-list', 'capabilities', 'inspect', 'start', 'stop', 'flush', 'save', 'export', 'format', 'cache', 'startup', 'remove', 'delete-image', 'recover'))
+{
+    & $cli disk $name --help
+    if ($LASTEXITCODE) { throw "Managed disk help failed: $name" }
+}
+$managedId = '00000000-0000-0000-0000-000000000123'
+foreach ($arguments in @(
+    @('disk', 'create', '--mode', 'ram', '--size-mib', '0'),
+    @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--new-image', 'C:\Images\wrong.vhdx'),
+    @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--budget-mib', '64'),
+    @('disk', 'create', '--mode', 'cached-vhdx', '--size-mib', '16', '--new-image', 'C:\Images\new.vhdx', '--preset', 'Fast'),
+    @('disk', 'create', '--mode', 'image-in-ram', '--size-mib', '16', '--new-image', 'C:\Images\new.vhdx'),
+    @('disk', 'stop', $managedId, '--save', '--discard'),
+    @('disk', 'format', $managedId),
+    @('disk', 'delete-image', $managedId, '--path', 'C:\Images\old.vhdx'),
+    @('disk', 'export', $managedId, '--path', '\\server\share\image.vhdx'),
+    @('disk', 'cache', $managedId, '--budget-mib', '0'),
+    @('disk', 'cache', $managedId, '--preset', 'Fast'),
+    @('disk', 'startup', $managedId),
+    @('disk', 'start', $managedId, '--expected-creation', '1')
+))
+{
+    & $cli @arguments 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 1) { throw "Managed validation must fail before broker/native access: $arguments" }
+}
+foreach ($arguments in @(
+    @('disk', 'create', '--mode', 'unknown'),
+    @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--letter', 'C'),
+    @('disk', 'status', 'not-a-resource'),
+    @('disk', 'stop', '00000000-0000-0000-0000-000000000000'),
+    @('disk', 'export', $managedId)
+))
+{
+    & $cli @arguments 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 2) { throw "Invalid managed syntax must fail before broker/native access: $arguments" }
+}
+Write-Host 'Managed disk CLI contracts passed. No broker or disk handle opened.'
 $verificationHelp = & $cli developer verify --help | Out-String
 if ($LASTEXITCODE -ne 0 -or $verificationHelp -notmatch 'DiskSpd64.exe' -or $verificationHelp -notmatch 'Microsoft' -or $verificationHelp -notmatch 'flush-interference')
 {

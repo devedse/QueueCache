@@ -12,9 +12,11 @@ public interface IManagedDiskCreation : IAsyncDisposable
     Guid BootEpoch { get; }
     ulong CreationGeneration { get; }
     ulong WriteGeneration { get; }
+    ulong? DurableBaselineGeneration => null;
     ILogicalDisk? RamStorage { get; }
     Task InitializeAndFormatAsync(ManagedDiskDefinition definition, CancellationToken token);
     Task SaveInitialImageAsync(ManagedDiskDefinition definition, CancellationToken token);
+    Task RecordImportedImageAsync(ImageInspection image, LogicalImageDigest digest, CancellationToken token) => Task.CompletedTask;
     Task<string> PublishAsync(ManagedDiskDefinition definition, CancellationToken token);
     Task AbortAsync(CancellationToken token);
 }
@@ -67,8 +69,10 @@ public sealed class ManagedDiskCreationCoordinator(IManagedDiskBackend backend)
                     var destination = creation.RamStorage ?? throw new InvalidDataException("No RAM storage for full-image import.");
                     if (destination.CapacityBytes != definition.CapacityBytes || destination.SectorBytes != definition.SectorBytes)
                         throw new InvalidDataException("Native RAM capacity does not match the requested disk.");
-                    await LogicalImageTransfer.CopyAsync(import.LogicalStorage, destination,
+                    var digest = await LogicalImageTransfer.CopyAsync(import.LogicalStorage, destination,
                         progress is null ? null : new TransferProgress(progress), token);
+                    await LogicalImageTransfer.VerifyAsync(destination, digest, token);
+                    await creation.RecordImportedImageAsync(source, digest, token);
                 }
                 // Native image view is detached before the copied GPT identities are published.
             }
@@ -79,7 +83,7 @@ public sealed class ManagedDiskCreationCoordinator(IManagedDiskBackend backend)
                 if (definition.Mode == ManagedDiskMode.ImageInRam)
                     await creation.SaveInitialImageAsync(definition, token);
             }
-            ulong? baseline = definition.Mode == ManagedDiskMode.ImageInRam ? creation.WriteGeneration : null;
+            ulong? baseline = definition.Mode == ManagedDiskMode.ImageInRam ? creation.DurableBaselineGeneration ?? creation.WriteGeneration : null;
             token.ThrowIfCancellationRequested();
             var volume = await creation.PublishAsync(definition, token);
             if (string.IsNullOrWhiteSpace(volume))

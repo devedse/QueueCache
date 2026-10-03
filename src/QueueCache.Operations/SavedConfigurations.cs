@@ -61,6 +61,9 @@ public static class SavedConfigurations
 
     public static void Save(DiskTarget target, CacheConfiguration configuration, bool acceptVolatileFlush)
     {
+        using var ownershipGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();
+        if (ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(target.VolumeId) is not null)
+            throw new IOException("This volume belongs to a managed disk. Use disk cache/startup settings; a second generic startup profile is refused.");
         configuration.Validate(acceptVolatileFlush);
         if (target.VolumeId.Length == 0)
             throw new InvalidOperationException("The volume GUID is required to save a profile.");
@@ -92,6 +95,12 @@ public static class SavedConfigurations
     }
 
     public static bool IsSaved(string volumeId) => List().Any(profile => profile.Matches(volumeId));
+    internal static void RemoveManagedVolume(string volumeId)
+    {
+        using var machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var key = machine.OpenSubKey(KeyPath, true);
+        key?.DeleteValue(ValueName(volumeId), false); key?.Flush();
+    }
 
     public static async Task<IReadOnlyList<RestoreResult>> RestoreAsync(IProgress<string>? progress = null, CancellationToken token = default)
     {
@@ -101,6 +110,8 @@ public static class SavedConfigurations
             token.ThrowIfCancellationRequested();
             try
             {
+                if (ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(profile.VolumeId) is not null)
+                    throw new IOException("Startup ownership belongs to the managed-disk broker; generic restore will not apply a duplicate profile.");
                 var target = await DiskTarget.InspectAsync(profile.Volume, token);
                 profile.CheckIdentity(target.Instance, target.VolumeId, target.Bytes);
                 await Task.Run(() => ConfigurationManager.Apply(target, profile.Configuration, profile.VolatileFlushAccepted, progress), token);

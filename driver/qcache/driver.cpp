@@ -829,6 +829,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     if (!NT_SUCCESS(status))
         return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER && stack->Parameters.Power.Type == SystemPowerState)
+        QcBudgetObserveSystemPower(stack->Parameters.Power.State.SystemState, stack->Parameters.Power.SystemPowerStateContext);
     if (DiagnosticMode & 1)
     {
         IoSkipCurrentIrpStackLocation(irp);

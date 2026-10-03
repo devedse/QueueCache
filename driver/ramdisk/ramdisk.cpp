@@ -84,6 +84,17 @@ static NTSTATUS BudgetCall(DISK* disk, ULONG action)
     if (status == STATUS_PENDING) KeWaitForSingleObject(&done, Executive, KernelMode, FALSE, nullptr);
     return result.Status;
 }
+static NTSTATUS StartupSession(GUID* epoch, ULONGLONG* transitions)
+{
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
+    DISK request{};
+    auto status = IoGetDeviceObjectPointer(&name, FILE_READ_DATA | FILE_WRITE_DATA, &request.BudgetFile, &request.BudgetDevice);
+    if (!NT_SUCCESS(status)) return status;
+    request.Reservation.Size = sizeof(request.Reservation); request.Reservation.Version = 1; request.Reservation.Owner = Driver;
+    status = BudgetCall(&request, QcBudgetStartupSession);
+    if (NT_SUCCESS(status)) { *epoch = request.Reservation.Token; *transitions = request.Reservation.Bytes; }
+    ObDereferenceObject(request.BudgetFile); return status;
+}
 static void FreeDisk(DISK* disk)
 {
     if (disk->Slabs)
@@ -180,18 +191,19 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     if (!Authorized(irp)) status = STATUS_ACCESS_DENIED;
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
-        reply->Action >= QcRamCapabilities && reply->Action <= QcRamSetReadOnly && input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
+        reply->Action >= QcRamCapabilities && reply->Action <= QcRamStartupSession && input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;
         // Service callbacks run at PASSIVE_LEVEL. Serialize control/transfer/remove,
         // leaving the SCSI hot path independent of this blocking mutex.
         KeEnterCriticalRegion();
         ExAcquireFastMutexUnsafe(&adapter->ControlLock);
-        if (command.Action == QcRamCapabilities)
+        if (command.Action == QcRamCapabilities || command.Action == QcRamStartupSession)
         {
             RtlZeroMemory(reply, sizeof(*reply)); reply->Magic = QcRamMagic; reply->Version = QcRamVersion; reply->Size = sizeof(*reply);
             reply->Epoch = adapter->Epoch; reply->Capacity = 128ULL << 30; reply->Slot = QcRamMaxDisks;
             reply->TransferBytes = QcRamTransferBytes; status = STATUS_SUCCESS;
+            if (command.Action == QcRamStartupSession) status = StartupSession(&reply->Epoch, &reply->Generation);
         }
         else if (command.Action == QcRamCreate)
         {
@@ -437,7 +449,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                 if (length) RtlCopyMemory(data, response, length); srb->DataTransferLength = length;
             }
             else Sense(srb, 5, 0x20);
-            if (srb->SrbStatus & SRB_STATUS_ERROR) ++disk->Errors;
+            if ((srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
             KeReleaseSpinLock(&disk->IoLock, irql);
         }
     }

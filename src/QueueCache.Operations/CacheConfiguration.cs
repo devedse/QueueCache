@@ -83,11 +83,13 @@ public static class ConfigurationManager
         bool acceptVolatileFlush, IProgress<string>? progress)
     {
         using var gate = ConfigurationGate.Enter(target.Instance);
+        using var hostProtectionGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();
         configuration.Validate(acceptVolatileFlush);
         // An inspected volume can be remapped between inventory and Apply (including
         // saved-profile startup). Recheck its physical extent and PnP identity at
         // the last boundary before opening the disk for any state change.
         target.ValidateCurrent();
+        ManagedDisks.ManagedDiskHostProtection.ValidateCacheChange(target.VolumeId, configuration);
         using var device = new CacheDevice(target.Device, writable: true);
         var initial = device.GetWriteCacheState();
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);

@@ -35,6 +35,21 @@ public sealed class WindowsVirtualDisk : IDisposable
             BitConverter.ToUInt32(size, 28), BitConverter.ToUInt32(subtype, 8) == 4);
     }
 
+    public static void DeleteDetachedOwnedImage(ImageInspection expected)
+    {
+        ManagedDiskPaths.ValidateImagePath(expected.Path);
+        // DELETE access with no write/delete sharing excludes attached/writable views.
+        // Disposition applies to this exact opened file, never a subsequently substituted path.
+        using var target = CreateFileW(expected.Path, 0x80010000, 1, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
+        if (target.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "The image is attached, in use, or unavailable for owned deletion.");
+        var identity = new byte[24];
+        if (!GetFileInformationByHandleEx(target, 18, identity, (uint)identity.Length)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!Convert.ToHexString(identity).Equals(expected.FileIdentity[(expected.FileIdentity.LastIndexOf('|') + 1)..], StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The deletion target file identity changed.");
+        var disposition = 1;
+        if (!SetFileInformationByHandle(target, 4, ref disposition, 4)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows refused deleting the owned detached image.");
+    }
+
     public static WindowsVirtualDisk Open(string path, bool informationOnly, bool readOnly)
     {
         ManagedDiskPaths.ValidateImagePath(path);
@@ -140,4 +155,8 @@ public sealed class WindowsVirtualDisk : IDisposable
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, uint informationClass, [Out] byte[] information, uint size);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint size, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, uint informationClass, ref int data, uint bytes);
 }

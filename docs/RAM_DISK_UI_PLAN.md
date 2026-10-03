@@ -1,7 +1,8 @@
 # Managed disks: UI plan and scenario matrix
 
-Status: reviewed proposal, revision 3, 2026-10-03. Initial shared contracts and
-creation UI are implemented on `feature/managed-disks`; real activation is gated.
+Status: reviewed proposal, revision 4, 2026-10-03. Creation, managed cards and
+product actions are implemented on `feature/managed-disks` through the shared
+broker API; activation requires the matching installed service/provider.
 None of the new disk modes is VM-qualified. The ordinary cache using the shared
 allocator/accounting helpers passed
 [focused VM checks](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).

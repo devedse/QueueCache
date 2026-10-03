@@ -11,7 +11,7 @@ using QueueCache.Operations.ManagedDisks;
 namespace QueueCache.Desktop;
 
 [SupportedOSPlatform("windows")]
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     internal static readonly IBrush Ink = Brush.Parse("#172B42"), Muted = Brush.Parse("#66788A"), Accent = Brush.Parse("#087F8C");
     // Chart palette lives on CacheOccupancy so the bar, the chart and the legends agree.
@@ -64,6 +64,9 @@ public sealed class MainWindow : Window
         heading.Children.Add(controls);
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
         body.Children.Add(heading);
+        body.Children.Add(Text("MANAGED DISKS", 12, Muted, FontWeight.SemiBold));
+        body.Children.Add(managedStatus);
+        body.Children.Add(managedCards);
         body.Children.Add(Text("VOLUMES & CACHES", 12, Muted, FontWeight.SemiBold));
         body.Children.Add(cards);
         body.Children.Add(disconnected);
@@ -87,6 +90,7 @@ public sealed class MainWindow : Window
             // Discovery never holds up telemetry; each volume has at most one outstanding sample.
             if (DateTimeOffset.UtcNow >= nextInventory && !busy)
                 _ = Refresh();
+            await SampleManagedDisks();
             await Sample();
         };
         Closing += (_, e) => { if (busy || views.Any(v => v.Busy)) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
@@ -101,7 +105,9 @@ public sealed class MainWindow : Window
         nextInventory = DateTimeOffset.UtcNow.AddMinutes(2);
         try
         {
+            _ = SampleManagedDisks();
             var volumes = await service.ListAsync();
+            volumes = volumes.Where(v => !managedViews.Values.Any(m => m.Record.VolumePath?.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
             var saved = await service.ListSavedAsync();
             if (closed)
                 return;

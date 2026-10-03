@@ -31,6 +31,8 @@ public sealed class WindowsRamDisk : IDisposable
     }
 
     public RamDiskSnapshot Capabilities() => Send(RamDiskSnapshot.Request(RamDiskAction.Capabilities), capabilities: true);
+    /// <summary>Authoritative qcache cold/hybrid startup epoch; sleep/hibernate and service restarts do not advance it.</summary>
+    public RamDiskSnapshot StartupSession() => Send(RamDiskSnapshot.Request(RamDiskAction.StartupSession), capabilities: true);
     public IReadOnlyList<RamDiskSnapshot> Enumerate()
     {
         var disks = new List<RamDiskSnapshot>();

@@ -575,6 +575,13 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "ram-disk":
+            case "vhdx-backed":
+            case "image-in-ram":
+                var managedChecks = await ManagedDiskScenarios.RunAsync(job.Operation, device, job.WorkDirectory!, job.Reply + ".managed.json");
+                RunStorage.AtomicJson(job.Reply, managedChecks);
+                ReportFailures(managedChecks, Console.Error);
+                return managedChecks.Count > 0 && managedChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "managed-provider":
                 var providerChecks = await ManagedProviderScenarios.RunAsync(target, device, job.WorkDirectory!, job.Reply + ".native.json");
                 RunStorage.AtomicJson(job.Reply, providerChecks);

@@ -2121,20 +2121,21 @@ part of the UI implementation.
 | RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, cache configuration composition, creation flow, typed VHDX primitives, checksummed durable catalog/journal with predecessor and removal tombstones | Management/desktop foundation contracts passed; catalog recovery contracts added; native VHDX primitives not VM-tested |
 | RD02 — native provider / isolated image-transfer prototype | In progress: Storport provider, private allocations, bounded service ABI, SCSI data plane, native identity/layout/volume/format wrappers, signed package/root installation and maintained `managed-provider` proof suite | Native Debug/Release and signed package CI 37112939166 passed; new native staging/filesystem tests not yet run on VM |
 | RD03 — RAM provider and one shared memory budget | In progress: cache shared helpers, kernel-only owned reserve/release endpoint, provider references, redundant-cache refusal and strict managed ABI | Native Debug/Release CI passed; managed ABI contracts passed; cross-driver VM proof pending |
-| RD04 — mounted VHDX with existing cache | Not started | Not run |
-| RD05 — pure RAM create/format/stop | Not started | Not run |
-| RD06 — whole-image import and RAM operation | Partial: bounded complete logical-sector transfer and private-publication coordinator; native adapters/provider outstanding | Host tests cover sparse zero regions/tail, aligned short reads, identity change, cancellation and incomplete import; no RAM device tested |
-| RD07 — consistent checkpoint save/export/recovery | Not started | Not run |
-| RD08 — broker/startup/power/package lifecycle | Partial: shared startup decision preserves live/dirty/faulted devices; broker, boot classifier and packaging outstanding | Pure startup decisions host-tested; Windows boot/power paths not run |
-| RD09 — completed three-mode UI | Partial: three-mode creation window, import inspection/identity binding, RAM/capacity and persistence controls; actual activation and remaining actions gated | Existing desktop regressions and new three-mode headless tests passed; rendered preview inspected |
-| RD10 — maintained verification integration | In progress: plan 78 adds opt-in `managed-provider` native lifecycle/staging/shared-budget case with retained native/cleanup evidence; broader product scenarios remain outstanding | Host contracts passed; new VM suite not yet run; existing score workload contracts unchanged |
+| RD04 — mounted VHDX with existing cache | Source implemented on feature branch: native mount/create, owned GPT/NTFS binding, independent shared cache transaction, explicit flush/drain/detach and veto restoration | Host build passed; product fixed/dynamic Strict/Fast VM case added, not run |
+| RD05 — pure RAM create/format/stop | Source implemented: full reservation, owned publication/format, explicit generation-bound discard, fresh recipe restart | Host definitions/UI/identity contracts passed; product VM case added, not run |
+| RD06 — whole-image import and RAM operation | Source implemented: read-only offline import, complete copy plus RAM digest verification, private GPT/NTFS/CRC validation, source detach before publication | Host transfer and corrupt/encrypted-layout tests passed; source-unavailable runtime/reload VM case added, not run |
+| RD07 — consistent checkpoint save/export/recovery | Source implemented: volume lock/native freeze, full-sector copy/flush/detach/read-back, durable journal/pointer, predecessor retention, export and save-stop | Host fault tests cover acquire/copy/flush/verify/journal/pointer/cleanup and cancellation; native crash/full-host/save-stop paths not VM-run |
+| RD08 — broker/startup/power/package lifecycle | Source implemented: LocalSystem SCM host in qcache, authenticated bounded local IPC, exact-generation adoption, native cold/hybrid startup epoch, opted-in preshutdown save, installer preflight and one startup coordinator | Host framing/identity contracts passed; SCM, power, upgrade/uninstall and native classifier require Windows qualification |
+| RD09 — completed three-mode UI and product CLI | Source implemented: creation and managed cards, all planned lifecycle/checkpoint/cache/startup/removal/recovery actions, shared cache editor, explicit erase/discard with fresh identity; physical discovery retained separately | Desktop creation/action/dashboard contracts passed; Windows CLI parser checks expanded; native UI walkthrough and CLI execution remain unrun |
+| RD10 — maintained verification integration | In progress: plan 79 adds opt-in `ram-disk`, `vhdx-backed`, `image-in-ram` product cases alongside plan-78 provider proof; raw transaction/cleanup evidence retained | Host suite contracts added; native current-boot cases not run; cross-boot/crash/power/injected-native-failure evidence phases remain outstanding |
 | RD11 — correctness/performance qualification | Partial: existing maintained cache suites reused without workload changes; native managed-disk qualification outstanding | Foundation: 9/9 cases, 74 raw PASS, 4 SKIP. Old 0.4.264.1 write-performance baseline `20261003-092326-b5e1ac5fb38b4cd4b25014258222610e` INCOMPLETE 4/72: pre-case Flush timed out at 180s; restoration succeeded, evidence preserved. No matrix/performance acceptance claimed. |
 
 This entry records an initial implementation milestone, not completion or VM
-qualification of the new managed-disk modes. The Windows managed-disk service deliberately refuses creation
-in every mode until the native ownership/lifetime gates are met. The ordinary
-cache uses the shared page allocator and budget helpers now; no RAM provider
-exists yet, so simultaneous cross-driver memory enforcement is not claimed.
+qualification of the new managed-disk modes. The initial foundation refused all
+creation; the subsequent feature-branch source supplies the provider, broker and
+product operations. Activation requires the matching running broker and native
+ABI. Simultaneous cross-driver memory enforcement and platform lifecycle contracts
+remain unqualified until their Windows evidence is recorded.
 Existing historical cache/driver verification does not qualify
 the new RAM provider, source import, checkpoint commit or power-state contracts.
 
@@ -2179,3 +2180,37 @@ run, production VHDX wrapper test, native RAM creation or boot/image-save tests 
 performed. Fully controlled old/new completion ordering remains open. Full commands,
 build hashes, exact run IDs, skip reasons and limits:
 [MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
+
+
+### Managed-disk broker, product actions and checkpoint source milestone, 2026-10-03
+
+Implementation: on `feature/managed-disks`, all planned product CLI action bindings
+and corresponding UI actions now call the shared service API. The SCM broker owns
+Windows/native lifetime, authenticates local elevated callers, uses bounded framed
+IPC with streamed inventory and correlated cancellation, and reconciles exact
+resource/boot/creation identities. Catalogs and host directories are protected;
+managed host volumes cannot become Fast or depend on managed disks. Volume
+association removes duplicate generic startup profiles. Save/export freezes RAM,
+verifies complete logical sectors in a detached candidate, commits the durable
+image pointer and retains source/previous files. Private decoded GPT headers and
+arrays are checked before image publication, including NTFS/encryption rejection.
+Update preflight runs before Inno file replacement; the existing binary hosts the
+service and the existing installer registers it. No new installer/test executable.
+
+Verification: managed Release build and Linux management/desktop contracts pass.
+New contracts cover checkpoint failures/commit cancellation, framed/truncated IPC,
+selected erase generation, GPT checksums/bounds and encrypted-source refusal, plus
+UI discard/format/export/recovery and duplicate-card behavior. Windows CLI help
+and pre-broker validation contracts are added to CI. Native startup-context changes
+require the next native CI build and Windows proof. Driver/power/SCM/installer
+success is not inferred from these host checks.
+
+Windows blocker: signed 0.4.269.1 from commit `980e5c83`/CI 37114226898 was
+staged and installer PID 7452 started. SSH disconnected during provider installation
+and TCP 22 subsequently timed out. Installation success, reboot, loaded provider
+identity and cause of lost connectivity are unproven. The owned installer/evidence
+paths are retained privately; the owner was asked to inspect VM 109's console.
+No automatic reset/reboot was used as recovery. This blocks native qualification,
+not ongoing source implementation. Cross-boot/crash/power/native-fault coverage,
+exact loaded-provider evidence and the complete same-binary performance comparison
+remain required work. The old 72-case baseline is incomplete, not an acceptance.

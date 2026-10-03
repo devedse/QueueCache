@@ -28,6 +28,13 @@ public static class CacheTasks
             using var gate = ConfigurationGate.Enter(target.Instance);
             target.ValidateCurrent(token, requireFileSystem: false);
             using var device = new CacheDevice(target.Device, writable: true);
+            using var hostProtectionGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();
+            if (action is WriteCacheAction.FlushPolicy or WriteCacheAction.Enable || enableAfter)
+            {
+                var configuration = CacheConfiguration.FromState(device.GetWriteCacheState());
+                if (action == WriteCacheAction.FlushPolicy) configuration = configuration with { Preset = value == 1 ? CachePreset.Fast : CachePreset.Strict };
+                ManagedDisks.ManagedDiskHostProtection.ValidateCacheChange(target.VolumeId, configuration with { Enabled = true });
+            }
             device.Control(action, budgetBytes, value);
             if (enableAfter) device.Control(WriteCacheAction.Enable);
             return device.GetWriteCacheState();

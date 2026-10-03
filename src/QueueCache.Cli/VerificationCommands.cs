@@ -30,10 +30,14 @@ internal static class VerificationCommands
     public static Command Create()
     {
         var command = new Command("verify", """
-            Foreground current-boot verification. New files only; runtime policies restored. Never formats or reboots.
+            Foreground current-boot verification. Owned fixtures only; runtime policies restored. Managed suites format only their new owned devices. No automatic reboot.
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
+              managed-provider   Native private-sector/shared-budget/VHDX/NTFS/freeze/remove proof. Opt-in, no DiskSpd.
+              ram-disk           Product pure-RAM create/format/lock veto/discard/recreate; unique owned fixture only.
+              vhdx-backed        Product fixed/dynamic VHDX with independent Strict/Fast cache; flush/detach/reopen byte oracle.
+              image-in-ram       Full import/checkpoint/export/dirty/reload; runtime bytes with the owned source unavailable. Opt-in.
               disk-removal-windows Native Windows eject while cache remains dirty/enabled, then live reconnect; no product preparation. Same disposable identity requirements.
               disk-removal       One disposable volume: Fast pending-write oracle, Windows eject, operator reconnect. Explicit disk identity and budget 256..512 MiB required; excludes surprise removal.
               system-preflight  Read-only C: identity/state check; no workload or cache changes.

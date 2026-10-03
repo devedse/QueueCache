@@ -119,17 +119,23 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         var result = new ManagedDiskLayout(new Guid(bytes.AsSpan(8, 16)), parts); result.Validate(CapacityBytes, SectorBytes); return result;
     }
     public void RefuseOnlineClone(ManagedDiskLayout layout)
+        => RefuseOnlineClone(layout, Number);
+    public static void RefuseOnlineClone(ManagedDiskLayout layout, int? excludedNumber = null)
     {
         for (var number = 0; number < 256; number++)
         {
-            if (number == Number) continue;
+            if (number == excludedNumber) continue;
             try
             {
                 using var other = Open(@"\\.\PhysicalDrive" + number, false);
-                if ((BitConverter.ToUInt64(other.Io(0x700F0, [], 16), 8) & 1) == 0 && other.Layout().DiskId == layout.DiskId)
+                var foreign = other.Io(0x70050, [], 48 + 144 * 128);
+                // Foreign layouts may include EFI/recovery partitions. Read identity
+                // directly rather than applying our managed-layout policy to another disk.
+                if (foreign.Length < 48 || BitConverter.ToUInt32(foreign) != 1) continue;
+                if ((BitConverter.ToUInt64(other.Io(0x700F0, [], 16), 8) & 1) == 0 && new Guid(foreign.AsSpan(8, 16)) == layout.DiskId)
                     throw new IOException("Another online disk has this GPT identity. Stop that disk before publishing this image.");
             }
-            catch (Win32Exception) { } catch (NotSupportedException) { }
+            catch (Win32Exception ex) when (ex.NativeErrorCode is 2 or 3 or 21 or 55 or 1167) { }
         }
     }
     public void InitializeNewGpt()

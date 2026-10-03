@@ -27,7 +27,29 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 78)
+## Suites (plan version 79)
+
+Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
+`image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
+images and transaction/cleanup evidence, and explicitly stop/forget their
+resources after the case. They require the matching running managed service
+and native modules. Pure RAM covers Windows open-file veto and fresh recreation;
+backed VHDX covers dynamic/fixed images, independent Strict/Fast cache and
+flush/detach/reopen byte checks. Whole-image RAM covers full verified checkpoint,
+export without pointer change, runtime writes/flush/read with the owned source
+temporarily unavailable, dirty generation, discard and committed-image reload.
+These cases format only newly created owned devices; ordinary physical targets
+are not formatted. Evidence is retained in `*.managed.json` next to worker
+replies. They are excluded from `full`. Cross-boot, broker-crash, physical power,
+installer and injected native-failure coverage remain separate required gates;
+these current-boot cases do not qualify those paths. Existing 72-case score
+contracts and historical raw output are unchanged.
+
+```powershell
+qcache developer verify T: --suite ram-disk --output C:\QueueCache-Results
+qcache developer verify T: --suite vhdx-backed --output C:\QueueCache-Results
+qcache developer verify T: --suite image-in-ram --output C:\QueueCache-Results
+```
 
 Plan 78 adds opt-in `managed-provider`. Use a disposable, clean non-OS host
 volume with the matching signed provider and budget driver loaded. The suite

@@ -3,7 +3,7 @@
 #include <ntddk.h>
 
 #define IOCTL_QCACHE_KERNEL_BUDGET CTL_CODE(0x8844UL, 0xD20UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
-enum QC_BUDGET_ACTION : ULONG { QcBudgetReserve = 1, QcBudgetRelease = 2 };
+enum QC_BUDGET_ACTION : ULONG { QcBudgetReserve = 1, QcBudgetRelease = 2, QcBudgetStartupSession = 3 };
 struct QC_KERNEL_RESERVATION
 {
     ULONG Size, Version, Action, Reserved;
@@ -16,3 +16,4 @@ void QcBudgetDestroy();
 bool QcBudgetOwnsDevice(PDEVICE_OBJECT device);
 NTSTATUS QcBudgetDispatch(PDEVICE_OBJECT device, PIRP irp);
 bool QcBudgetIsRamSerial(const char* serial, ULONG length);
+void QcBudgetObserveSystemPower(SYSTEM_POWER_STATE state, SYSTEM_POWER_STATE_CONTEXT context);

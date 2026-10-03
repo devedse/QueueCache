@@ -15,6 +15,9 @@ internal static class ManagedDiskTests
         DurableCatalog();
         await LogicalTransfers();
         await CreationTransactions();
+        await ManagedCheckpointTests.RunAsync();
+        await ManagedBrokerTests.RunAsync();
+        await ManagedLayoutTests.RunAsync();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
     }
 
@@ -45,6 +48,7 @@ internal static class ManagedDiskTests
             Check(recovered.CommittedImage == previous && recovered.LastError is not null, "corrupt current catalog recovers predecessor with explicit reconciliation state");
             store.Save(record);
             store.RemoveStopped(definition.ResourceId);
+            Check(store.ContainsResource(definition.ResourceId), "retired resource identity cannot be silently reused by a new creation");
             Check(store.List().Count == 0 && store.Read(definition.ResourceId).Removed && !store.Read(definition.ResourceId).Definition.StartAtBoot, "durable removal tombstone prevents recipe resurrection and retains image references");
             Throws<InvalidDataException>(() => store.Save(record with { Native = new(Guid.NewGuid(), epoch, 1, definition.CapacityBytes, 0, 18 * MiB, Guid.Empty, 512, 0, 0, 0, 0, 0, 0, 0, 0) }));
             File.WriteAllBytes(path, new byte[(1 << 20) + 1]); File.WriteAllText(path + ".previous", "also corrupt");

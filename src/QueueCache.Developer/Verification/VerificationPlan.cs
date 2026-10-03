@@ -30,13 +30,16 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 78;
+    public const int Version = 79;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
         "managed-provider",
+        "ram-disk",
+        "vhdx-backed",
+        "image-in-ram",
         "disk-removal",
         "disk-removal-windows",
         "system-preflight",
@@ -89,6 +92,9 @@ public static class VerificationPlan
     {
         "quick" => [new("file-integrity", "files")],
         "managed-provider" => [new("managed-provider-lifecycle", "managed-provider")],
+        "ram-disk" => [new("managed-pure-ram-lifecycle", "ram-disk")],
+        "vhdx-backed" => [new("managed-backed-vhdx-persistence", "vhdx-backed")],
+        "image-in-ram" => [new("managed-whole-image-checkpoints", "image-in-ram")],
         "disk-removal" => [new("disk-orderly-eject-reconnect", "disk-removal")],
         "disk-removal-windows" => [new("disk-windows-eject-reconnect", "disk-removal")],
         "system-preflight" => [new("system-preflight", "system-preflight")],
