@@ -10,7 +10,8 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
     ImageInspection? OriginalSource = null, RamDiskSnapshot? Native = null, int? PhysicalDiskNumber = null,
     string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
-    Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0)
+    Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0,
+    ManagedImageIoSnapshot? ImageIo = null)
 {
     public Guid ResourceId => Definition.ResourceId;
     public void Validate()
@@ -22,6 +23,8 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
             (PhysicalDiskNumber is < 0) || (CommittedImage is not null && Definition.Mode != ManagedDiskMode.ImageInRam) ||
             (Removed && (Definition.StartAtBoot || (Runtime is not null && Runtime.State != ManagedDiskState.Stopped))))
             throw new InvalidDataException("Managed disk catalog ownership or mode mismatch.");
+        if (ImageIo?.ObservationEpoch == Guid.Empty)
+            throw new InvalidDataException("Image I/O counters require an observation epoch.");
         foreach (var reference in new[] { CommittedImage, PreviousImage })
         {
             if (reference is null) continue;

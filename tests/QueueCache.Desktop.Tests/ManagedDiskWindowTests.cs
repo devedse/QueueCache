@@ -50,8 +50,13 @@ internal static class ManagedDiskWindowTests
         imported.Validate();
         Check(imported.CapacityBytes == service.VirtualBytes && imported.SectorBytes == 4096 && imported.Cache is null, "import binds native virtual capacity and geometry, not sparse file size");
         Check(Text("no automatic formatting") && Text("4,096 MiB") && !Control<TextBox>("DiskLabel").IsEffectivelyVisible, "existing image is preserved and full RAM payload is visible");
+        Control<CheckBox>("DiskInitializeRaw").IsChecked = true;
+        var raw = window.Definition(); raw.Validate();
+        Check(raw.InitializeBlankImage && raw.ExpectedBlankImage is not null && Control<TextBox>("DiskLabel").IsEffectivelyVisible &&
+            Text("every logical sector is blank"), "explicit RAW flow binds inspected identity and exposes formatting intent");
         Control<CheckBox>("DiskReadOnly").IsChecked = true;
-        Check(window.Definition().ReadOnly && !window.Definition().SaveBeforeStopping && !window.Definition().SaveDuringShutdown, "read-only RAM copy disables automatic saves");
+        Check(window.Definition().ReadOnly && !window.Definition().SaveBeforeStopping && !window.Definition().SaveDuringShutdown &&
+            !window.Definition().InitializeBlankImage, "read-only RAM copy disables initialization and automatic saves");
         Control<TextBox>("DiskImagePath").Text = @"C:\Images\Replacement.vhdx";
         Check(window.Definition().CapacityBytes == 0, "stale image metadata cannot bind a changed path before UI events settle");
         Dispatcher.UIThread.RunJobs();

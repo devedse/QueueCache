@@ -31,6 +31,7 @@ public sealed class ManagedDiskWindow : Window
     private readonly CheckBox saveBeforeStop = new() { Name = "DiskSaveBeforeStop", Content = "Save before stopping", IsChecked = true };
     private readonly CheckBox shutdownSave = new() { Name = "DiskShutdownSave", Content = "Attempt a save during Windows shutdown (best effort)" };
     private readonly CheckBox readOnly = new() { Name = "DiskReadOnly", Content = "Open the RAM copy read-only" };
+    private readonly CheckBox initializeBlank = new() { Name = "DiskInitializeRaw" };
     private readonly TextBlock persistence = MainWindow.Text("", 13, MainWindow.Muted);
     private readonly TextBlock startupHint = MainWindow.Text("", 13, MainWindow.Muted);
     private readonly TextBlock memoryHint = MainWindow.Text("", 13, MainWindow.Muted);
@@ -75,7 +76,7 @@ public sealed class ManagedDiskWindow : Window
         labelField = Field("New NTFS volume label", label);
         foreach (var control in new Control[] { sourceField, imageField, capacityField, memoryHint, cacheField,
             allocationField, checkpointField, behaviourField, volatility, Field("Preferred drive letter (D–Z)", letter),
-            labelField, readOnly, saveBeforeStop, shutdownSave, startup, startupHint })
+            labelField, initializeBlank, readOnly, saveBeforeStop, shutdownSave, startup, startupHint })
             form.Children.Add(control);
         body.Children.Add(form);
         body.Children.Add(status);
@@ -85,15 +86,17 @@ public sealed class ManagedDiskWindow : Window
         body.Children.Add(buttons);
         Content = new ScrollViewer { Content = body };
         mode.SelectionChanged += (_, _) => { inspected = null; source.SelectedIndex = 0; Update(); };
-        source.SelectionChanged += (_, _) => { inspected = null; readOnly.IsChecked = false; Update(); };
+        source.SelectionChanged += (_, _) => { inspected = null; readOnly.IsChecked = false; initializeBlank.IsChecked = false; Update(); };
         image.TextChanged += (_, _) => { inspected = null; inspectionHint.Text = ""; Update(); };
         behaviour.SelectionChanged += (_, _) => Update();
         capacity.ValueChanged += (_, _) => Update();
         readOnly.IsCheckedChanged += (_, _) =>
         {
             if (readOnly.IsChecked == true) { saveBeforeStop.IsChecked = false; shutdownSave.IsChecked = false; }
+            if (readOnly.IsChecked == true) initializeBlank.IsChecked = false;
             Update();
         };
+        initializeBlank.IsCheckedChanged += (_, _) => Update();
         inspect.Click += async (_, _) => await InspectAsync();
         create.Click += async (_, _) => await CreateAsync();
         cancel.Click += (_, _) => { if (operation is not null) operation.Cancel(); else Close(null); };
@@ -126,7 +129,9 @@ public sealed class ManagedDiskWindow : Window
                 fast ? CachePreset.Fast : CachePreset.Strict) : null, fast && volatility.IsChecked == true,
             startup.IsChecked == true, fullImage && saveBeforeStop.IsChecked == true,
             fullImage && shutdownSave.IsChecked == true, fullImage && Existing && readOnly.IsChecked == true,
-            (ImageAllocation)allocation.SelectedIndex, Existing ? current?.SectorBytes ?? 512 : 512);
+            (ImageAllocation)allocation.SelectedIndex, Existing ? current?.SectorBytes ?? 512 : 512,
+            InitializeBlankImage: Existing && initializeBlank.IsChecked == true,
+            ExpectedBlankImage: Existing && initializeBlank.IsChecked == true ? current : null);
     }
 
     private void Update()
@@ -139,7 +144,11 @@ public sealed class ManagedDiskWindow : Window
         cacheField.IsVisible = behaviourField.IsVisible = backed;
         checkpointField.IsVisible = saveBeforeStop.IsVisible = shutdownSave.IsVisible = Mode == ManagedDiskMode.ImageInRam;
         allocationField.IsVisible = !pure && !Existing;
-        labelField.IsVisible = !Existing;
+        labelField.IsVisible = !Existing || initializeBlank.IsChecked == true;
+        initializeBlank.IsVisible = Existing;
+        initializeBlank.IsEnabled = readOnly.IsChecked != true;
+        initializeBlank.Content = backed ? "Initialize a completely blank image as GPT/NTFS (changes this VHDX)" :
+            "Initialize a completely blank RAM copy as GPT/NTFS (preserves source; saves a new checkpoint)";
         volatility.IsVisible = backed && behaviour.SelectedIndex == 1;
         readOnly.IsVisible = Mode == ManagedDiskMode.ImageInRam && Existing;
         saveBeforeStop.IsEnabled = shutdownSave.IsEnabled = readOnly.IsChecked != true;
@@ -157,7 +166,9 @@ public sealed class ManagedDiskWindow : Window
             bytes is null ? "Inspect the VHDX to determine its full virtual RAM requirement; file size is not disk capacity." :
             $"Full RAM payload: {bytes / ManagedDiskDefinition.MiB:N0} MiB, plus native metadata and bounded transfer workspace. Reservation must fit the shared cache/RAM-disk budget.";
         if (Existing && inspected is not null)
-            inspectionHint.Text = $"Virtual capacity: {inspected.VirtualBytes / ManagedDiskDefinition.MiB:N0} MiB; allocated file: {inspected.AllocatedBytes / ManagedDiskDefinition.MiB:N0} MiB. Preserve the existing layout; no automatic formatting.";
+            inspectionHint.Text = $"Virtual capacity: {inspected.VirtualBytes / ManagedDiskDefinition.MiB:N0} MiB; allocated file: {inspected.AllocatedBytes / ManagedDiskDefinition.MiB:N0} MiB. " +
+                (initializeBlank.IsChecked == true ? "Explicit initialization checks every logical sector is blank before formatting. Nonempty or damaged images are refused." :
+                    "Preserve the existing layout; no automatic formatting.");
         var capability = capabilities.SingleOrDefault(c => c.Mode == Mode);
         create.IsEnabled = capability?.CanStart == true && (!Existing || current is not null);
         status.Text = capability is null ? "Checking available disk modes…" : !capability.CanStart ? capability.UnavailableReason :

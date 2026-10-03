@@ -105,7 +105,7 @@ public sealed partial class MainWindow : Window
         nextInventory = DateTimeOffset.UtcNow.AddMinutes(2);
         try
         {
-            _ = SampleManagedDisks();
+            await SampleManagedDisks();
             var volumes = await service.ListAsync();
             volumes = volumes.Where(v => !managedViews.Values.Any(m => m.Record.VolumePath?.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
             var saved = await service.ListSavedAsync();

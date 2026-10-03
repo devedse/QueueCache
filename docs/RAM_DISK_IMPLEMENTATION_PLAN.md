@@ -1,6 +1,6 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 4, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
+Revision 5, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
 action source is implemented on the feature branch. Native lifecycle, startup,
 crash/fault and full product qualification remain outstanding; none of the new
 managed-disk modes is VM-qualified. Ordinary-cache foundation checks passed.** See
@@ -34,6 +34,17 @@ attempt off. All modes keep configuration independently of auto-start selection.
 No RAM paging to a hidden host file, no partial-load fallback and no memory
 compression in the first implementation. No image-path access on the RAM device's
 normal I/O path. Disk and file capacity are distinct from cache/RAM reservation.
+
+S16 now has an explicit UI/CLI initialization choice bound to the inspected source
+identity. The initial implementation accepts only completely zero logical images;
+it checks all sectors, including tails, rather than treating an absent/corrupt
+partition table as permission to erase. Backed mode initializes the chosen blank
+image; ImageInRam initializes its copy and commits a separate checkpoint without
+changing the source. This consent is consumed on success and never becomes an
+automatic startup format recipe for image modes. Stopped recipe editing supports
+preferred letter/label and new pure-RAM capacity; image resize remains deferred.
+Resource-scoped image I/O attempt counters carry an observation epoch; status and
+runtime tests do not substitute completed transfer totals for actual attempts.
 
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's

@@ -14,8 +14,9 @@ internal static class ManagedDiskScenarios
         var service = new ManagedDiskBrokerClient(); var checks = new List<CheckResult>(); var trace = new List<object>();
         var mode = operation switch { "ram-disk" => ManagedDiskMode.EphemeralRam, "vhdx-backed" => ManagedDiskMode.CachedVhdx, "image-in-ram" => ManagedDiskMode.ImageInRam, _ => throw new ArgumentException("Unknown managed product scenario.") };
         var originalBudget = hostCache.GetWriteCacheState().GlobalReservedBytes;
-        var variants = mode == ManagedDiskMode.CachedVhdx ? new[] { ImageAllocation.Dynamic, ImageAllocation.Fixed } : [ImageAllocation.Dynamic];
-        foreach (var allocation in variants)
+        var variants = mode == ManagedDiskMode.CachedVhdx ? new[] { (ImageAllocation.Dynamic, false), (ImageAllocation.Fixed, false), (ImageAllocation.Dynamic, true) } :
+            mode == ManagedDiskMode.ImageInRam ? [(ImageAllocation.Dynamic, false), (ImageAllocation.Dynamic, true)] : [(ImageAllocation.Dynamic, false)];
+        foreach (var (allocation, initializeRaw) in variants)
         {
             var id = Guid.NewGuid(); var directory = Path.Combine(work, id.ToString("N"));
             var definition = ManagedDiskDefinition.New(mode) with { ResourceId = id, CapacityBytes = 64UL << 20,
@@ -26,6 +27,13 @@ internal static class ManagedDiskScenarios
             var created = false; string? movedSource = null;
             try
             {
+                if (initializeRaw)
+                {
+                    ManagedDiskHostProtection.CreateProtectedDirectory(directory);
+                    using (WindowsVirtualDisk.CreateNew(definition.ImagePath!, definition.CapacityBytes, definition.SectorBytes, allocation)) { }
+                    var identity = await service.InspectAsync(definition.ImagePath!);
+                    definition = definition with { Source = ManagedDiskSource.OpenExisting, InitializeBlankImage = true, ExpectedBlankImage = identity };
+                }
                 await service.CreateAsync(definition, new ProgressLog()); created = true;
                 var ready = await RecordAsync(); trace.Add(new { Stage = "Created", Record = ready });
                 if (ready.Runtime?.State != ManagedDiskState.Ready || ready.PhysicalDiskNumber is null || ready.VolumePath is null)
@@ -49,7 +57,7 @@ internal static class ManagedDiskScenarios
                             throw new IOException("Stop veto did not retain the live contents/binding.");
                     }
                 }
-                Pass("managed-open-file-veto-" + allocation, "Product Stop honours Windows locks and preserves the owned live disk.");
+                Pass("managed-open-file-veto-" + allocation + (initializeRaw ? "-raw" : ""), "Product Stop honours Windows locks and preserves the owned live disk.");
                 await ActAsync(ManagedDiskAction.Flush);
                 if (mode == ManagedDiskMode.ImageInRam)
                 {
@@ -66,6 +74,9 @@ internal static class ManagedDiskScenarios
                     bytes[0] ^= 0xFF; Write(file, bytes); await ActAsync(ManagedDiskAction.Flush);
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Whole-image RAM runtime depends on the unavailable source file.");
                     var runtimeEnd = await RecordAsync();
+                    if (runtimeStart.ImageIo is null || runtimeEnd.ImageIo is null || runtimeStart.ImageIo.ObservationEpoch != runtimeEnd.ImageIo.ObservationEpoch ||
+                        runtimeStart.ImageIo != runtimeEnd.ImageIo)
+                        throw new IOException("RAM runtime image-I/O attempt evidence is missing, has changed epoch, or shows image access.");
                     if (!runtimeEnd.Runtime!.HasUnsavedChanges || runtimeEnd.ImageTransferAttempts != runtimeStart.ImageTransferAttempts ||
                         runtimeEnd.ImageTransferredBytes != runtimeStart.ImageTransferredBytes)
                         throw new IOException("Runtime I/O triggered an image transfer or lost its changed generation.");
@@ -75,7 +86,7 @@ internal static class ManagedDiskScenarios
                     await ActAsync(ManagedDiskAction.Start);
                     bytes[0] ^= 0xFF;
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Restarted image did not load the committed checkpoint, excluding discarded RAM changes.");
-                    Pass("whole-image-save-export-runtime", "Full verified save, unchanged-source export, RAM-only runtime with unavailable source, dirty generation and committed reload match bytes.");
+                    Pass("whole-image-save-export-runtime" + (initializeRaw ? "-raw" : ""), "Full verified save, unchanged-source export, RAM-only runtime with unavailable source and unchanged image-I/O attempts, dirty generation and committed reload match bytes.");
                 }
                 else if (mode == ManagedDiskMode.CachedVhdx)
                 {
@@ -87,7 +98,7 @@ internal static class ManagedDiskScenarios
                     bytes[0] ^= 0xFF; Write(file, bytes); await ActAsync(ManagedDiskAction.Flush);
                     await ActAsync(ManagedDiskAction.Stop); await ActAsync(ManagedDiskAction.Start);
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Fast backed VHDX explicit flush/detach/reopen differs.");
-                    Pass("backed-vhdx-persistence-" + allocation, "Independent shared cache, Strict and explicit Fast flush/detach/reopen preserve the owned byte oracle.");
+                    Pass("backed-vhdx-persistence-" + allocation + (initializeRaw ? "-raw" : ""), "Independent shared cache, Strict and explicit Fast flush/detach/reopen preserve the owned byte oracle.");
                 }
                 else
                 {

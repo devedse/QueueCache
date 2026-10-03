@@ -48,6 +48,15 @@ boot/creation identity before mutation. Scripts may provide `--expected-boot`,
 `--expected-creation` and `--expected-write` together from a prior status result;
 stale erase/discard generations are refused.
 
+For an entirely blank existing VHDX, explicitly select initialization in the
+creation dialog, or add `--initialize-raw` to `disk create --load`. The broker
+binds consent to the inspected file identity and checks every logical sector is
+zero. A RAW partition style alone is insufficient: nonempty, damaged, encrypted
+or inaccessible images are refused. Backed mode initializes the selected blank
+file. Full-image mode initializes only its RAM copy and commits a new checkpoint
+in the selected folder, preserving the original blank image. Initialization is
+one-shot; startup and later Start operations never repeat it.
+
 | Command | Contract |
 |---|---|
 | `disk inspect <image>` | Read detached VHDX identity, virtual size, allocation and geometry |
@@ -62,6 +71,7 @@ stale erase/discard generations are refused.
 | `disk export <id> --path <new.vhdx> --commit` | Use verified export as the committed startup image |
 | `disk format <id> --accept-erase [--label Name]` | Erase the exact owned NTFS volume; for image-in-RAM this changes only RAM until Save |
 | `disk cache <id> --budget-mib N --preset Strict` | Apply/remember backed-image cache settings; all ordinary allocation/drain options are available |
+| `disk configure <id> --letter S --label Name [--size-mib N]` | Edit a stopped creation recipe; capacity changes apply only to a fresh pure RAM creation, never an existing image |
 | `disk startup <id> --enabled true` | Remember automatic startup without starting/formatting immediately |
 | `disk startup <id> --save-before-stop true --save-on-shutdown false` | Image-in-RAM stop policy and optional best-effort preshutdown save |
 | `disk remove <id>` | Forget a stopped definition; preserve images and recovery evidence |
@@ -74,6 +84,13 @@ the prior pointer. Once commit or Windows formatting begins, await and report it
 actual outcome; late cancellation is not rollback. A save may commit while stop
 or cleanup fails: inspect status/recovery details before retrying. Candidate and
 previous files are retained across failures.
+
+Status JSON includes actual native reservations/counters and `ImageIo`, whose
+observation epoch changes on broker restart. Read/write/flush attempts are counted
+before image I/O, including failed attempts; completed bytes are separate.
+Compare only snapshots in the same epoch. Legacy `ImageTransferAttempts` and
+`ImageTransferredBytes` describe completed full-image transactions, not lower
+attempts. A missing measurement is unavailable, never an implied zero.
 
 Physical discovery is `qcache disk physical-list`. Existing `disk eject <volume>`
 remains the Windows physical-device eject workflow. Managed Stop is a separate

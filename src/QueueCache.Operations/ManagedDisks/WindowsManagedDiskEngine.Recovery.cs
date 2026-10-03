@@ -44,6 +44,7 @@ public sealed partial class WindowsManagedDiskEngine
     }
     private async Task ReconcileAsync(Entry entry, CancellationToken token)
     {
+        using var measured = MeasureImages(entry);
         token.ThrowIfCancellationRequested(); var record = store.Read(entry.Record.ResourceId); var journal = store.ReadJournal(record.ResourceId);
         entry.Record = record;
         if (record.Definition.Mode != ManagedDiskMode.CachedVhdx)
@@ -54,7 +55,7 @@ public sealed partial class WindowsManagedDiskEngine
             {
                 entry.Disk?.Dispose(); entry.Disk = null; entry.Provider.Dispose(); entry.Provider = null; entry.Published = false;
                 var runtime = record.Runtime ?? new(record.ResourceId, startupSession, 1, record.Definition.Mode, ManagedDiskState.Stopped, 0, null);
-                Update(entry, record with { Native = null, PhysicalDiskNumber = null, VolumePath = null,
+                Update(entry, record with { Native = null, PhysicalDiskNumber = null, VolumePath = null, StartupSession = startupSession,
                     Runtime = runtime with { State = ManagedDiskState.Stopped, Volume = null },
                     LastError = runtime.HasUnsavedChanges ? "The preceding RAM creation is no longer present. Unsaved RAM changes are unavailable; the committed image is retained." : null });
                 return;
@@ -101,7 +102,7 @@ public sealed partial class WindowsManagedDiskEngine
             if (record.OriginalSource is null)
             {
                 var runtime = record.Runtime ?? new(record.ResourceId, startupSession, 1, record.Definition.Mode, ManagedDiskState.Stopped, 0, null);
-                Update(entry, record with { Runtime = runtime with { State = ManagedDiskState.Stopped, Volume = null } }); return;
+                Update(entry, record with { Runtime = runtime with { State = ManagedDiskState.Stopped, Volume = null }, StartupSession = startupSession }); return;
             }
             entry.Paths ??= ManagedDiskHostProtection.Pin(Path.GetDirectoryName(record.OriginalSource.Path)!, true);
             entry.Image ??= WindowsVirtualDisk.Open(record.OriginalSource.Path, false, false);
@@ -110,7 +111,8 @@ public sealed partial class WindowsManagedDiskEngine
             catch (Win32Exception ex) when (ex.NativeErrorCode is 55 or 1167 or 2)
             {
                 entry.Dispose(); entry.Image = null; entry.Disk = null; entry.Paths = null;
-                Update(entry, record with { PhysicalDiskNumber = null, VolumePath = null, Runtime = record.Runtime! with { State = ManagedDiskState.Stopped, Volume = null } }); return;
+                Update(entry, record with { PhysicalDiskNumber = null, VolumePath = null, StartupSession = startupSession,
+                    Runtime = record.Runtime! with { State = ManagedDiskState.Stopped, Volume = null } }); return;
             }
             if (record.StartupSession != startupSession || record.Runtime is null || record.GptDiskId is null || record.PhysicalDiskNumber is null)
                 throw new IOException("An attached image lacks same-startup ownership evidence. It was not detached or adopted.");

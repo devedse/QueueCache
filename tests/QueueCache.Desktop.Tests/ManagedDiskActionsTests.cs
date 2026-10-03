@@ -38,6 +38,13 @@ internal static class ManagedDiskActionsTests
         Find<TextBox>(export, "ManagedActionPath").Text = @"C:\Images\export.vhdx";
         Check(!export.Request().CommitExport, "export preserves startup source by default"); Find<CheckBox>(export, "ManagedExportCommit").IsChecked = true;
         Check(export.Request().CommitExport, "export changes startup source only by explicit choice"); export.Close();
+        var pure = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam);
+        var stopped = new ManagedDiskRecord(pure, new(pure.ResourceId, Guid.NewGuid(), 1, pure.Mode, ManagedDiskState.Stopped, 0, null));
+        var settings = new ManagedDiskActionWindow(fixture, stopped, ManagedDiskAction.ConfigureStopped); settings.Show(); Dispatcher.UIThread.RunJobs();
+        Find<TextBox>(settings, "ManagedPreferredLetter").Text = "S";
+        Find<NumericUpDown>(settings, "ManagedStoppedCapacityMiB").Value = 2048;
+        Check(settings.Request().PreferredLetter == 'S' && settings.Request().CapacityBytes == 2048 * ManagedDiskDefinition.MiB,
+            "stopped settings submit the next pure-RAM recipe without erase or live resize"); settings.Close();
         var dashboard = new MainWindow(new VolumeFixture(record.VolumePath!), fixture); dashboard.Show(); Dispatcher.UIThread.RunJobs();
         var labels = dashboard.GetVisualDescendants().OfType<TextBlock>().Select(t => t.Text).ToArray();
         Check(labels.Any(t => t?.Contains("Unsaved RAM changes") == true) && labels.Any(t => t?.Contains("Entire VHDX in RAM") == true), "managed dashboard shows typed mode and unsaved generation");

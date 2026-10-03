@@ -30,6 +30,9 @@ public sealed partial class MainWindow
             var records = await managedDisks.ListAsync();
             if (closed) return;
             var ids = records.Select(r => r.ResourceId).ToHashSet();
+            var oldVolumes = managedViews.Values.Select(v => v.Record.VolumePath).Where(v => v is not null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var newVolumes = records.Select(v => v.VolumePath).Where(v => v is not null).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (!oldVolumes.SetEquals(newVolumes)) nextInventory = DateTimeOffset.MinValue;
             if (!ids.SetEquals(managedViews.Keys))
             {
                 managedCards.Children.Clear(); managedViews.Clear();
@@ -58,7 +61,7 @@ public sealed partial class MainWindow
         foreach (var pair in new[] { (ManagedDiskAction.Start, "Start disk"), (ManagedDiskAction.Stop, "Stop disk"), (ManagedDiskAction.Flush, "Flush disk"),
             (ManagedDiskAction.Save, "Save image"), (ManagedDiskAction.Export, "Export image"), (ManagedDiskAction.Format, "Format disk"),
             (ManagedDiskAction.ChangeCache, "Cache settings"), (ManagedDiskAction.SetStartup, "Startup settings"),
-            (ManagedDiskAction.RemoveDefinition, "Forget disk"), (ManagedDiskAction.DeleteImage, "Delete owned image"), (ManagedDiskAction.Recover, "Recover disk") })
+            (ManagedDiskAction.ConfigureStopped, "Stopped disk settings"), (ManagedDiskAction.RemoveDefinition, "Forget disk"), (ManagedDiskAction.DeleteImage, "Delete owned image"), (ManagedDiskAction.Recover, "Recover disk") })
         {
             var action = pair.Item1;
             var button = Action(pair.Item2, async () =>
@@ -92,6 +95,7 @@ public sealed partial class MainWindow
             runtime.State + (runtime.Mode == ManagedDiskMode.ImageInRam ? runtime.HasUnsavedChanges ? " · Unsaved RAM changes" : " · Saved generation" : "");
         view.Detail.Text = $"{definition.CapacityBytes / ManagedDiskDefinition.MiB:N0} MiB disk" +
             (definition.Cache is not null ? $" · {definition.Cache.BudgetMiB:N0} MiB cache · {definition.Cache.Preset}" : " · full capacity reserved in RAM") +
+            (record.Native is null ? "" : $"\nActual reserved RAM: {record.Native.ReservedBytes / ManagedDiskDefinition.MiB:N0} MiB · read {record.Native.ReadBytes:N0} bytes · written {record.Native.WriteBytes:N0} bytes · flushes {record.Native.Flushes:N0} · errors {record.Native.Errors:N0}") +
             $"\n{(definition.StartAtBoot ? definition.StartupDescription : "Automatic startup off; definition remembered")}." +
             (definition.Mode == ManagedDiskMode.EphemeralRam ? "\nContents are temporary; stopping or a new Windows startup loses them." : "") +
             (record.CommittedImage is null ? "" : $"\nStartup image: {record.CommittedImage.Identity.Path}\nLast committed save: {record.SavedAt?.ToString("u") ?? "imported source; no checkpoint yet"}. Flush stays in RAM; Save image commits a full checkpoint.") +
@@ -112,7 +116,7 @@ public sealed partial class MainWindow
                 ManagedDiskAction.Stop => runtime is not null && !stopped,
                 ManagedDiskAction.Flush or ManagedDiskAction.Save or ManagedDiskAction.Export => ready,
                 ManagedDiskAction.Format => ready && !definition.ReadOnly,
-                ManagedDiskAction.RemoveDefinition => stopped,
+                ManagedDiskAction.RemoveDefinition or ManagedDiskAction.ConfigureStopped => stopped,
                 ManagedDiskAction.ChangeCache => ready || stopped,
                 ManagedDiskAction.SetStartup or ManagedDiskAction.DeleteImage => runtime is not null,
                 ManagedDiskAction.Recover => runtime is null || runtime.State is ManagedDiskState.Blocked or ManagedDiskState.RecoveryRequired or ManagedDiskState.Faulted,

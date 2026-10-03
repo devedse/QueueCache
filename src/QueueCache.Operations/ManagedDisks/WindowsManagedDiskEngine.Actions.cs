@@ -59,6 +59,11 @@ public sealed partial class WindowsManagedDiskEngine
                         SaveDuringShutdown = request.SaveDuringShutdown ?? record.Definition.SaveDuringShutdown };
                     startup.Validate(); Update(entry, record with { Definition = startup });
                     message = startup.StartAtBoot ? startup.StartupDescription + "." : "Automatic startup disabled; configuration retained."; break;
+                case ManagedDiskAction.ConfigureStopped:
+                    if (entry.Provider is not null || entry.Image is not null || entry.Disk is not null)
+                        throw new IOException("Surviving owned storage must be reconciled before editing its creation settings.");
+                    Update(entry, entry.Record with { Definition = ManagedDiskConfiguration.EditStopped(record, request) });
+                    message = "Stopped creation settings remembered. Start explicitly or wait for a new Windows startup."; break;
                 case ManagedDiskAction.RemoveDefinition:
                     if (record.Runtime!.State != ManagedDiskState.Stopped) throw new IOException("Stop the managed disk explicitly before removing its definition.");
                     store.RemoveStopped(record.ResourceId); ManagedDiskHostProtection.Unregister(record.ResourceId);

@@ -16,6 +16,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
     private readonly Guid startupSession;
     private readonly Guid mountedEpoch;
     private ulong mountedGeneration;
+    private readonly AsyncLocal<Entry?> imageOperation = new();
     private sealed class Entry(ManagedDiskRecord record) : IDisposable
     {
         public volatile ManagedDiskRecord Record = record;
@@ -24,6 +25,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         public WindowsDiskStorage? Disk;
         public IDisposable? Paths;
         public bool Published;
+        public readonly ManagedImageIo ImageIo = new();
         public void Dispose() { Disk?.Dispose(); Image?.Dispose(); Provider?.Dispose(); Paths?.Dispose(); }
     }
     public WindowsManagedDiskEngine(Guid startupSession)
@@ -76,7 +78,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             catch (Exception ex) when (ex is IOException or Win32Exception)
             { record = record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired, LastError = ex.Message }, LastError = ex.Message }; }
         }
-        return record;
+        return record with { ImageIo = entry.ImageIo.Snapshot() };
     }
     public async Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition, IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default)
     {
@@ -92,6 +94,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
     }
     private async Task<ManagedDiskRuntime> StartCoreAsync(Entry entry, IProgress<ManagedDiskProgress>? progress, CancellationToken token, bool creating = false)
     {
+        using var measured = MeasureImages(entry);
         var definition = entry.Record.Definition;
         if (!creating && entry.Record.Runtime?.State != ManagedDiskState.Stopped) throw new IOException("The managed disk is live or requires recovery; it cannot be recreated.");
         if (!creating && definition.Mode != ManagedDiskMode.EphemeralRam)
@@ -100,7 +103,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             if (reference is null) throw new IOException("No recorded image identity is available; recover the failed creation before starting.");
             var actual = await InspectAsync(reference.Path, token);
             if (!actual.SameImage(reference)) throw new IOException("The remembered image was replaced or changed; startup is blocked.");
-            definition = definition with { Source = ManagedDiskSource.OpenExisting, ImagePath = reference.Path };
+            definition = definition with { Source = ManagedDiskSource.OpenExisting, ImagePath = reference.Path,
+                InitializeBlankImage = false, ExpectedBlankImage = null };
         }
         var hostPaths = new List<string>();
         if (definition.Mode != ManagedDiskMode.EphemeralRam)
@@ -117,7 +121,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         {
             var runtime = await new ManagedDiskCreationCoordinator(this).CreateAsync(definition, progress, token);
             var latest = entry.Record;
-            Update(entry, latest with { Runtime = runtime, StartupSession = startupSession, LastError = null });
+            Update(entry, latest with { Runtime = runtime, StartupSession = startupSession, LastError = null,
+                Definition = latest.Definition with { InitializeBlankImage = false, ExpectedBlankImage = null } });
             store.SaveJournal(new(Guid.NewGuid(), definition.ResourceId, ManagedDiskJournalStage.Ready, runtime.BootEpoch, runtime.CreationGeneration));
             return runtime;
         }
@@ -130,7 +135,14 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             throw;
         }
     }
-    private void Update(Entry entry, ManagedDiskRecord record) { store.Save(record); entry.Record = record; }
+    private void Update(Entry entry, ManagedDiskRecord record)
+    { record = record with { ImageIo = entry.ImageIo.Snapshot() }; store.Save(record); entry.Record = record; }
+    private IDisposable MeasureImages(Entry entry)
+    {
+        var previous = imageOperation.Value; imageOperation.Value = entry;
+        return new ImageMeasurementScope(() => imageOperation.Value = previous);
+    }
+    private sealed class ImageMeasurementScope(Action restore) : IDisposable { public void Dispose() => restore(); }
     public async Task<IManagedDiskCreation> CreateUnpublishedAsync(ManagedDiskDefinition definition, CancellationToken token)
     {
         var entry = entries[definition.ResourceId];
@@ -174,6 +186,10 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
     }
     public async Task<IImageReadView> OpenImportAsync(ImageInspection expected, CancellationToken token)
+        => await OpenImportCoreAsync(expected, false, token);
+    public async Task<IImageReadView> OpenBlankImportAsync(ImageInspection expected, CancellationToken token)
+        => await OpenImportCoreAsync(expected, true, token);
+    private async Task<IImageReadView> OpenImportCoreAsync(ImageInspection expected, bool requireBlank, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         var pins = ManagedDiskHostProtection.Pin(Path.GetDirectoryName(expected.Path)!, false, trustedDirectory: false);
@@ -186,14 +202,16 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             image = WindowsVirtualDisk.Open(expected.Path, false, true); disk = WindowsDiskStorage.Open(image.Attach(true), true);
             disk.SetOffline(true);
             if (disk.CapacityBytes != expected.VirtualBytes || disk.SectorBytes != expected.SectorBytes) throw new IOException("The staging disk geometry differs from the source.");
-            _ = await ManagedImageLayout.InspectAsync(disk, token);
-            return new ImportView(pins, lease, image, disk, actual);
+            var measured = (imageOperation.Value ?? throw new InvalidOperationException("Image import requires an owned resource measurement scope.")).ImageIo.Measure(disk);
+            if (requireBlank) await ManagedImageLayout.RequireBlankAsync(measured, token);
+            else _ = await ManagedImageLayout.InspectAsync(measured, token);
+            return new ImportView(pins, lease, image, disk, measured, actual);
         }
         catch { disk?.Dispose(); image?.Dispose(); lease?.Dispose(); pins.Dispose(); throw; }
     }
-    private sealed class ImportView(IDisposable pins, SafeFileHandle lease, WindowsVirtualDisk image, WindowsDiskStorage disk, ImageInspection identity) : IImageReadView
+    private sealed class ImportView(IDisposable pins, SafeFileHandle lease, WindowsVirtualDisk image, WindowsDiskStorage disk, ILogicalDisk measured, ImageInspection identity) : IImageReadView
     {
-        public ILogicalDisk LogicalStorage => disk;
+        public ILogicalDisk LogicalStorage => measured;
         public ImageInspection Identity => identity;
         public ValueTask DisposeAsync() { disk.Dispose(); try { image.Detach(); } finally { image.Dispose(); lease.Dispose(); pins.Dispose(); } return ValueTask.CompletedTask; }
     }
@@ -218,9 +236,16 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
         public async Task InitializeAndFormatAsync(ManagedDiskDefinition value, CancellationToken token)
         {
+            if (value.InitializeBlankImage && value.Mode == ManagedDiskMode.CachedVhdx)
+            {
+                var actual = WindowsVirtualDisk.Inspect(value.ImagePath!, allowAttached: true);
+                if (!actual.SameImage(value.ExpectedBlankImage!)) throw new IOException("The selected blank VHDX identity changed before initialization.");
+                entry.Disk!.SetOffline(true);
+                await ManagedImageLayout.RequireBlankAsync(entry.ImageIo.Measure(entry.Disk), token);
+            }
             await EnsurePublishedAsync(token); token.ThrowIfCancellationRequested();
             engine.Update(entry, entry.Record with { Runtime = entry.Record.Runtime! with { State = ManagedDiskState.Formatting } });
-            entry.Disk!.InitializeNewGpt(); var volume = await entry.Disk.WaitVolumeAsync(token);
+            entry.Disk!.InitializeNewGpt(); entry.Disk.SetOffline(false); var volume = await entry.Disk.WaitVolumeAsync(token);
             await WindowsDiskStorage.FormatNtfsAsync(volume, entry.Disk.Number, value.Label, token);
             engine.Update(entry, entry.Record with { VolumePath = volume, GptDiskId = entry.Disk.Layout().DiskId });
         }
@@ -237,7 +262,9 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
         public async Task SaveInitialImageAsync(ManagedDiskDefinition value, CancellationToken token)
         {
-            var result = await new ManagedImageCheckpoint(engine.store, engine).SaveAsync(entry.Record, value.ImagePath!, true, token: token);
+            var path = value.Source == ManagedDiskSource.CreateNew ? value.ImagePath! : Path.Combine(value.CheckpointDirectory!,
+                $"{value.ResourceId:N}-initial-{Guid.NewGuid():N}.vhdx");
+            var result = await new ManagedImageCheckpoint(engine.store, engine).SaveAsync(entry.Record, path, true, token: token);
             entry.Record = result.Record;
             baseline = result.Record.Runtime!.SavedGeneration;
         }

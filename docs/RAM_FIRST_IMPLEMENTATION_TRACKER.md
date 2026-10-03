@@ -2127,7 +2127,7 @@ part of the UI implementation.
 | RD07 — consistent checkpoint save/export/recovery | Source implemented: volume lock/native freeze, full-sector copy/flush/detach/read-back, durable journal/pointer, predecessor retention, export and save-stop | Host fault tests cover acquire/copy/flush/verify/journal/pointer/cleanup and cancellation; native crash/full-host/save-stop paths not VM-run |
 | RD08 — broker/startup/power/package lifecycle | Source implemented: LocalSystem SCM host in qcache, authenticated bounded local IPC, exact-generation adoption, native cold/hybrid startup epoch, opted-in preshutdown save, installer preflight and one startup coordinator | Host framing/identity contracts passed; SCM, power, upgrade/uninstall and native classifier require Windows qualification |
 | RD09 — completed three-mode UI and product CLI | Source implemented: creation and managed cards, all planned lifecycle/checkpoint/cache/startup/removal/recovery actions, shared cache editor, explicit erase/discard with fresh identity; physical discovery retained separately | Desktop creation/action/dashboard contracts passed; Windows CLI parser checks expanded; native UI walkthrough and CLI execution remain unrun |
-| RD10 — maintained verification integration | In progress: plan 79 adds opt-in `ram-disk`, `vhdx-backed`, `image-in-ram` product cases alongside plan-78 provider proof; raw transaction/cleanup evidence retained | Host suite contracts added; native current-boot cases not run; cross-boot/crash/power/injected-native-failure evidence phases remain outstanding |
+| RD10 — maintained verification integration | In progress: plan 80 adds explicit blank-image fixtures and actual image-sector I/O attempt counters to the opt-in `ram-disk`, `vhdx-backed`, `image-in-ram` product cases alongside plan-78 provider proof; raw transaction/cleanup evidence retained | Host suite contracts added; native current-boot cases not run; cross-boot/crash/power/injected-native-failure evidence phases remain outstanding |
 | RD11 — correctness/performance qualification | Partial: existing maintained cache suites reused without workload changes; native managed-disk qualification outstanding | Foundation: 9/9 cases, 74 raw PASS, 4 SKIP. Old 0.4.264.1 write-performance baseline `20261003-092326-b5e1ac5fb38b4cd4b25014258222610e` INCOMPLETE 4/72: pre-case Flush timed out at 180s; restoration succeeded, evidence preserved. No matrix/performance acceptance claimed. |
 
 This entry records an initial implementation milestone, not completion or VM
@@ -2223,3 +2223,26 @@ No automatic reset/reboot was used as recovery. This blocks native qualification
 not ongoing source implementation. Cross-boot/crash/power/native-fault coverage,
 exact loaded-provider evidence and the complete same-binary performance comparison
 remain required work. The old 72-case baseline is incomplete, not an acceptance.
+
+### Managed disk scenario completion follow-up, 2026-10-03
+
+Implementation: S16 now has a shared explicit blank-image initialization contract,
+UI checkbox and `disk create --load ... --initialize-raw`. Complete logical zero
+validation refuses nonempty/corrupt images; source identity is rechecked before
+allocation and formatting. Image-in-RAM preserves the blank source and creates a
+separate initial checkpoint. Consent is one-shot, with no repeated startup erase.
+Stopped recipe editing is exposed in the UI and `disk configure`; only pure RAM
+capacity may change. Managed dashboard cards report actual native reserved RAM
+and counters, and refresh ordinary inventory when managed ownership changes.
+Image-sector read/write/flush attempts include failed attempts and separate
+completion bytes, with a new observation epoch on broker restart. Plan 80's
+maintained image cases cover explicit blank initialization and require unchanged
+attempts during ordinary whole-image RAM I/O with its source unavailable.
+
+Verification: managed Release compilation has zero warnings/errors; management
+and desktop contracts pass, including complete blank-sector/tail/error checks,
+identity-bound initialization, stopped recipe restrictions and failed I/O attempt
+accounting. The preceding startup/CLI fixes passed Windows Debug/Release native,
+management, desktop, CLI and signed-package CI 37130121135 (`ebecff3`). The new
+scenario additions still require their matching Windows CI build. None has run on the inaccessible VM;
+the outstanding installer/console blocker and native qualification gaps remain.

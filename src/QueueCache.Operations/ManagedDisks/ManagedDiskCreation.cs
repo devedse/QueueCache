@@ -33,6 +33,8 @@ public interface IManagedDiskBackend
     Task<ManagedDiskCapability> CapabilityAsync(ManagedDiskMode mode, CancellationToken token);
     Task<ImageInspection> InspectAsync(string path, CancellationToken token);
     Task<IImageReadView> OpenImportAsync(ImageInspection expected, CancellationToken token);
+    Task<IImageReadView> OpenBlankImportAsync(ImageInspection expected, CancellationToken token) =>
+        throw new NotSupportedException("Explicit blank-image initialization is unavailable in this backend.");
     Task<IManagedDiskCreation> CreateUnpublishedAsync(ManagedDiskDefinition definition, CancellationToken token);
 }
 
@@ -52,6 +54,8 @@ public sealed class ManagedDiskCreationCoordinator(IManagedDiskBackend backend)
         {
             source = await backend.InspectAsync(definition.ImagePath!, token);
             source.ValidateFor(definition);
+            if (definition.InitializeBlankImage && !source.SameImage(definition.ExpectedBlankImage!))
+                throw new IOException("The image selected for initialization was replaced. Inspect it again before formatting.");
         }
         progress?.Report(new(ManagedDiskState.Creating, "Creating an owned, unpublished disk."));
         await using var creation = await backend.CreateUnpublishedAsync(definition, token);
@@ -62,7 +66,8 @@ public sealed class ManagedDiskCreationCoordinator(IManagedDiskBackend backend)
             if (definition.Mode == ManagedDiskMode.ImageInRam && source is not null)
             {
                 progress?.Report(new(ManagedDiskState.Loading, "Loading every logical image sector into RAM."));
-                await using (var import = await backend.OpenImportAsync(source, token))
+                await using (var import = definition.InitializeBlankImage
+                    ? await backend.OpenBlankImportAsync(source, token) : await backend.OpenImportAsync(source, token))
                 {
                     if (import.Identity != source)
                         throw new IOException("The source image changed before import.");
@@ -76,7 +81,7 @@ public sealed class ManagedDiskCreationCoordinator(IManagedDiskBackend backend)
                 }
                 // Native image view is detached before the copied GPT identities are published.
             }
-            if (definition.Source == ManagedDiskSource.CreateNew)
+            if (definition.Source == ManagedDiskSource.CreateNew || definition.InitializeBlankImage)
             {
                 progress?.Report(new(ManagedDiskState.Formatting, "Initializing and formatting the new owned disk."));
                 await creation.InitializeAndFormatAsync(definition, token);

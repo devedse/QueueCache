@@ -1,6 +1,6 @@
 # Managed disks: UI plan and scenario matrix
 
-Status: reviewed proposal, revision 4, 2026-10-03. Creation, managed cards and
+Status: reviewed proposal, revision 5, 2026-10-03. Creation, managed cards and
 product actions are implemented on `feature/managed-disks` through the shared
 broker API; activation requires the matching installed service/provider.
 None of the new disk modes is VM-qualified. The ordinary cache using the shared
@@ -62,6 +62,11 @@ virtual capacity; show this before creation.
    label, allocation-unit default and available drive letter. Existing image
    layout is retained. Inspect other filesystems/partitions and explain unsupported
    layouts; never offer formatting as recovery from an inspection error.
+   Existing image modes additionally expose an explicit blank-image initialization
+   checkbox and format label. Initialization binds the inspected file identity and
+   requires every logical sector to be zero. Backed mode changes that blank file;
+   full-RAM mode preserves it and saves a separate checkpoint. Read-only selection
+   disables this choice. It is never an automatic fallback.
 5. **Persistence:** mode 2 defaults to Strict, with explicit Fast selection.
    Mode 3 offers **Save image now**, **Save image as…**, and **Save before stopping**
    (default on). A separate **Save during Windows shutdown — best effort** setting

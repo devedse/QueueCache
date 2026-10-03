@@ -26,7 +26,9 @@ public sealed record ManagedDiskDefinition(
     bool ReadOnly = false,
     ImageAllocation Allocation = ImageAllocation.Dynamic,
     uint SectorBytes = 512,
-    int SchemaVersion = 1)
+    int SchemaVersion = 1,
+    bool InitializeBlankImage = false,
+    ImageInspection? ExpectedBlankImage = null)
 {
     public const ulong MiB = 1UL << 20;
     public static ManagedDiskDefinition New(ManagedDiskMode mode) => new(Guid.NewGuid(), mode,
@@ -47,6 +49,14 @@ public sealed record ManagedDiskDefinition(
             throw new ArgumentException("Use a valid NTFS volume label of at most 32 characters.");
         if (ReadOnly && Source == ManagedDiskSource.CreateNew)
             throw new ArgumentException("Create and format a writable disk before opening it read-only.");
+        if (InitializeBlankImage)
+        {
+            if (Mode == ManagedDiskMode.EphemeralRam || Source != ManagedDiskSource.OpenExisting || ReadOnly || ExpectedBlankImage is null)
+                throw new ArgumentException("Blank-image initialization requires an inspected existing image and an explicit writable format request.");
+            ExpectedBlankImage.ValidateFor(this);
+        }
+        else if (ExpectedBlankImage is not null)
+            throw new ArgumentException("An initialization identity requires explicit blank-image initialization.");
         if (Mode == ManagedDiskMode.EphemeralRam)
         {
             if (Source != ManagedDiskSource.CreateNew || ImagePath is not null || CheckpointDirectory is not null ||

@@ -126,6 +126,16 @@ internal static class ManagedDiskTests
             }
         }
         var ram = Definition(ManagedDiskMode.EphemeralRam);
+        var stoppedRam = new ManagedDiskRecord(ram, new(ram.ResourceId, epoch, 1, ram.Mode, ManagedDiskState.Stopped, 0, null));
+        var edit = new ManagedDiskRequest(ram.ResourceId, ManagedDiskAction.ConfigureStopped, PreferredLetter: 'S', Label: "Next", CapacityBytes: 32 * MiB);
+        var edited = ManagedDiskConfiguration.EditStopped(stoppedRam, edit);
+        Check(edited.PreferredLetter == 'S' && edited.Label == "Next" && edited.CapacityBytes == 32 * MiB && edited.ResourceId == ram.ResourceId,
+            "stopped pure RAM edits update only the next recipe without creating or formatting storage");
+        Throws<IOException>(() => ManagedDiskConfiguration.EditStopped(stoppedRam with { Runtime = stoppedRam.Runtime! with { State = ManagedDiskState.Ready } }, edit));
+        Throws<IOException>(() => ManagedDiskConfiguration.EditStopped(stoppedRam with { PhysicalDiskNumber = 4 }, edit));
+        Throws<ArgumentException>(() => ManagedDiskConfiguration.EditStopped(stoppedRam, edit with { PreferredLetter = 'C' }));
+        var stoppedImage = new ManagedDiskRecord(Definition(ManagedDiskMode.ImageInRam), new(ram.ResourceId, epoch, 1, ManagedDiskMode.ImageInRam, ManagedDiskState.Stopped, 0, null));
+        Throws<NotSupportedException>(() => ManagedDiskConfiguration.EditStopped(stoppedImage, edit));
         Throws<ArgumentException>(() => (ram with { ImagePath = @"C:\Disk.vhdx" }).Validate());
         Throws<ArgumentException>(() => (ram with { Source = ManagedDiskSource.OpenExisting }).Validate());
         Throws<ArgumentException>(() => (ram with { Cache = new CacheConfiguration(4) }).Validate());
@@ -200,6 +210,34 @@ internal static class ManagedDiskTests
 
     private static async Task CreationTransactions()
     {
+        var countedDisk = new MemoryDisk(16 << 20) { MaxRead = 512 };
+        var measurements = new ManagedImageIo(); var measuredDisk = measurements.Measure(countedDisk);
+        await measuredDisk.ReadAsync(0, new byte[4096], default);
+        await measuredDisk.WriteAsync(0, new byte[512], default); await measuredDisk.FlushAsync(default);
+        var counted = measurements.Snapshot();
+        Check(counted.ObservationEpoch != Guid.Empty && counted.ReadAttempts == 1 && counted.ReadBytes == 512 &&
+            counted.WriteAttempts == 1 && counted.WrittenBytes == 512 && counted.FlushAttempts == 1,
+            "image counters record actual short completion bytes separately from attempts");
+        countedDisk.ReadFailureAt = 0;
+        await ThrowsAsync<IOException>(async () => { await measuredDisk.ReadAsync(0, new byte[512], default); });
+        Check(measurements.Snapshot().ReadAttempts == 2 && measurements.Snapshot().ReadBytes == 512,
+            "failed image attempts are counted without inventing completed bytes");
+        using (var cancelledRead = new CancellationTokenSource())
+        {
+            cancelledRead.Cancel();
+            await ThrowsAsync<OperationCanceledException>(async () => { await measuredDisk.ReadAsync(0, new byte[512], cancelledRead.Token); });
+            Check(measurements.Snapshot().ReadAttempts == 2, "pre-cancelled image operation makes no lower attempt");
+        }
+        Check(new ManagedImageIo().Snapshot().ObservationEpoch != counted.ObservationEpoch,
+            "a new observation epoch cannot silently combine counters across broker restarts");
+        var blank = new MemoryDisk(16 << 20) { MaxRead = 4096 };
+        await ManagedImageLayout.RequireBlankAsync(blank);
+        blank.Bytes[^1] = 1;
+        await ThrowsAsync<NotSupportedException>(() => ManagedImageLayout.RequireBlankAsync(blank));
+        blank.Bytes[^1] = 0; blank.Bytes[512] = 1;
+        await ThrowsAsync<NotSupportedException>(() => ManagedImageLayout.RequireBlankAsync(blank));
+        blank.Bytes[512] = 0; blank.ReadFailureAt = 8 * MiB;
+        await ThrowsAsync<IOException>(() => ManagedImageLayout.RequireBlankAsync(blank));
         foreach (var mode in Enum.GetValues<ManagedDiskMode>())
         {
             var definition = Definition(mode);
@@ -217,6 +255,20 @@ internal static class ManagedDiskTests
         var backing = new FakeBackend(cached);
         await new ManagedDiskCreationCoordinator(backing).CreateAsync(cached);
         Check(!backing.Formatted && !backing.OpenedImport, "mounted image cache preserves existing content without full-image transfer");
+        foreach (var candidate in new[] { existing, cached })
+        {
+            var rawBackend = new FakeBackend(candidate);
+            var rawDefinition = candidate with { InitializeBlankImage = true, ExpectedBlankImage = rawBackend.Inspection };
+            await new ManagedDiskCreationCoordinator(rawBackend).CreateAsync(rawDefinition);
+            Check(rawBackend.Formatted && rawBackend.Published && rawBackend.InitialSaved == (candidate.Mode == ManagedDiskMode.ImageInRam),
+                "explicit blank-image initialization formats and commits only the selected storage mode");
+            var stale = rawDefinition with { ExpectedBlankImage = rawBackend.Inspection with { FileIdentity = "replaced" } };
+            var staleBackend = new FakeBackend(candidate);
+            await ThrowsAsync<IOException>(() => new ManagedDiskCreationCoordinator(staleBackend).CreateAsync(stale));
+            Check(!staleBackend.Allocated, "stale initialization consent is refused before attachment or allocation");
+            Throws<ArgumentException>(() => (rawDefinition with { ExpectedBlankImage = null }).Validate());
+            Throws<ArgumentException>(() => (rawDefinition with { ReadOnly = true }).Validate());
+        }
         var unavailable = new FakeBackend(existing) { Available = false };
         await ThrowsAsync<NotSupportedException>(() => new ManagedDiskCreationCoordinator(unavailable).CreateAsync(existing));
         Check(!unavailable.Allocated, "capability refusal happens before memory allocation");
@@ -271,7 +323,7 @@ internal static class ManagedDiskTests
         public ulong CreationGeneration => 1;
         public ulong WriteGeneration => Published ? 5UL : 4UL;
         public ILogicalDisk? RamStorage => ram;
-        private ImageInspection Inspection => new(definition.ImagePath!, "stable-id", imageId, definition.CapacityBytes, MiB, 512, false);
+        public ImageInspection Inspection => new(definition.ImagePath!, "stable-id", imageId, definition.CapacityBytes, MiB, 512, false);
         public Task<ManagedDiskCapability> CapabilityAsync(ManagedDiskMode mode, CancellationToken token) => Task.FromResult(new ManagedDiskCapability(mode, Available, "Not qualified."));
         public Task<ImageInspection> InspectAsync(string path, CancellationToken token) => Task.FromResult(Inspection);
         public Task<IImageReadView> OpenImportAsync(ImageInspection expected, CancellationToken token)
@@ -281,6 +333,8 @@ internal static class ManagedDiskTests
             CancelOnImport?.Cancel();
             return Task.FromResult<IImageReadView>(new ReadView(this, ChangeSource ? Inspection with { FileIdentity = "replacement-id" } : Inspection));
         }
+        public Task<IImageReadView> OpenBlankImportAsync(ImageInspection expected, CancellationToken token)
+        { OpenedImport = true; return Task.FromResult<IImageReadView>(new ReadView(this, Inspection)); }
         public Task<IManagedDiskCreation> CreateUnpublishedAsync(ManagedDiskDefinition value, CancellationToken token) { Allocated = true; return Task.FromResult<IManagedDiskCreation>(this); }
         public Task InitializeAndFormatAsync(ManagedDiskDefinition value, CancellationToken token) { Formatted = true; return Task.CompletedTask; }
         public Task SaveInitialImageAsync(ManagedDiskDefinition value, CancellationToken token) { InitialSaved = true; return Task.CompletedTask; }

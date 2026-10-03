@@ -27,7 +27,17 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 79)
+## Suites (plan version 80)
+
+Plan 80 extends the image product cases with uniquely owned blank existing VHDX
+fixtures and explicit initialization. Backed mode initializes that owned file;
+full-image mode preserves it and commits a separate initial checkpoint. Normal
+RAM runtime must leave the resource's logical-image read/write/flush attempt
+counters unchanged in the same observation epoch. Missing counters or an epoch
+change fail that check; completed-transfer totals alone are insufficient. These
+counters include image-sector access and explicit candidate host flushes, not
+container metadata inspection or unrelated processes. Existing score workloads
+are unchanged.
 
 Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
 `image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
@@ -38,7 +48,8 @@ backed VHDX covers dynamic/fixed images, independent Strict/Fast cache and
 flush/detach/reopen byte checks. Whole-image RAM covers full verified checkpoint,
 export without pointer change, runtime writes/flush/read with the owned source
 temporarily unavailable, dirty generation, discard and committed-image reload.
-These cases format only newly created owned devices; ordinary physical targets
+These cases format only newly created owned devices or explicitly selected blank
+fixture images after complete zero-sector validation; ordinary physical targets
 are not formatted. Evidence is retained in `*.managed.json` next to worker
 replies. They are excluded from `full`. Cross-boot, broker-crash, physical power,
 installer and injected native-failure coverage remain separate required gates;

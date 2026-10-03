@@ -6,6 +6,21 @@ namespace QueueCache.Operations.ManagedDisks;
 /// <summary>Validate decoded sectors while an import remains private/offline, before Windows publication.</summary>
 public static class ManagedImageLayout
 {
+    public static async Task RequireBlankAsync(ILogicalDisk disk, CancellationToken token = default)
+    {
+        if (disk.SectorBytes is not (512 or 4096) || disk.CapacityBytes < 16UL << 20 || disk.CapacityBytes % disk.SectorBytes != 0)
+            throw new InvalidDataException("Unsupported blank-image sector geometry.");
+        // RAW does not mean empty: refuse erased partition tables with surviving
+        // payload, corrupt GPT, encryption and any nonzero sector, including tails.
+        const int chunk = 1 << 20;
+        for (ulong offset = 0; offset < disk.CapacityBytes; offset += chunk)
+        {
+            token.ThrowIfCancellationRequested();
+            var bytes = await ReadAsync(disk, offset, (int)Math.Min(chunk, disk.CapacityBytes - offset), token);
+            if (bytes.AsSpan().ContainsAnyExcept((byte)0))
+                throw new NotSupportedException("Initialization requires a completely blank logical image. Nonempty, damaged or encrypted images are never formatted as recovery.");
+        }
+    }
     private sealed record Header(Guid DiskId, ulong Current, ulong Alternate, ulong First, ulong Last,
         ulong EntriesLba, uint Count, uint EntryBytes, uint EntriesCrc);
     public static async Task<ManagedDiskLayout> InspectAsync(ILogicalDisk disk, CancellationToken token = default)

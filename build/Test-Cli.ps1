@@ -81,7 +81,7 @@ foreach ($arguments in @(
     }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
-foreach ($name in @('create', 'list', 'status', 'physical-list', 'capabilities', 'inspect', 'start', 'stop', 'flush', 'save', 'export', 'format', 'cache', 'startup', 'remove', 'delete-image', 'recover'))
+foreach ($name in @('create', 'list', 'status', 'physical-list', 'capabilities', 'inspect', 'start', 'stop', 'flush', 'save', 'export', 'format', 'cache', 'startup', 'remove', 'delete-image', 'recover', 'configure'))
 {
     & $cli disk $name --help
     if ($LASTEXITCODE) { throw "Managed disk help failed: $name" }
@@ -91,6 +91,9 @@ foreach ($arguments in @(
     @('disk', 'create', '--mode', 'ram', '--size-mib', '0'),
     @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--new-image', 'C:\Images\wrong.vhdx'),
     @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--budget-mib', '64'),
+    @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--initialize-raw'),
+    @('disk', 'create', '--mode', 'cached-vhdx', '--size-mib', '16', '--new-image', 'C:\Images\new.vhdx', '--initialize-raw'),
+    @('disk', 'create', '--mode', 'image-in-ram', '--load', 'C:\Images\source.vhdx', '--checkpoint-directory', 'C:\Images\Checkpoints', '--read-only', '--initialize-raw'),
     @('disk', 'create', '--mode', 'cached-vhdx', '--size-mib', '16', '--new-image', 'C:\Images\new.vhdx', '--preset', 'Fast'),
     @('disk', 'create', '--mode', 'image-in-ram', '--size-mib', '16', '--new-image', 'C:\Images\new.vhdx'),
     @('disk', 'stop', $managedId, '--save', '--discard'),
@@ -100,6 +103,8 @@ foreach ($arguments in @(
     @('disk', 'cache', $managedId, '--budget-mib', '0'),
     @('disk', 'cache', $managedId, '--preset', 'Fast'),
     @('disk', 'startup', $managedId),
+    @('disk', 'configure', $managedId),
+    @('disk', 'configure', $managedId, '--size-mib', '0'),
     @('disk', 'start', $managedId, '--expected-creation', '1')
 ))
 {
@@ -110,6 +115,7 @@ foreach ($arguments in @(
     @('disk', 'create', '--mode', 'unknown'),
     @('disk', 'create', '--mode', 'ram', '--size-mib', '16', '--letter', 'C'),
     @('disk', 'status', 'not-a-resource'),
+    @('disk', 'configure', $managedId, '--letter', 'C'),
     @('disk', 'stop', '00000000-0000-0000-0000-000000000000'),
     @('disk', 'export', $managedId)
 ))

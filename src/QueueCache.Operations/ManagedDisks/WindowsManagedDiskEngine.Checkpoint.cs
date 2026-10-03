@@ -87,18 +87,20 @@ public sealed partial class WindowsManagedDiskEngine
             if ((ulong)drive.AvailableFreeSpace < required) throw new IOException("The destination lacks worst-case space for a complete VHDX candidate while retaining existing checkpoints.");
             image = WindowsVirtualDisk.CreateNew(path, definition.CapacityBytes, definition.SectorBytes, definition.Allocation);
             disk = WindowsDiskStorage.Open(image.Attach(false), true); disk.SetOffline(true);
-            return Task.FromResult<ICheckpointImage>(new CandidateImage(pins, image, disk, path));
+            var counters = entries[definition.ResourceId].ImageIo;
+            return Task.FromResult<ICheckpointImage>(new CandidateImage(pins, image, disk, counters.Measure(disk), counters, path));
         }
         catch { disk?.Dispose(); image?.Dispose(); pins.Dispose(); throw; }
     }
-    private sealed class CandidateImage(IDisposable pins, WindowsVirtualDisk image, WindowsDiskStorage disk, string path) : ICheckpointImage
+    private sealed class CandidateImage(IDisposable pins, WindowsVirtualDisk image, WindowsDiskStorage disk, ILogicalDisk measured, ManagedImageIo counters, string path) : ICheckpointImage
     {
         private bool detached;
-        public ILogicalDisk Storage => disk;
+        public ILogicalDisk Storage => measured;
         public async Task CompleteAndDetachAsync(CancellationToken token)
         {
-            await disk.FlushAsync(token); disk.Dispose(); image.Detach(); detached = true;
+            await measured.FlushAsync(token); disk.Dispose(); image.Detach(); detached = true;
             using var host = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.WriteThrough);
+            counters.FlushAttempt();
             host.Flush(flushToDisk: true);
         }
         public ValueTask DisposeAsync()
@@ -113,6 +115,7 @@ public sealed partial class WindowsManagedDiskEngine
     }
     private async Task<ManagedCheckpointResult> SaveCoreAsync(Entry entry, string? export, bool commit, IProgress<ManagedDiskProgress>? progress, CancellationToken token, bool stopAfterSave = false)
     {
+        using var measured = MeasureImages(entry);
         ValidateLive(entry);
         var path = export ?? Path.Combine(entry.Record.Definition.CheckpointDirectory!,
             $"{entry.Record.ResourceId:N}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.vhdx");
