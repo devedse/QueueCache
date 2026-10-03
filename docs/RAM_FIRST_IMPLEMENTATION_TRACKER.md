@@ -2096,3 +2096,40 @@ hash. Q: saved 2048 MiB Fast/Idle profile is Active, clean and error-free. No
 owned benchmark process remains. Read-only Proxmox check confirms unused eject
 backing vm-109-disk-5 is preserved and detached. This restart is a planned
 benchmark-state restoration, not automatic recovery or a removal-path proof.
+
+
+### Managed disks planning, 2026-10-03
+
+Owner scope: three UI modes — pure RAM disk, VHDX-backed disk with independent
+RAM cache, and complete VHDX image loaded into RAM. Pure RAM with startup enabled
+must create/partition/format a new empty disk at each new Windows startup;
+image-backed and full-image modes preserve their existing filesystem/data.
+
+Planning: [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md) revision 2 contains the
+three-mode UI contract and S01–S64 scenario matrix.
+[RAM_DISK_IMPLEMENTATION_PLAN.md](RAM_DISK_IMPLEMENTATION_PLAN.md) defines the
+native provider, shared kernel RAM budget, broker/ownership, complete logical
+image transfer, consistent versioned image saves, startup/recovery, installer
+changes and maintained verification handoff for Luna or Sol. Full-image saves
+preserve the imported source and publish verified checkpoint generations; an
+ordinary file flush in RAM does not save an image. CLI product design remains
+later; shared operations and necessary internal service/runner plumbing are
+part of the UI implementation.
+
+| Work package | Implementation | Verification |
+|---|---|---|
+| RD01 — contracts, resource schema and UI flow | Not started; documented | Not run |
+| RD02 — native provider / isolated image-transfer prototype | Not started; platform gate | Not run |
+| RD03 — RAM provider and one shared memory budget | Not started | Not run |
+| RD04 — mounted VHDX with existing cache | Not started | Not run |
+| RD05 — pure RAM create/format/stop | Not started | Not run |
+| RD06 — whole-image import and RAM operation | Not started | Not run |
+| RD07 — consistent checkpoint save/export/recovery | Not started | Not run |
+| RD08 — broker/startup/power/package lifecycle | Not started | Not run |
+| RD09 — completed three-mode UI | Not started | Not run |
+| RD10 — maintained verification integration | Not started | Not run |
+| RD11 — correctness/performance qualification | Not started | Not run |
+
+This entry records a documentation-only review, not source completion or VM
+qualification. Existing historical cache/driver verification does not qualify
+the new RAM provider, source import, checkpoint commit or power-state contracts.
