@@ -82,6 +82,13 @@ public sealed partial class WindowsManagedDiskEngine
             if (!entry.Published)
                 throw new IOException("An interrupted unpublished creation is retained. Explicitly discard that owned creation before retrying; it cannot be adopted as Ready.");
             entry.Disk = await WindowsDiskStorage.ResolveRamAsync(entry.Provider, native, token);
+            if (ManagedDiskStartup.IsIncompleteCreation(record))
+            {
+                Update(entry, record with { Native = native, PhysicalDiskNumber = entry.Disk.Number,
+                    Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired },
+                    LastError = "The published RAM creation has no completed filesystem binding. Explicitly discard this owned creation; no format or load was performed." });
+                return;
+            }
             var volume = await entry.Disk.WaitVolumeAsync(token);
             if (record.GptDiskId is null || entry.Disk.Layout().DiskId != record.GptDiskId ||
                 record.VolumePath is null || !volume.Equals(record.VolumePath, StringComparison.OrdinalIgnoreCase))
@@ -122,12 +129,20 @@ public sealed partial class WindowsManagedDiskEngine
                 Update(entry, record with { PhysicalDiskNumber = null, VolumePath = null, StartupSession = startupSession,
                     Runtime = record.Runtime! with { State = ManagedDiskState.Stopped, Volume = null } }); return;
             }
-            if (record.StartupSession != startupSession || record.Runtime is null || record.GptDiskId is null || record.PhysicalDiskNumber is null)
+            if (record.StartupSession != startupSession || record.Runtime is null || record.PhysicalDiskNumber is null)
                 throw new IOException("An attached image lacks same-startup ownership evidence. It was not detached or adopted.");
             entry.Image.AdoptAttached(); entry.Disk?.Dispose(); entry.Disk = WindowsDiskStorage.Open(physicalPath, true);
-            if (!WindowsVirtualDisk.Inspect(record.OriginalSource.Path, true).SameImage(record.OriginalSource) || entry.Disk.Layout().DiskId != record.GptDiskId ||
-                entry.Disk.Number != record.PhysicalDiskNumber)
+            if (!WindowsVirtualDisk.Inspect(record.OriginalSource.Path, true).SameImage(record.OriginalSource) ||
+                entry.Disk.Number != record.PhysicalDiskNumber || entry.Disk.CapacityBytes != record.Definition.CapacityBytes ||
+                entry.Disk.SectorBytes != record.Definition.SectorBytes)
                 throw new IOException("The attached VHDX does not match its remembered image and physical binding.");
+            if (ManagedDiskStartup.IsIncompleteCreation(record))
+            {
+                Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired },
+                    LastError = "The owned image has an incomplete filesystem binding. Explicitly stop/detach it; image bytes are retained and no format was performed." });
+                return;
+            }
+            if (entry.Disk.Layout().DiskId != record.GptDiskId) throw new IOException("The attached image layout changed.");
             var volume = await entry.Disk.WaitVolumeAsync(token);
             if (!volume.Equals(record.VolumePath, StringComparison.OrdinalIgnoreCase)) throw new IOException("The attached image volume changed.");
             ManagedDiskHostProtection.RegisterVolume(record.ResourceId, volume);

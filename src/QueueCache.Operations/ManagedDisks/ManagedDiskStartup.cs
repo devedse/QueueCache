@@ -5,6 +5,9 @@ public enum ManagedDiskStartupAction { LeaveStopped, AdoptLive, CreateAndFormatE
 /// <summary>Receives a proven Windows startup epoch; UI/service PID or uptime is not a boot classifier.</summary>
 public static class ManagedDiskStartup
 {
+    public static bool IsIncompleteCreation(ManagedDiskRecord record) =>
+        record.Runtime?.State is ManagedDiskState.Creating or ManagedDiskState.Loading or ManagedDiskState.Formatting or ManagedDiskState.Blocked or ManagedDiskState.Faulted or ManagedDiskState.RecoveryRequired &&
+        (record.GptDiskId is null || record.VolumePath is null);
     public static bool ShouldStartAfterReconcile(ManagedDiskDefinition definition, bool newWindowsStartup, ManagedDiskRuntime? runtime) =>
         newWindowsStartup && definition.StartAtBoot && runtime?.State == ManagedDiskState.Stopped;
     public static bool CanAdoptReady(ManagedDiskRecord record, ManagedDiskJournal? journal) =>

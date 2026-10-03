@@ -303,13 +303,19 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         {
             if (entry.Disk is not null)
                 foreach (var volume in WindowsDiskStorage.Volumes(entry.Disk.Number))
+                {
                     locks.Add(WindowsDiskStorage.LockVolume(volume, entry.Disk.Number, true));
-            if (record.Definition.Mode == ManagedDiskMode.CachedVhdx && record.VolumePath is not null)
-            { using var cache = CacheDevice.OpenVolumeName(record.VolumePath, true); cache.Control(WriteCacheAction.Release); }
+                    if (record.Definition.Mode == ManagedDiskMode.CachedVhdx)
+                    {
+                        var owner = ManagedDiskHostProtection.OwnerOfVolume(VolumeIds.Parse(volume));
+                        if (owner is not null) ManagedDiskConfiguration.RequireCacheOwner(owner, record.ResourceId);
+                        using var cache = CacheDevice.OpenVolumeName(volume, true); cache.Control(WriteCacheAction.Release);
+                    }
+                }
             if (record.VolumePath is not null) WindowsDiskStorage.RemoveLetter(record.VolumePath, record.Definition.PreferredLetter);
             entry.Disk?.Dispose(); entry.Disk = null;
             if (entry.Provider is not null && record.Native is not null) entry.Provider.Remove(record.Native);
-            entry.Image?.Detach(); entry.Dispose(); entry.Provider = null; entry.Image = null; entry.Paths = null;
+            entry.Image?.Detach(); entry.Dispose(); entry.Provider = null; entry.Image = null; entry.Paths = null; entry.Published = false;
             Update(entry, record with { Native = null, PhysicalDiskNumber = null, VolumePath = null,
                 Runtime = record.Runtime is null ? null : record.Runtime with { State = ManagedDiskState.Stopped, Volume = null } });
         }

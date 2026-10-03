@@ -108,6 +108,16 @@ public sealed partial class WindowsManagedDiskEngine
             store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Stopped, record.Runtime.BootEpoch, record.Runtime.CreationGeneration));
             return;
         }
+        if (ManagedDiskStartup.IsIncompleteCreation(record))
+        {
+            if (mode != ManagedDiskMode.CachedVhdx && (intent != ManagedDiskStopIntent.DiscardThenStop || !acceptDiscard))
+                throw new IOException("An incomplete RAM creation requires explicit discard; it cannot be saved without an owned filesystem binding.");
+            ValidateOwnedAttachment(entry);
+            progress?.Report(new(ManagedDiskState.Stopping, "Locking any enumerated volumes before stopping the exact incomplete creation."));
+            await AbortCreationAsync(entry, token);
+            store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Stopped, record.Runtime!.BootEpoch, record.Runtime.CreationGeneration));
+            return;
+        }
         ValidateLive(entry);
         if (intent == ManagedDiskStopIntent.SaveThenStop)
         {

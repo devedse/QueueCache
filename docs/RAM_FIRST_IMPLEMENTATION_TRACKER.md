@@ -2313,6 +2313,22 @@ contracts cover deferred seeding and those transition/race invariants.
 
 Verification: hardening/lifecycle commit `5590d19` passed native Debug/Release,
 management/desktop contracts, CLI checks and signed-package CI 37158510520.
-The subsequent boot identity correction requires matching native CI and an actual
-loaded-driver boot. It is a plausible boot-risk fix, not a confirmed explanation
-of the install failure. Windows/native/performance acceptance remains outstanding.
+The boot identity correction `9c16e99` passed both native builds and the managed,
+CLI and signed-package checks in CI 37159070887; an actual loaded-driver boot is
+still required. It is a plausible boot-risk fix, not a confirmed explanation of
+the install failure. Windows/native/performance acceptance remains outstanding.
+
+Incomplete-creation recovery implementation: explicit Stop now reuses the creation
+cleanup path when a published RAM disk or owned VHDX lacks its completed GPT/volume
+binding. It validates the actual native creation or image identity, geometry and
+physical attachment first, locks every enumerated volume and drains any backing
+cache before removal/detach. It does not format or infer Ready from a partial
+creation. Reconciliation retains those attachments for this explicit action;
+RAM requires fresh discard intent. Successful abort also clears the publication
+flag before a later creation. A foreign managed cache owner blocks cleanup.
+
+Verification: managed Release compilation passed with zero warnings/errors;
+management and desktop contracts passed. Contracts distinguish incomplete error
+states from fully bound resources and stopped recipes. Actual interrupted native
+creation/Windows veto qualification remains pending the recovered VM and matching
+CI; host tests do not prove physical detach ordering.

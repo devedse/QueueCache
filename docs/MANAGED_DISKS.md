@@ -2,7 +2,8 @@
 
 Feature-branch source is implemented; the new native modes are **not yet
 VM-qualified**. Installation of signed 0.4.269.1 lost SSH during provider setup;
-its outcome is unresolved. Follow the separate implementation/verification state
+the live Proxmox console now confirms Windows Recovery and failed automatic
+repair. The underlying failure remains undiagnosed. Follow the separate implementation/verification state
 in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md), and the remaining platform
 and acceptance gates in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
 The examples below describe the implemented command contract, not completed
@@ -13,6 +14,13 @@ service and Operations API. Disk ownership outlives either frontend. The signed
 provider uses the same locked-page allocator and budget authority as ordinary
 caches. Filesystem operations identify the owned disk and volume; Windows open
 handles may veto stop, save or format.
+
+If creation fails before Windows exposes the owned filesystem, use `disk recover`
+to reconcile the exact surviving attachment, then explicit `disk stop` (with
+`--discard` for RAM modes). Cleanup verifies ownership and locks any enumerated
+volumes; a Windows veto retains the attachment. Recovery never treats a missing
+filesystem as consent to format it. An incomplete image creation retains its
+image file when detached.
 
 | Mode | Disk capacity / memory | Persistence and startup |
 |---|---|---|

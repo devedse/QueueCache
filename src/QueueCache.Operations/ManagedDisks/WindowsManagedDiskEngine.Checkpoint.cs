@@ -6,12 +6,12 @@ namespace QueueCache.Operations.ManagedDisks;
 [SupportedOSPlatform("windows")]
 public sealed partial class WindowsManagedDiskEngine
 {
-    private void ValidateLive(Entry entry)
+    private void ValidateOwnedAttachment(Entry entry)
     {
         var record = Snapshot(entry);
-        if (entry.Disk is null || record.Runtime is null || record.VolumePath is null || record.PhysicalDiskNumber != entry.Disk.Number ||
-            WindowsDiskStorage.VolumeDisk(record.VolumePath) != entry.Disk.Number || entry.Disk.Layout().DiskId != record.GptDiskId)
-            throw new IOException("The managed disk/volume binding changed; mutation is blocked.");
+        if (entry.Disk is null || record.Runtime is null || record.PhysicalDiskNumber != entry.Disk.Number ||
+            entry.Disk.CapacityBytes != record.Definition.CapacityBytes || entry.Disk.SectorBytes != record.Definition.SectorBytes)
+            throw new IOException("The managed physical attachment/geometry changed; mutation is blocked.");
         if (entry.Provider is not null)
         {
             entry.Provider.Query(record.Native!).RequireSameCreation(record.Native!);
@@ -20,6 +20,13 @@ public sealed partial class WindowsManagedDiskEngine
         else if (entry.Image is null || entry.Image.PhysicalPath() != entry.Disk.Path || record.OriginalSource is null ||
             !WindowsVirtualDisk.Inspect(record.OriginalSource.Path, true).SameImage(record.OriginalSource))
             throw new IOException("The owned VHDX attachment identity changed.");
+    }
+    private void ValidateLive(Entry entry)
+    {
+        ValidateOwnedAttachment(entry); var record = Snapshot(entry);
+        if (record.VolumePath is null || WindowsDiskStorage.VolumeDisk(record.VolumePath) != entry.Disk!.Number ||
+            entry.Disk.Layout().DiskId != record.GptDiskId)
+            throw new IOException("The managed disk/volume binding changed; mutation is blocked.");
     }
     public Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token)
     {

@@ -137,6 +137,11 @@ internal static class ManagedDiskTests
         Throws<IOException>(() => ManagedDiskConfiguration.RequireCacheOwner(ram.ResourceId, null));
         Throws<IOException>(() => ManagedDiskConfiguration.RequireCacheOwner(ram.ResourceId, Guid.NewGuid()));
         var stoppedRam = new ManagedDiskRecord(ram, new(ram.ResourceId, epoch, 1, ram.Mode, ManagedDiskState.Stopped, 0, null));
+        var interrupted = stoppedRam with { Runtime = stoppedRam.Runtime! with { State = ManagedDiskState.RecoveryRequired } };
+        Check(ManagedDiskStartup.IsIncompleteCreation(interrupted), "an interrupted creation can use exact attachment cleanup without a nonexistent filesystem binding");
+        Check(ManagedDiskStartup.IsIncompleteCreation(interrupted with { Runtime = interrupted.Runtime! with { State = ManagedDiskState.Blocked } }), "failed reconciliation does not make an incomplete owned creation impossible to stop");
+        Check(!ManagedDiskStartup.IsIncompleteCreation(interrupted with { GptDiskId = Guid.NewGuid(), VolumePath = @"\\?\Volume{11111111-1111-1111-1111-111111111111}\" }), "complete bindings retain normal Windows volume checks");
+        Check(!ManagedDiskStartup.IsIncompleteCreation(stoppedRam), "stopped recipes are not mistaken for surviving incomplete creations");
         var edit = new ManagedDiskRequest(ram.ResourceId, ManagedDiskAction.ConfigureStopped, PreferredLetter: 'S', Label: "Next", CapacityBytes: 32 * MiB);
         var edited = ManagedDiskConfiguration.EditStopped(stoppedRam, edit);
         Check(edited.PreferredLetter == 'S' && edited.Label == "Next" && edited.CapacityBytes == 32 * MiB && edited.ResourceId == ram.ResourceId,
