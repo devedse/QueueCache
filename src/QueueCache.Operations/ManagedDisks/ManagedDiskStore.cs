@@ -80,6 +80,21 @@ public sealed class ManagedDiskStore : IManagedDiskRecordStore
         return records;
     }
     public bool ContainsResource(Guid id) => File.Exists(PathFor(id, "resource")) || File.Exists(PathFor(id, "resource") + ".previous");
+    private sealed record StartupMarker(int Version, Guid Epoch);
+    public Guid? ReadStartupSession()
+    {
+        var path = Path.Combine(directory, "startup-session.json");
+        if (!File.Exists(path) && !File.Exists(path + ".previous")) return null;
+        var marker = ReadWithPrevious<StartupMarker>(path, out var recovered);
+        if (recovered || marker.Version != 1 || marker.Epoch == Guid.Empty)
+            throw new InvalidDataException("The startup coordinator marker needs reconciliation; regular runtime settings were not reapplied.");
+        return marker.Epoch;
+    }
+    public void SaveStartupSession(Guid epoch)
+    {
+        if (epoch == Guid.Empty) throw new ArgumentException("A proven startup epoch is required.");
+        Write(Path.Combine(directory, "startup-session.json"), new StartupMarker(1, epoch));
+    }
     public ManagedDiskRecord Read(Guid id)
     {
         var record = ReadWithPrevious<ManagedDiskRecord>(PathFor(id, "resource"), out var recovered);

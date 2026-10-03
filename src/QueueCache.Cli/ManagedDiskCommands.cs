@@ -149,7 +149,7 @@ internal static class ManagedDiskCommands
     private static Argument<Guid> ResourceArgument(Command command)
     {
         var argument = new Argument<Guid>("resource") { Description = "Stable managed resource GUID from disk list (never a drive letter or physical disk number)." };
-        argument.Validators.Add(r => { if (r.GetValueOrDefault<Guid>() == Guid.Empty) r.AddError("A nonempty managed resource GUID is required."); });
+        argument.Validators.Add(r => { if (r.Tokens.Count != 1 || !Guid.TryParse(r.Tokens[0].Value, out var id) || id == Guid.Empty) r.AddError("A nonempty managed resource GUID is required."); });
         command.Arguments.Add(argument); return argument;
     }
     private static Option<bool> JsonOption(Command command) { var option = new Option<bool>("--json"); command.Options.Add(option); return option; }

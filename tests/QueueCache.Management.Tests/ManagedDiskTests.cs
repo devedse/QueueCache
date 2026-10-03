@@ -27,6 +27,14 @@ internal static class ManagedDiskTests
         try
         {
             var store = new ManagedDiskStore(root);
+            Check(store.ReadStartupSession() is null, "first startup has no fabricated coordinator marker");
+            var startup = Guid.NewGuid(); store.SaveStartupSession(startup);
+            Check(store.ReadStartupSession() == startup, "same-session broker restart recognizes completed startup ownership");
+            var startupDefinition = Definition(ManagedDiskMode.EphemeralRam) with { StartAtBoot = true };
+            var stopped = new ManagedDiskRuntime(startupDefinition.ResourceId, startup, 1, startupDefinition.Mode, ManagedDiskState.Stopped, 0, null);
+            Check(!ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, false, stopped), "broker restart cannot resurrect an intentionally stopped automatic-start disk");
+            Check(ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, true, stopped), "a proven new startup runs the remembered stopped recipe");
+            Check(!ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, true, stopped with { State = ManagedDiskState.RecoveryRequired }), "startup does not recreate a surviving resource requiring recovery");
             var definition = Definition(ManagedDiskMode.ImageInRam);
             var epoch = Guid.NewGuid();
             var runtime = new ManagedDiskRuntime(definition.ResourceId, epoch, 1, definition.Mode, ManagedDiskState.Stopped, 10, 8);

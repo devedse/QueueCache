@@ -2205,6 +2205,15 @@ and pre-broker validation contracts are added to CI. Native startup-context chan
 require the next native CI build and Windows proof. Driver/power/SCM/installer
 success is not inferred from these host checks.
 
+Follow-up source review: the broker now starts automatic recipes and restores
+ordinary saved profiles only at a proven new Windows startup. Restarting the
+broker preserves an intentionally stopped disk and runtime-only cache settings.
+A checksummed coordinator marker records completion without using uptime or a
+service PID. Host contracts pass. Windows CI 37128721293 passed both native
+builds and management/desktop tests, but exposed a malformed-GUID CLI validator
+returning runtime exit code 1 instead of syntax exit code 2; the validator is
+fixed in source. These fixes still require the next Windows CI/VM checks.
+
 Windows blocker: signed 0.4.269.1 from commit `980e5c83`/CI 37114226898 was
 staged and installer PID 7452 started. SSH disconnected during provider installation
 and TCP 22 subsequently timed out. Installation success, reboot, loaded provider

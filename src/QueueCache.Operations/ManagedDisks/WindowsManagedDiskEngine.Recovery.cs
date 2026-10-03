@@ -16,8 +16,9 @@ public sealed partial class WindowsManagedDiskEngine
             {
                 try
                 {
+                    var newStartup = entry.Record.StartupSession != startupSession;
                     await ReconcileAsync(entry, token);
-                    if (entry.Record.Definition.StartAtBoot && entry.Record.Runtime?.State == ManagedDiskState.Stopped)
+                    if (ManagedDiskStartup.ShouldStartAfterReconcile(entry.Record.Definition, newStartup, entry.Record.Runtime))
                         await StartCoreAsync(entry, progress, token);
                 }
                 catch (Exception ex)
@@ -32,7 +33,12 @@ public sealed partial class WindowsManagedDiskEngine
             if (unknown.Length != 0)
                 throw new IOException("Uncataloged owned RAM objects are retained for recovery: " + string.Join(", ", unknown.Select(n => n.ResourceId)));
             // Managed resources own their image-volume profiles. Regular disks retain strict saved identities.
-            await SavedConfigurations.RestoreAsync(token: token);
+            if (store.ReadStartupSession() != startupSession)
+            {
+                var restored = await SavedConfigurations.RestoreAsync(token: token);
+                foreach (var failure in restored.Where(r => !r.Applied)) WindowsManagedBrokerService.Log($"Saved profile {failure.Volume}: {failure.Detail}");
+                store.SaveStartupSession(startupSession);
+            }
         }
         finally { mutation.Release(); }
     }
