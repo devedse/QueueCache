@@ -1,6 +1,6 @@
 # Managed disks: UI plan and scenario matrix
 
-Status: reviewed proposal, revision 5, 2026-10-03. Creation, managed cards and
+Status: reviewed proposal, revision 6, 2026-10-03. Creation, managed cards and
 product actions are implemented on `feature/managed-disks` through the shared
 broker API; activation requires the matching installed service/provider.
 None of the new disk modes is VM-qualified. The ordinary cache using the shared

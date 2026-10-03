@@ -4,7 +4,7 @@ using QueueCache.Management;
 
 namespace QueueCache.Operations.ManagedDisks;
 
-public enum ManagedDiskJournalStage { Creating, Loading, Ready, Exporting, CandidateVerified, Committed, Stopping, Stopped, RecoveryRequired }
+public enum ManagedDiskJournalStage { Creating, Loading, Ready, Exporting, CandidateVerified, Committed, Stopping, Stopped, RecoveryRequired, Formatting }
 public sealed record ManagedImageReference(ImageInspection Identity, LogicalImageDigest? Digest, ulong? Generation);
 public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, ManagedDiskRuntime? Runtime = null,
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
@@ -25,6 +25,11 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
             throw new InvalidDataException("Managed disk catalog ownership or mode mismatch.");
         if (ImageIo?.ObservationEpoch == Guid.Empty)
             throw new InvalidDataException("Image I/O counters require an observation epoch.");
+        if (Native is not null && (Native.BootEpoch == Guid.Empty || Native.CreationGeneration == 0 ||
+            Native.CapacityBytes != Definition.CapacityBytes || Native.SectorBytes != Definition.SectorBytes ||
+            Native.ReservedBytes < Native.CapacityBytes || Native.Slot >= RamDiskSnapshot.MaximumDisks ||
+            Runtime is null || Runtime.BootEpoch != Native.BootEpoch || Runtime.CreationGeneration != Native.CreationGeneration))
+            throw new InvalidDataException("Native catalog geometry/creation does not match the remembered runtime.");
         foreach (var reference in new[] { CommittedImage, PreviousImage })
         {
             if (reference is null) continue;

@@ -24,16 +24,17 @@ public sealed partial class WindowsManagedDiskEngine
     public Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token)
     {
         token.ThrowIfCancellationRequested(); var entry = entries[record.ResourceId]; ValidateLive(entry);
+        var restoreLetter = WindowsDiskStorage.HasLetter(record.VolumePath!, record.Definition.PreferredLetter);
         var volumeLock = WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number, dismount: true);
         try
         {
             var native = entry.Provider!.Freeze(entry.Record.Native!, operation);
             entry.Record = entry.Record with { Native = native, Runtime = entry.Record.Runtime! with { WriteGeneration = native.WriteGeneration } };
-            return Task.FromResult<IStableManagedImage>(new StableView(entry, volumeLock, operation, native));
+            return Task.FromResult<IStableManagedImage>(new StableView(entry, volumeLock, operation, native, restoreLetter));
         }
         catch { volumeLock.Dispose(); throw; }
     }
-    private sealed class StableView(Entry entry, IDisposable volumeLock, Guid operation, RamDiskSnapshot native) : IStableManagedImage
+    private sealed class StableView(Entry entry, IDisposable volumeLock, Guid operation, RamDiskSnapshot native, bool restoreLetter) : IStableManagedImage
     {
         public bool Removed;
         public RamDiskSnapshot Native => native;
@@ -52,7 +53,7 @@ public sealed partial class WindowsManagedDiskEngine
                         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                         entry.Disk = await WindowsDiskStorage.ResolveRamAsync(entry.Provider, thawed, cleanup.Token);
                     }
-                    if (entry.Record.VolumePath is not null) WindowsDiskStorage.AssignLetter(entry.Record.VolumePath, entry.Record.Definition.PreferredLetter);
+                    if (restoreLetter && entry.Record.VolumePath is not null) WindowsDiskStorage.AssignLetter(entry.Record.VolumePath, entry.Record.Definition.PreferredLetter);
                 }
             }
             finally { volumeLock.Dispose(); }
@@ -127,16 +128,25 @@ public sealed partial class WindowsManagedDiskEngine
                 ImageTransferredBytes = checked(entry.Record.ImageTransferredBytes + result.Image.Digest!.Bytes) };
             Update(entry, entry.Record); return result with { Record = entry.Record };
         }
-        catch
+        catch (Exception failure)
         {
-            var actual = store.Read(entry.Record.ResourceId);
+            ManagedDiskRecord actual;
+            try { actual = store.Read(entry.Record.ResourceId); }
+            catch (Exception catalog)
+            {
+                entry.Record = entry.Record with { Runtime = entry.Record.Runtime! with { State = ManagedDiskState.RecoveryRequired },
+                    LastError = "Save outcome requires catalog reconciliation. " + failure.Message + " Catalog: " + catalog.Message };
+                throw new AggregateException("Save and catalog recovery failed; owned storage is retained where present.", failure, catalog);
+            }
             if (entry.Provider is null && !entry.Published)
                 actual = actual with { Native = null, PhysicalDiskNumber = null, VolumePath = null,
                     Runtime = actual.Runtime! with { State = ManagedDiskState.Stopped, Volume = null } };
             else if (entry.Disk is null)
                 actual = actual with { Runtime = actual.Runtime! with { State = ManagedDiskState.RecoveryRequired },
                     LastError = "Saved-image outcome is recorded; the live RAM binding needs reconciliation before another operation." };
-            Update(entry, actual);
+            entry.Record = actual;
+            try { Update(entry, actual); }
+            catch (Exception catalog) { throw new AggregateException("Save failed and its reconciled state could not be recorded.", failure, catalog); }
             throw;
         }
     }

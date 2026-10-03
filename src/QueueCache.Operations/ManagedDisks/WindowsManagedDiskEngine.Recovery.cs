@@ -55,9 +55,10 @@ public sealed partial class WindowsManagedDiskEngine
             {
                 entry.Disk?.Dispose(); entry.Disk = null; entry.Provider.Dispose(); entry.Provider = null; entry.Published = false;
                 var runtime = record.Runtime ?? new(record.ResourceId, startupSession, 1, record.Definition.Mode, ManagedDiskState.Stopped, 0, null);
+                var precedingCreation = record.Native is not null || record.PhysicalDiskNumber is not null || runtime.State != ManagedDiskState.Stopped;
                 Update(entry, record with { Native = null, PhysicalDiskNumber = null, VolumePath = null, StartupSession = startupSession,
                     Runtime = runtime with { State = ManagedDiskState.Stopped, Volume = null },
-                    LastError = runtime.HasUnsavedChanges ? "The preceding RAM creation is no longer present. Unsaved RAM changes are unavailable; the committed image is retained." : null });
+                    LastError = precedingCreation ? "The preceding RAM creation is no longer present. Volatile contents/changes since the last save may be unavailable; any committed image is retained. No save was inferred from its disappearance." : null });
                 return;
             }
             if (record.Native is null || record.Runtime is null) throw new IOException("Live RAM has no durable creation identity. Restore its matching catalog before mutating it.");
@@ -86,6 +87,13 @@ public sealed partial class WindowsManagedDiskEngine
                 record.VolumePath is null || !volume.Equals(record.VolumePath, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("The live RAM layout/volume differs from its catalog. No format or reload was performed.");
             ManagedDiskHostProtection.RegisterVolume(record.ResourceId, volume);
+            if (!ManagedDiskStartup.CanAdoptReady(record, journal))
+            {
+                Update(entry, record with { Native = native, PhysicalDiskNumber = entry.Disk.Number,
+                    Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired },
+                    LastError = "An interrupted creation/format lacks a completed Ready boundary. The owned disk is retained; explicitly stop it or reformat with fresh erase consent." });
+                return;
+            }
             Update(entry, record with { Native = native, PhysicalDiskNumber = entry.Disk.Number,
                 Runtime = record.Runtime with { State = ManagedDiskState.Ready, WriteGeneration = native.WriteGeneration, Volume = record.Definition.PreferredLetter + ":" }, LastError = null });
             if (record.StartupSession != startupSession)
@@ -123,8 +131,14 @@ public sealed partial class WindowsManagedDiskEngine
             var volume = await entry.Disk.WaitVolumeAsync(token);
             if (!volume.Equals(record.VolumePath, StringComparison.OrdinalIgnoreCase)) throw new IOException("The attached image volume changed.");
             ManagedDiskHostProtection.RegisterVolume(record.ResourceId, volume);
+            if (!ManagedDiskStartup.CanAdoptReady(record, journal))
+            {
+                Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired },
+                    LastError = "An interrupted creation/format is retained without being declared Ready. Stop the owned image or explicitly reformat it." });
+                return;
+            }
             WindowsDiskStorage.AssignLetter(volume, record.Definition.PreferredLetter);
-            await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: token);
+            await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId);
             Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Ready }, LastError = null });
         }
         var current = entry.Record.Runtime!;

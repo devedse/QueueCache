@@ -35,6 +35,12 @@ internal static class ManagedDiskTests
             Check(!ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, false, stopped), "broker restart cannot resurrect an intentionally stopped automatic-start disk");
             Check(ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, true, stopped), "a proven new startup runs the remembered stopped recipe");
             Check(!ManagedDiskStartup.ShouldStartAfterReconcile(startupDefinition, true, stopped with { State = ManagedDiskState.RecoveryRequired }), "startup does not recreate a surviving resource requiring recovery");
+            var readyRecord = new ManagedDiskRecord(startupDefinition, stopped with { State = ManagedDiskState.Ready, Volume = "R:" });
+            var readyJournal = new ManagedDiskJournal(Guid.NewGuid(), startupDefinition.ResourceId, ManagedDiskJournalStage.Ready, startup, 1);
+            Check(ManagedDiskStartup.CanAdoptReady(readyRecord, readyJournal), "completed Ready boundary can be adopted without formatting");
+            Check(!ManagedDiskStartup.CanAdoptReady(readyRecord, readyJournal with { Stage = ManagedDiskJournalStage.Formatting }), "interrupted formatting is not relabelled Ready by recovery");
+            Check(!ManagedDiskStartup.CanAdoptReady(readyRecord with { Runtime = readyRecord.Runtime! with { Volume = null } }, readyJournal), "initial checkpoint cannot impersonate completed creation publication");
+            Check(!ManagedDiskStartup.CanAdoptReady(readyRecord, null), "missing durable lifecycle boundary is unavailable, not Ready");
             var definition = Definition(ManagedDiskMode.ImageInRam);
             var epoch = Guid.NewGuid();
             var runtime = new ManagedDiskRuntime(definition.ResourceId, epoch, 1, definition.Mode, ManagedDiskState.Stopped, 10, 8);
@@ -126,6 +132,10 @@ internal static class ManagedDiskTests
             }
         }
         var ram = Definition(ManagedDiskMode.EphemeralRam);
+        ManagedDiskConfiguration.RequireCacheOwner(null, null);
+        ManagedDiskConfiguration.RequireCacheOwner(ram.ResourceId, ram.ResourceId);
+        Throws<IOException>(() => ManagedDiskConfiguration.RequireCacheOwner(ram.ResourceId, null));
+        Throws<IOException>(() => ManagedDiskConfiguration.RequireCacheOwner(ram.ResourceId, Guid.NewGuid()));
         var stoppedRam = new ManagedDiskRecord(ram, new(ram.ResourceId, epoch, 1, ram.Mode, ManagedDiskState.Stopped, 0, null));
         var edit = new ManagedDiskRequest(ram.ResourceId, ManagedDiskAction.ConfigureStopped, PreferredLetter: 'S', Label: "Next", CapacityBytes: 32 * MiB);
         var edited = ManagedDiskConfiguration.EditStopped(stoppedRam, edit);

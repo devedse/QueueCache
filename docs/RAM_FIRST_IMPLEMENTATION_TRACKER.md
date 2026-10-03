@@ -2127,7 +2127,7 @@ part of the UI implementation.
 | RD07 — consistent checkpoint save/export/recovery | Source implemented: volume lock/native freeze, full-sector copy/flush/detach/read-back, durable journal/pointer, predecessor retention, export and save-stop | Host fault tests cover acquire/copy/flush/verify/journal/pointer/cleanup and cancellation; native crash/full-host/save-stop paths not VM-run |
 | RD08 — broker/startup/power/package lifecycle | Source implemented: LocalSystem SCM host in qcache, authenticated bounded local IPC, exact-generation adoption, native cold/hybrid startup epoch, opted-in preshutdown save, installer preflight and one startup coordinator | Host framing/identity contracts passed; SCM, power, upgrade/uninstall and native classifier require Windows qualification |
 | RD09 — completed three-mode UI and product CLI | Source implemented: creation and managed cards, all planned lifecycle/checkpoint/cache/startup/removal/recovery actions, shared cache editor, explicit erase/discard with fresh identity; physical discovery retained separately | Desktop creation/action/dashboard contracts passed; Windows CLI parser checks expanded; native UI walkthrough and CLI execution remain unrun |
-| RD10 — maintained verification integration | In progress: plan 80 adds explicit blank-image fixtures and actual image-sector I/O attempt counters to the opt-in `ram-disk`, `vhdx-backed`, `image-in-ram` product cases alongside plan-78 provider proof; raw transaction/cleanup evidence retained | Host suite contracts added; native current-boot cases not run; cross-boot/crash/power/injected-native-failure evidence phases remain outstanding |
+| RD10 — maintained verification integration | In progress: plan 81 adds broker-restart and durable managed lifecycle prepare/verify/cleanup phases; plan-80 blank-image fixtures/image-I/O attempts and plan-78 provider proof remain maintained | Host suite/epoch/identity/oracle contracts added; no new cases have run on VM. Actual cross-boot/crash/power and injected-native-failure qualification remains outstanding |
 | RD11 — correctness/performance qualification | Partial: existing maintained cache suites reused without workload changes; native managed-disk qualification outstanding | Foundation: 9/9 cases, 74 raw PASS, 4 SKIP. Old 0.4.264.1 write-performance baseline `20261003-092326-b5e1ac5fb38b4cd4b25014258222610e` INCOMPLETE 4/72: pre-case Flush timed out at 180s; restoration succeeded, evidence preserved. No matrix/performance acceptance claimed. |
 
 This entry records an initial implementation milestone, not completion or VM
@@ -2216,9 +2216,12 @@ fixed in source. These fixes still require the next Windows CI/VM checks.
 
 Windows blocker: signed 0.4.269.1 from commit `980e5c83`/CI 37114226898 was
 staged and installer PID 7452 started. SSH disconnected during provider installation
-and TCP 22 subsequently timed out. Installation success, reboot, loaded provider
-identity and cause of lost connectivity are unproven. The owned installer/evidence
-paths are retained privately; the owner was asked to inspect VM 109's console.
+and TCP 22 subsequently timed out. The owner's screenshot and a direct Proxmox
+console capture confirm VM 109 is in Windows Recovery with automatic repair
+failed; it reports `D:\WINDOWS\System32\Logfiles\Srt\SrtTrail.txt`.
+Installation success, loaded provider identity and the underlying crash/boot
+failure cause remain unproven. Console access using the previously supplied API
+token is restored; owned installer/evidence paths and console captures stay private.
 No automatic reset/reboot was used as recovery. This blocks native qualification,
 not ongoing source implementation. Cross-boot/crash/power/native-fault coverage,
 exact loaded-provider evidence and the complete same-binary performance comparison
@@ -2246,3 +2249,39 @@ accounting. The preceding startup/CLI fixes passed Windows Debug/Release native,
 management, desktop, CLI and signed-package CI 37130121135 (`ebecff3`). The new
 scenario additions still require their matching Windows CI build. None has run on the inaccessible VM;
 the outstanding installer/console blocker and native qualification gaps remain.
+
+Follow-up recovery implementation: save/catalog reporting failures preserve the
+original error while independent thaw still runs; initial checkpoints restore
+only an existing letter, preventing premature publication. Creation records the
+actual owned GPT/volume before formatting or letter assignment. Read-only RAM is
+armed before Windows publication. Interrupted creation/formatting cannot be
+relabelled Ready without its durable completion boundary. Ordinary cache
+reconfiguration/control/removal refuses managed volume ownership; the broker
+uses the same shared cache transaction with its exact resource owner. Read-only
+IPC observations are bounded independently from mutation cancellation/commit.
+Elevated developer directory creation uses an eligible Administrators owner;
+the SYSTEM broker uses SYSTEM, with no implicit restore privilege activation
+([Windows owner rules](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfoa)).
+
+Verification: recovery/catalog-reporting and interrupted-format adoption host
+contracts pass; managed build and desktop tests pass. The S16/settings/I/O-proof
+changes passed Windows Debug/Release and signed-package CI 37131210508 (`b164db6`).
+The subsequent hardening still needs matching CI and VM qualification.
+
+Lifecycle verification implementation: plan 81 adds an owned SCM broker-restart
+case and independent prepare/verify/cleanup phases with five fixtures, persistent
+file hashes, startup/native identities, pointer checks and exact shared-budget
+cleanup. The preparation marker explicitly does not qualify a transition. The
+operator selects/performs the actual transition; no automatic reboot, sleep,
+hibernate, reset or process kill is implemented. Failure retains resources and
+raw evidence. Host acceptance contracts reject changed epochs, incomplete/duplicate
+manifests, missing hashes, stale creations, changed pointers and recovery states.
+Native disappearance is reported as possible volatile loss, never inferred save;
+stopped image cards describe the retained checkpoint rather than live Saved RAM.
+
+Verification: local Release compilation passed with zero warnings/errors;
+management and desktop contracts passed, including the new lifecycle acceptance
+contracts. Matching Windows CI is still required. Cross-boot/power/SCM/native-crash
+evidence has not been collected while Windows remains in Recovery;
+prototype isolation, read-only/4Kn, failures,
+installer and complete performance qualification still need actual Windows runs.

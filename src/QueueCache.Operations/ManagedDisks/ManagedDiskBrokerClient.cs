@@ -28,6 +28,9 @@ public sealed class ManagedDiskBrokerClient : IManagedDiskService
         { throw new IOException("The managed-disk service is unavailable. Install the matching QueueCache package and start its Windows service."); }
         WindowsManagedBrokerService.AuthenticateServer(pipe);
         await ManagedDiskBrokerProtocol.WriteAsync(pipe, request, token);
+        var readOnly = request.Operation is "capabilities" or "inspect" or "list";
+        using var observationDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        if (readOnly) observationDeadline.CancelAfter(TimeSpan.FromSeconds(request.Operation == "inspect" ? 30 : 5));
         using var finished = new CancellationTokenSource();
         var cancellation = SendCancellationAsync();
         var records = new List<ManagedDiskRecord>();
@@ -37,7 +40,7 @@ public sealed class ManagedDiskBrokerClient : IManagedDiskService
             {
                 // Once sent, cancellation is a request. Await the actual terminal
                 // outcome: pointer commit/Windows formatting cannot be rolled back by disconnecting.
-                var reply = await ManagedDiskBrokerProtocol.ReadAsync<ManagedBrokerReply>(pipe, CancellationToken.None)
+                var reply = await ManagedDiskBrokerProtocol.ReadAsync<ManagedBrokerReply>(pipe, readOnly ? observationDeadline.Token : CancellationToken.None)
                     ?? throw new EndOfStreamException("Managed broker disconnected before the terminal result. Refresh/recover the resource before retrying.");
                 if (reply.Version != 1 || reply.OperationId != request.OperationId) throw new InvalidDataException("Broker response identity/version mismatch.");
                 if (reply.Kind == "progress") { if (reply.Progress is null) throw new InvalidDataException("Missing broker progress."); progress?.Report(reply.Progress); continue; }
@@ -64,6 +67,8 @@ public sealed class ManagedDiskBrokerClient : IManagedDiskService
                 return reply.Result.Value.Deserialize<T>(ManagedDiskBrokerProtocol.Json) ?? throw new InvalidDataException("Incomplete managed broker result.");
             }
         }
+        catch (OperationCanceledException) when (readOnly && !token.IsCancellationRequested)
+        { throw new IOException("Managed disk state did not respond before the observation deadline. No mutation was requested; live counters are unavailable."); }
         finally { finished.Cancel(); await cancellation; }
         async Task SendCancellationAsync()
         {
@@ -72,8 +77,10 @@ public sealed class ManagedDiskBrokerClient : IManagedDiskService
             catch (OperationCanceledException) { }
             if (token.IsCancellationRequested && !finished.IsCancellationRequested)
             {
-                try { await ManagedDiskBrokerProtocol.WriteAsync(pipe, new ManagedBrokerRequest(1, request.OperationId, "cancel"), CancellationToken.None); }
+                using var sendDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try { await ManagedDiskBrokerProtocol.WriteAsync(pipe, new ManagedBrokerRequest(1, request.OperationId, "cancel"), sendDeadline.Token); }
                 catch (IOException) { }
+                catch (OperationCanceledException) { }
             }
         }
     }

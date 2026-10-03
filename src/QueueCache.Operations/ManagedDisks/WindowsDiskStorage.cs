@@ -226,6 +226,12 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         }
         if (!SetVolumeMountPointW(root, volume)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows could not assign the selected letter.");
     }
+    public static bool HasLetter(string volume, char letter)
+    {
+        var current = new StringBuilder(1024);
+        return GetVolumeNameForVolumeMountPointW(letter + @":\", current, (uint)current.Capacity) &&
+            current.ToString().Equals(volume, StringComparison.OrdinalIgnoreCase);
+    }
     public static void RemoveLetter(string volume, char letter)
     {
         var root = letter + @":\"; var current = new StringBuilder(1024);

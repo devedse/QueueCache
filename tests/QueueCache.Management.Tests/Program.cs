@@ -20,6 +20,7 @@ if (args.Length > 0 && args[0] == "--runner-child")
 }
 if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
 await ManagedDiskTests.RunAsync();
+ManagedLifecycleTests.Run();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];

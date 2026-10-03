@@ -1,6 +1,6 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 5, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
+Revision 6, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
 action source is implemented on the feature branch. Native lifecycle, startup,
 crash/fault and full product qualification remain outstanding; none of the new
 managed-disk modes is VM-qualified. Ordinary-cache foundation checks passed.** See
@@ -45,6 +45,10 @@ automatic startup format recipe for image modes. Stopped recipe editing supports
 preferred letter/label and new pure-RAM capacity; image resize remains deferred.
 Resource-scoped image I/O attempt counters carry an observation epoch; status and
 runtime tests do not substitute completed transfer totals for actual attempts.
+Maintained plan-81 broker-restart and lifecycle prepare/verify/cleanup phases now
+preserve independent byte oracles and native creation/startup identities across
+operator-controlled transitions. They perform no reboot, sleep or process kill;
+actual transition provenance and native crash/power qualification remain required.
 
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's

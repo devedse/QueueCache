@@ -8,6 +8,11 @@ using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations.ManagedDisks;
 
+public sealed record ManagedBrokerObservation(uint State, int ProcessId, DateTime StartedUtc)
+{
+    public bool IsRunning => State == 4 && ProcessId > 0 && StartedUtc != default;
+}
+
 /// <summary>SCM host in the installed qcache binary. Stopping the broker preserves owned storage.</summary>
 [SupportedOSPlatform("windows")]
 public static class WindowsManagedBrokerService
@@ -132,6 +137,17 @@ public static class WindowsManagedBrokerService
         // PID/state are checked again after opening the process token to reject service restarts.
         var again = Query(service);
         if (again.State != Running || again.ProcessId != pid) throw new IOException("The managed service restarted; reconnect and refresh.");
+    }
+    public static ManagedBrokerObservation Observe()
+    {
+        using var manager = Manager(1); using var service = Open(manager, 4);
+        var current = Query(service);
+        if (current.ProcessId == 0) return new(current.State, 0, default);
+        using var process = Process.GetProcessById(checked((int)current.ProcessId));
+        var started = process.StartTime.ToUniversalTime(); var again = Query(service);
+        if (again.State != current.State || again.ProcessId != current.ProcessId)
+            throw new IOException("The broker changed while its process identity was being observed.");
+        return new(current.State, checked((int)current.ProcessId), started);
     }
     public static void Install(string executable)
     {

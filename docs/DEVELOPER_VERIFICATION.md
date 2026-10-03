@@ -27,7 +27,56 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 80)
+## Suites (plan version 81)
+
+Plan 81 adds opt-in managed lifecycle phases. `managed-broker-restart` prepares
+five 64 MiB fixtures, stops/starts only QueueCache's named SCM service, then proves
+the same native creations/content survive and an intentionally stopped automatic
+recipe stays stopped. It requires an empty managed catalog, a Strict/disabled
+image host, trusted result directories and no competing workloads. Service PID
+and creation time are retained as process ownership evidence; they do not classify
+Windows startup.
+
+`managed-lifecycle-prepare` retains those fixtures and a durable
+`managed-lifecycle-manifest.json` in its exact run directory. The fixtures cover
+automatic pure RAM, manual pure RAM, stopped automatic pure RAM, Strict backed
+VHDX and a full-RAM image with a committed file plus a later unsaved file. The
+manifest stores native identities, startup epoch, source/checkpoint pointers and
+independent byte hashes on another physical disk. Preparation success is not a
+power/lifecycle acceptance verdict. Do not reboot before its `FINISHED.txt` and
+complete manifest exist.
+
+Perform the intended external transition, then run `managed-lifecycle-verify`
+with the exact prior `--managed-oracle` and declared `--managed-transition`:
+`Restart`, `ColdStart`, `FastStartup`, `Sleep`, `Hibernate`, `BrokerRestart` or
+`BrokerCrash`. The runner never invokes shutdown, sleep, hibernate, reset or process
+kill. Retain hypervisor/Windows event/console evidence of the actual transition
+separately; the argument is a declaration, not proof that the transition happened.
+Native startup must change for a new startup and remain unchanged for resume or
+broker restart/crash. New-startup RAM must discard the unsaved session file while
+the committed full-image file and Strict backed bytes survive. Same-session RAM
+must keep its native creation/content. A stopped automatic recipe stays stopped
+on broker restart/resume but starts empty at a new Windows startup.
+
+After all checks pass, only manifest-owned fixtures are stopped/forgotten; all
+images/evidence remain. Failure preserves resources and raw trace instead of
+automatic destructive recovery. Explicit `managed-lifecycle-cleanup` consumes the
+completed manifest and fresh exact identities. If preparation failed before a
+complete manifest, inspect its `.preparing.json`, raw trace and `disk list`; use
+the product Stop/recover commands for those recorded owned resources. Independent
+cache reservations/profiles must remain stable across the transition; a global
+reservation mismatch is reported, never repaired by changing driver defaults.
+These cases remain outside `full`. Crash during checkpoint commit, physical
+persistence, installer, unavailable power capabilities and injected native faults
+remain independent qualification gates.
+
+```powershell
+qcache developer verify T: --suite managed-broker-restart --output C:\QueueCache-Results
+qcache developer verify T: --suite managed-lifecycle-prepare --output C:\QueueCache-Results
+# After the externally controlled transition; use the exact printed manifest:
+qcache developer verify T: --suite managed-lifecycle-verify --managed-oracle C:\QueueCache-Results\QueueCache-Verify-<id>\managed-lifecycle-manifest.json --managed-transition Restart --output C:\QueueCache-Results
+qcache developer verify T: --suite managed-lifecycle-cleanup --managed-oracle C:\QueueCache-Results\QueueCache-Verify-<id>\managed-lifecycle-manifest.json --output C:\QueueCache-Results
+```
 
 Plan 80 extends the image product cases with uniquely owned blank existing VHDX
 fixtures and explicit initialization. Backed mode initializes that owned file;

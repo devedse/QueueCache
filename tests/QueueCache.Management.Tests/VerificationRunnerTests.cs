@@ -46,12 +46,21 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 80, "plan 80 adds explicit blank-image fixtures and image-I/O attempts without changing existing score workloads");
+        Check(VerificationPlan.Version == 81, "plan 81 adds durable managed lifecycle phases without changing existing score workloads");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
         foreach (var suite in new[] { "ram-disk", "vhdx-backed", "image-in-ram" })
             Check(VerificationPlan.Integrity(options with { Suite = suite }).Single().Operation == suite &&
                 !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == suite), "product managed fixtures are explicit: " + suite);
+        foreach (var suite in new[] { "managed-broker-restart", "managed-lifecycle-prepare", "managed-lifecycle-verify", "managed-lifecycle-cleanup" })
+            Check(VerificationPlan.Integrity(options with { Suite = suite }).Single().Operation == suite &&
+                !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == suite), "retained lifecycle fixtures/transitions are opt-in: " + suite);
+        VerificationPlan.Validate(options with { Suite = "managed-lifecycle-prepare", DiskSpd = null });
+        VerificationPlan.Validate(options with { Suite = "managed-lifecycle-verify", ManagedOraclePath = @"C:\Results\prior.json", ManagedTransition = ManagedLifecycleTransition.Restart, DiskSpd = null });
+        Reject(() => VerificationPlan.Validate(options with { Suite = "managed-lifecycle-verify" }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "managed-lifecycle-cleanup", ManagedOraclePath = @"C:\Results\prior.json", ManagedTransition = ManagedLifecycleTransition.Restart }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "quick", ManagedOraclePath = @"C:\Results\prior.json" }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "managed-lifecycle-prepare", OraclePath = @"C:\Results\prior.json" }));
         var windowsRemovalCases = VerificationPlan.Integrity(options with { Suite = "disk-removal-windows" });
         Check(windowsRemovalCases.Count == 1 && windowsRemovalCases[0].Id == "disk-windows-eject-reconnect" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Id == "disk-windows-eject-reconnect"),

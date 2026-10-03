@@ -19,6 +19,19 @@ internal static class ManagedCheckpointTests
             Check(fixture.Store.Journal?.CandidatePath == @"C:\Images\candidate.vhdx", "candidate path remains in the recovery journal even before verification");
         }
         var export = new Fixture(null); var exported = await export.Save(commit: false);
+        foreach (var stage in new[] { "reporting-read", "reporting-save", "reporting-journal", "release-reporting" })
+        {
+            var brokenCatalog = new Fixture(stage);
+            try { await brokenCatalog.Save(); throw new Exception("Reporting failure was hidden: " + stage); }
+            catch (IOException failure)
+            {
+                var messages = failure.ToString();
+                Check(messages.Contains("reporting") && messages.Contains(stage == "release-reporting" ? "Unfreeze failed" : "logical sectors"),
+                    "catalog/reporting failure preserves the original operation or cleanup failure: " + stage);
+            }
+            Check(!brokenCatalog.Removed && brokenCatalog.Frozen == (stage == "release-reporting"),
+                "catalog failure cannot skip independent thaw or silently remove RAM: " + stage);
+        }
         Check(!exported.ChangedStartupSource && export.Store.Record.CommittedImage == export.Original && export.Store.Record.Runtime!.HasUnsavedChanges,
             "Save As preserves the startup source, saved generation and dirty state");
         var stop = new Fixture(null); var stopped = await stop.Save(stop: true);
@@ -59,7 +72,8 @@ internal static class ManagedCheckpointTests
         public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token)
         {
             Check(destination.Flushed, "verification happens only after destination flush/detach");
-            if (fault == "verify") destination.Bytes[^1] ^= 1;
+            if (fault == "verify" || fault?.StartsWith("reporting-", StringComparison.Ordinal) == true)
+            { destination.Bytes[^1] ^= 1; Store.Reporting = true; }
             await LogicalImageTransfer.VerifyAsync(destination, digest, token);
             if (fault == "cancel-before") Cancel.Cancel();
             return new(path, "candidate-id", Guid.NewGuid(), digest.Bytes, digest.Bytes, 512, false);
@@ -74,7 +88,7 @@ internal static class ManagedCheckpointTests
             public ulong Generation => 10;
             public ILogicalDisk Storage => owner.Source;
             public ValueTask DisposeAsync()
-            { if (owner.fault == "release") throw new IOException("Unfreeze failed."); owner.Frozen = false; return ValueTask.CompletedTask; }
+            { if (owner.fault is "release" or "release-reporting") { owner.Store.Reporting = true; throw new IOException("Unfreeze failed."); } owner.Frozen = false; return ValueTask.CompletedTask; }
         }
         private sealed class Candidate(Fixture owner) : ICheckpointImage
         {
@@ -89,10 +103,12 @@ internal static class ManagedCheckpointTests
         public ManagedDiskRecord Record = initial;
         public ManagedDiskJournal? Journal;
         private bool injected;
-        public ManagedDiskRecord Read(Guid id) => Record;
+        public bool Reporting;
+        public ManagedDiskRecord Read(Guid id) => Reporting && fault is "reporting-read" or "release-reporting" ? throw new IOException("Injected catalog reporting read failure.") : Record;
         public ManagedDiskJournal? ReadJournal(Guid id) => Journal;
         public void Save(ManagedDiskRecord record)
         {
+            if (Reporting && fault == "reporting-save") throw new IOException("Injected catalog reporting save failure.");
             var pointer = record.CommittedImage != original;
             if (!injected && pointer && fault == "pointer-before") { injected = true; throw new IOException("Pointer barrier failed before replace."); }
             Record = record;
@@ -101,6 +117,7 @@ internal static class ManagedCheckpointTests
         }
         public void SaveJournal(ManagedDiskJournal journal)
         {
+            if (Reporting && fault == "reporting-journal") throw new IOException("Injected catalog reporting journal failure.");
             if (!injected && ((journal.Stage == ManagedDiskJournalStage.CandidateVerified && fault == "verified-journal") ||
                 (journal.Stage == ManagedDiskJournalStage.Committed && fault == "committed-journal")))
             { injected = true; throw new IOException("Journal barrier failed."); }

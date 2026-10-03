@@ -92,6 +92,13 @@ Compare only snapshots in the same epoch. Legacy `ImageTransferAttempts` and
 `ImageTransferredBytes` describe completed full-image transactions, not lower
 attempts. A missing measurement is unavailable, never an implied zero.
 
+Ordinary cache configuration/pause/removal commands refuse volumes owned by a
+managed resource. Use its managed cache settings so runtime and remembered
+configuration stay together. Explicit Flush remains available. Read-only broker
+inventory/capability observations have a five-second response deadline; image
+inspection has thirty seconds. Missing state disables actions and counters.
+Mutations still await the real terminal outcome after cancellation.
+
 Physical discovery is `qcache disk physical-list`. Existing `disk eject <volume>`
 remains the Windows physical-device eject workflow. Managed Stop is a separate
 owned-resource transaction and cannot grant physical eject capability.
@@ -108,3 +115,10 @@ Use the maintained opt-in [verification suites](DEVELOPER_VERIFICATION.md):
 `managed-provider`, `ram-disk`, `vhdx-backed` and `image-in-ram`. The legacy
 `developer lab-disk` helper remains for the multi-volume/raw legacy verification
 fixtures; product managed disks do not replace those test layouts.
+
+The maintained runner also provides `managed-broker-restart` and explicit managed
+lifecycle prepare/verify/cleanup phases. They retain owned fixtures and byte
+oracles across externally controlled startup/resume. They never reboot or kill a
+process automatically. Read their scope and failure-preservation instructions
+before preparing retained RAM resources; host contract success is not Windows
+power or native-driver qualification.

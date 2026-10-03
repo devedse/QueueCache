@@ -106,7 +106,7 @@ internal static class ManagedDiskCommands
             var commit = new Option<bool>("--commit") { Description = "Use this verified export as the future startup source." };
             var formatLabel = new Option<string>("--label");
             var configuredLetter = new Option<string>("--letter");
-            configuredLetter.Validators.Add(r => { if (!ValidLetter(r.GetValueOrDefault<string>())) r.AddError("--letter must be a single drive letter D through Z."); });
+            configuredLetter.Validators.Add(r => { if (r.Tokens.Count != 0 && !ValidLetter(r.GetValueOrDefault<string>())) r.AddError("--letter must be a single drive letter D through Z."); });
             var configuredSize = new Option<ulong?>("--size-mib");
             var enabled = ExplicitBool("--enabled"); var saveBefore = ExplicitBool("--save-before-stop"); var saveShutdown = ExplicitBool("--save-on-shutdown");
             var expectedBoot = new Option<Guid?>("--expected-boot"); var expectedCreation = new Option<ulong?>("--expected-creation"); var expectedWrite = new Option<ulong?>("--expected-write");

@@ -76,11 +76,11 @@ public sealed class ConfigurationNotAppliedException(string message, Exception i
 public static class ConfigurationManager
 {
     public static WriteCacheState Apply(DiskTarget target, CacheConfiguration configuration,
-        bool acceptVolatileFlush, IProgress<string>? progress = null)
-        => ApplyCore(target, configuration, acceptVolatileFlush, progress);
+        bool acceptVolatileFlush, IProgress<string>? progress = null, Guid? managedOwner = null)
+        => ApplyCore(target, configuration, acceptVolatileFlush, progress, managedOwner);
 
     private static WriteCacheState ApplyCore(DiskTarget target, CacheConfiguration configuration,
-        bool acceptVolatileFlush, IProgress<string>? progress)
+        bool acceptVolatileFlush, IProgress<string>? progress, Guid? managedOwner)
     {
         using var gate = ConfigurationGate.Enter(target.Instance);
         using var hostProtectionGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();
@@ -89,6 +89,7 @@ public static class ConfigurationManager
         // saved-profile startup). Recheck its physical extent and PnP identity at
         // the last boundary before opening the disk for any state change.
         target.ValidateCurrent();
+        ManagedDisks.ManagedDiskConfiguration.RequireCacheOwner(ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(target.VolumeId), managedOwner);
         ManagedDisks.ManagedDiskHostProtection.ValidateCacheChange(target.VolumeId, configuration);
         using var device = new CacheDevice(target.Device, writable: true);
         var initial = device.GetWriteCacheState();

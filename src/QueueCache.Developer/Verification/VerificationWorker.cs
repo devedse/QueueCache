@@ -15,7 +15,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, bool RequireImageEvidence = false,
     string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
-    string? DisposableInstance = null, long? DisposableBytes = null);
+    string? DisposableInstance = null, long? DisposableBytes = null,
+    string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -575,6 +576,18 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "managed-broker-restart":
+            case "managed-lifecycle-prepare":
+            case "managed-lifecycle-verify":
+            case "managed-lifecycle-cleanup":
+                if (job.ManagedOraclePath is null) throw new ArgumentException("Managed lifecycle oracle path is required.");
+                var lifecycleOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.ManagedOraclePath)!));
+                lifecycleOutput.ValidateCurrent();
+                if (lifecycleOutput.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase) || lifecycleOutput.Number == target.Number)
+                    throw new IOException("Managed lifecycle evidence must be off the image host physical disk.");
+                var lifecycleChecks = await ManagedLifecycleScenarios.RunAsync(job, target, device);
+                RunStorage.AtomicJson(job.Reply, lifecycleChecks); ReportFailures(lifecycleChecks, Console.Error);
+                return lifecycleChecks.Count > 0 && lifecycleChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ram-disk":
             case "vhdx-backed":
             case "image-in-ram":

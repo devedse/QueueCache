@@ -28,7 +28,13 @@ public static class ManagedDiskHostProtection
         if (!Directory.Exists(parent)) CreateProtectedDirectory(parent);
         using var pinned = Pin(parent, writableDirectory: false);
         var security = new DirectorySecurity(); security.SetAccessRuleProtection(true, false);
-        security.SetOwner(SystemSid);
+        using var identity = WindowsIdentity.GetCurrent();
+        var owner = identity.User == SystemSid ? SystemSid :
+            new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator) ? AdminSid :
+            throw new UnauthorizedAccessException("Protected managed directories require an elevated administrator or SYSTEM.");
+        // Assign only an eligible token owner; an elevated developer worker does
+        // not silently enable SeRestorePrivilege to assign SYSTEM ownership.
+        security.SetOwner(owner);
         foreach (var sid in new[] { SystemSid, AdminSid })
             security.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.FullControl,
                 InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));

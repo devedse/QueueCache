@@ -186,7 +186,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         {
             Output = Path.GetFullPath(selected.Output),
             DiskSpd = selected.DiskSpd is null ? null : Path.GetFullPath(selected.DiskSpd),
-            OraclePath = selected.OraclePath is null ? null : Path.GetFullPath(selected.OraclePath)
+            OraclePath = selected.OraclePath is null ? null : Path.GetFullPath(selected.OraclePath),
+            ManagedOraclePath = selected.ManagedOraclePath is null ? null : Path.GetFullPath(selected.ManagedOraclePath)
         };
         storage = new RunStorage(options.Output);
         progressSink = progress;
@@ -441,6 +442,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                             BudgetMiB = original.State.BudgetBytes == 0 ? options.BudgetMiB : (int)(original.State.BudgetBytes >> 20)
                         };
                         await Worker(Job("configure") with { Configuration = configuration }, deadline.Token);
+                    }
+                    if (test.Operation is "managed-broker-restart" or "managed-lifecycle-prepare" or "managed-lifecycle-verify" or "managed-lifecycle-cleanup")
+                    {
+                        var lifecycleReply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory,
+                            ManagedOraclePath = options.ManagedOraclePath ?? storage.PathFor("managed-lifecycle-manifest.json"),
+                            ManagedTransition = options.ManagedTransition }, deadline.Token, 900);
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(lifecycleReply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing managed lifecycle check results.");
+                        return null;
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
                     if (test.Operation is "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or

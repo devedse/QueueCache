@@ -175,6 +175,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             entry.Record = entry.Record with { Runtime = runtime, Native = native, StartupSession = startupSession };
             Update(entry, entry.Record);
         }
+        var allocated = entry.Record.Runtime!;
+        store.SaveJournal(new(operation, definition.ResourceId, ManagedDiskJournalStage.Creating, allocated.BootEpoch, allocated.CreationGeneration));
         return new Creation(this, entry, definition);
         }
         catch (Exception failure)
@@ -246,8 +248,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             await EnsurePublishedAsync(token); token.ThrowIfCancellationRequested();
             engine.Update(entry, entry.Record with { Runtime = entry.Record.Runtime! with { State = ManagedDiskState.Formatting } });
             entry.Disk!.InitializeNewGpt(); entry.Disk.SetOffline(false); var volume = await entry.Disk.WaitVolumeAsync(token);
-            await WindowsDiskStorage.FormatNtfsAsync(volume, entry.Disk.Number, value.Label, token);
             engine.Update(entry, entry.Record with { VolumePath = volume, GptDiskId = entry.Disk.Layout().DiskId });
+            await WindowsDiskStorage.FormatNtfsAsync(volume, entry.Disk.Number, value.Label, token);
         }
         public Task RecordImportedImageAsync(ImageInspection image, LogicalImageDigest digest, CancellationToken token)
         {
@@ -275,17 +277,17 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
                 var privateLayout = await ManagedImageLayout.InspectAsync(RamStorage ?? entry.Disk!, token);
                 WindowsDiskStorage.RefuseOnlineClone(privateLayout, entry.Disk?.Number);
             }
+            if (value.ReadOnly) engine.Update(entry, entry.Record with { Native = entry.Provider!.SetReadOnly(entry.Record.Native!, true) });
             await EnsurePublishedAsync(token);
             var layout = entry.Disk!.Layout(); entry.Disk.RefuseOnlineClone(layout);
             entry.Disk.SetOffline(false);
             var volume = entry.Record.VolumePath ?? await entry.Disk.WaitVolumeAsync(token);
             if (WindowsDiskStorage.FileSystem(volume) != "NTFS") throw new NotSupportedException("Only unencrypted NTFS images can be activated.");
-            if (value.ReadOnly) engine.Update(entry, entry.Record with { Native = entry.Provider!.SetReadOnly(entry.Record.Native!, true) });
-            WindowsDiskStorage.AssignLetter(volume, value.PreferredLetter);
             engine.Update(entry, entry.Record with { VolumePath = volume, GptDiskId = layout.DiskId });
+            WindowsDiskStorage.AssignLetter(volume, value.PreferredLetter);
             ManagedDiskHostProtection.RegisterVolume(value.ResourceId, volume);
             if (value.Mode == ManagedDiskMode.CachedVhdx)
-                await CacheTasks.SaveAsync(value.PreferredLetter + ":", value.Cache!, false, value.AcceptVolatileWrites, token: token);
+                await CacheTasks.SaveAsync(value.PreferredLetter + ":", value.Cache!, false, value.AcceptVolatileWrites, token: token, managedOwner: value.ResourceId);
             transferred = true;
             return value.PreferredLetter + ":";
         }

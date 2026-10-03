@@ -7,6 +7,11 @@ public static class ManagedDiskStartup
 {
     public static bool ShouldStartAfterReconcile(ManagedDiskDefinition definition, bool newWindowsStartup, ManagedDiskRuntime? runtime) =>
         newWindowsStartup && definition.StartAtBoot && runtime?.State == ManagedDiskState.Stopped;
+    public static bool CanAdoptReady(ManagedDiskRecord record, ManagedDiskJournal? journal) =>
+        record.Runtime?.State is ManagedDiskState.Ready or ManagedDiskState.Saving or ManagedDiskState.RecoveryRequired &&
+        !string.IsNullOrWhiteSpace(record.Runtime.Volume) && journal is not null &&
+        (journal.Stage == ManagedDiskJournalStage.Ready || journal.CandidatePath is not null &&
+            journal.Stage is ManagedDiskJournalStage.Exporting or ManagedDiskJournalStage.CandidateVerified or ManagedDiskJournalStage.Committed or ManagedDiskJournalStage.RecoveryRequired);
     public static ManagedDiskStartupAction Decide(ManagedDiskDefinition definition, Guid startupEpoch, ManagedDiskRuntime? live)
     {
         definition.Validate();

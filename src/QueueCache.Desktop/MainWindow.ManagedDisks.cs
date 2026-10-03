@@ -92,7 +92,10 @@ public sealed partial class MainWindow
         var mode = definition.Mode switch { ManagedDiskMode.EphemeralRam => "Pure RAM disk", ManagedDiskMode.CachedVhdx => "VHDX with RAM cache", _ => "Entire VHDX in RAM" };
         view.Name.Text = $"{definition.PreferredLetter}: {definition.Label} · {mode}";
         view.Status.Text = runtime is null ? "Runtime identity unavailable · Recover required" :
-            runtime.State + (runtime.Mode == ManagedDiskMode.ImageInRam ? runtime.HasUnsavedChanges ? " · Unsaved RAM changes" : " · Saved generation" : "");
+            runtime.State + (runtime.Mode != ManagedDiskMode.ImageInRam ? "" : runtime.State == ManagedDiskState.Stopped ?
+                record.CommittedImage is null ? " · No committed image" : " · Only the committed image is retained" :
+                runtime.State is not (ManagedDiskState.Ready or ManagedDiskState.Saving) ? " · RAM state needs reconciliation" :
+                runtime.HasUnsavedChanges ? " · Unsaved RAM changes" : " · Saved generation");
         view.Detail.Text = $"{definition.CapacityBytes / ManagedDiskDefinition.MiB:N0} MiB disk" +
             (definition.Cache is not null ? $" · {definition.Cache.BudgetMiB:N0} MiB cache · {definition.Cache.Preset}" : " · full capacity reserved in RAM") +
             (record.Native is null ? "" : $"\nActual reserved RAM: {record.Native.ReservedBytes / ManagedDiskDefinition.MiB:N0} MiB · read {record.Native.ReadBytes:N0} bytes · written {record.Native.WriteBytes:N0} bytes · flushes {record.Native.Flushes:N0} · errors {record.Native.Errors:N0}") +
@@ -115,7 +118,8 @@ public sealed partial class MainWindow
                 ManagedDiskAction.Start => stopped,
                 ManagedDiskAction.Stop => runtime is not null && !stopped,
                 ManagedDiskAction.Flush or ManagedDiskAction.Save or ManagedDiskAction.Export => ready,
-                ManagedDiskAction.Format => ready && !definition.ReadOnly,
+                ManagedDiskAction.Format => runtime is not null && runtime.State is ManagedDiskState.Ready or ManagedDiskState.RecoveryRequired &&
+                    record.VolumePath is not null && !definition.ReadOnly,
                 ManagedDiskAction.RemoveDefinition or ManagedDiskAction.ConfigureStopped => stopped,
                 ManagedDiskAction.ChangeCache => ready || stopped,
                 ManagedDiskAction.SetStartup or ManagedDiskAction.DeleteImage => runtime is not null,

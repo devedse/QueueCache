@@ -21,6 +21,11 @@ public sealed record ManagedDiskOperationResult(ManagedDiskRecord Record, string
 
 public static class ManagedDiskConfiguration
 {
+    public static void RequireCacheOwner(Guid? actualOwner, Guid? requestedOwner)
+    {
+        if (actualOwner != requestedOwner)
+            throw new IOException("This volume's cache belongs to a managed disk. Use disk cache or its managed disk settings to preserve the remembered recipe.");
+    }
     public static ManagedDiskDefinition EditStopped(ManagedDiskRecord record, ManagedDiskRequest request)
     {
         if (record.Runtime?.State != ManagedDiskState.Stopped || record.Native is not null || record.PhysicalDiskNumber is not null || record.VolumePath is not null)

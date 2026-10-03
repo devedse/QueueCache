@@ -51,7 +51,7 @@ public sealed partial class WindowsManagedDiskEngine
                     var changed = record.Definition with { Cache = request.Cache, AcceptVolatileWrites = request.AcceptVolatileWrites };
                     changed.Validate();
                     if (record.Runtime!.State != ManagedDiskState.Stopped)
-                    { ValidateLive(entry); await CacheTasks.SaveAsync(changed.PreferredLetter + ":", request.Cache, false, request.AcceptVolatileWrites, token: token); }
+                    { ValidateLive(entry); await CacheTasks.SaveAsync(changed.PreferredLetter + ":", request.Cache, false, request.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId); }
                     Update(entry, entry.Record with { Definition = changed }); message = "Backing-volume cache settings applied and remembered."; break;
                 case ManagedDiskAction.SetStartup:
                     var startup = record.Definition with { StartAtBoot = request.StartAtBoot ?? record.Definition.StartAtBoot,
@@ -146,7 +146,7 @@ public sealed partial class WindowsManagedDiskEngine
                     ValidateLive(entry);
                     WindowsDiskStorage.AssignLetter(record.VolumePath!, record.Definition.PreferredLetter);
                     if (mode == ManagedDiskMode.CachedVhdx)
-                        await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: cleanup.Token);
+                        await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: cleanup.Token, managedOwner: record.ResourceId);
                     Update(entry, record with { LastError = "Windows vetoed stopping; the owned disk remains mounted: " + failure.Message });
                 }
                 catch (Exception recovery)
@@ -166,27 +166,36 @@ public sealed partial class WindowsManagedDiskEngine
         ValidateLive(entry); var record = entry.Record;
         if (record.Definition.ReadOnly) throw new IOException("A read-only RAM device cannot be formatted.");
         var definition = record.Definition with { Label = label ?? record.Definition.Label }; definition.Validate();
-        // Prove Windows exclusivity before disabling cache or removing the mount point.
-        using (WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number, true))
-        {
-            if (definition.Mode == ManagedDiskMode.CachedVhdx)
-            { using var cache = CacheDevice.OpenVolumeName(record.VolumePath!, true); cache.Control(WriteCacheAction.Release); }
-            WindowsDiskStorage.RemoveLetter(record.VolumePath!, definition.PreferredLetter);
-        }
-        Update(entry, record with { Runtime = record.Runtime! with { State = ManagedDiskState.Formatting } });
-        progress?.Report(new(ManagedDiskState.Formatting, "Formatting the exact owned NTFS volume."));
+        var started = false;
         try
         {
+            // Prove exclusivity before recording an erase boundary or changing cache/mounts.
+            using (WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number, true))
+            {
+                token.ThrowIfCancellationRequested();
+                store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Formatting, record.Runtime!.BootEpoch, record.Runtime.CreationGeneration));
+                started = true;
+                Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Formatting } });
+                if (definition.Mode == ManagedDiskMode.CachedVhdx)
+                { using var cache = CacheDevice.OpenVolumeName(record.VolumePath!, true); cache.Control(WriteCacheAction.Release); }
+                WindowsDiskStorage.RemoveLetter(record.VolumePath!, definition.PreferredLetter);
+            }
+            progress?.Report(new(ManagedDiskState.Formatting, "Formatting the exact owned NTFS volume."));
             ValidateLive(entry); await WindowsDiskStorage.FormatNtfsAsync(record.VolumePath!, entry.Disk!.Number, definition.Label, token);
             WindowsDiskStorage.AssignLetter(record.VolumePath!, definition.PreferredLetter);
             if (definition.Mode == ManagedDiskMode.CachedVhdx)
-                await CacheTasks.SaveAsync(definition.PreferredLetter + ":", definition.Cache!, false, definition.AcceptVolatileWrites, token: token);
+                await CacheTasks.SaveAsync(definition.PreferredLetter + ":", definition.Cache!, false, definition.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId);
             var generation = entry.Provider?.Query(record.Native!).WriteGeneration ?? record.Runtime!.WriteGeneration;
             Update(entry, entry.Record with { Definition = definition, Runtime = entry.Record.Runtime! with { State = ManagedDiskState.Ready, WriteGeneration = generation }, LastError = null });
+            store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Ready, record.Runtime!.BootEpoch, record.Runtime.CreationGeneration));
         }
         catch (Exception ex)
         {
-            Update(entry, entry.Record with { Runtime = entry.Record.Runtime! with { State = ManagedDiskState.RecoveryRequired }, LastError = "Format failed; the disk is retained and requires recovery: " + ex.Message }); throw;
+            if (!started) throw;
+            entry.Record = entry.Record with { Runtime = entry.Record.Runtime! with { State = ManagedDiskState.RecoveryRequired }, LastError = "Format failed; the disk is retained and requires recovery: " + ex.Message };
+            try { Update(entry, entry.Record); }
+            catch (Exception catalog) { throw new AggregateException("Format and recording its recovery state failed.", ex, catalog); }
+            throw;
         }
     }
     private void DeleteImageCore(Entry entry, string path)

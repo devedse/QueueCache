@@ -84,11 +84,18 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             failure = ex;
             // Preserve the candidate and original images. A failed pointer barrier is
             // recovery-required, even when a new primary record happens to be readable.
-            var actual = store.Read(record.ResourceId);
+            ManagedDiskRecord actual;
+            try { actual = store.Read(record.ResourceId); }
+            catch (Exception recovery)
+            {
+                failure = new AggregateException(failure!, recovery);
+                actual = record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired } };
+            }
             record = actual with { Runtime = actual.Runtime! with { State = commitStarted && !committed ? ManagedDiskState.RecoveryRequired : actual.Runtime.State == ManagedDiskState.Stopped ? ManagedDiskState.Stopped : ManagedDiskState.Ready },
                 LastError = (committed ? "Checkpoint committed; final cleanup or stop failed. " : "Checkpoint did not complete; RAM and the preceding committed image are retained. ") + ex.Message };
-            store.Save(record);
-            store.SaveJournal(journal with { Stage = ManagedDiskJournalStage.RecoveryRequired, Failure = ex.ToString() });
+            if (failure is AggregateException) record = record with { Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired } };
+            TryRecord(() => store.Save(record));
+            TryRecord(() => store.SaveJournal(journal with { Stage = ManagedDiskJournalStage.RecoveryRequired, Failure = failure!.ToString() }));
         }
         finally
         {
@@ -97,14 +104,19 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
                 try { await stable.DisposeAsync(); }
                 catch (Exception cleanup)
                 {
-                    record = store.Read(record.ResourceId);
-                    store.Save(record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired }, LastError = "Stable RAM view could not be released: " + cleanup.Message });
                     failure = failure is null ? cleanup : new AggregateException(failure, cleanup);
+                    TryRecord(() => record = store.Read(record.ResourceId));
+                    TryRecord(() => store.Save(record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired }, LastError = "Stable RAM view could not be released: " + cleanup.Message }));
                 }
             }
         }
-        if (failure is not null) throw new IOException(committed ? "Image committed, RAM remains mounted; recovery is required." : "Save failed. The live RAM disk and preceding committed image are retained.", failure);
+        if (failure is not null) throw new IOException(committed ? "Image committed; final cleanup, stop or catalog reconciliation failed. Inspect the actual disk state before retrying." : "Save failed. The live RAM disk and preceding committed image are retained.", failure);
         return new(record, candidate ?? throw new InvalidDataException("Missing committed checkpoint."), commit);
+        void TryRecord(Action action)
+        {
+            try { action(); }
+            catch (Exception reporting) { failure = failure is null ? reporting : new AggregateException(failure, reporting); }
+        }
     }
     private sealed class TransferProgress(IProgress<ManagedDiskProgress> progress) : IProgress<ImageTransferProgress>
     { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving, "Copying the complete frozen RAM disk.", value.CompletedBytes, value.TotalBytes)); }

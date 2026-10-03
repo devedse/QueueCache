@@ -27,6 +27,8 @@ public static class CacheTasks
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
             target.ValidateCurrent(token, requireFileSystem: false);
+            if (action != WriteCacheAction.Flush || enableAfter)
+                ManagedDisks.ManagedDiskConfiguration.RequireCacheOwner(ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(target.VolumeId), null);
             using var device = new CacheDevice(target.Device, writable: true);
             using var hostProtectionGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();
             if (action is WriteCacheAction.FlushPolicy or WriteCacheAction.Enable || enableAfter)
@@ -49,6 +51,7 @@ public static class CacheTasks
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
             target.ValidateCurrent(token, requireFileSystem: false);
+            ManagedDisks.ManagedDiskConfiguration.RequireCacheOwner(ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(target.VolumeId), null);
             using var device = new CacheDevice(target.Device, writable: true);
             if (!device.GetWriteCacheState().SupportsRelease)
                 throw new IOException("The loaded driver does not support removing cache tasks. Install the matching driver and restart Windows.");
@@ -58,7 +61,7 @@ public static class CacheTasks
         }, token);
     }
     public static async Task<WriteCacheState> SaveAsync(string volume, CacheConfiguration configuration, bool persistent,
-        bool acceptVolatileFlush, IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false, VolumeDescription? expected = null)
+        bool acceptVolatileFlush, IProgress<string>? progress = null, CancellationToken token = default, bool preserveSaved = false, VolumeDescription? expected = null, Guid? managedOwner = null)
     {
         if (persistent && preserveSaved)
             throw new ArgumentException("Cannot save a configuration while preserving the saved profile unchanged.");
@@ -69,7 +72,7 @@ public static class CacheTasks
             // One management transaction across CLI/UI processes, including persistence.
             using var gate = ConfigurationGate.Enter(target.Instance);
             token.ThrowIfCancellationRequested();
-            var state = ConfigurationManager.Apply(target, configuration, acceptVolatileFlush, progress);
+            var state = ConfigurationManager.Apply(target, configuration, acceptVolatileFlush, progress, managedOwner);
             if (persistent)
                 SavedConfigurations.Save(target, configuration, acceptVolatileFlush);
             else if (!preserveSaved)
