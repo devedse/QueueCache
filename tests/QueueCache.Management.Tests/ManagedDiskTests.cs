@@ -11,6 +11,7 @@ internal static class ManagedDiskTests
     {
         DefinitionsAndStartup();
         NativeImageAbi();
+        NativeRamAbi();
         await LogicalTransfers();
         await CreationTransactions();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
@@ -22,6 +23,35 @@ internal static class ManagedDiskTests
         ImagePath = mode == ManagedDiskMode.EphemeralRam ? null : @"C:\Images\Source.vhdx",
         CheckpointDirectory = mode == ManagedDiskMode.ImageInRam ? @"C:\Images\Checkpoints" : null
     };
+
+    private static void NativeRamAbi()
+    {
+        var expected = new RamDiskSnapshot(Guid.NewGuid(), Guid.NewGuid(), 7, 16 * MiB, 19,
+            18 * MiB, Guid.Empty, 512, RamDiskFlags.Published, 5, 1024, 2048, 3, 4, 0, 6);
+        var wire = RamDiskSnapshot.Request(RamDiskAction.Query, expected);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(80), expected.ReservedBytes);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(wire.AsSpan(108), (uint)expected.Flags);
+        var decoded = RamDiskSnapshot.Decode(wire);
+        decoded.RequireSameCreation(expected);
+        Check(decoded.WriteGeneration == expected.WriteGeneration && decoded.CapacityBytes == expected.CapacityBytes &&
+            decoded.ReservedBytes == expected.ReservedBytes, "RAM ABI retains exact geometry, generations and reservation");
+        Throws<IOException>(() => decoded.RequireSameCreation(expected with { BootEpoch = Guid.NewGuid() }));
+        Throws<IOException>(() => decoded.RequireSameCreation(expected with { CreationGeneration = 8 }));
+        Throws<IOException>(() => decoded.RequireSameCreation(expected with { Slot = 4 }));
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(wire[..^1]));
+        var badVersion = (byte[])wire.Clone(); badVersion[4] = 2;
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(badVersion));
+        var badFrozen = (byte[])wire.Clone(); badFrozen[108] |= (byte)RamDiskFlags.Frozen;
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(badFrozen));
+        var insufficient = (byte[])wire.Clone(); insufficient.AsSpan(80, 8).Clear();
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(insufficient));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Write, expected, transferBytes: RamDiskSnapshot.MaximumTransferBytes + 1));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB + 512));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Remove));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Freeze, expected));
+        Check(RamDiskSnapshot.Request(RamDiskAction.Read, expected, transferBytes: 4096).Length == RamDiskSnapshot.WireSize + 4096,
+            "bounded RAM transfers carry bytes, never user pointers");
+    }
 
     private static void DefinitionsAndStartup()
     {
