@@ -4,6 +4,16 @@ using QueueCache.Cli;
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("QueueCache requires Windows."); return 1; }
 try
 {
+    if (args.Length == 1 && args[0] == "--managed-update-preflight")
+    {
+        QueueCache.Operations.ManagedDisks.WindowsProviderInstallation.RequireNoLiveDisks(); return 0;
+    }
+    if (args.Length == 2 && args[0] == "--managed-provider-install")
+        return QueueCache.Operations.ManagedDisks.WindowsProviderInstallation.Install(args[1]) ? 3010 : 0;
+    if (args.Length == 1 && args[0] == "--managed-provider-remove")
+    {
+        QueueCache.Operations.ManagedDisks.WindowsProviderInstallation.Remove(); return 0;
+    }
     // Private transport for the foreground verification coordinator; still the same installed executable.
     if (args.Length == 2 && args[0] == "--verification-worker")
     {

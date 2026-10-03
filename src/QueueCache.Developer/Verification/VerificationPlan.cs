@@ -30,12 +30,13 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 77;
+    public const int Version = 78;
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
+        "managed-provider",
         "disk-removal",
         "disk-removal-windows",
         "system-preflight",
@@ -87,6 +88,7 @@ public static class VerificationPlan
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
     {
         "quick" => [new("file-integrity", "files")],
+        "managed-provider" => [new("managed-provider-lifecycle", "managed-provider")],
         "disk-removal" => [new("disk-orderly-eject-reconnect", "disk-removal")],
         "disk-removal-windows" => [new("disk-windows-eject-reconnect", "disk-removal")],
         "system-preflight" => [new("system-preflight", "system-preflight")],

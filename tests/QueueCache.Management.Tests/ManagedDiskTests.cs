@@ -12,9 +12,45 @@ internal static class ManagedDiskTests
         DefinitionsAndStartup();
         NativeImageAbi();
         NativeRamAbi();
+        DurableCatalog();
         await LogicalTransfers();
         await CreationTransactions();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
+    }
+
+    private static void DurableCatalog()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "QueueCache-Catalog-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new ManagedDiskStore(root);
+            var definition = Definition(ManagedDiskMode.ImageInRam);
+            var epoch = Guid.NewGuid();
+            var runtime = new ManagedDiskRuntime(definition.ResourceId, epoch, 1, definition.Mode, ManagedDiskState.Stopped, 10, 8);
+            var previous = new ManagedImageReference(new(@"C:\Images\old.vhdx", "old-id", Guid.NewGuid(), definition.CapacityBytes, MiB, 512, false), new(definition.CapacityBytes, new string('A', 64)), 8);
+            var current = previous with { Identity = previous.Identity with { Path = @"C:\Images\new.vhdx", FileIdentity = "new-id" }, Generation = 10 };
+            var record = new ManagedDiskRecord(definition, runtime, previous);
+            store.Save(record);
+            var journal = new ManagedDiskJournal(Guid.NewGuid(), definition.ResourceId, ManagedDiskJournalStage.Exporting, epoch, 1, 10, Previous: previous);
+            store.SaveJournal(journal);
+            Check(store.Read(definition.ResourceId).CommittedImage == previous, "candidate creation does not change the committed startup source");
+            Throws<InvalidDataException>(() => store.SaveJournal(journal with { Stage = ManagedDiskJournalStage.CandidateVerified }));
+            store.SaveJournal(journal with { Stage = ManagedDiskJournalStage.CandidateVerified, Candidate = current });
+            Check(store.Read(definition.ResourceId).CommittedImage == previous, "verified uncommitted candidate does not silently become startup source");
+            store.Save(record with { CommittedImage = current, PreviousImage = previous, Runtime = runtime.RecordSaved(10) });
+            Check(store.Read(definition.ResourceId).CommittedImage == current && store.Read(definition.ResourceId).PreviousImage == previous, "pointer commit retains previous verified image");
+            var path = Path.Combine(root, definition.ResourceId.ToString("N") + ".resource.json");
+            File.WriteAllText(path, "corrupt");
+            var recovered = store.Read(definition.ResourceId);
+            Check(recovered.CommittedImage == previous && recovered.LastError is not null, "corrupt current catalog recovers predecessor with explicit reconciliation state");
+            store.Save(record);
+            store.RemoveStopped(definition.ResourceId);
+            Check(store.List().Count == 0 && store.Read(definition.ResourceId).Removed && !store.Read(definition.ResourceId).Definition.StartAtBoot, "durable removal tombstone prevents recipe resurrection and retains image references");
+            Throws<InvalidDataException>(() => store.Save(record with { Native = new(Guid.NewGuid(), epoch, 1, definition.CapacityBytes, 0, 18 * MiB, Guid.Empty, 512, 0, 0, 0, 0, 0, 0, 0, 0) }));
+            File.WriteAllBytes(path, new byte[(1 << 20) + 1]); File.WriteAllText(path + ".previous", "also corrupt");
+            Throws<AggregateException>(() => store.Read(definition.ResourceId));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     private static ManagedDiskDefinition Definition(ManagedDiskMode mode) => ManagedDiskDefinition.New(mode) with

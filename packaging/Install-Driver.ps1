@@ -80,8 +80,10 @@ try
     {
         throw '64-bit setup is required.'
     }
+    Native $controller @('--managed-update-preflight')
     if ($Uninstall)
     {
+        Native $controller @('--managed-provider-remove')
         $volumeInstalled = @((Get-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters) -contains 'qcachelab'
         if ($volumeInstalled)
         {
@@ -234,6 +236,11 @@ public static class QueueCacheCodeIntegrity {
     [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $volumeClassPath -Expected $filters
+    # Use the same signed distribution and root-device SetupAPI entrypoint.
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
+    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
     $action = New-ScheduledTaskAction -Execute $controller -Argument 'policy restore'
     $trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'
     $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest

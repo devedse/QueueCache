@@ -575,6 +575,11 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "managed-provider":
+                var providerChecks = await ManagedProviderScenarios.RunAsync(target, device, job.WorkDirectory!, job.Reply + ".native.json");
+                RunStorage.AtomicJson(job.Reply, providerChecks);
+                ReportFailures(providerChecks, Console.Error);
+                return providerChecks.Count > 0 && providerChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "disk-removal-prepare":
                 result = DiskRemovalScenarios.Prepare(target, device, job.WorkDirectory!, job.BudgetMiB);
                 break;

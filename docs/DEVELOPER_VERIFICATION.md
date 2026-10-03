@@ -27,7 +27,16 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 77)
+## Suites (plan version 78)
+
+Plan 78 adds opt-in `managed-provider`. Use a disposable, clean non-OS host
+volume with the matching signed provider and budget driver loaded. The suite
+creates only uniquely owned RAM/VHDX fixtures, proves private-sector transfer,
+shared budget accounting, no-letter/offline image raw access, NTFS publication,
+open-file lock veto, freeze/thaw and exact reservation release. Native snapshots
+and cleanup failures are retained next to the worker reply. It is excluded from
+`full`; an incomplete native proof does not qualify product activation. Existing
+performance workload/score contracts are unchanged.
 
 Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
 disable and filesystem flush before orderly-removal acceptance. Plan 72 added

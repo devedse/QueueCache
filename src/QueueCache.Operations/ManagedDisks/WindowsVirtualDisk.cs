@@ -15,10 +15,10 @@ public sealed class WindowsVirtualDisk : IDisposable
     private bool attached;
     private WindowsVirtualDisk(SafeFileHandle handle) => this.handle = handle;
 
-    public static ImageInspection Inspect(string path)
+    public static ImageInspection Inspect(string path, bool allowAttached = false)
     {
         ManagedDiskPaths.ValidateImagePath(path);
-        using var identityHandle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var identityHandle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, allowAttached ? FileShare.ReadWrite : FileShare.Read);
         var fileId = new byte[24]; // FILE_ID_INFO: volume serial and 128-bit file ID.
         if (!GetFileInformationByHandleEx(identityHandle, 18, fileId, (uint)fileId.Length))
             throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -60,18 +60,25 @@ public sealed class WindowsVirtualDisk : IDisposable
     }
 
     /// <summary>No-letter alone does not prove isolation; caller must qualify offline staging before raw transfer.</summary>
-    public string Attach(bool readOnly)
+    public string Attach(bool readOnly, bool permanent = false)
     {
         if (attached)
             throw new InvalidOperationException("This owned image view is already attached.");
         var parameters = new AttachParameters { Version = 1 };
-        Check(AttachVirtualDisk(handle, IntPtr.Zero, readOnly ? 3U : 2U, 0, ref parameters, IntPtr.Zero));
+        Check(AttachVirtualDisk(handle, IntPtr.Zero, (readOnly ? 3U : 2U) | (permanent ? 4U : 0U), 0, ref parameters, IntPtr.Zero));
         attached = true;
+        return PhysicalPath();
+    }
+
+    public string PhysicalPath()
+    {
         uint size = 32768 * 2;
         var physical = new StringBuilder((int)size / 2);
         Check(GetVirtualDiskPhysicalPath(handle, ref size, physical));
         return physical.ToString();
     }
+
+    public void AdoptAttached() { _ = PhysicalPath(); attached = true; }
 
     public void Detach()
     {
