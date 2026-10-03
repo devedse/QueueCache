@@ -3,6 +3,7 @@
 #include <wdmsec.h>
 #include "../shared/budgetprotocol.h"
 #include "../shared/memorybudget.h"
+#include "../shared/startupepoch.h"
 
 extern QC_MEMORY_BUDGET* QcSharedMemoryBudget();
 extern void QcInitializeMemoryBudget();
@@ -10,8 +11,7 @@ static PDEVICE_OBJECT ControlDevice;
 static FAST_MUTEX ReservationLock;
 static LIST_ENTRY Reservations;
 static KSPIN_LOCK StartupLock;
-static GUID StartupBase, StartupEpoch;
-static ULONGLONG StartupTransitions;
+static QC_STARTUP_EPOCH Startup;
 static bool ResumeObserved;
 static constexpr bool FastStartup(ULONG target, ULONG effective)
 { return target == PowerSystemShutdown && effective == PowerSystemHibernate; }
@@ -34,9 +34,10 @@ NTSTATUS QcBudgetInitialize(PDRIVER_OBJECT driver)
     InitializeListHead(&Reservations);
     QcInitializeMemoryBudget();
     KeInitializeSpinLock(&StartupLock);
-    auto epochStatus = ExUuidCreate(&StartupBase);
-    if (!NT_SUCCESS(epochStatus)) return epochStatus;
-    StartupEpoch = StartupBase;
+    // The volume filter is boot-start. ExUuidCreate may return STATUS_RETRY
+    // before UUID generation is ready; optional managed-disk identity must not
+    // make the OS volume filter fail DriverEntry. Seed only on a later service
+    // query, and return the real failure to that caller without inventing an epoch.
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
     UNICODE_STRING security = RTL_CONSTANT_STRING(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)");
     auto status = IoCreateDeviceSecure(driver, 0, &name, FILE_DEVICE_UNKNOWN,
@@ -45,6 +46,20 @@ NTSTATUS QcBudgetInitialize(PDRIVER_OBJECT driver)
     return status;
 }
 bool QcBudgetOwnsDevice(PDEVICE_OBJECT device) { return device == ControlDevice; }
+static NTSTATUS EnsureStartupEpoch()
+{
+    KIRQL irql; KeAcquireSpinLock(&StartupLock, &irql);
+    const bool ready = Startup.Initialized;
+    KeReleaseSpinLock(&StartupLock, irql);
+    if (ready) return STATUS_SUCCESS;
+    GUID candidate{};
+    auto status = ExUuidCreate(&candidate); // PASSIVE_LEVEL, outside all spin/fast mutexes.
+    if (!NT_SUCCESS(status)) return status;
+    KeAcquireSpinLock(&StartupLock, &irql);
+    Startup.Seed(candidate);
+    KeReleaseSpinLock(&StartupLock, irql);
+    return STATUS_SUCCESS;
+}
 void QcBudgetObserveSystemPower(SYSTEM_POWER_STATE state, SYSTEM_POWER_STATE_CONTEXT context)
 {
     KIRQL irql; KeAcquireSpinLock(&StartupLock, &irql);
@@ -56,9 +71,7 @@ void QcBudgetObserveSystemPower(SYSTEM_POWER_STATE state, SYSTEM_POWER_STATE_CON
         ResumeObserved = true;
         if (FastStartup(context.TargetSystemState, context.EffectiveSystemState))
         {
-            ++StartupTransitions;
-            StartupEpoch = StartupBase;
-            for (ULONG i = 0; i < 8; ++i) StartupEpoch.Data4[i] ^= static_cast<UCHAR>(StartupTransitions >> (i * 8));
+            Startup.AdvanceHybrid();
         }
     }
     KeReleaseSpinLock(&StartupLock, irql);
@@ -87,8 +100,10 @@ NTSTATUS QcBudgetDispatch(PDEVICE_OBJECT, PIRP irp)
         {
             if (request->Action == QcBudgetStartupSession)
             {
+                status = EnsureStartupEpoch();
+                if (!NT_SUCCESS(status)) goto Complete;
                 KIRQL irql; KeAcquireSpinLock(&StartupLock, &irql);
-                request->Token = StartupEpoch; request->Bytes = StartupTransitions;
+                request->Token = Startup.Epoch; request->Bytes = Startup.Transitions;
                 KeReleaseSpinLock(&StartupLock, irql);
                 status = STATUS_SUCCESS; returned = sizeof(*request); goto Complete;
             }

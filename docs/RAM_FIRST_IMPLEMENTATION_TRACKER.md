@@ -2285,3 +2285,34 @@ contracts. Matching Windows CI is still required. Cross-boot/power/SCM/native-cr
 evidence has not been collected while Windows remains in Recovery;
 prototype isolation, read-only/4Kn, failures,
 installer and complete performance qualification still need actual Windows runs.
+
+### VM 109 recovery investigation and boot identity correction, 2026-10-04
+
+Verification evidence: direct Proxmox API console access was recovered from the
+owner's previously supplied private credentials. Windows Recovery permits reading
+the OS volume as D:. No current failure minidump or `MEMORY.DMP` is present.
+The October 3 installer transcript ends after the volume-class filter registration;
+SetupAPI records importing the RAM-provider package and creating its service.
+A copied offline SYSTEM hive still selects the new 0.4.269.1 qcache ImagePath,
+but has no RAM-provider service entry; this disagreement does not prove the
+underlying crash or repair action. The old 0.4.264.1 driver file is present.
+The current SYSTEM hive was copied to the owned installer evidence directory
+before any proposed recovery edits. Original registration and logs are retained.
+Restoring the old driver path and one recovery boot require owner approval under
+the current prohibition on automatic reboot/reset recovery. No reset was issued.
+
+Implementation: review identified an independent boot hazard: the boot-start
+volume filter returned failure when `ExUuidCreate` could not generate an epoch.
+Microsoft documents `STATUS_RETRY` while UUID generation is unavailable
+([ExUuidCreate](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-exuuidcreate)).
+Epoch seeding is deferred to an actual later service query; an unavailable UUID
+fails that query without fabricating identity or failing the filter's boot load.
+Hybrid transitions preceding the first query are preserved under the same spin
+lock, and concurrent successful queries retain one chosen epoch. Compile-time
+contracts cover deferred seeding and those transition/race invariants.
+
+Verification: hardening/lifecycle commit `5590d19` passed native Debug/Release,
+management/desktop contracts, CLI checks and signed-package CI 37158510520.
+The subsequent boot identity correction requires matching native CI and an actual
+loaded-driver boot. It is a plausible boot-risk fix, not a confirmed explanation
+of the install failure. Windows/native/performance acceptance remains outstanding.

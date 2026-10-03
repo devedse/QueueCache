@@ -102,14 +102,14 @@ mechanisms while preserving each mode's durability and storage contracts.
 
 | Concern | Shared component / implementation rule | Current source status |
 |---|---|---|
-| Cached-volume settings | `CacheConfiguration`, `CacheOptions`, existing configuration/identity/drain operations | B definitions contain the existing `CacheConfiguration` directly, including all options; production B backend must call existing operations |
-| Physical headroom | `MemoryBudget.AvailableForReservation` and existing `ValidateIncrease` | Existing cache API delegates to the common estimate; provider activation must use it before authoritative kernel reservation |
-| Locked physical pages | `driver/shared/lockedpages.h`, bounded MDL-backed slabs | Existing cache uses the extracted allocator/free routines; RAM provider must use the same primitives and zero new/released RAM storage |
-| Global accounting | `driver/shared/memorybudget.h`, one authority instance in qcache | Existing cache uses atomic shared helpers and releases reservations after freeing storage; kernel endpoint/owned RAM-provider tokens remain RD03 |
-| Managed disk creation | `ManagedDiskCreationCoordinator`, one typed definition/runtime/progress model | All three modes share capability validation, owned publication and independent cancellation cleanup; native backend remains outstanding |
-| Full logical transfer | `ILogicalDisk` and `LogicalImageTransfer` | Complete sector copy, bounded buffers, hash and read-back verification are shared between import/export; Windows/RAM adapters and consistent freeze/commit remain outstanding |
-| Startup decisions | `ManagedDiskStartup`, authoritative epoch + native generation | One pure decision function preserves live devices; broker and real boot classifier remain RD08 |
-| UI and future CLI | `IManagedDiskService`, Operations assembly | Creation UI calls the common service; shipped Windows implementation allows inspection only and refuses all new activations |
+| Cached-volume settings | `CacheConfiguration`, `CacheOptions`, existing configuration/identity/drain operations | B uses the existing cache transaction with its exact managed resource owner; ordinary cache commands refuse conflicting ownership |
+| Physical headroom | `MemoryBudget.AvailableForReservation` and existing `ValidateIncrease` | Ordinary cache and provider activation use the common estimate before authoritative kernel reservation |
+| Locked physical pages | `driver/shared/lockedpages.h`, bounded MDL-backed slabs | Both drivers use the extracted allocator/free routines; provider storage is zeroed before publication and on release |
+| Global accounting | `driver/shared/memorybudget.h`, one authority instance in qcache | Source includes the kernel endpoint, owned reservation tokens and provider-held references; cross-driver Windows qualification remains RD03 |
+| Managed disk creation | `ManagedDiskCreationCoordinator`, one typed definition/runtime/progress model | All three modes share validation, owned publication and independent cancellation cleanup; native/backend source exists, Windows qualification remains RD02-RD04 |
+| Full logical transfer | `ILogicalDisk` and `LogicalImageTransfer` | Import/export share complete sector copy, bounded buffers, hash and read-back verification; Windows/RAM adapters and freeze/commit source exist, native proof remains RD06-RD07 |
+| Startup decisions | `ManagedDiskStartup`, authoritative epoch + native generation | Broker uses the shared decision rules and native startup classifier; maintained lifecycle phases exist, actual transition qualification remains RD08/RD10 |
+| UI and CLI | `IManagedDiskService`, Operations assembly | Both product frontends call the same SCM broker for all three modes and lifecycle actions; Windows end-to-end qualification remains RD09-RD10 |
 
 Keep the RAM provider's Windows block-device/SCSI presentation separate from the
 volume filter. A fully reserved dense RAM disk does not need cache eviction or
@@ -120,11 +120,11 @@ actually use them; do not add allocations, indirect calls, full-cache drains or
 image access to an existing hot path just to force a common abstraction.
 
 Compiling a common header into two binaries does **not** share a global counter.
-RD03 must connect RAM-provider reservations to the same authoritative qcache
+RD03's source connects RAM-provider reservations to the same authoritative qcache
 instance, including metadata, failure unwinding, rundown and native ownership.
-Host tests and compile-time admission checks do not qualify that unimplemented
-cross-driver protocol or prove native performance. Retain the maintained runner
-and lower-I/O-attempt evidence for the later native implementation.
+Host tests and compile-time admission checks do not qualify this cross-driver
+protocol or prove native performance. Retain the maintained runner and
+lower-I/O-attempt evidence for actual Windows qualification.
 
 ## 3. Native provider decision and proof gates
 
