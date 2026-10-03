@@ -12,8 +12,8 @@ RAM disk on every new boot. “Performative it” is interpreted as “format it
 Read [RAM_DISK_IMPLEMENTATION_PLAN.md](RAM_DISK_IMPLEMENTATION_PLAN.md) for the
 backend contracts, work packages, failure recovery and acceptance tests. The
 [execution tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md#managed-disks-planning-2026-10-03)
-records implementation and verification separately. CLI product syntax comes
-later; UI and future CLI must share the same operations.
+records implementation and verification separately. The owner's follow-up includes
+product CLI commands in the current delivery; UI and CLI share the same operations.
 
 ## Review findings and settled design
 

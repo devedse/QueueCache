@@ -44,11 +44,12 @@
       <TreatWarningAsError>false</TreatWarningAsError>
       <PreprocessorDefinitions>QCACHE_CACHE_DRIVER=1;QCACHE_SERIALIZED_IO=1;POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <Link><GenerateDebugInformation>true</GenerateDebugInformation></Link>
+    <Link><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalDependencies>wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="driver.cpp" />
     <ClCompile Include="writecache.cpp" />
+    <ClCompile Include="budget.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="abi-check.cpp" />

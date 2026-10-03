@@ -2119,8 +2119,8 @@ part of the UI implementation.
 | Work package | Implementation | Verification |
 |---|---|---|
 | RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, existing cache configuration composition, creation flow, typed VHDX primitives; durable resource catalog outstanding | Management and desktop host contracts passed on Linux and Windows CI Debug/Release; native VHDX primitives not VM-tested |
-| RD02 — native provider / isolated image-transfer prototype | Native provider and staging-isolation proof outstanding | Not run |
-| RD03 — RAM provider and one shared memory budget | Partial: cache uses extracted locked-page allocator and atomic budget helpers; RAM provider and secure cross-driver reservation endpoint outstanding | Native x64 Debug/Release CI passed; installed 0.4.264.1 cache policy/pressure/volume/TRIM checks passed under Verifier, including allocation rollback and reservation restoration; RAM-provider/global-limit contention qualification outstanding |
+| RD02 — native provider / isolated image-transfer prototype | In progress: in-tree Storport provider, private allocations, bounded service ABI, SCSI data plane and signed-package build integration; staging-isolation proof outstanding | Native implementation build/VM checks pending |
+| RD03 — RAM provider and one shared memory budget | In progress: cache shared helpers plus kernel-only owned reserve/release endpoint and provider references; native redundant-cache refusal; provider qualification outstanding | Existing-cache foundation CI/0.4.264.1 VM checks passed; new cross-driver implementation build/VM checks pending |
 | RD04 — mounted VHDX with existing cache | Not started | Not run |
 | RD05 — pure RAM create/format/stop | Not started | Not run |
 | RD06 — whole-image import and RAM operation | Partial: bounded complete logical-sector transfer and private-publication coordinator; native adapters/provider outstanding | Host tests cover sparse zero regions/tail, aligned short reads, identity change, cancellation and incomplete import; no RAM device tested |

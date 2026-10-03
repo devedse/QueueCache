@@ -24,6 +24,11 @@ static ULONGLONG MemoryLimit()
     ExFreePool(ranges);
     return min(128ULL << 30, total / 4 * 3);
 }
+QC_MEMORY_BUDGET* QcSharedMemoryBudget() { return &SharedMemoryBudget; }
+void QcInitializeMemoryBudget()
+{
+    InterlockedExchange64(&SharedMemoryBudget.LimitBytes, static_cast<LONG64>(MemoryLimit()));
+}
 
 static ULONGLONG NowMs()
 {
@@ -1369,6 +1374,7 @@ void QcCacheDestroy(QC_CACHE* c)
 }
 static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
 {
+    if (c->OwnedRamDevice) return STATUS_NOT_SUPPORTED;
     if (budget < (1ULL << 20) || budget > (128ULL << 30))
         return STATUS_INVALID_PARAMETER;
     AcquireCache(c);
@@ -1516,7 +1522,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     {
         if (command.Value || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
-        else if (c->BlockedPlacement)
+        else if (c->BlockedPlacement || c->OwnedRamDevice)
             status = STATUS_INVALID_DEVICE_STATE;
         else if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096))
             status = STATUS_DEVICE_NOT_READY;

@@ -1,6 +1,6 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 2, 2026-10-03. **Initial shared foundation implemented; native provider,
+Revision 3, 2026-10-03. **Initial shared foundation implemented; native provider,
 broker and real activation remain outstanding. Ordinary-cache refactor VM checks
 passed; none of the new managed-disk modes is VM-qualified.** See
 [installed foundation verification](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
@@ -64,7 +64,7 @@ mode conversion. Do not interpret a locked or corrupt image as blank.
 | `src/QueueCache.Developer/LabDisk.cs` | DiskPart/PowerShell three-volume test VHDX | Keep its test layout separate; production image operations use typed Windows APIs |
 | `driver/qcache/driver.cpp` | WDM volume upper filter | Add secure management/budget endpoint and owned-RAM identification; never pretend the filter already creates disks |
 | `driver/qcache/writecache.cpp` | Static process-wide-in-driver `GlobalBudget` / `GlobalLimit` | Extract one atomic kernel budget authority shared by cache allocations and RAM-provider reservations |
-| `src/QueueCache.Cli` | Normal commands and same-binary developer worker | Add internal broker-host mode in the existing executable; user CLI design deferred |
+| `src/QueueCache.Cli` | Normal commands and same-binary developer worker | Add internal broker-host mode and product `disk` commands using the same operations as the UI |
 | `packaging/QueueCache.iss`, `packaging/Install-Driver.ps1`, `build/Build-Installer.ps1` | Current driver package/startup cache restore | Extend the same installer/artifacts with RAM provider and broker lifetime/dependencies |
 | `src/QueueCache.Developer/Verification`, `VerificationRunnerTests.cs` | Maintained runner, strict evidence/recovery | Add opt-in managed-disk scenarios and host-safe contracts |
 | `tests/QueueCache.Desktop.Tests` | Headless frontend tests | Add wizard/state/action coverage through fake services |
@@ -504,7 +504,17 @@ Contracts/tests may be written in parallel, but don't expose a UI mode as workin
 before its backend dependencies pass. Do not schedule RD09's mocks as completion
 of RD09. Track checkpoints as source commits with coherent interfaces; keep
 native ABI/bindings/tests aligned in each change. GitHub Actions owns versions.
-Product CLI commands remain deferred; internal service/verification plumbing
+Product CLI commands are included by the owner's follow-up instruction. Implement
+`qcache disk create`, `list`, `status`, `start`, `stop`, `flush`, `save`, `export`,
+`format`, `cache`, `startup`, `remove`, `delete-image` and `recover` through the
+same broker/Operations API as the UI. `create --mode ram|cached-vhdx|image-in-ram`
+binds source/new-image, capacity, independent cache, letter, label, read-only,
+allocation, startup and save policies. Destructive actions require explicit intent
+and fresh expected resource/boot/creation identity; `stop --discard` acknowledges
+loss and never deletes images. JSON output exposes typed definitions/runtime,
+checkpoint generations and actual failures. Save/export cancellation and source
+identity rules are identical in both frontends. Add parser/host contracts and
+maintained native CLI scenarios. Internal service/verification plumbing
 needed by the UI is in scope and uses the existing binary.
 
 ## 10. Verification plan for implementation
