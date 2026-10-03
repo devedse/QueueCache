@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Storport owns the adapter/PDOs; RAM lifetime is independent of user handles.
 #include <ntifs.h>
+extern "C" {
 #include <storport.h>
+}
 #include <ntddscsi.h>
 #include "../shared/lockedpages.h"
 #include "../shared/budgetprotocol.h"
