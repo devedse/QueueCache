@@ -36,6 +36,7 @@ internal static class ManagedProviderScenarios
         var id = Guid.NewGuid(); RamDiskSnapshot? ram = null; WindowsDiskStorage? physical = null;
         string? volume = null;
         var snapshots = new List<object>();
+        Exception? primaryFailure = null;
         var imagePath = Path.Combine(directory, "provider-" + id.ToString("N") + ".vhdx");
         try
         {
@@ -97,6 +98,23 @@ internal static class ManagedProviderScenarios
                 using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
                 { stream.Write(pattern); stream.Flush(true); }
                 if (!File.ReadAllBytes(file).SequenceEqual(pattern)) throw new IOException("NTFS RAM filesystem bytes differ.");
+                var trimPath = letter + @":\provider-trim.bin";
+                var trimBytes = new byte[3 << 20]; new Random(718).NextBytes(trimBytes);
+                using (var trimmed = new AlignedFile(trimPath, trimBytes.Length, create: true))
+                {
+                    trimmed.Write(0, trimBytes); trimmed.Flush();
+                    var observed = new byte[trimBytes.Length]; trimmed.Read(0, observed);
+                    if (!observed.SequenceEqual(trimBytes)) throw new IOException("Provider pre-TRIM bytes differ.");
+                    var trimBefore = provider.Query(ram);
+                    trimmed.Trim(1 << 20, 1 << 20); trimmed.Read(0, observed);
+                    var trimAfter = provider.Query(ram);
+                    snapshots.Add(new { Stage = "Trim", Before = trimBefore, After = trimAfter });
+                    ManagedProviderEvidence.ValidateTrim(trimBefore, trimAfter, trimBytes, observed, 1 << 20, 1 << 20);
+                    new Random(719).NextBytes(trimBytes); trimmed.Write(0, trimBytes); trimmed.Flush(); trimmed.Read(0, observed);
+                    if (!observed.SequenceEqual(trimBytes)) throw new IOException("Provider post-TRIM reuse differs.");
+                }
+                File.Delete(trimPath);
+                Pass("native-trim-zero-guards-reuse", "File-relative TRIM reaches the provider, advances generation, zeroes the middle range, preserves guards and permits exact rewrite.");
                 using (var open = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
                     try { using var invalid = WindowsDiskStorage.LockVolume(volume, physical.Number); throw new IOException("Open-file volume lock unexpectedly succeeded."); }
@@ -134,6 +152,7 @@ internal static class ManagedProviderScenarios
             }
             snapshots.Add(new { Stage = "Ready", Native = provider.Query(ram) });
         }
+        catch (Exception ex) { primaryFailure = ex; throw; }
         finally
         {
             Exception? cleanupFailure = null;
@@ -152,8 +171,9 @@ internal static class ManagedProviderScenarios
                 Pass("owned-removal-budget", "Native RAM object removed and complete reservation returned exactly once.");
             }
             catch (Exception ex) { cleanupFailure = ex; }
-            finally { physical?.Dispose(); RunStorage.AtomicJson(evidence, new { ResourceId = id, Host = host, Image = imagePath, Snapshots = snapshots, CleanupFailure = cleanupFailure?.ToString() }); }
-            if (cleanupFailure is not null) throw new IOException("Provider fixture teardown requires recovery; preserve its native evidence.", cleanupFailure);
+            finally { physical?.Dispose(); RunStorage.AtomicJson(evidence, new { ResourceId = id, Host = host, Image = imagePath, Snapshots = snapshots, PrimaryFailure = primaryFailure?.ToString(), CleanupFailure = cleanupFailure?.ToString() }); }
+            if (cleanupFailure is not null) throw new IOException("Provider fixture teardown requires recovery; preserve its native evidence.",
+                primaryFailure is null ? cleanupFailure : new AggregateException(primaryFailure, cleanupFailure));
         }
         return checks;
 

@@ -11,6 +11,7 @@ internal static class ManagedDiskTests
     {
         DefinitionsAndStartup();
         ProviderRepair();
+        ProviderTrimEvidence();
         NativeImageAbi();
         NativeRamAbi();
         DurableCatalog();
@@ -31,6 +32,30 @@ internal static class ManagedDiskTests
             unbound with { ProviderModuleLoaded = true }, unbound with { ModulesObserved = false }, unbound with { DevNodeStatus = null } })
             Check(!blocked.CanRepairUnbound, "bound, started, loaded or unobserved provider cannot bypass live-RAM preflight");
     }
+
+    #pragma warning disable CA1416 // Pure acceptance oracle in the Windows-targeted runner assembly; no native calls.
+    private static void ProviderTrimEvidence()
+    {
+        foreach (var sector in new uint[] { 512, 4096 })
+        {
+            var original = Enumerable.Repeat((byte)17, checked((int)sector * 3)).ToArray();
+            var observed = original.ToArray(); observed.AsSpan((int)sector, (int)sector).Clear();
+            var before = new RamDiskSnapshot(Guid.NewGuid(), Guid.NewGuid(), 1, 64UL << 20, 10,
+                65UL << 20, Guid.Empty, sector, RamDiskFlags.Published, 0, 0, 0, 0, 2, 0, 0);
+            var after = before with { Trims = 3, WriteGeneration = 11 };
+            QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, observed, (int)sector, (int)sector);
+            foreach (var bad in new[] { after with { Trims = 2 }, after with { WriteGeneration = 10 },
+                after with { Errors = 1 }, after with { BootEpoch = Guid.NewGuid() }, after with { CreationGeneration = 2 } })
+                Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, bad, original, observed, (int)sector, (int)sector));
+            foreach (var corrupt in new[] { 0, (int)sector, original.Length - 1 })
+            {
+                var bad = observed.ToArray(); bad[corrupt] ^= 1;
+                Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, bad, (int)sector, (int)sector));
+            }
+            Throws<InvalidDataException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, observed[..^1], (int)sector, (int)sector));
+        }
+    }
+    #pragma warning restore CA1416
 
     private static void DurableCatalog()
     {

@@ -26,7 +26,7 @@ internal static class ManagedDiskScenarios
                 ImagePath = mode == ManagedDiskMode.EphemeralRam ? null : Path.Combine(directory, "source.vhdx"),
                 CheckpointDirectory = mode == ManagedDiskMode.ImageInRam ? Path.Combine(directory, "Checkpoints") : null,
                 Cache = mode == ManagedDiskMode.CachedVhdx ? new CacheConfiguration(64, CachePreset.Strict) : null };
-            var created = false; string? movedSource = null;
+            var created = false; string? movedSource = null; Exception? primaryFailure = null;
             try
             {
                 if (initializeRaw)
@@ -109,6 +109,7 @@ internal static class ManagedDiskScenarios
                     Pass("pure-ram-fresh-creation", "Product format/write/flush/explicit discard/recreate produces a fresh NTFS disk.");
                 }
             }
+            catch (Exception ex) { primaryFailure = ex; throw; }
             finally
             {
                 Exception? cleanup = null;
@@ -124,9 +125,10 @@ internal static class ManagedDiskScenarios
                     if (hostCache.GetWriteCacheState().GlobalReservedBytes != originalBudget) throw new IOException("Managed teardown did not restore the exact shared RAM reservation.");
                 }
                 catch (Exception ex) { cleanup = ex; }
-                trace.Add(new { Stage = "Cleanup", ResourceId = id, Created = created, Error = cleanup?.ToString(), FilesRetained = directory });
+                trace.Add(new { Stage = "Cleanup", ResourceId = id, Created = created, PrimaryFailure = primaryFailure?.ToString(), Error = cleanup?.ToString(), FilesRetained = directory });
                 RunStorage.AtomicJson(evidence, trace);
-                if (cleanup is not null) throw new IOException("Managed product fixture cleanup failed; preserve the recorded owned resource and images.", cleanup);
+                if (cleanup is not null) throw new IOException("Managed product fixture cleanup failed; preserve the recorded owned resource and images.",
+                    primaryFailure is null ? cleanup : new AggregateException(primaryFailure, cleanup));
             }
             async Task<ManagedDiskRecord> RecordAsync() => (await service.ListAsync()).Single(r => r.ResourceId == id);
             void Pass(string name, string detail) { name += "-" + sectorBytes; checks.Add(new(name, "PASS", detail)); Console.WriteLine(name + ": " + detail); }

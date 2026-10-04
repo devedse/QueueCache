@@ -56,6 +56,12 @@ physical read-only write rejection and redundant cache refusal are required
 checks rather than inferred from advertised flags. Actual Windows qualification
 is recorded separately in the execution tracker.
 
+Plan 83 adds mandatory native RAM TRIM zero/adjacent-guard/rewrite proof for both
+geometries, using file-relative filesystem requests on owned fixture files.
+Provider counters must prove actual TRIM completion; a successful filesystem
+request alone is insufficient. Native/product evidence retains the primary
+failure independently of any teardown failure.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

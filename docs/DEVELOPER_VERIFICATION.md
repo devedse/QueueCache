@@ -106,6 +106,14 @@ Provider geometry evidence has a retained index with an explicit completion flag
 a failure in the first geometry cannot qualify the second. Existing score
 workloads, case IDs, deadlines and the 72-case performance matrix are unchanged.
 
+Plan 83 additionally requires file-relative TRIM on each owned native RAM fixture:
+the provider's TRIM count and write generation must advance without errors,
+the discarded middle range must read as zero, adjacent guards must remain intact,
+and a flushed rewrite must match exactly. Unsupported TRIM fails this provider
+contract; it is not a hardware-dependent SKIP. Primary test failures and separate
+teardown failures are both retained in native/product evidence. Existing score
+workloads and preparation/restoration deadlines are unchanged.
+
 Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
 `image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
 images and transaction/cleanup evidence, and explicitly stop/forget their

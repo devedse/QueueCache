@@ -2399,3 +2399,23 @@ host management/desktop contracts, CLI and signed-installer CI 37175645554.
 The additional plan-82 scenarios still require host build/contracts and matching
 Windows execution. Their source existence does not qualify either geometry or
 native write-protection behavior.
+
+Verification update: plan-82 commit 2c53b6a passed native Debug/Release,
+management/desktop contracts, CLI and signed-installer CI 37176587183. Signed
+0.4.278.1 is downloaded for qualification; it has not been installed. The fresh
+T: baseline remains in progress on the recovered 0.4.264.1 filter, with its exact
+run evidence retained. No complete comparison is claimed.
+
+Managed TRIM verification implementation: plan 83 adds file-relative TRIM of
+the middle 1 MiB of a newly owned 3 MiB RAM file in both sector geometries.
+Acceptance requires an advancing native TRIM count/write generation, unchanged
+errors, zero discarded bytes, intact adjacent guards and exact flushed rewrite.
+Missing/unsupported native behavior fails rather than becoming SKIP. Primary
+test and separate teardown failures are both retained in provider/product raw
+evidence and combined if both fail, preserving the original diagnostic.
+
+Verification: host evidence-oracle contracts cover missing progress, errors,
+changed boot/creation, corrupt guards/nonzero discarded bytes and incomplete
+read-back. Host management contracts passed on Linux without compiler warnings;
+Windows runner contracts, matching CI and actual signed VM execution are still
+required. Source implementation does not qualify native TRIM.
