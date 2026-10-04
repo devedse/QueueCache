@@ -2384,3 +2384,18 @@ CI and real installation/lifecycle proof. It is a concrete initialization defect
 not a confirmed explanation of the original crash. The fresh, separate 72-case
 baseline runs on T: with the same DiskSpd hash, 2048 MiB budget and a recorded
 3600-second preparation flush deadline; it is not accepted until complete.
+
+Managed geometry verification implementation: plan 82 makes provider and product
+fixtures cover both 512-byte and 4096-byte logical sectors through one shared
+immutable geometry contract. Provider raw evidence is separate per geometry with
+an explicit enclosing completion index. Additional checks require native rejection
+of three invalid transfer ranges without generation changes, refusal of redundant
+RAM caching without an extra reservation, and an actual protected physical-sector
+write with unchanged bytes/generation. Score workloads and the complete 72-case
+performance contract are unchanged; the running plan-81 baseline is preserved.
+
+Verification: adapter declaration commit 3bcbcb5 passed native Debug/Release,
+host management/desktop contracts, CLI and signed-installer CI 37175645554.
+The additional plan-82 scenarios still require host build/contracts and matching
+Windows execution. Their source existence does not qualify either geometry or
+native write-protection behavior.

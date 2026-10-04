@@ -12,8 +12,24 @@ internal static class ManagedProviderScenarios
 {
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget host, CacheDevice cache, string directory, string evidence)
     {
+        var checks = new List<CheckResult>(); var files = new List<string>();
+        var completed = false;
+        try
+        {
+            foreach (var sector in VerificationPlan.ManagedSectorSizes)
+            {
+                var raw = evidence + ".sector-" + sector + ".json"; files.Add(raw);
+                checks.AddRange(await RunGeometryAsync(host, cache, Path.Combine(directory, "sector-" + sector), raw, sector));
+            }
+            completed = true; return checks;
+        }
+        finally { RunStorage.AtomicJson(evidence, new { Completed = completed, GeometryEvidence = files, Checks = checks }); }
+    }
+
+    private static async Task<IReadOnlyList<CheckResult>> RunGeometryAsync(DiskTarget host, CacheDevice cache, string directory, string evidence, uint sectorBytes)
+    {
         var checks = new List<CheckResult>();
-        void Pass(string name, string detail) { checks.Add(new(name, "PASS", detail)); Console.WriteLine(name + ": " + detail); }
+        void Pass(string name, string detail) { name += "-" + sectorBytes; checks.Add(new(name, "PASS", detail)); Console.WriteLine(name + ": " + detail); }
         Directory.CreateDirectory(directory);
         using var provider = WindowsRamDisk.Connect();
         var before = cache.GetWriteCacheState();
@@ -23,13 +39,13 @@ internal static class ManagedProviderScenarios
         var imagePath = Path.Combine(directory, "provider-" + id.ToString("N") + ".vhdx");
         try
         {
-            ram = provider.Create(id, 64UL << 20, 512); snapshots.Add(new { Stage = "Private", Native = ram });
+            ram = provider.Create(id, 64UL << 20, sectorBytes); snapshots.Add(new { Stage = "Private", Native = ram });
             if ((ram.Flags & RamDiskFlags.Published) != 0 || provider.Enumerate().Single(d => d.ResourceId == id) != ram)
                 throw new IOException("Private creation unexpectedly published or lost its native ownership.");
             var reserved = cache.GetWriteCacheState();
             if (reserved.GlobalReservedBytes != before.GlobalReservedBytes + ram.ReservedBytes) throw new IOException("RAM reservation did not use the existing cache budget authority.");
             var storage = provider.Storage(ram);
-            var sector = new byte[512];
+            var sector = new byte[sectorBytes];
             await storage.ReadAsync(0, sector, default);
             if (sector.Any(b => b != 0)) throw new IOException("New RAM sectors are not zero.");
             var pattern = Enumerable.Range(0, 1 << 20).Select(n => (byte)(n * 31 + 7)).ToArray();
@@ -37,9 +53,15 @@ internal static class ManagedProviderScenarios
             var read = new byte[pattern.Length]; await storage.ReadAsync(ram.CapacityBytes - (ulong)pattern.Length, read, default);
             if (!read.SequenceEqual(pattern)) throw new IOException("Private RAM tail-sector transfer differs.");
             Pass("private-owned-ram", "Unpublished zeroed storage, exact tail transfer and shared cache/RAM accounting.");
+            var generation = provider.Query(ram).WriteGeneration;
+            await RejectRangeAsync(() => storage.ReadAsync(1, sector, default).AsTask());
+            await RejectRangeAsync(() => storage.ReadAsync(ram.CapacityBytes, sector, default).AsTask());
+            await RejectRangeAsync(() => storage.WriteAsync(0, new byte[sectorBytes - 1], default).AsTask());
+            if (provider.Query(ram).WriteGeneration != generation) throw new IOException("Rejected native range changed the RAM generation.");
+            Pass("native-range-rejection", "Unaligned offset, end-of-disk read and partial-sector write fail with ERROR_INVALID_PARAMETER and preserve generation.");
             // Isolated native VHDX raw access: no filesystem or letter; source attachment is read-only on verification.
             LogicalImageDigest digest;
-            using (var image = WindowsVirtualDisk.CreateNew(imagePath, ram.CapacityBytes, 512, ImageAllocation.Dynamic))
+            using (var image = WindowsVirtualDisk.CreateNew(imagePath, ram.CapacityBytes, sectorBytes, ImageAllocation.Dynamic))
             using (var disk = WindowsDiskStorage.Open(image.Attach(false), true))
             {
                 disk.SetOffline(true);
@@ -58,6 +80,19 @@ internal static class ManagedProviderScenarios
             WindowsDiskStorage.AssignLetter(volume, letter);
             try
             {
+                using (var ramCache = new CacheDevice(letter + ":", writable: true))
+                {
+                    try
+                    {
+                        ramCache.Control(WriteCacheAction.Configure, 16UL << 20);
+                        ramCache.Control(WriteCacheAction.Release);
+                        throw new IOException("Native filter permitted a redundant cache on an owned RAM disk.");
+                    }
+                    catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 50) { }
+                    if (ramCache.GetWriteCacheState().BudgetBytes != 0 || cache.GetWriteCacheState().GlobalReservedBytes != reserved.GlobalReservedBytes)
+                        throw new IOException("Rejected redundant cache changed shared reservations.");
+                }
+                Pass("redundant-cache-refusal", "Native cache configuration fails with ERROR_NOT_SUPPORTED before reserving more shared RAM.");
                 var file = letter + @":\provider-sentinel.bin";
                 using (var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
                 { stream.Write(pattern); stream.Flush(true); }
@@ -78,9 +113,25 @@ internal static class ManagedProviderScenarios
                 ram = provider.Thaw(ram, operation);
             }
             Pass("published-filesystem-freeze", "Owned GPT/NTFS device supports filesystem write/flush/read and stable full-disk freeze/thaw.");
-            ram = provider.SetReadOnly(ram, true);
-            if ((ram.Flags & RamDiskFlags.ReadOnly) == 0) throw new IOException("Read-only native state was not applied.");
-            ram = provider.SetReadOnly(ram, false);
+            using (WindowsDiskStorage.LockVolume(volume, physical.Number))
+            {
+                var offset = ram.CapacityBytes - (1UL << 20); var beforeBytes = new byte[sectorBytes];
+                await physical.ReadAsync(offset, beforeBytes, default);
+                ram = provider.SetReadOnly(ram, true);
+                try
+                {
+                    if ((ram.Flags & RamDiskFlags.ReadOnly) == 0) throw new IOException("Read-only native state was not applied.");
+                    var protectedGeneration = ram.WriteGeneration; var rejected = false;
+                    try { await physical.WriteAsync(offset, new byte[sectorBytes], default); }
+                    catch (IOException ex) when ((ex.HResult & 0xFFFF) == 19) { rejected = true; }
+                    if (!rejected) throw new IOException("Native read-only disk did not reject a physical sector write with ERROR_WRITE_PROTECT.");
+                    var afterBytes = new byte[sectorBytes]; await physical.ReadAsync(offset, afterBytes, default);
+                    if (!afterBytes.SequenceEqual(beforeBytes) || provider.Query(ram).WriteGeneration != protectedGeneration)
+                        throw new IOException("Rejected read-only write changed sectors or generation.");
+                    Pass("native-readonly-write-veto", "An actual physical sector write is rejected; sectors and generation remain unchanged.");
+                }
+                finally { ram = provider.SetReadOnly(ram, false); }
+            }
             snapshots.Add(new { Stage = "Ready", Native = provider.Query(ram) });
         }
         finally
@@ -105,5 +156,12 @@ internal static class ManagedProviderScenarios
             if (cleanupFailure is not null) throw new IOException("Provider fixture teardown requires recovery; preserve its native evidence.", cleanupFailure);
         }
         return checks;
+
+        static async Task RejectRangeAsync(Func<Task> operation)
+        {
+            try { await operation(); }
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 87) { return; }
+            throw new IOException("Invalid native RAM range was not rejected with ERROR_INVALID_PARAMETER.");
+        }
     }
 }

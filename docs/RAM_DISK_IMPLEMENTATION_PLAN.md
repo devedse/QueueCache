@@ -50,6 +50,12 @@ preserve independent byte oracles and native creation/startup identities across
 operator-controlled transitions. They perform no reboot, sleep or process kill;
 actual transition provenance and native crash/power qualification remain required.
 
+Maintained plan 82 extends the provider and three product suites to both logical
+sector sizes, with distinct resource identities/evidence. Native range errors,
+physical read-only write rejection and redundant cache refusal are required
+checks rather than inferred from advertised flags. Actual Windows qualification
+is recorded separately in the execution tracker.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

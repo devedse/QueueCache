@@ -16,10 +16,12 @@ internal static class ManagedDiskScenarios
         var originalBudget = hostCache.GetWriteCacheState().GlobalReservedBytes;
         var variants = mode == ManagedDiskMode.CachedVhdx ? new[] { (ImageAllocation.Dynamic, false), (ImageAllocation.Fixed, false), (ImageAllocation.Dynamic, true) } :
             mode == ManagedDiskMode.ImageInRam ? [(ImageAllocation.Dynamic, false), (ImageAllocation.Dynamic, true)] : [(ImageAllocation.Dynamic, false)];
+        foreach (var sectorBytes in VerificationPlan.ManagedSectorSizes)
         foreach (var (allocation, initializeRaw) in variants)
         {
             var id = Guid.NewGuid(); var directory = Path.Combine(work, id.ToString("N"));
             var definition = ManagedDiskDefinition.New(mode) with { ResourceId = id, CapacityBytes = 64UL << 20,
+                SectorBytes = sectorBytes,
                 PreferredLetter = FreeLetter(), Label = "QC-Managed", Allocation = allocation,
                 ImagePath = mode == ManagedDiskMode.EphemeralRam ? null : Path.Combine(directory, "source.vhdx"),
                 CheckpointDirectory = mode == ManagedDiskMode.ImageInRam ? Path.Combine(directory, "Checkpoints") : null,
@@ -127,6 +129,7 @@ internal static class ManagedDiskScenarios
                 if (cleanup is not null) throw new IOException("Managed product fixture cleanup failed; preserve the recorded owned resource and images.", cleanup);
             }
             async Task<ManagedDiskRecord> RecordAsync() => (await service.ListAsync()).Single(r => r.ResourceId == id);
+            void Pass(string name, string detail) { name += "-" + sectorBytes; checks.Add(new(name, "PASS", detail)); Console.WriteLine(name + ": " + detail); }
             async Task<ManagedDiskOperationResult> ActAsync(ManagedDiskAction action, string? path = null, bool discard = false)
             {
                 var record = await RecordAsync();
@@ -136,7 +139,6 @@ internal static class ManagedDiskScenarios
             }
         }
         return checks;
-        void Pass(string name, string detail) { checks.Add(new(name, "PASS", detail)); Console.WriteLine(name + ": " + detail); }
     }
     private static char FreeLetter() => Enumerable.Range('D', 'Z' - 'D' + 1).Select(i => (char)i)
         .First(c => !DriveInfo.GetDrives().Any(d => d.Name.StartsWith(c + ":", StringComparison.OrdinalIgnoreCase)));

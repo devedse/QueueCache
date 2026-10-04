@@ -97,6 +97,15 @@ counters include image-sector access and explicit candidate host flushes, not
 container metadata inspection or unrelated processes. Existing score workloads
 are unchanged.
 
+Plan 82 runs the provider and all three product suites with both 512-byte and
+4096-byte logical sectors. Each geometry uses distinct owned resources and raw
+evidence; provider checks additionally require native invalid-range rejection,
+an actual physical write-protection failure with unchanged bytes/generation,
+and refusal of redundant cache allocation without changing shared reservations.
+Provider geometry evidence has a retained index with an explicit completion flag;
+a failure in the first geometry cannot qualify the second. Existing score
+workloads, case IDs, deadlines and the 72-case performance matrix are unchanged.
+
 Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
 `image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
 images and transaction/cleanup evidence, and explicitly stop/forget their

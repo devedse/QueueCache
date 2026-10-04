@@ -46,7 +46,8 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 81, "plan 81 adds durable managed lifecycle phases without changing existing score workloads");
+        Check(VerificationPlan.Version == 82, "plan 82 qualifies both managed sector geometries without changing existing score workloads");
+        Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
         foreach (var suite in new[] { "ram-disk", "vhdx-backed", "image-in-ram" })

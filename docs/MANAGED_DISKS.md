@@ -1,9 +1,11 @@
 # Managed RAM and VHDX disks
 
 Feature-branch source is implemented; the new native modes are **not yet
-VM-qualified**. Installation of signed 0.4.269.1 lost SSH during provider setup;
-the live Proxmox console now confirms Windows Recovery and failed automatic
-repair. The underlying failure remains undiagnosed. Follow the separate implementation/verification state
+VM-qualified**. Installation of signed 0.4.269.1 lost SSH during provider setup.
+The owner-approved rollback to the retained 0.4.264.1 filter restored Windows
+and SSH. The original crash cause remains unconfirmed. Subsequent source fixes
+address deferred boot identity, safe repair of an unbound adapter, and the
+provider's missing Storport virtual-miniport declaration. Follow the separate implementation/verification state
 in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md), and the remaining platform
 and acceptance gates in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
 The examples below describe the implemented command contract, not completed
