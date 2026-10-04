@@ -142,7 +142,7 @@ internal static class ManagedDiskCommands
                 if (action == ManagedDiskAction.SetStartup && p.GetValue(enabled) is null && p.GetValue(saveBefore) is null && p.GetValue(saveShutdown) is null)
                     throw new ArgumentException("Choose at least one startup/save policy setting.");
                 var record = await FindAsync(service, p.GetValue(resource), token);
-                var expected = action == ManagedDiskAction.Recover ? null : boot is not null
+                var expected = action == ManagedDiskAction.Recover || action == ManagedDiskAction.RemoveDefinition && record.Runtime is null && boot is null ? null : boot is not null
                     ? new ManagedDiskExpected(record.ResourceId, boot.Value, creation!.Value, write!.Value)
                     : ManagedDiskExpected.From(record.Runtime ?? throw new IOException("No runtime identity is recorded. Run disk recover first."));
                 var request = new ManagedDiskRequest(record.ResourceId, action, expected,

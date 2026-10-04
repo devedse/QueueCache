@@ -120,7 +120,8 @@ public sealed partial class MainWindow
                 ManagedDiskAction.Flush or ManagedDiskAction.Save or ManagedDiskAction.Export => ready,
                 ManagedDiskAction.Format => runtime is not null && runtime.State is ManagedDiskState.Ready or ManagedDiskState.RecoveryRequired &&
                     record.VolumePath is not null && !definition.ReadOnly,
-                ManagedDiskAction.RemoveDefinition or ManagedDiskAction.ConfigureStopped => stopped,
+                ManagedDiskAction.RemoveDefinition => stopped || runtime is null,
+                ManagedDiskAction.ConfigureStopped => stopped,
                 ManagedDiskAction.ChangeCache => ready || stopped,
                 ManagedDiskAction.SetStartup or ManagedDiskAction.DeleteImage => runtime is not null,
                 ManagedDiskAction.Recover => runtime is null || runtime.State is ManagedDiskState.Blocked or ManagedDiskState.RecoveryRequired or ManagedDiskState.Faulted,

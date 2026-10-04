@@ -87,7 +87,8 @@ public sealed class ManagedDiskActionWindow : Window
     public ManagedDiskRequest Request()
     {
         if (acknowledge.IsVisible && acknowledge.IsChecked != true) throw new ArgumentException("Acknowledge the selected erase/discard before continuing.");
-        if (record.Runtime is null) throw new IOException("Refresh/recover this managed disk's runtime identity first.");
+        // A definition that never obtained a runtime can only be forgotten.
+        if (record.Runtime is null && action != ManagedDiskAction.RemoveDefinition) throw new IOException("Refresh/recover this managed disk's runtime identity first.");
         var intent = action != ManagedDiskAction.Stop ? (ManagedDiskStopIntent?)null : record.Definition.Mode switch
         {
             ManagedDiskMode.CachedVhdx => ManagedDiskStopIntent.DrainThenDetach,
@@ -95,7 +96,7 @@ public sealed class ManagedDiskActionWindow : Window
             _ => stop.SelectedIndex == 0 ? ManagedDiskStopIntent.SaveThenStop : ManagedDiskStopIntent.DiscardThenStop
         };
         var selectedPath = path.IsVisible ? ManagedDiskPaths.ValidateImagePath(path.Text) : null;
-        var request = new ManagedDiskRequest(record.ResourceId, action, ManagedDiskExpected.From(record.Runtime), intent, selectedPath,
+        var request = new ManagedDiskRequest(record.ResourceId, action, record.Runtime is null ? null : ManagedDiskExpected.From(record.Runtime), intent, selectedPath,
             CommitExport: commit.IsVisible && commit.IsChecked == true, AcceptDiscard: intent == ManagedDiskStopIntent.DiscardThenStop && acknowledge.IsChecked == true,
             AcceptErase: action is ManagedDiskAction.Format or ManagedDiskAction.DeleteImage && acknowledge.IsChecked == true,
             StartAtBoot: startup.IsVisible ? startup.IsChecked == true : null, SaveBeforeStopping: saveStop.IsVisible ? saveStop.IsChecked == true : null,
