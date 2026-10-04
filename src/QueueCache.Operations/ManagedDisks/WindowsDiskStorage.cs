@@ -250,7 +250,13 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         var handle = OpenHandle(volume.TrimEnd('\\'), true);
         try
         {
-            Control(handle, 0x90018, [], 0);
+            // Scanners briefly open files on a new or just-written volume. Retry a short
+            // bounded time; a handle that stays open is still reported as the veto.
+            for (var attempt = 1; ; ++attempt)
+            {
+                try { Control(handle, 0x90018, [], 0); break; }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 5 && attempt < 20) { Thread.Sleep(250); }
+            }
             if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
             if (dismount) Control(handle, 0x90020, [], 0);
             return new VolumeLock(handle);

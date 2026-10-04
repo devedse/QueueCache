@@ -2616,3 +2616,11 @@ threw "Uncataloged owned RAM objects are retained for recovery" and the service
 exited, so the ordinary Q: saved profile was not restored on that boot. Unknown
 native objects are still retained untouched and logged, but the broker now keeps
 serving cataloged disks and restoring saved profiles.
+
+Deadlock fix check, 2026-10-04 (installed 0.4.302.1): the provider suite, which hung
+on its first iteration twice before the fix, completed six consecutive iterations
+(both geometries, all checks) with no hang. The seventh failed once with
+ERROR_ACCESS_DENIED from FSCTL_LOCK_VOLUME on the freshly written RAM volume, the
+usual sign of a background scanner briefly holding a handle. Volume locking now
+retries for up to five seconds on access denied; a handle that stays open is still
+reported as the Windows veto.
