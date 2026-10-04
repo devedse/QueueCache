@@ -37,9 +37,21 @@ internal static class ManagedCheckpointTests
         var stop = new Fixture(null); var stopped = await stop.Save(stop: true);
         Check(stop.Removed && !stop.Frozen && stopped.Record.Runtime!.State == ManagedDiskState.Stopped && stopped.Record.Runtime.SavedGeneration == 10,
             "save and stop removes RAM while the exact committed generation is still frozen");
-        var cancelled = new Fixture("cancel-before");
-        try { await cancelled.Save(); throw new Exception("Cancelled precommit save reported success."); } catch (IOException) { }
-        Check(cancelled.Store.Record.CommittedImage == cancelled.Original && !cancelled.Frozen && !cancelled.Removed, "precommit cancellation retains old image and live writable RAM");
+        foreach (var stage in new[] { "cancel-copy", "cancel-before" })
+        {
+            var cancelled = new Fixture(stage);
+            try { await cancelled.Save(); throw new Exception("Cancelled precommit save reported success."); }
+            catch (OperationCanceledException ex) { Check(ex.CancellationToken == cancelled.Cancel.Token, "save cancellation preserves the request token"); }
+            Check(cancelled.Store.Record.CommittedImage == cancelled.Original && !cancelled.Frozen && !cancelled.Removed &&
+                cancelled.Store.Record.Runtime!.State == ManagedDiskState.Ready,
+                "precommit cancellation reports cancellation and retains old image and live writable RAM: " + stage);
+        }
+        var failedCancellationCleanup = new Fixture("cancel-release");
+        try { await failedCancellationCleanup.Save(); throw new Exception("Cancellation cleanup failure was hidden."); }
+        catch (IOException ex) { Check(ex.ToString().Contains("Unfreeze failed"), "cancellation cannot mask a teardown failure"); }
+        Check(failedCancellationCleanup.Frozen && failedCancellationCleanup.Store.Record.Runtime!.State == ManagedDiskState.RecoveryRequired &&
+            failedCancellationCleanup.Store.Record.CommittedImage == failedCancellationCleanup.Original,
+            "failed cancellation cleanup reports recovery and preserves the preceding checkpoint");
         var late = new Fixture("cancel-after"); var saved = await late.Save();
         Check(saved.ChangedStartupSource && late.Cancel.IsCancellationRequested && saved.Record.Runtime!.SavedGeneration == 10 && !late.Frozen,
             "late cancellation cannot claim rollback after pointer commit starts");
@@ -65,7 +77,9 @@ internal static class ManagedCheckpointTests
             if (fault == "copy") Source.ReadFailureAt = 8UL << 20;
         }
         public Task<ManagedCheckpointResult> Save(bool commit = true, bool stop = false) => new ManagedImageCheckpoint(Store, this)
-            .SaveAsync(Store.Record, @"C:\Images\candidate.vhdx", commit, token: Cancel.Token, stopAfterSave: stop);
+            .SaveAsync(Store.Record, @"C:\Images\candidate.vhdx", commit,
+                progress: new InlineProgress(value => { if (fault == "cancel-copy" && value.CompletedBytes > 0) Cancel.Cancel(); }),
+                token: Cancel.Token, stopAfterSave: stop);
         public Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token)
         { if (fault == "acquire") throw new IOException("Open-file veto."); Frozen = true; return Task.FromResult<IStableManagedImage>(new Stable(this)); }
         public Task<ICheckpointImage> CreateCandidateAsync(ManagedDiskDefinition definition, string path, CancellationToken token) => Task.FromResult<ICheckpointImage>(new Candidate(this));
@@ -75,7 +89,7 @@ internal static class ManagedCheckpointTests
             if (fault == "verify" || fault?.StartsWith("reporting-", StringComparison.Ordinal) == true)
             { destination.Bytes[^1] ^= 1; Store.Reporting = true; }
             await LogicalImageTransfer.VerifyAsync(destination, digest, token);
-            if (fault == "cancel-before") Cancel.Cancel();
+            if (fault is "cancel-before" or "cancel-release") Cancel.Cancel();
             return new(path, "candidate-id", Guid.NewGuid(), digest.Bytes, digest.Bytes, 512, false);
         }
         public Task StopFrozenAsync(ManagedDiskRecord record, IStableManagedImage stable, CancellationToken token)
@@ -88,7 +102,7 @@ internal static class ManagedCheckpointTests
             public ulong Generation => 10;
             public ILogicalDisk Storage => owner.Source;
             public ValueTask DisposeAsync()
-            { if (owner.fault is "release" or "release-reporting") { owner.Store.Reporting = true; throw new IOException("Unfreeze failed."); } owner.Frozen = false; return ValueTask.CompletedTask; }
+            { if (owner.fault is "release" or "release-reporting" or "cancel-release") { owner.Store.Reporting = true; throw new IOException("Unfreeze failed."); } owner.Frozen = false; return ValueTask.CompletedTask; }
         }
         private sealed class Candidate(Fixture owner) : ICheckpointImage
         {
@@ -98,6 +112,8 @@ internal static class ManagedCheckpointTests
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
     }
+    private sealed class InlineProgress(Action<ManagedDiskProgress> action) : IProgress<ManagedDiskProgress>
+    { public void Report(ManagedDiskProgress value) => action(value); }
     private sealed class FakeStore(ManagedDiskRecord initial, ManagedImageReference original, string? fault, CancellationTokenSource cancel) : IManagedDiskRecordStore
     {
         public ManagedDiskRecord Record = initial;

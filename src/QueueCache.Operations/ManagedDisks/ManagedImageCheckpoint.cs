@@ -110,6 +110,8 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
                 }
             }
         }
+        if (!commitStarted && failure is OperationCanceledException)
+            throw new OperationCanceledException("Save cancelled before commit. The live RAM disk and preceding committed image are retained.", failure, token);
         if (failure is not null) throw new IOException(committed ? "Image committed; final cleanup, stop or catalog reconciliation failed. Inspect the actual disk state before retrying." : "Save failed. The live RAM disk and preceding committed image are retained.", failure);
         return new(record, candidate ?? throw new InvalidDataException("Missing committed checkpoint."), commit);
         void TryRecord(Action action)

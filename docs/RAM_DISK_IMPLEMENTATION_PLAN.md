@@ -76,6 +76,13 @@ setting. The release IRP is prepared before reservation and included in its
 metadata accounting, so low-memory teardown needs no fresh allocation. Native
 Verifier/VM proof remains required for this lifetime change.
 
+Plan 86 adds native checkpoint failure checks: Save with a held open file and
+Export to an existing destination must retain the prior image pointer and live
+dirty RAM, leave existing destination bytes intact, and restore writable operation.
+Precommit cancellation is reported as cancellation only after independent cleanup
+has succeeded; cleanup or catalog failures remain explicit recovery failures.
+Host-full, interrupted commit and power qualification remain separate gates.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

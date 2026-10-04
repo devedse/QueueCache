@@ -36,7 +36,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 81)
+## Suites (plan version 86)
+
+Plan 86 extends `image-in-ram` at both sector sizes with actual open-file Save
+vetoes and an export destination collision. The preceding checkpoint/pointer and
+exact live dirty RAM must survive, the existing export's container hash must stay
+unchanged, and a subsequent filesystem write must succeed. Raw before/after
+records and errors remain in the same run. Host cancellation contracts separately
+require a cancellation result before commit; cleanup/reporting failures must
+remain failures requiring recovery. These additions do not change score workloads.
 
 Plan 81 adds opt-in managed lifecycle phases. `managed-broker-restart` prepares
 five 64 MiB fixtures, stops/starts only QueueCache's named SCM service, then proves

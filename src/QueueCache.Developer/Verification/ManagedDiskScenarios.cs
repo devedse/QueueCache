@@ -45,6 +45,17 @@ internal static class ManagedDiskScenarios
                 Write(file, bytes);
                 using (var open = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
+                    if (mode == ManagedDiskMode.ImageInRam)
+                    {
+                        var saveBefore = await RecordAsync(); var vetoed = false;
+                        try { await ActAsync(ManagedDiskAction.Save); }
+                        catch (IOException ex) { vetoed = true; trace.Add(new { Stage = "SaveOpenFileVeto", Error = ex.ToString() }); }
+                        if (!vetoed) throw new IOException("Product Save bypassed a Windows open-file veto.");
+                        var saveAfter = await RecordAsync(); ManagedCheckpointEvidence.RequireRetained(saveBefore, saveAfter);
+                        if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Save veto changed live filesystem bytes.");
+                        trace.Add(new { Stage = "SaveVetoRetained", Before = saveBefore, After = saveAfter });
+                        Pass("save-open-file-veto" + (initializeRaw ? "-raw" : ""), "Save refuses the open filesystem and retains the prior checkpoint, exact live RAM and dirty bytes.");
+                    }
                     var preview = await RecordAsync();
                     try
                     {
@@ -65,9 +76,24 @@ internal static class ManagedDiskScenarios
                 {
                     var before = await RecordAsync();
                     if (!before.Runtime!.HasUnsavedChanges) throw new IOException("RAM writes/flush were incorrectly marked saved.");
-                    var export = await ActAsync(ManagedDiskAction.Export, Path.Combine(directory, "standalone-export.vhdx"));
+                    var exportPath = Path.Combine(directory, "standalone-export.vhdx");
+                    var export = await ActAsync(ManagedDiskAction.Export, exportPath);
                     if (export.Record.CommittedImage != before.CommittedImage || export.Record.Runtime!.SavedGeneration != before.Runtime.SavedGeneration)
                         throw new IOException("Export unexpectedly changed startup source/saved generation.");
+                    var exportBefore = await RecordAsync();
+                    var existingHash = HashFile(exportPath); var refused = false;
+                    try { await ActAsync(ManagedDiskAction.Export, exportPath); }
+                    catch (IOException ex) { refused = true; trace.Add(new { Stage = "ExportDestinationCollision", Error = ex.ToString() }); }
+                    if (!refused) throw new IOException("Export overwrote an existing image destination.");
+                    var exportAfter = await RecordAsync(); ManagedCheckpointEvidence.RequireRetained(exportBefore, exportAfter);
+                    if (HashFile(exportPath) != existingHash || !File.ReadAllBytes(file).SequenceEqual(bytes))
+                        throw new IOException("Refused export changed the existing image or live RAM bytes.");
+                    // A real write after failure proves cleanup restored the writable filesystem.
+                    var probe = definition.PreferredLetter + @":\save-failure-probe.bin";
+                    Write(probe, bytes); if (!File.ReadAllBytes(probe).SequenceEqual(bytes)) throw new IOException("Failed export left RAM writes blocked.");
+                    File.Delete(probe);
+                    trace.Add(new { Stage = "ExportCollisionRetained", Before = exportBefore, After = exportAfter, ExistingImageSha256 = existingHash });
+                    Pass("save-destination-collision" + (initializeRaw ? "-raw" : ""), "Existing export bytes, preceding checkpoint and live dirty RAM survive; filesystem remains writable.");
                     var saved = await ActAsync(ManagedDiskAction.Save);
                     if (saved.Record.CommittedImage?.Digest is null || saved.Record.PreviousImage != before.CommittedImage)
                         throw new IOException("Save did not verify the full image and retain the preceding checkpoint.");
@@ -146,6 +172,8 @@ internal static class ManagedDiskScenarios
         .First(c => !DriveInfo.GetDrives().Any(d => d.Name.StartsWith(c + ":", StringComparison.OrdinalIgnoreCase)));
     private static void Write(string file, byte[] bytes)
     { using var stream = new FileStream(file, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough); stream.Write(bytes); stream.Flush(true); }
+    private static string HashFile(string path)
+    { using var file = File.OpenRead(path); return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(file)); }
     private sealed class ProgressLog : IProgress<ManagedDiskProgress>
     { public void Report(ManagedDiskProgress value) => Console.WriteLine($"{value.Stage}: {value.Message} {value.CompletedBytes}/{value.TotalBytes}"); }
 }

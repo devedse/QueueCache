@@ -2485,3 +2485,23 @@ commit 8a58b30 passed native Debug/Release, Windows management/desktop contracts
 CLI and signed-installer CI 37178446155. Matching reconciliation CI and actual
 hybrid-startup/lifetime qualification remain required;
 normal restart evidence alone cannot qualify this path.
+
+Managed checkpoint cancellation and native failure coverage, 2026-10-04:
+precommit cancellation previously became a generic IOException after successful
+cleanup, so broker/UI/CLI could not report the real cancelled outcome. It now
+retains the request token and reports cancellation only before commit and when
+independent cleanup/catalog recording succeeded. A cleanup/reporting failure
+still reports failure/recovery; cancellation after pointer commit remains the
+actual committed result. Plan 86 extends the maintained `image-in-ram` suite with
+open-file Save veto and existing-destination Export refusal at both geometries.
+Required proof includes unchanged checkpoint pointers/destination container hash,
+the exact live dirty RAM/volume/GPT binding, and successful writes after failure.
+
+Verification: source and host contracts cover cancellation during copy and
+before commit, failed thaw after cancellation, late cancellation, and rejection
+of missing/frozen/read-only/changed native or checkpoint evidence. Matching CI and
+actual Windows failure runs remain required. Reconciliation commit be7a32f passed
+native Debug/Release, Windows management/desktop contracts, CLI and signed setup
+CI 37179484245. Its signed package 0.4.282.1 is downloaded but not installed.
+The exact fresh old-driver baseline on T: remains running; it is separate from
+the earlier incomplete Q: run and no performance acceptance is claimed.

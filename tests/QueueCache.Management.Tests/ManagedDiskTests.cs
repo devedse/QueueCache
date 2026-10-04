@@ -13,6 +13,7 @@ internal static class ManagedDiskTests
         ProviderRepair();
         ProviderTrimEvidence();
         ProviderAllocationEvidence();
+        CheckpointRetentionEvidence();
         ProductCliOwnership();
         AttachedStartupOwnership();
         NativeImageAbi();
@@ -88,6 +89,28 @@ internal static class ManagedDiskTests
             }
             Throws<InvalidDataException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, observed[..^1], (int)sector, (int)sector));
         }
+    }
+    #pragma warning restore CA1416
+
+    #pragma warning disable CA1416 // Pure failure acceptance; no native calls.
+    private static void CheckpointRetentionEvidence()
+    {
+        var definition = Definition(ManagedDiskMode.ImageInRam); var epoch = Guid.NewGuid();
+        var native = new RamDiskSnapshot(definition.ResourceId, epoch, 1, definition.CapacityBytes, 10,
+            definition.CapacityBytes + MiB, Guid.Empty, 512, RamDiskFlags.Published, 0, 0, 0, 0, 0, 0, 0);
+        var image = new ManagedImageReference(new(definition.ImagePath!, "owned-file", Guid.NewGuid(), definition.CapacityBytes, MiB, 512, false),
+            new(definition.CapacityBytes, new string('A', 64)), 8);
+        var before = new ManagedDiskRecord(definition, new(definition.ResourceId, epoch, 1, definition.Mode, ManagedDiskState.Ready, 10, 8, "R:"),
+            image, Native: native, PhysicalDiskNumber: 7, VolumePath: "owned-volume", SavedAt: DateTimeOffset.UtcNow, GptDiskId: Guid.NewGuid());
+        var after = before with { LastError = "Expected save veto", Native = native with { Flushes = 3, WriteGeneration = 11 },
+            Runtime = before.Runtime! with { WriteGeneration = 11 } };
+        QueueCache.Developer.Verification.ManagedCheckpointEvidence.RequireRetained(before, after);
+        foreach (var bad in new[] { after with { Native = null }, after with { Native = after.Native! with { Flags = RamDiskFlags.Published | RamDiskFlags.Frozen } },
+            after with { Native = after.Native! with { Flags = RamDiskFlags.Published | RamDiskFlags.ReadOnly } },
+            after with { CommittedImage = image with { Generation = 10 } }, after with { PhysicalDiskNumber = 8 },
+            after with { VolumePath = null }, after with { GptDiskId = Guid.NewGuid() }, after with { Runtime = after.Runtime! with { State = ManagedDiskState.RecoveryRequired } },
+            after with { Runtime = after.Runtime! with { SavedGeneration = 11 } }, after with { Definition = definition with { Label = "Foreign" } } })
+            Throws<IOException>(() => QueueCache.Developer.Verification.ManagedCheckpointEvidence.RequireRetained(before, bad));
     }
     #pragma warning restore CA1416
 
