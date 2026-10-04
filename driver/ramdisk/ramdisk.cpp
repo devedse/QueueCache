@@ -526,6 +526,7 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
     StorPortNotification(RequestComplete, adapter, request->Srb);
     KeLowerIrql(irql);
 }
+static void CopyChunks(SPLIT* split);
 static void WorkerMain(PVOID context)
 {
     auto worker = static_cast<WORKER*>(context); auto adapter = worker->Adapter;
