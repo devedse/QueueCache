@@ -464,7 +464,8 @@ ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATI
     if (!NT_SUCCESS(ExUuidCreate(&adapter->Epoch))) return SP_RETURN_ERROR;
     configuration->VirtualDevice = TRUE; configuration->NumberOfBuses = 1;
     configuration->MaximumNumberOfTargets = 1; configuration->MaximumNumberOfLogicalUnits = QcRamMaxDisks;
-    configuration->MaximumTransferLength = QcRamTransferBytes; configuration->NumberOfPhysicalBreaks = MAXULONG;
+    configuration->MaximumTransferLength = QcRamTransferBytes;
+    configuration->NumberOfPhysicalBreaks = QcRamTransferBytes / PAGE_SIZE + 1; // Include an unaligned first/last page.
     configuration->ScatterGather = TRUE; configuration->Master = TRUE;
     configuration->CachesData = TRUE; configuration->AlignmentMask = 0;
     configuration->WmiDataProvider = FALSE; *again = FALSE;
@@ -502,6 +503,12 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     Driver = driver;
     HW_INITIALIZATION_DATA initialization{};
     initialization.HwInitializationDataSize = sizeof(initialization); initialization.AdapterInterfaceType = Internal;
+    // HW_INITIALIZATION_DATA uses this flag to select virtual callbacks (including
+    // the seven-argument FindAdapter). ConfigInfo.VirtualDevice is set later and
+    // cannot substitute for declaring the miniport type at StorPortInitialize.
+    initialization.FeatureSupport = STOR_FEATURE_VIRTUAL_MINIPORT;
+    initialization.SrbTypeFlags = SRB_TYPE_FLAG_SCSI_REQUEST_BLOCK;
+    initialization.AddressTypeFlags = ADDRESS_TYPE_FLAG_BTL8;
     initialization.HwFindAdapter = reinterpret_cast<PVOID>(FindAdapter); initialization.HwInitialize = Initialize; initialization.HwStartIo = StartIo;
     initialization.HwResetBus = ResetBus; initialization.HwAdapterControl = AdapterControl;
     initialization.HwFreeAdapterResources = FreeAdapter; initialization.HwProcessServiceRequest = ServiceRequest;

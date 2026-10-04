@@ -2364,3 +2364,23 @@ unbound/disconnected adapter, no qcramdisk service and no current dump at either
 the OS or configured Q: dump location. Host repair-policy contracts reject unsafe
 and incomplete observations. Matching CI, the actual installer repair, subsequent
 loaded-driver boot and full Windows qualification remain outstanding.
+
+Native adapter initialization correction: review against Microsoft's
+[HW_INITIALIZATION_DATA contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/storport/ns-storport-_hw_initialization_data-r1)
+found that the provider omitted STOR_FEATURE_VIRTUAL_MINIPORT while supplying
+virtual service callbacks and the seven-argument virtual FindAdapter. DriverEntry
+now explicitly declares virtual miniport, legacy SCSI_REQUEST_BLOCK and BTL8
+addressing support before StorPortInitialize. Its physical-page transfer limit
+is bounded by the maximum transfer size plus an unaligned edge page, rather than
+MAXULONG. ConfigInfo.VirtualDevice remains set during FindAdapter; that later
+configuration is not a substitute for the initialization type declaration.
+
+Verification: d81424b's repair/observation code passed native Debug/Release,
+management/desktop, CLI and signed-installer CI 37175177698. Its maintained
+loaded-module diagnostic and unbound-node repair preflight both passed on the
+recovered VM with the 0.4.264.1 filter; no provider was installed during those
+observations. The adapter declaration correction still needs matching native
+CI and real installation/lifecycle proof. It is a concrete initialization defect,
+not a confirmed explanation of the original crash. The fresh, separate 72-case
+baseline runs on T: with the same DiskSpd hash, 2048 MiB budget and a recorded
+3600-second preparation flush deadline; it is not accepted until complete.
