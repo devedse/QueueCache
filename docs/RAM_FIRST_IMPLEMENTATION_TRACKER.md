@@ -2583,3 +2583,13 @@ classpnp maps DATA PROTECT with ASC 27h to STATUS_IO_DEVICE_ERROR (only other AS
 become STATUS_MEDIA_WRITE_PROTECTED), so the provider is correct SCSI and the test
 expectation was wrong. Plan 88 checks the class write-protect state instead. The
 4096-byte geometry did not run because the suite stops at the first failure.
+
+Broker local-client fix, 2026-10-04 (found on installed 0.4.298.1): with the pipe
+instance fix the broker stayed running, but every `qcache disk` call failed with
+"Pipe is broken". The broker's local-client check required
+GetNamedPipeClientComputerName to return this machine's name; a VM probe showed it
+fails with ERROR_PIPE_LOCAL (229) for local clients, so every local client was
+rejected and the pipe closed before the client finished writing. ERROR_PIPE_LOCAL is
+now accepted as local (a returned name must still match). The broker also reads the
+bounded request before impersonating, as Windows documents for pipe impersonation.
+No product `qcache disk` operation had ever completed before this fix.

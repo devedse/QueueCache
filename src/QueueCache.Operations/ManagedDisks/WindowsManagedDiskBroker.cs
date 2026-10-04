@@ -52,10 +52,12 @@ public sealed class WindowsManagedDiskBroker(IManagedDiskService service)
     }
     private static void Authorize(NamedPipeServerStream pipe)
     {
+        // Local clients make this call fail with ERROR_PIPE_LOCAL; a returned name must be this machine.
         var machine = new StringBuilder(256);
-        if (!GetNamedPipeClientComputerNameW(pipe.SafePipeHandle, machine, (uint)machine.Capacity) ||
-            !machine.ToString().TrimStart('\\').Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("Managed disk control accepts local clients only.");
+        var local = GetNamedPipeClientComputerNameW(pipe.SafePipeHandle, machine, (uint)machine.Capacity)
+            ? machine.ToString().TrimStart('\\').Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
+            : Marshal.GetLastWin32Error() == 229;
+        if (!local) throw new UnauthorizedAccessException("Managed disk control accepts local clients only.");
         var permitted = false;
         pipe.RunAsClient(() =>
         {
@@ -76,10 +78,11 @@ public sealed class WindowsManagedDiskBroker(IManagedDiskService service)
             Task? cancelReader = null;
             try
             {
-                Authorize(pipe);
                 using var requestDeadline = CancellationTokenSource.CreateLinkedTokenSource(serviceToken); requestDeadline.CancelAfter(TimeSpan.FromSeconds(10));
                 var request = await ManagedDiskBrokerProtocol.ReadAsync<ManagedBrokerRequest>(pipe, requestDeadline.Token)
                     ?? throw new EndOfStreamException("The client sent no broker request.");
+                // Windows impersonates a pipe client only after data has been read from the pipe.
+                Authorize(pipe);
                 id = request.OperationId; ManagedDiskBrokerProtocol.Validate(request);
                 if (request.Operation == "cancel") throw new InvalidDataException("Cancellation must belong to a running operation.");
                 cancelReader = ReadCancellationAsync(request.OperationId);
