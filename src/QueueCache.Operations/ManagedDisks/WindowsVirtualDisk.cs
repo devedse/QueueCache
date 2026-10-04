@@ -28,7 +28,9 @@ public sealed class WindowsVirtualDisk : IDisposable
             throw new IOException("Could not resolve the source image's final handle path.");
         using var disk = Open(path, informationOnly: true, readOnly: true);
         var size = disk.Information(1);
-        var id = disk.Information(2);
+        // GET_VIRTUAL_DISK_INFO_VIRTUAL_DISK_ID. IDENTIFIER (2) changes once a VHDX has been
+        // opened for writing (seen on the VM), so it cannot identify a used image.
+        var id = disk.Information(14);
         var subtype = disk.Information(7);
         return new(path, finalPath + "|" + Convert.ToHexString(fileId), new Guid(id.AsSpan(8, 16)),
             BitConverter.ToUInt64(size, 8), BitConverter.ToUInt64(size, 16),

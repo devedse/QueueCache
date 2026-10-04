@@ -2640,3 +2640,14 @@ stopped or removed (RemoveDefinition required an identity; the engine dereferenc
 a missing runtime). Create now retires such a definition before rethrowing, and
 RemoveDefinition accepts an identityless definition. Fixture cleanups no longer
 assume a runtime.
+
+Backed-image identity fix, 2026-10-04 (installed 0.4.308.1): `vhdx-backed` created,
+formatted and Stop-vetoed correctly, then Flush failed with "The owned VHDX attachment
+identity changed." A VM probe showed GET_VIRTUAL_DISK_INFO IDENTIFIER (version 2)
+returned the image's VirtualDiskId at creation but a different GUID once the VHDX had
+been opened for writing; VIRTUAL_DISK_ID (version 14) stayed equal to the recorded
+value. Every used backed image therefore failed Stop/Flush/startup identity checks,
+and checkpoint identities had the same exposure. Image inspection now records the
+VirtualDiskId. The suite's earlier "open-file veto" PASS was false: it accepted this
+identity error as the veto. The product and CLI veto checks now require the broker's
+recorded "Windows vetoed stopping" outcome.
