@@ -2609,3 +2609,10 @@ volume online/state queries as observations: forwarded at dispatch, never queued
 never counted in DirectCount. IOCTL_VOLUME_OFFLINE and attribute changes stay ordered.
 None of these touch volume data, so cache ordering and invalidation are unchanged.
 Not yet VM-verified; the provider suite is repeated in a loop to check.
+
+Broker startup with foreign RAM objects, 2026-10-04: during a boot where the
+developer provider suite's own native RAM fixture existed, broker initialization
+threw "Uncataloged owned RAM objects are retained for recovery" and the service
+exited, so the ordinary Q: saved profile was not restored on that boot. Unknown
+native objects are still retained untouched and logged, but the broker now keeps
+serving cataloged disks and restoring saved profiles.

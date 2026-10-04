@@ -30,8 +30,10 @@ public sealed partial class WindowsManagedDiskEngine
             }
             using var provider = WindowsRamDisk.Connect();
             var unknown = provider.Enumerate().Where(n => !entries.ContainsKey(n.ResourceId)).ToArray();
+            // Retain them untouched, but keep serving cataloged disks and restoring ordinary
+            // saved profiles: an unrelated native object must not disable the whole broker.
             if (unknown.Length != 0)
-                throw new IOException("Uncataloged owned RAM objects are retained for recovery: " + string.Join(", ", unknown.Select(n => n.ResourceId)));
+                WindowsManagedBrokerService.Log("Uncataloged owned RAM objects are retained for recovery: " + string.Join(", ", unknown.Select(n => n.ResourceId)));
             // Managed resources own their image-volume profiles. Regular disks retain strict saved identities.
             if (store.ReadStartupSession() != startupSession)
             {
