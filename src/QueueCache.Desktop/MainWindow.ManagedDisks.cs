@@ -44,6 +44,7 @@ public sealed partial class MainWindow
             }
             foreach (var record in records) { managedViews[record.ResourceId].Record = record; UpdateManagedCard(managedViews[record.ResourceId]); }
             managedStatus.Text = records.Count == 0 ? "No managed disks. Choose Create disk to add one." : "";
+            UpdateSummary();
         }
         catch (Exception ex)
         {
@@ -97,7 +98,7 @@ public sealed partial class MainWindow
                 runtime.State is not (ManagedDiskState.Ready or ManagedDiskState.Saving) ? " · RAM state needs reconciliation" :
                 runtime.HasUnsavedChanges ? " · Unsaved RAM changes" : " · Saved generation");
         view.Detail.Text = $"{definition.CapacityBytes / ManagedDiskDefinition.MiB:N0} MiB disk" +
-            (definition.Cache is not null ? $" · {definition.Cache.BudgetMiB:N0} MiB cache · {definition.Cache.Preset}" : " · full capacity reserved in RAM") +
+            (definition.Cache is not null ? $" · {definition.Cache.BudgetMiB:N0} MiB cache · {definition.Cache.Preset}" : " · reserves its full capacity in RAM while running") +
             (record.Native is null ? "" : $"\nActual reserved RAM: {record.Native.ReservedBytes / ManagedDiskDefinition.MiB:N0} MiB · read {record.Native.ReadBytes:N0} bytes · written {record.Native.WriteBytes:N0} bytes · flushes {record.Native.Flushes:N0} · errors {record.Native.Errors:N0}") +
             $"\n{(definition.StartAtBoot ? definition.StartupDescription : "Automatic startup off; definition remembered")}." +
             (definition.Mode == ManagedDiskMode.EphemeralRam ? "\nContents are temporary; stopping or a new Windows startup loses them." : "") +

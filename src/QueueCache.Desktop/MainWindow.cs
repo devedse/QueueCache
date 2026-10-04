@@ -334,8 +334,14 @@ public sealed partial class MainWindow : Window
     {
         var fresh = views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled <= TimeSpan.FromSeconds(Math.Max(3, timer.Interval.TotalSeconds * 3))).ToArray();
         var active = fresh.Count(v => v.State!.Operational);
-        var memory = fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes);
-        summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} {(views.Count == 1 ? "volume" : "volumes")}";
+        // The driver's shared authority also covers managed RAM disks and managed-disk caches,
+        // whose volumes have no ordinary card here.
+        var memory = Math.Max(fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes),
+            fresh.Select(v => v.State!.GlobalReservedBytes).DefaultIfEmpty(0UL).Max());
+        var ramDisks = managedViews.Values.Count(m => m.Record.Native is not null);
+        summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}" +
+            (ramDisks == 0 ? "" : $"  ·  {ramDisks} RAM {(ramDisks == 1 ? "disk" : "disks")}") +
+            $"  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} {(views.Count == 1 ? "volume" : "volumes")}";
     }
     private async Task CreateDisk()
     {

@@ -2727,3 +2727,15 @@ the filter and RAM provider, T: on a non-OS SATA disk:
   page-metadata accounting or the filter's observation change was measured.
 Not covered: sleep, hibernate and Fast Startup (postponed; no VM sleep states), crash during
 checkpoint commit, physical hardware.
+
+Desktop UI walkthrough, 2026-10-04 (installed 0.4.328.1, VM console): the app opened
+elevated, showed the Managed disks section, created a 1024 MiB pure RAM disk on R:
+through Create disk (Ready, 1027 MiB actual reservation), refused Stop without the
+discard acknowledgement ("Acknowledge the selected erase/discard before continuing"),
+stopped with it, and restarted the stopped disk; action availability followed each
+state. Polish from the walkthrough: the header counted only ordinary cache
+reservations and now shows the driver's shared total plus the RAM disk count; a stopped
+pure RAM card said "full capacity reserved in RAM" and now says it reserves it while
+running; every new RAM disk showed "errors 4" from Windows probing optional SCSI
+opcodes, VPD and mode pages, which the provider no longer counts as errors (range,
+write-protect and invalid UNMAP failures still count).

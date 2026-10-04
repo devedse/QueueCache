@@ -399,7 +399,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
         else
         {
             KIRQL irql; KeAcquireSpinLock(&disk->IoLock, &irql);
-            auto data = static_cast<PUCHAR>(mapped); auto cdb = srb->Cdb; const auto available = srb->DataTransferLength;
+            auto data = static_cast<PUCHAR>(mapped); auto cdb = srb->Cdb; const auto available = srb->DataTransferLength; bool unsupported = false;
             const auto opcode = cdb[0];
             if (opcode == 0x00 || opcode == 0x1B || opcode == 0x1E) srb->DataTransferLength = 0; // ready/start/prevent
             else if (opcode == 0x35 || opcode == 0x91) { ++disk->Flushes; srb->DataTransferLength = 0; }
@@ -423,7 +423,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                 }
                 else if (cdb[2] == 0xB1) { response[1] = 0xB1; response[3] = 60; response[5] = 1; length = 64; }
                 else if (cdb[2] == 0xB2) { response[1] = 0xB2; response[3] = 4; response[5] = 0x84; response[6] = 2; length = 8; }
-                else Sense(srb, 5, 0x24);
+                else { Sense(srb, 5, 0x24); unsupported = true; }
                 if (length) { length = min(length, min(available, static_cast<ULONG>(cdb[4]))); if (length) RtlCopyMemory(data, response, length); srb->DataTransferLength = length; }
             }
             else if (opcode == 0x25 || (opcode == 0x9E && (cdb[1] & 31) == 0x10))
@@ -461,7 +461,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
             {
                 UCHAR response[64]{}; const bool ten = opcode == 0x5A; const auto header = ten ? 8U : 4U;
                 const auto page = cdb[2] & 0x3F;
-                if (page != 8 && page != 0x3F) Sense(srb, 5, 0x24);
+                if (page != 8 && page != 0x3F) { Sense(srb, 5, 0x24); unsupported = true; }
                 else
                 {
                     response[header] = 8; response[header + 1] = 18; response[header + 2] = 4; // volatile write cache enabled
@@ -508,8 +508,10 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                 PutBig(response, count * 8, 4); auto length = min(8 + count * 8, min(available, static_cast<ULONG>(Big(cdb + 6, 4))));
                 if (length) RtlCopyMemory(data, response, length); srb->DataTransferLength = length;
             }
-            else Sense(srb, 5, 0x20);
-            if ((srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
+            else { Sense(srb, 5, 0x20); unsupported = true; }
+            // Windows probes optional opcodes, VPD and mode pages on every new disk; those
+            // illegal-request replies are not storage errors.
+            if (!unsupported && (srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
             KeReleaseSpinLock(&disk->IoLock, irql);
         }
     }
