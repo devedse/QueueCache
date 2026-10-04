@@ -30,7 +30,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 89;
+    public const int Version = 90;
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 

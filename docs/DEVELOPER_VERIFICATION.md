@@ -36,7 +36,12 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 89)
+## Suites (plan version 90)
+
+Plan 90 adds `failed-create-retired` to `ram-disk`: a pure-RAM create on an occupied
+drive letter is refused only at publication, after allocation and formatting. The
+rollback must leave no definition and restore the exact shared reservation. Earlier,
+only refusals before allocation retired the definition. Score workloads are unchanged.
 
 Plan 89 stops taking read-only VHDX views offline: changing the disk attributes of a
 read-only attachment made its detach wait out a 180-second Windows timeout. The

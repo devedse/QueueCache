@@ -91,10 +91,10 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             store.Save(record); entries.TryAdd(definition.ResourceId, new(record));
             var entry = entries[definition.ResourceId];
             try { return await StartCoreAsync(entry, progress, token, creating: true); }
-            catch when (entry.Record.Runtime is null)
+            catch when (entry.Provider is null && entry.Image is null && entry.Record.OriginalSource is null && entry.Record.CommittedImage is null)
             {
-                // Refused before any native/image state existed: do not leave a definition
-                // that has no identity to stop or remove.
+                // Refused, failed or cancelled with no native/image state left (rollback
+                // succeeded) and no image identity to start again: do not leave a dead definition.
                 store.RemoveStopped(definition.ResourceId); ManagedDiskHostProtection.Unregister(definition.ResourceId);
                 entries.TryRemove(definition.ResourceId, out _); entry.Dispose();
                 throw;

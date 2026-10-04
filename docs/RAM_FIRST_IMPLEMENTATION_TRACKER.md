@@ -2739,3 +2739,16 @@ pure RAM card said "full capacity reserved in RAM" and now says it reserves it w
 running; every new RAM disk showed "errors 4" from Windows probing optional SCSI
 opcodes, VPD and mode pages, which the provider no longer counts as errors (range,
 write-protect and invalid UNMAP failures still count).
+
+Verified on 0.4.332.1 (fdc6b1b): managed-provider and ram-disk PASS at 512/4096 sectors; a
+new RAM disk reports errors 0 after Windows' probes and a file write.
+
+Failed creates retire their definition (plan 90). Implementation: CreateAsync retired a
+definition only when the refusal came before any runtime was recorded; StartCoreAsync
+always records a Stopped runtime when it fails, so a create that failed or was cancelled
+after allocation (for example a disconnected CLI client, seen on the VM) left a dead
+"Stopped" definition with LastError "The operation was canceled." It now retires
+whenever rollback left no provider object or attached image and the record holds no
+image identity; image modes that already recorded an image stay remembered.
+Verification: `ram-disk` gains `failed-create-retired` (occupied letter, refused at
+publication after allocation/format; no definition, exact reservation). VM result below.

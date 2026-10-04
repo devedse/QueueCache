@@ -29,6 +29,7 @@ internal static class ManagedDiskScenarios
             var created = false; string? movedSource = null; Exception? primaryFailure = null;
             try
             {
+                if (mode == ManagedDiskMode.EphemeralRam) await RequireFailedCreateRetiredAsync();
                 if (initializeRaw)
                 {
                     ManagedDiskHostProtection.CreateProtectedDirectory(directory);
@@ -167,6 +168,19 @@ internal static class ManagedDiskScenarios
                 var result = await service.ExecuteAsync(new(id, action, record.Runtime is null ? null : ManagedDiskExpected.From(record.Runtime),
                     discard ? ManagedDiskStopIntent.DiscardThenStop : null, Path: path, AcceptDiscard: discard), new ProgressLog());
                 trace.Add(new { Stage = action.ToString(), Result = result }); RunStorage.AtomicJson(evidence, trace); return result;
+            }
+            async Task RequireFailedCreateRetiredAsync()
+            {
+                // An occupied letter is only refused at publication, after allocation and formatting.
+                var occupied = DriveInfo.GetDrives().Select(d => char.ToUpperInvariant(d.Name[0])).First(c => c is >= 'D' and <= 'Z');
+                var refusedId = Guid.NewGuid(); var refused = false;
+                try { await service.CreateAsync(definition with { ResourceId = refusedId, PreferredLetter = occupied }, new ProgressLog()); }
+                catch (IOException ex) { refused = true; trace.Add(new { Stage = "OccupiedLetterRefused", Letter = occupied, Error = ex.Message }); }
+                if (!refused) throw new IOException($"Creating a RAM disk on occupied drive {occupied}: was not refused.");
+                if ((await service.ListAsync()).Any(r => r.ResourceId == refusedId)) throw new IOException("A create that failed after allocation left its definition behind.");
+                if (hostCache.GetWriteCacheState().GlobalReservedBytes != originalBudget) throw new IOException("A create that failed after allocation did not restore the exact shared RAM reservation.");
+                RunStorage.AtomicJson(evidence, trace);
+                Pass("failed-create-retired", $"A create refused at publication (occupied {occupied}:) rolls back, leaves no definition and restores the exact reservation.");
             }
         }
         return checks;
