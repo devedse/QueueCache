@@ -2703,3 +2703,27 @@ Read-only RAM disk stop fix, 2026-10-04 (installed 0.4.326.1): `image-in-ram`,
 command 79, where stopping a read-only image-in-RAM disk failed with "The media is write
 protected": volume locking flushed the locked volume, and a read-only volume answers
 that flush with ERROR_WRITE_PROTECT. That error is now treated as nothing to flush.
+
+VM qualification on signed 0.4.328.1 (`7b3f3c5`), 2026-10-04, Driver Verifier 0x209bb on
+the filter and RAM provider, T: on a non-OS SATA disk:
+- `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram` and `managed-cli` PASSED
+  at 512- and 4096-byte sectors (runs `QueueCache-Verify-20261004-144501-...`,
+  `-144541-...`, `-144621-...`, `-144821-...`, `-144112-...`); the provider suite also
+  passed six consecutive iterations after the volume-arrival deadlock fix.
+- `managed-broker-restart` PASSED (`C:\QueueCache-Trusted\QueueCache-Verify-20261004-144411-...`).
+- Restart lifecycle: `managed-lifecycle-prepare` (`-145012-...`), a real `shutdown /r`
+  (boot 14:38:18Z to 14:52:35Z), `managed-lifecycle-verify --managed-transition Restart`
+  (`-145548-...`) and `managed-lifecycle-cleanup` (`-145617-...`) all PASSED: automatic RAM
+  recreated empty, manual RAM reported lost, stopped automatic recipe started empty,
+  backed VHDX reopened, image-in-RAM reloaded its committed checkpoint.
+- Setup refused to upgrade while a managed disk was live (observed twice).
+- Matched 72-case `write-performance` (budget 2048 MiB, 3 repetitions, same DiskSpd SHA-256
+  DD4E57E1..., Verifier on the filter, kernel debug off) against the 0.4.264.1 baseline:
+  `QueueCache-Verify-20261004-145704-ef3b348e0f174ccd94ded385a5e1669f` COMPLETED 72/72 with
+  clean restoration. Median IOPS ratio new/old across the 16 cached (Eager/Idle)
+  configurations 1.004 (range 0.983..1.040); uncached Off rows vary in both directions with
+  the slow virtual SATA backend. A few cached Q1 write p99 values rose slightly (for
+  example 0.278 to 0.428 ms) without a throughput change. No regression from the shared
+  page-metadata accounting or the filter's observation change was measured.
+Not covered: sleep, hibernate and Fast Startup (postponed; no VM sleep states), crash during
+checkpoint commit, physical hardware.

@@ -1,15 +1,22 @@
 # Managed RAM and VHDX disks
 
-Feature-branch source is implemented; the new native modes are **not yet
-VM-qualified**. Installation of signed 0.4.269.1 lost SSH during provider setup.
-The owner-approved rollback to the retained 0.4.264.1 filter restored Windows
-and SSH. The original crash cause remains unconfirmed. Subsequent source fixes
-address deferred boot identity, safe repair of an unbound adapter, and the
-provider's missing Storport virtual-miniport declaration. Follow the separate implementation/verification state
-in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md), and the remaining platform
-and acceptance gates in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
-The examples below describe the implemented command contract, not completed
-Windows acceptance evidence.
+All three modes are implemented and, on 2026-10-04, passed the maintained Windows
+VM suites on signed build 0.4.328.1 under Driver Verifier (filter and RAM provider):
+`managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram` and `managed-cli` at
+512-byte and 4096-byte sectors, `managed-broker-restart`, and a real Windows restart
+through `managed-lifecycle-prepare`/`-verify`/`-cleanup`. Installer upgrade refusal
+while a managed disk is live was also observed, and a matched 72-case write-performance
+run showed no regression for ordinary caches. Not yet covered: sleep, hibernate and
+Fast Startup (postponed; the test VM has no sleep states), a crash during checkpoint
+commit, a manual desktop UI walkthrough and physical hardware. The per-item record is
+in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md); remaining platform gates are in
+[the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
+
+Image host directories (and their parents) must be owned by Administrators or SYSTEM
+and must not give unprivileged accounts delete, permission or ownership rights. Volumes
+formatted through the Windows storage service are often owned by NETWORK SERVICE; take
+ownership (`icacls X:\ /setowner Administrators`) or choose another volume. Windows'
+default root ACL is accepted.
 
 The desktop **Create disk** flow and `qcache disk` use one LocalSystem Windows
 service and Operations API. Disk ownership outlives either frontend. The signed

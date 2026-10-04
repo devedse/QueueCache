@@ -1,9 +1,10 @@
 # Managed disk implementation handoff: Luna / Sol
 
-Revision 6, 2026-10-03. **Native provider, broker, checkpoint, product CLI and UI
-action source is implemented on the feature branch. Native lifecycle, startup,
-crash/fault and full product qualification remain outstanding; none of the new
-managed-disk modes is VM-qualified. Ordinary-cache foundation checks passed.** See
+Revision 7, 2026-10-04. **Native provider, broker, checkpoint, product CLI and UI
+action source is implemented on the feature branch, and all three modes passed the
+maintained VM suites on signed 0.4.328.1 under Driver Verifier, including a real
+Windows restart lifecycle and broker restart. Sleep/hibernate/Fast Startup, crash
+during checkpoint commit and a manual UI walkthrough remain outstanding.** See
 [installed foundation verification](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
 This document and [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md)
 replace the earlier two-mode proposal. All three modes are in planned scope.
