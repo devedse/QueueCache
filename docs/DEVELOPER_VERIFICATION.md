@@ -114,6 +114,25 @@ contract; it is not a hardware-dependent SKIP. Primary test failures and separat
 teardown failures are both retained in native/product evidence. Existing score
 workloads and preparation/restoration deadlines are unchanged.
 
+Plan 84 adds opt-in `managed-cli`, executing the same qcache binary's product
+`disk` commands for all three modes and both sector geometries. Unique 64 MiB
+fixtures cover create/list/status, startup settings/recovery, flush, image
+save/export/inspect/owned-image deletion, backed-cache settings, Windows stop
+veto, stale erase refusal, explicit format, stop/configure/start and definition
+removal with source retention. Every child has immutable command/PID/exit/stdout/
+stderr evidence next to the worker reply; `*.cli.json` records ownership and
+separate primary/cleanup outcomes. Exact requested recipe and exclusion of
+preexisting resource IDs guard cleanup even if CLI output fails after creation.
+Fallback cleanup uses the broker independently and preserves images. The suite
+is excluded from `full`, does not reboot, and does not use DiskSpd; existing
+score workloads are unchanged. Image modes also reopen an existing image without
+formatting, infer its geometry, verify persisted bytes and retain the imported
+source on removal; full-image RAM uses the CLI read-only load option.
+
+```powershell
+qcache developer verify T: --suite managed-cli --output C:\QueueCache-Results
+```
+
 Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
 `image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
 images and transaction/cleanup evidence, and explicitly stop/forget their

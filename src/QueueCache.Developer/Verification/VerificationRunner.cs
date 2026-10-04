@@ -452,8 +452,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                             ?? throw new InvalidDataException("Missing managed lifecycle check results.");
                         return null;
                     }
-                    var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory }, deadline.Token, 900);
-                    if (test.Operation is "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or
+                    var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory,
+                        ProductExecutable = test.Operation == "managed-cli" ? executable : null,
+                        ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token, 900);
+                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "ordering-faults" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");

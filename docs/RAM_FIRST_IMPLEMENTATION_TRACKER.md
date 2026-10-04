@@ -2419,3 +2419,21 @@ changed boot/creation, corrupt guards/nonzero discarded bytes and incomplete
 read-back. Host management contracts passed on Linux without compiler warnings;
 Windows runner contracts, matching CI and actual signed VM execution are still
 required. Source implementation does not qualify native TRIM.
+
+Product CLI verification implementation: plan 84 adds explicit `managed-cli`
+through the maintained runner and existing qcache binary. All three modes and
+both geometries execute product create/list/status/startup/recover/flush,
+mode-specific save/export/inspect/delete-image/cache, Windows open-file and stale
+erase vetoes, format, stop/configure/start and remove. Unique recipe/ID guards
+exclude preexisting resources even during independent broker fallback cleanup.
+Each nested product child has immutable command, PID/start, exit, stdout/stderr
+evidence in the enclosing run, with primary and cleanup failures retained.
+Original images survive definition removal; no power transition or ordinary
+physical-disk format occurs. Existing 72-case score contracts are unchanged.
+
+Verification: new ownership contracts reject wrong letter/label/path/geometry/
+capacity and preexisting IDs before targeting cleanup. Host management contracts
+and managed CLI compilation passed without warnings/errors. Plan-83 commit
+f36a64b also passed native Debug/Release, Windows management/desktop contracts,
+CLI and signed-installer CI 37177476249. Matching plan-84 CI and real Windows
+CLI execution remain required; this source addition is not native qualification.

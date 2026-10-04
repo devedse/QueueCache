@@ -62,6 +62,14 @@ Provider counters must prove actual TRIM completion; a successful filesystem
 request alone is insufficient. Native/product evidence retains the primary
 failure independently of any teardown failure.
 
+Plan 84 additionally exercises the actual product CLI for all three modes and
+both geometries through the existing binary/maintained runner. Its uniquely owned
+fixtures cover action bindings, strict JSON, Windows/stale-identity vetoes,
+format/restart bytes and source-preserving removal. Every product child is
+recorded; independent exact-owner cleanup prevents a CLI output failure from
+orphaning storage silently. Windows CLI execution remains a separate acceptance
+gate from service API fixtures and parser-only CI tests.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

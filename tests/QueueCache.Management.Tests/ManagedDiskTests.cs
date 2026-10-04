@@ -12,6 +12,7 @@ internal static class ManagedDiskTests
         DefinitionsAndStartup();
         ProviderRepair();
         ProviderTrimEvidence();
+        ProductCliOwnership();
         NativeImageAbi();
         NativeRamAbi();
         DurableCatalog();
@@ -54,6 +55,24 @@ internal static class ManagedDiskTests
             }
             Throws<InvalidDataException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, observed[..^1], (int)sector, (int)sector));
         }
+    }
+    #pragma warning restore CA1416
+
+    #pragma warning disable CA1416 // Pure ownership oracle in the Windows-targeted runner assembly.
+    private static void ProductCliOwnership()
+    {
+        var definition = ManagedDiskDefinition.New(ManagedDiskMode.CachedVhdx) with
+        { CapacityBytes = 64UL << 20, Label = "QC-CLI-owned", PreferredLetter = 'R', ImagePath = @"T:\Owned\source.vhdx" };
+        var record = new ManagedDiskRecord(definition);
+        var fixture = new QueueCache.Developer.Verification.ManagedCliFixture(definition.Mode, definition.Label,
+            definition.PreferredLetter, definition.CapacityBytes, definition.SectorBytes, definition.ImagePath, new HashSet<Guid>());
+        QueueCache.Developer.Verification.ManagedCliEvidence.RequireOwned(record, fixture);
+        foreach (var foreign in new[] { definition with { Label = "Other" }, definition with { PreferredLetter = 'S' },
+            definition with { CapacityBytes = 128UL << 20 }, definition with { SectorBytes = 4096 },
+            definition with { ImagePath = @"T:\Other\source.vhdx" } })
+            Throws<IOException>(() => QueueCache.Developer.Verification.ManagedCliEvidence.RequireOwned(new(foreign), fixture));
+        Throws<IOException>(() => QueueCache.Developer.Verification.ManagedCliEvidence.RequireOwned(record,
+            fixture with { PreexistingResources = new HashSet<Guid> { record.ResourceId } }));
     }
     #pragma warning restore CA1416
 

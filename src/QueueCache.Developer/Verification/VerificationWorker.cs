@@ -16,7 +16,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? OraclePath = null, bool RequireImageEvidence = false,
     string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
     string? DisposableInstance = null, long? DisposableBytes = null,
-    string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null);
+    string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
+    string? ProductExecutable = null, string[]? ProductPrefix = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -576,6 +577,10 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "managed-cli":
+                var cliChecks = await ManagedCliScenarios.RunAsync(job, device);
+                RunStorage.AtomicJson(job.Reply, cliChecks); ReportFailures(cliChecks, Console.Error);
+                return cliChecks.Count > 0 && cliChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "managed-broker-restart":
             case "managed-lifecycle-prepare":
             case "managed-lifecycle-verify":
