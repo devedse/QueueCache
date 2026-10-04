@@ -2752,3 +2752,6 @@ whenever rollback left no provider object or attached image and the record holds
 image identity; image modes that already recorded an image stay remembered.
 Verification: `ram-disk` gains `failed-create-retired` (occupied letter, refused at
 publication after allocation/format; no definition, exact reservation). VM result below.
+VM result on 0.4.334.1 (8e326fd): ram-disk PASS including failed-create-retired-512/4096
+(occupied D: refused at publication, no definition, exact reservation); managed-provider
+PASS. A CLI create killed after 2.5 s of a 4 GiB RAM create left no definition or volume.
