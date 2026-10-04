@@ -14,7 +14,9 @@ public sealed partial class WindowsManagedDiskEngine
         {
             if (!entries.TryGetValue(request.ResourceId, out var entry)) throw new IOException("The managed disk does not exist.");
             var record = Snapshot(entry);
-            if (request.Action != ManagedDiskAction.Recover)
+            // A definition that never obtained a runtime has no identity to refresh; it can only be forgotten.
+            var identityless = request.Action == ManagedDiskAction.RemoveDefinition && record.Runtime is null;
+            if (request.Action != ManagedDiskAction.Recover && !identityless)
                 (request.Expected ?? throw new IOException("A fresh expected managed disk identity is required.")).Validate(record,
                     request.Action == ManagedDiskAction.Format || (request.Action == ManagedDiskAction.Stop &&
                         (request.StopIntent == ManagedDiskStopIntent.DiscardThenStop || request.StopIntent is null &&
@@ -65,7 +67,7 @@ public sealed partial class WindowsManagedDiskEngine
                     Update(entry, entry.Record with { Definition = ManagedDiskConfiguration.EditStopped(record, request) });
                     message = "Stopped creation settings remembered. Start explicitly or wait for a new Windows startup."; break;
                 case ManagedDiskAction.RemoveDefinition:
-                    if (record.Runtime!.State != ManagedDiskState.Stopped) throw new IOException("Stop the managed disk explicitly before removing its definition.");
+                    if (record.Runtime is { State: not ManagedDiskState.Stopped }) throw new IOException("Stop the managed disk explicitly before removing its definition.");
                     store.RemoveStopped(record.ResourceId); ManagedDiskHostProtection.Unregister(record.ResourceId);
                     entries.TryRemove(record.ResourceId, out _); entry.Dispose(); message = "Managed disk definition removed; no image files were deleted."; break;
                 case ManagedDiskAction.DeleteImage:

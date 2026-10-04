@@ -129,11 +129,11 @@ internal static class ManagedCliScenarios
                     {
                         RequireOwned(record);
                         var current = record;
-                        if (current.Runtime?.State != ManagedDiskState.Stopped)
+                        if (current.Runtime is { State: not ManagedDiskState.Stopped })
                             current = (await service.ExecuteAsync(new(record.ResourceId, ManagedDiskAction.Stop, ManagedDiskExpected.From(record.Runtime!),
                                 mode == ManagedDiskMode.CachedVhdx ? ManagedDiskStopIntent.DrainThenDetach : ManagedDiskStopIntent.DiscardThenStop,
                                 AcceptDiscard: mode != ManagedDiskMode.CachedVhdx))).Record;
-                        await service.ExecuteAsync(new(current.ResourceId, ManagedDiskAction.RemoveDefinition, ManagedDiskExpected.From(current.Runtime!)));
+                        await service.ExecuteAsync(new(current.ResourceId, ManagedDiskAction.RemoveDefinition, current.Runtime is null ? null : ManagedDiskExpected.From(current.Runtime)));
                     }
                     if (host.GetWriteCacheState().GlobalReservedBytes != baseline) throw new IOException("CLI fixture teardown changed the shared reservation.");
                 }

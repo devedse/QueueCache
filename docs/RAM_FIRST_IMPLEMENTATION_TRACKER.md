@@ -2624,3 +2624,19 @@ ERROR_ACCESS_DENIED from FSCTL_LOCK_VOLUME on the freshly written RAM volume, th
 usual sign of a background scanner briefly holding a handle. Volume locking now
 retries for up to five seconds on access denied; a handle that stays open is still
 reported as the Windows veto.
+
+Image-host validation and failed-create cleanup, 2026-10-04 (installed 0.4.302.1):
+`ram-disk` PASSED at both geometries (open-file Stop veto, fresh format/write/flush,
+explicit discard and recreate). `vhdx-backed` was refused by the image-host check:
+T:\ was owned by NETWORK SERVICE (volumes formatted through the Windows storage
+service get that owner). An owner implicitly has WRITE_DAC, so the refusal is
+correct; the test volume root was changed to Administrators. The check then refused
+Windows' default root ACL (Authenticated Users Modify on the root itself). A volume
+root cannot be deleted or renamed, so only Delete on the root is now ignored;
+FILE_DELETE_CHILD, permission and ownership rights still fail. Both messages now
+say how to fix the directory. The refused creates exposed a product bug: a create
+that failed before obtaining a runtime left a catalog definition that could not be
+stopped or removed (RemoveDefinition required an identity; the engine dereferenced
+a missing runtime). Create now retires such a definition before rethrowing, and
+RemoveDefinition accepts an identityless definition. Fixture cleanups no longer
+assume a runtime.

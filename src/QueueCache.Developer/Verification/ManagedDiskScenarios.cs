@@ -145,7 +145,7 @@ internal static class ManagedDiskScenarios
                     var record = (await service.ListAsync()).SingleOrDefault(r => r.ResourceId == id);
                     if (record is not null)
                     {
-                        if (record.Runtime?.State != ManagedDiskState.Stopped) await ActAsync(ManagedDiskAction.Stop, discard: mode != ManagedDiskMode.CachedVhdx);
+                        if (record.Runtime is { State: not ManagedDiskState.Stopped }) await ActAsync(ManagedDiskAction.Stop, discard: mode != ManagedDiskMode.CachedVhdx);
                         await ActAsync(ManagedDiskAction.RemoveDefinition);
                     }
                     if (hostCache.GetWriteCacheState().GlobalReservedBytes != originalBudget) throw new IOException("Managed teardown did not restore the exact shared RAM reservation.");
@@ -161,7 +161,7 @@ internal static class ManagedDiskScenarios
             async Task<ManagedDiskOperationResult> ActAsync(ManagedDiskAction action, string? path = null, bool discard = false)
             {
                 var record = await RecordAsync();
-                var result = await service.ExecuteAsync(new(id, action, ManagedDiskExpected.From(record.Runtime!),
+                var result = await service.ExecuteAsync(new(id, action, record.Runtime is null ? null : ManagedDiskExpected.From(record.Runtime),
                     discard ? ManagedDiskStopIntent.DiscardThenStop : null, Path: path, AcceptDiscard: discard), new ProgressLog());
                 trace.Add(new { Stage = action.ToString(), Result = result }); RunStorage.AtomicJson(evidence, trace); return result;
             }

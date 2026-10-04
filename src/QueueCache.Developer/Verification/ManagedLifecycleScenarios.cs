@@ -156,7 +156,7 @@ internal static class ManagedLifecycleScenarios
         }
         async Task<ManagedDiskRecord> FindAsync(Guid id) => (await service.ListAsync()).Single(r => r.ResourceId == id);
         async Task ActAsync(ManagedDiskRecord record, ManagedDiskAction action, bool discard = false) =>
-            _ = await service.ExecuteAsync(new(record.ResourceId, action, ManagedDiskExpected.From(record.Runtime!),
+            _ = await service.ExecuteAsync(new(record.ResourceId, action, record.Runtime is null ? null : ManagedDiskExpected.From(record.Runtime),
                 StopIntent: discard ? ManagedDiskStopIntent.DiscardThenStop : null, AcceptDiscard: discard), new ProgressLog());
     }
     private static ManagedLifecycleManifest Read(string path)

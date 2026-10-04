@@ -72,13 +72,19 @@ public static class ManagedDiskHostProtection
     {
         var acl = directory.GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner);
         if (acl.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !Trusted(owner))
-            throw new IOException("Managed image directories require an administrator/SYSTEM owner: " + directory.FullName);
+            throw new IOException("Managed image directories and their parents must be owned by Administrators or SYSTEM: " + directory.FullName +
+                ". Volumes formatted by a Windows service are often owned by NETWORK SERVICE; take ownership (for example icacls \"" +
+                directory.FullName + "\" /setowner Administrators) or choose another directory.");
         var unsafeRights = FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.Delete | FileSystemRights.ChangePermissions | FileSystemRights.TakeOwnership;
         if (writes) unsafeRights |= FileSystemRights.Write;
+        // Windows' default NTFS root ACL gives Authenticated Users Modify on the root itself.
+        // A volume root cannot be deleted or renamed, so only its Delete right is harmless.
+        if (directory.Parent is null) unsafeRights &= ~FileSystemRights.Delete;
         foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
             if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
                 !Trusted((SecurityIdentifier)rule.IdentityReference) && (rule.FileSystemRights & unsafeRights) != 0)
-                throw new IOException("An unprivileged account can modify or replace the managed image directory: " + directory.FullName);
+                throw new IOException("An unprivileged account can modify or replace the managed image directory: " + directory.FullName +
+                    ". Remove its delete/permission/ownership rights there or choose another directory.");
     }
     private static bool Trusted(SecurityIdentifier sid) => sid == SystemSid || sid == AdminSid || sid == InstallerSid;
     public static string HostVolume(string path)

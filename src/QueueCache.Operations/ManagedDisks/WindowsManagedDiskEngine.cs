@@ -89,7 +89,16 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             if (entries.ContainsKey(definition.ResourceId) || store.ContainsResource(definition.ResourceId)) throw new IOException("This managed resource identity already exists or was retired. Use Start/recover, or create a new resource identity.");
             var record = new ManagedDiskRecord(definition, StartupSession: startupSession);
             store.Save(record); entries.TryAdd(definition.ResourceId, new(record));
-            return await StartCoreAsync(entries[definition.ResourceId], progress, token, creating: true);
+            var entry = entries[definition.ResourceId];
+            try { return await StartCoreAsync(entry, progress, token, creating: true); }
+            catch when (entry.Record.Runtime is null)
+            {
+                // Refused before any native/image state existed: do not leave a definition
+                // that has no identity to stop or remove.
+                store.RemoveStopped(definition.ResourceId); ManagedDiskHostProtection.Unregister(definition.ResourceId);
+                entries.TryRemove(definition.ResourceId, out _); entry.Dispose();
+                throw;
+            }
         }
         finally { mutation.Release(); }
     }
