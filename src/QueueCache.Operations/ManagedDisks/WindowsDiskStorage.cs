@@ -30,6 +30,8 @@ public sealed record ManagedDiskLayout(Guid DiskId, IReadOnlyList<ManagedPartiti
 }
 
 /// <summary>Owned physical-disk access. Numbers are resolved from native resource identities, never selected by a letter.</summary>
+/// <summary>Windows refused exclusive volume access because something still uses the volume.</summary>
+public sealed class WindowsVetoException(string message, Exception inner) : IOException(message, inner);
 [SupportedOSPlatform("windows")]
 public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
 {
@@ -255,7 +257,12 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
             for (var attempt = 1; ; ++attempt)
             {
                 try { Control(handle, 0x90018, [], 0); break; }
-                catch (Win32Exception ex) when (ex.NativeErrorCode == 5 && attempt < 20) { Thread.Sleep(250); }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 5)
+                {
+                    if (attempt == 20)
+                        throw new WindowsVetoException("Windows vetoed exclusive access to the volume: files are open on it or another process holds it.", ex);
+                    Thread.Sleep(250);
+                }
             }
             if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
             var locked = new LockedVolume(handle, volume);

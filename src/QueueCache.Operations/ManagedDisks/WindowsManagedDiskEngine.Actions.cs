@@ -130,12 +130,11 @@ public sealed partial class WindowsManagedDiskEngine
             if (intent == ManagedDiskStopIntent.DiscardThenStop && !acceptDiscard)
                 throw new IOException("Stopping this RAM disk requires explicit discard acknowledgement. Cancellation is not discard permission.");
             progress?.Report(new(ManagedDiskState.Stopping, mode == ManagedDiskMode.CachedVhdx ? "Draining cache and detaching the owned image." : "Locking the owned RAM volume before discarding it."));
-            var removed = false; var exclusive = false;
+            var removed = false;
             try
             {
                 // Only the locking handle can reach a locked volume: release through it, then dismount.
                 using var locked = WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number);
-                exclusive = true;
                 if (mode == ManagedDiskMode.CachedVhdx)
                 { using var cache = locked.Cache(); cache.Control(WriteCacheAction.Release); }
                 locked.Dismount();
@@ -163,7 +162,7 @@ public sealed partial class WindowsManagedDiskEngine
                     if (mode == ManagedDiskMode.CachedVhdx)
                         await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: cleanup.Token, managedOwner: record.ResourceId);
                     // Only a refused exclusive lock is a Windows veto; anything later is a stop failure.
-                    Update(entry, record with { LastError = (exclusive ? "Stopping failed; the owned disk remains mounted: " : "Windows vetoed stopping; the owned disk remains mounted: ") + failure.Message });
+                    Update(entry, record with { LastError = (failure is WindowsVetoException ? "Windows vetoed stopping; the owned disk remains mounted: " : "Stopping failed; the owned disk remains mounted: ") + failure.Message });
                 }
                 catch (Exception recovery)
                 {

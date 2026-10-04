@@ -67,7 +67,7 @@ internal static class ManagedDiskScenarios
                     {
                         var retained = await RecordAsync(); trace.Add(new { Stage = "StopVeto", Error = ex.Message, Record = retained });
                         // Any other refusal (identity, catalog) must not pass as the Windows lock veto.
-                        if (retained.LastError?.StartsWith("Windows vetoed stopping", StringComparison.Ordinal) != true)
+                        if (retained.LastError?.Contains("Windows vetoed", StringComparison.Ordinal) != true)
                             throw new IOException("Stop failed for a reason other than the Windows open-file veto: " + ex.Message, ex);
                         if (retained.Runtime?.State != ManagedDiskState.Ready || !File.ReadAllBytes(file).SequenceEqual(bytes))
                             throw new IOException("Stop veto did not retain the live contents/binding.");

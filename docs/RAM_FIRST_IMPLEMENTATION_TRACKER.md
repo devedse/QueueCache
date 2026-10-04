@@ -2688,3 +2688,12 @@ while writable attachments detached at once. Read-only import/verification views
 no longer taken offline; read-only access and no drive letter already isolate them. A
 replay without the attribute change detached immediately and left the live volume's
 letter, volume GUID and NTFS mount intact. Plan 89 matches the provider read-back check.
+
+Product suites on installed 0.4.324.1, 2026-10-04: `image-in-ram` PASSED (83 s, was
+over 12 minutes), `ram-disk`, `vhdx-backed` and `managed-provider` PASSED. `managed-cli`
+ran 63 commands, then its image-in-RAM stop veto check failed: Stop with save is refused
+by Windows while a file is open (correct), but the outcome was recorded as "Checkpoint
+did not complete ... Access is denied." A refused exclusive volume lock (after the
+bounded retry) is now a WindowsVetoException that says Windows vetoed exclusive access;
+Stop, Save and Format report it that way, Stop records "Windows vetoed stopping" only
+for that exception, and the product/CLI veto checks accept the veto from either path.

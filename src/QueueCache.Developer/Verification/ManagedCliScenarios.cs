@@ -75,7 +75,7 @@ internal static class ManagedCliScenarios
                 using (var open = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                     await CommandAsync(["stop", resource.Value.ToString(), "--json", .. StopFlags()], expectedExit: 1);
                 var vetoed = await StatusAsync(); RequireReady(vetoed);
-                if (vetoed.LastError?.StartsWith("Windows vetoed stopping", StringComparison.Ordinal) != true)
+                if (vetoed.LastError?.Contains("Windows vetoed", StringComparison.Ordinal) != true)
                     throw new IOException("CLI stop failed for a reason other than the Windows open-file veto: " + vetoed.LastError);
                 RequireBytes();
                 var preview = await StatusAsync();

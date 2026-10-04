@@ -133,7 +133,7 @@ internal static class ManagedProviderScenarios
                 using (var open = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
                     try { using var invalid = WindowsDiskStorage.LockVolume(volume, physical.Number); throw new IOException("Open-file volume lock unexpectedly succeeded."); }
-                    catch (System.ComponentModel.Win32Exception) { Pass("open-file-veto", "Windows refused exclusive volume lock while the fixture file was open."); }
+                    catch (WindowsVetoException) { Pass("open-file-veto", "Windows refused exclusive volume lock while the fixture file was open."); }
                 }
                 File.Delete(file);
             }
