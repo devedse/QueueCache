@@ -2539,3 +2539,25 @@ making the code write configuration through the wrong pointer when setup
 started the root adapter. That is consistent with the setup log ending right
 after filter registration, but it remains a hypothesis, not a confirmed
 diagnosis. Fixed by 3bcbcb5; not yet VM-verified.
+
+Provider install crash diagnosed, 2026-10-04 (0.4.292.1 install on the test VM):
+setup bugchecked with PAGE_FAULT_IN_NONPAGED_AREA in storport.sys while starting
+the root adapter, then the next boot failed with INACCESSIBLE_BOOT_DEVICE. The
+SetupAPI device log shows the cause: `Cannot overwrite Trusted Installer protected
+file 'C:\WINDOWS\System32\drivers\qcramdisk.sys'`. The interrupted 0.4.269.1 install
+had left that path as a hardlink into its own driver-store package, so the 0.4.292.1
+package was staged but Windows restarted the adapter with the old 0.4.269.1 binary,
+which lacks `STOR_FEATURE_VIRTUAL_MINIPORT` (seven-argument FindAdapter called with
+the physical convention). The new provider code never ran. The boot failure was a
+consequence: the crash discarded unflushed file data, leaving the newly staged
+boot-start filter and the Program Files copies entirely zero-filled (their SHA-256
+equals that of all-zero buffers of the same size). No dump was saved.
+
+Fixes: the INF uses DIRID 13, so the service runs from its own driver-store package
+and a stale fixed-path copy can no longer shadow a newer package. Provider setup
+removes leftover QueueCache provider packages whenever no adapter node is bound,
+so PnP cannot auto-select an older package for the new node. Install-Driver.ps1
+flushes the SYSTEM hive and the system volume before starting the provider, so a
+crash there cannot zero the staged boot filter. Recovery used the documented
+offline rollback to the 0.4.264.1 filter path (hive backed up first), then deleted
+the two stale provider packages (oem3/oem5) that pointed at the old binary.

@@ -43,6 +43,9 @@ public static class WindowsProviderInstallation
         }
         if (set.Find() is null)
         {
+            // With no adapter node, any staged provider package is a leftover; PnP could
+            // otherwise auto-select it for the new node instead of the package below.
+            RemoveStalePackages();
             var info = DeviceInfo.New();
             Check(SetupDiCreateDeviceInfoW(set.Handle, "QueueCacheRamDisk", ref set.Class, "QueueCache RAM disk adapter", IntPtr.Zero, 1, ref info));
             var identifiers = Encoding.Unicode.GetBytes(HardwareId + "\0\0");
@@ -61,6 +64,16 @@ public static class WindowsProviderInstallation
         RequireNoLiveDisks();
         var info = found.Value;
         Check(SetupDiCallClassInstaller(5, set.Handle, ref info)); // DIF_REMOVE, whole owned root adapter.
+    }
+    private static void RemoveStalePackages()
+    {
+        foreach (var inf in Directory.EnumerateFiles(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF"), "oem*.inf"))
+        {
+            var text = File.ReadAllText(inf);
+            if (!text.Contains(HardwareId, StringComparison.OrdinalIgnoreCase) ||
+                !text.Contains("CatalogFile=qcramdisk.cat", StringComparison.OrdinalIgnoreCase)) continue;
+            Check(SetupUninstallOEMInfW(Path.GetFileName(inf), 1 /* SUOI_FORCEDELETE */, IntPtr.Zero));
+        }
     }
     private sealed class DeviceSet : IDisposable
     {
@@ -157,6 +170,9 @@ public static class WindowsProviderInstallation
     [DllImport("setupapi.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupUninstallOEMInfW(string inf, uint flags, IntPtr reserved);
     [DllImport("newdev.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool UpdateDriverForPlugAndPlayDevicesW(IntPtr window, string hardware, string inf, uint flags, [MarshalAs(UnmanagedType.Bool)] out bool reboot);

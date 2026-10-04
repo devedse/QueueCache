@@ -240,6 +240,12 @@ public static class QueueCacheCodeIntegrity {
     # Use the same signed distribution and root-device SetupAPI entrypoint.
     Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
     Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    # Installing the provider starts its root adapter immediately. Persist the staged
+    # boot filter, its registration and the installed files first, so a crash there
+    # cannot leave a zero-filled boot-start driver behind.
+    $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
+    try { $systemHive.Flush() } finally { $systemHive.Dispose() }
+    Write-VolumeCache -DriveLetter $env:SystemDrive.Substring(0, 1)
     & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
     if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
     Native $controller @('--managed-service-install')

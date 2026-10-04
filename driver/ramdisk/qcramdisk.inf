@@ -15,8 +15,10 @@ PnpLockdown=1
 CopyFiles=DriverCopy
 [DriverCopy]
 qcramdisk.sys
+; DIRID 13 runs the service from its own driver-store package. A fixed System32\drivers
+; copy can be left behind as a protected hardlink and silently shadow a newer package.
 [DestinationDirs]
-DriverCopy=12
+DriverCopy=13
 [Install.NT.Services]
 AddService=qcramdisk,0x00000002,Service
 [Service]
@@ -24,7 +26,7 @@ DisplayName=%Adapter%
 ServiceType=1
 StartType=3
 ErrorControl=1
-ServiceBinary=%12%\qcramdisk.sys
+ServiceBinary=%13%\qcramdisk.sys
 LoadOrderGroup=SCSI Miniport
 Dependencies=qcachelab
 AddReg=ServiceSettings
