@@ -244,7 +244,7 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         if (GetVolumeNameForVolumeMountPointW(root, current, (uint)current.Capacity) && current.ToString().Equals(volume, StringComparison.OrdinalIgnoreCase) &&
             !DeleteVolumeMountPointW(root)) throw new Win32Exception(Marshal.GetLastWin32Error());
     }
-    public static IDisposable LockVolume(string volume, int expectedDisk, bool dismount = false)
+    public static LockedVolume LockVolume(string volume, int expectedDisk, bool dismount = false)
     {
         if (VolumeDisk(volume) != expectedDisk) throw new IOException("The selected volume no longer belongs to the managed disk.");
         var handle = OpenHandle(volume.TrimEnd('\\'), true);
@@ -258,13 +258,17 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
                 catch (Win32Exception ex) when (ex.NativeErrorCode == 5 && attempt < 20) { Thread.Sleep(250); }
             }
             if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
-            if (dismount) Control(handle, 0x90020, [], 0);
-            return new VolumeLock(handle);
+            var locked = new LockedVolume(handle, volume);
+            if (dismount) locked.Dismount();
+            return locked;
         }
         catch { handle.Dispose(); throw; }
     }
-    private sealed class VolumeLock(SafeFileHandle handle) : IDisposable
+    public sealed class LockedVolume(SafeFileHandle handle, string volume) : IDisposable
     {
+        /// <summary>Cache controls for the locked volume; no other handle can reach it while locked.</summary>
+        public CacheDevice Cache() => CacheDevice.ForLockedHandle(handle, volume);
+        public void Dismount() => Control(handle, 0x90020, [], 0);
         // Windows releases FSCTL_LOCK_VOLUME when the handle closes, including after device removal.
         public void Dispose() => handle.Dispose();
     }

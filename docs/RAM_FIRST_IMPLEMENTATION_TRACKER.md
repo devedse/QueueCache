@@ -2651,3 +2651,12 @@ and checkpoint identities had the same exposure. Image inspection now records th
 VirtualDiskId. The suite's earlier "open-file veto" PASS was false: it accepted this
 identity error as the veto. The product and CLI veto checks now require the broker's
 recorded "Windows vetoed stopping" outcome.
+
+Backed Stop/Format cache release fix, 2026-10-04 (installed 0.4.312.1): with the
+identity fix, `vhdx-backed` passed the real Windows Stop veto (now checked against the
+broker's recorded veto) and Flush, then Stop (drain then detach) failed with "Cannot
+open \\?\Volume{...}: The device is not ready." Stop and Format took FSCTL_LOCK_VOLUME
+with dismount and then opened the volume again to release the cache; only the locking
+handle can reach a locked volume. Both now lock without dismounting, release the cache
+through the locking handle, and then dismount, so exclusivity is still proven before
+the cache changes.

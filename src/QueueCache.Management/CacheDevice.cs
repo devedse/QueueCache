@@ -20,6 +20,7 @@ public sealed class CacheDevice : IDisposable
     public const uint PerformanceIoctl = (0x8844u << 16) | (0xD16u << 2);
     public const uint SpecialRangesIoctl = (0x8844u << 16) | (3u << 14) | (0xD17u << 2);
     private readonly SafeFileHandle handle;
+    private readonly bool ownsHandle = true;
 
     public CacheDevice(string device, bool writable = false)
         : this(DevicePath.NormalizeVolume(device), writable, validatedPath: true) { }
@@ -33,6 +34,10 @@ public sealed class CacheDevice : IDisposable
             throw new ArgumentException("A canonical Windows volume GUID name is required.");
         return new CacheDevice(prefix + id.ToString("B"), writable, validatedPath: true);
     }
+
+    /// <summary>Uses a caller-owned volume handle: a FSCTL_LOCK_VOLUME holder is the only handle that can reach a locked volume.</summary>
+    public static CacheDevice ForLockedHandle(SafeFileHandle lockedVolume, string path) => new(lockedVolume, path);
+    private CacheDevice(SafeFileHandle borrowed, string path) { handle = borrowed; Path = path; ownsHandle = false; }
 
     private CacheDevice(string path, bool writable, bool validatedPath)
     {
@@ -178,7 +183,7 @@ public sealed class CacheDevice : IDisposable
         throw new IOException("Device-name buffer exceeded 1 MiB.");
     }
 
-    public void Dispose() => handle.Dispose();
+    public void Dispose() { if (ownsHandle) handle.Dispose(); }
 
     private static class Native
     {

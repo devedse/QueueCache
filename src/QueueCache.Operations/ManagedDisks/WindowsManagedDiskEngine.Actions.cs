@@ -133,9 +133,11 @@ public sealed partial class WindowsManagedDiskEngine
             var removed = false;
             try
             {
-                using var locked = WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number, true);
+                // Only the locking handle can reach a locked volume: release through it, then dismount.
+                using var locked = WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number);
                 if (mode == ManagedDiskMode.CachedVhdx)
-                { using var cache = CacheDevice.OpenVolumeName(record.VolumePath!, true); cache.Control(WriteCacheAction.Release); }
+                { using var cache = locked.Cache(); cache.Control(WriteCacheAction.Release); }
+                locked.Dismount();
                 WindowsDiskStorage.RemoveLetter(record.VolumePath!, record.Definition.PreferredLetter);
                 entry.Disk.Dispose(); entry.Disk = null;
                 if (entry.Provider is not null) entry.Provider.Remove(record.Native!);
@@ -182,14 +184,15 @@ public sealed partial class WindowsManagedDiskEngine
         try
         {
             // Prove exclusivity before recording an erase boundary or changing cache/mounts.
-            using (WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number, true))
+            using (var locked = WindowsDiskStorage.LockVolume(record.VolumePath!, entry.Disk!.Number))
             {
                 token.ThrowIfCancellationRequested();
                 store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Formatting, record.Runtime!.BootEpoch, record.Runtime.CreationGeneration));
                 started = true;
                 Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Formatting } });
                 if (definition.Mode == ManagedDiskMode.CachedVhdx)
-                { using var cache = CacheDevice.OpenVolumeName(record.VolumePath!, true); cache.Control(WriteCacheAction.Release); }
+                { using var cache = locked.Cache(); cache.Control(WriteCacheAction.Release); }
+                locked.Dismount();
                 WindowsDiskStorage.RemoveLetter(record.VolumePath!, definition.PreferredLetter);
             }
             progress?.Report(new(ManagedDiskState.Formatting, "Formatting the exact owned NTFS volume."));
