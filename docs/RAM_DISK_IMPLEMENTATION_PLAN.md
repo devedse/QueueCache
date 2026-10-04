@@ -83,6 +83,12 @@ Precommit cancellation is reported as cancellation only after independent cleanu
 has succeeded; cleanup or catalog failures remain explicit recovery failures.
 Host-full, interrupted commit and power qualification remain separate gates.
 
+Plan 87 requires native shared-budget evidence to include MDL/PFN/slab metadata,
+along with payload and bounded transfer workspace. Cache and provider use one
+locked-page metadata sizing helper; cache payload stays inside its hard budget.
+The managed headroom quote is conservative, while actual native reservations
+remain authoritative. Full matched cache regression measurements remain required.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

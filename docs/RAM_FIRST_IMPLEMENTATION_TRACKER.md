@@ -2505,3 +2505,24 @@ native Debug/Release, Windows management/desktop contracts, CLI and signed setup
 CI 37179484245. Its signed package 0.4.282.1 is downloaded but not installed.
 The exact fresh old-driver baseline on T: remains running; it is separate from
 the earlier incomplete Q: run and no performance acceptance is claimed.
+
+Shared locked-page metadata correction, 2026-10-04:
+the cache and provider reserved page payload and their own slab tables, but
+omitted the allocated MDL header/PFN arrays. A common locked-page sizing helper
+now charges those arrays in both paths. Cache slab admission includes that cost
+inside the selected hard budget; published reserved bytes include the actual
+descriptor count and remain bounded by the budget. Provider reservation includes
+all per-slab MDLs before allocation. The managed headroom estimate also includes
+PFNs and conservatively sized MDL/slab headers, without replacing authoritative
+kernel accounting. There are no changes to ordinary read/write hot-path I/O.
+
+Verification: bounded managed estimate contracts cover 16/17/64 MiB and maximum
+capacity, including PFN scaling and invalid/overflowing capacities. Native
+Debug/Release CI, actual shared allocation/rollback/removal and the complete
+72-case before/after comparison remain required. This is a source accounting
+fix, not a native allocation/performance acceptance verdict.
+
+Maintained plan 87 additionally rejects an underreported native reservation even
+when matching global/provider counters agree. The independent lower bound includes
+x64 MDL/PFN/slab descriptors and the transfer workspace. Host evidence contracts
+reject the old omitted-metadata reservation and any global-accounting discrepancy.

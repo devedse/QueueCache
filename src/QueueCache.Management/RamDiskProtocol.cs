@@ -20,6 +20,15 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
     public const uint AllocationSlabBytes = 4 << 20;
     public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038;
 
+    /// <summary>Conservative x64 headroom estimate, including PFN/MDL/slab metadata. Native reservation is authoritative.</summary>
+    public static ulong EstimateReservationBytes(ulong capacity)
+    {
+        if (capacity < 16UL << 20 || capacity > 128UL << 30 || capacity % (1UL << 20) != 0)
+            throw new ArgumentOutOfRangeException(nameof(capacity));
+        var slabs = (capacity + AllocationSlabBytes - 1) / AllocationSlabBytes;
+        return checked(capacity + capacity / 4096 * 8 + slabs * (64 + 32) + (2UL << 20));
+    }
+
     public static byte[] Request(RamDiskAction action, RamDiskSnapshot? expected = null,
         Guid resource = default, ulong capacity = 0, uint sector = 512, uint slot = 0,
         ulong offset = 0, int transferBytes = 0, Guid freezeOwner = default, RamDiskFlags flags = RamDiskFlags.None)

@@ -36,7 +36,14 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 86)
+## Suites (plan version 87)
+
+Plan 87 requires `managed-provider` to prove that the native reservation includes
+all x64 MDL/PFN/slab metadata and its bounded transfer workspace, and that the
+existing authority increases by exactly that reservation. Underreported native
+metadata fails even if two incorrect counters agree. Allocation failure and final
+removal must still restore the exact previous authority total. Score workloads
+remain unchanged; shared allocator changes require the full matched 72-case run.
 
 Plan 86 extends `image-in-ram` at both sector sizes with actual open-file Save
 vetoes and an export destination collision. The preceding checkpoint/pointer and

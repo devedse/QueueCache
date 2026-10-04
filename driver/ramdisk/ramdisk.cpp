@@ -163,7 +163,8 @@ static NTSTATUS AllocateDisk(ADAPTER* adapter, QC_RAM_REQUEST* request, PIRP irp
     disk->Resource = request->Resource; disk->Epoch = adapter->Epoch;
     disk->Creation = ++adapter->NextCreation; disk->Capacity = request->Capacity; disk->SectorBytes = request->SectorBytes;
     disk->SlabCount = static_cast<ULONG>((disk->Capacity + SlabBytes - 1) / SlabBytes);
-    disk->ReservedBytes = disk->Capacity + disk->SlabCount * sizeof(SLAB) + sizeof(DISK) + QcRamTransferBytes + 4096;
+    disk->ReservedBytes = disk->Capacity + QcLockedPageMetadataBytes(disk->Capacity, disk->SlabCount) +
+        disk->SlabCount * sizeof(SLAB) + sizeof(DISK) + QcRamTransferBytes + 4096;
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
     auto status = IoGetDeviceObjectPointer(&name, FILE_READ_DATA | FILE_WRITE_DATA, &disk->BudgetFile, &disk->BudgetDevice);
     if (!NT_SUCCESS(status)) { FreeDisk(disk); return status; }

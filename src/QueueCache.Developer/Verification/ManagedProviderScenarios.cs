@@ -59,7 +59,7 @@ internal static class ManagedProviderScenarios
             if ((ram.Flags & RamDiskFlags.Published) != 0 || provider.Enumerate().Single(d => d.ResourceId == id) != ram)
                 throw new IOException("Private creation unexpectedly published or lost its native ownership.");
             var reserved = cache.GetWriteCacheState();
-            if (reserved.GlobalReservedBytes != before.GlobalReservedBytes + ram.ReservedBytes) throw new IOException("RAM reservation did not use the existing cache budget authority.");
+            ManagedProviderEvidence.ValidateReservation(ram, before.GlobalReservedBytes, reserved.GlobalReservedBytes);
             var storage = provider.Storage(ram);
             var sector = new byte[sectorBytes];
             await storage.ReadAsync(0, sector, default);

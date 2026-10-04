@@ -6,6 +6,18 @@ namespace QueueCache.Developer.Verification;
 /// <summary>Acceptance oracles for the owned native RAM fixture; no Windows or driver access.</summary>
 public static class ManagedProviderEvidence
 {
+    public static void ValidateReservation(RamDiskSnapshot ram, ulong globalBefore, ulong globalAfter)
+    {
+        if (ram.CapacityBytes == 0 || ram.CapacityBytes % (1UL << 20) != 0)
+            throw new InvalidDataException("Reservation evidence requires the observed aligned native capacity.");
+        var slabs = (ram.CapacityBytes + RamDiskSnapshot.AllocationSlabBytes - 1) / RamDiskSnapshot.AllocationSlabBytes;
+        // x64 MDL/PFN and provider slab descriptors, plus the bounded transfer workspace.
+        var minimum = checked(ram.CapacityBytes + ram.CapacityBytes / 4096 * 8 + slabs * (48 + 24) +
+            RamDiskSnapshot.MaximumTransferBytes + 4096UL);
+        if (ram.ReservedBytes < minimum || globalAfter != checked(globalBefore + ram.ReservedBytes))
+            throw new IOException("Shared RAM reservation omitted native page metadata or did not charge the existing authority exactly.");
+    }
+
     public static void ValidateAllocationFailure(RamDiskAllocationFailureProof before, RamDiskAllocationFailureProof after,
         Guid resource, uint afterSlabs, ulong reservationBefore, ulong reservationAfter)
     {

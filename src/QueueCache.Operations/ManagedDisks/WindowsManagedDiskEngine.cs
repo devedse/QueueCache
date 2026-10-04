@@ -167,8 +167,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
         else
         {
-            var overhead = (definition.CapacityBytes / (4UL << 20) + 1) * 32 + (2UL << 20);
-            MemoryBudget.ValidateIncrease(0, checked(definition.CapacityBytes + overhead));
+            MemoryBudget.ValidateIncrease(0, RamDiskSnapshot.EstimateReservationBytes(definition.CapacityBytes));
             entry.Provider = WindowsRamDisk.Connect();
             token.ThrowIfCancellationRequested();
             var native = entry.Provider.Create(definition.ResourceId, definition.CapacityBytes, definition.SectorBytes);

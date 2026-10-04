@@ -1399,9 +1399,9 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
-    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) /
-                                (Chunk + sizeof(QC_SLOT) + sizeof(ULONG)));
-    n = n / SlotsPerSlab * SlotsPerSlab;
+    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + sizeof(ULONG)) +
+        QcLockedPageMetadataBytes(SlabBytes, 1);
+    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =
@@ -1458,7 +1458,9 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     c->FreeHead = 0;
     c->State.BudgetBytes = budget;
-    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk;
+    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk +
+        QcLockedPageMetadataBytes(static_cast<ULONGLONG>(n) * Chunk, n / SlotsPerSlab);
+    NT_ASSERT(c->State.ReservedBytes <= budget);
     c->State.PayloadCapacity = static_cast<ULONGLONG>(n) * Chunk;
     ++c->Generation;
     Publish(c);

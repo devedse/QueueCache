@@ -4,6 +4,11 @@
 
 // Shared physical-page primitive for the cache and RAM-disk provider. No backing I/O.
 // Call only from an allowed allocation worker context, never a Storport fast callback.
+// Fully page-aligned allocations have one PFN entry per page plus one MDL per slab.
+constexpr ULONGLONG QcLockedPageMetadataBytes(ULONGLONG bytes, ULONGLONG slabs)
+{
+    return bytes / PAGE_SIZE * sizeof(PFN_NUMBER) + slabs * sizeof(MDL);
+}
 inline PUCHAR QcAllocateLockedPages(SIZE_T bytes, PMDL* mdl)
 {
     if (!mdl || !bytes || bytes % PAGE_SIZE || bytes > MAXULONG)

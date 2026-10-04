@@ -11,6 +11,7 @@ internal static class ManagedDiskTests
     {
         DefinitionsAndStartup();
         ProviderRepair();
+        ReservationHeadroom();
         ProviderTrimEvidence();
         ProviderAllocationEvidence();
         CheckpointRetentionEvidence();
@@ -25,6 +26,18 @@ internal static class ManagedDiskTests
         await ManagedBrokerTests.RunAsync();
         await ManagedLayoutTests.RunAsync();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
+    }
+
+    private static void ReservationHeadroom()
+    {
+        foreach (var capacity in new[] { 16UL << 20, 17UL << 20, 64UL << 20, 128UL << 30 })
+        {
+            var estimate = RamDiskSnapshot.EstimateReservationBytes(capacity);
+            Check(estimate > capacity + capacity / 512 + (1UL << 20),
+                "reservation headroom includes a PFN for every page, slab descriptors and control overhead");
+        }
+        foreach (var invalid in new[] { 0UL, (16UL << 20) - 1, (128UL << 30) + (1UL << 20), ulong.MaxValue })
+            Throws<ArgumentOutOfRangeException>(() => RamDiskSnapshot.EstimateReservationBytes(invalid));
     }
 
     private static void ProviderRepair()
@@ -124,6 +137,12 @@ internal static class ManagedDiskTests
             after with { ResourceId = Guid.NewGuid() }, after with { BootEpoch = Guid.NewGuid() }, after with { AllocatedSlabs = 7 } })
             Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateAllocationFailure(before, bad, resource, 8, 1024, 1024));
         Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateAllocationFailure(before, after, resource, 8, 1024, 1025));
+        var ram = new RamDiskSnapshot(resource, before.BootEpoch, 1, 64UL << 20, 0, 66UL << 20,
+            Guid.Empty, 512, RamDiskFlags.None, 0, 0, 0, 0, 0, 0, 0);
+        QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReservation(ram, 1024, 1024 + ram.ReservedBytes);
+        var omittedMetadata = ram with { ReservedBytes = 65UL << 20 };
+        Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReservation(omittedMetadata, 1024, 1024 + omittedMetadata.ReservedBytes));
+        Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReservation(ram, 1024, 1024 + ram.ReservedBytes - 1));
     }
     #pragma warning restore CA1416
 
