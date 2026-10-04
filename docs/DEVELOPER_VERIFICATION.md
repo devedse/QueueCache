@@ -36,7 +36,15 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 87)
+## Suites (plan version 88)
+
+Plan 88 corrects the `managed-provider` read-only check. The provider answers a
+write to a read-only RAM disk with DATA PROTECT / WRITE PROTECTED (sense 7/27h/00h),
+which is correct SCSI, but Windows classpnp maps that ASC to STATUS_IO_DEVICE_ERROR
+for raw writes (only other DATA PROTECT codes become STATUS_MEDIA_WRITE_PROTECTED).
+The check now requires IOCTL_DISK_IS_WRITABLE to succeed before and to fail with
+ERROR_WRITE_PROTECT while read-only, the raw write to fail with ERROR_WRITE_PROTECT or
+ERROR_IO_DEVICE, exactly one new provider error, and unchanged sectors/generation.
 
 Plan 87 requires `managed-provider` to prove that the native reservation includes
 all x64 MDL/PFN/slab metadata and its bounded transfer workspace, and that the

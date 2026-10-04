@@ -6,6 +6,22 @@ namespace QueueCache.Developer.Verification;
 /// <summary>Acceptance oracles for the owned native RAM fixture; no Windows or driver access.</summary>
 public static class ManagedProviderEvidence
 {
+    /// <summary>
+    /// The provider answers DATA PROTECT / WRITE PROTECTED (7/27h). Windows classpnp maps that
+    /// ASC to STATUS_IO_DEVICE_ERROR for raw writes, so the class-level write-protect state is
+    /// proven through IOCTL_DISK_IS_WRITABLE, and the rejection by exactly one provider error.
+    /// </summary>
+    public static void ValidateReadOnlyWrite(bool writableBefore, bool writableWhileReadOnly, int? writeError,
+        ulong errorsBefore, ulong errorsAfter, ulong generationBefore, ulong generationAfter, bool bytesUnchanged)
+    {
+        if (!writableBefore || writableWhileReadOnly)
+            throw new IOException("Windows did not report the native read-only state through IOCTL_DISK_IS_WRITABLE.");
+        if (writeError is not (19 or 1117))
+            throw new IOException($"Native read-only disk did not reject a physical sector write as write-protected (error {writeError?.ToString() ?? "none"}).");
+        if (errorsAfter != errorsBefore + 1 || generationAfter != generationBefore || !bytesUnchanged)
+            throw new IOException("Rejected read-only write was not exactly one provider rejection with unchanged sectors and generation.");
+    }
+
     public static void ValidateReservation(RamDiskSnapshot ram, ulong globalBefore, ulong globalAfter)
     {
         if (ram.CapacityBytes == 0 || ram.CapacityBytes % (1UL << 20) != 0)

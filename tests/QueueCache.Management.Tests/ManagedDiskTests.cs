@@ -143,6 +143,15 @@ internal static class ManagedDiskTests
         var omittedMetadata = ram with { ReservedBytes = 65UL << 20 };
         Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReservation(omittedMetadata, 1024, 1024 + omittedMetadata.ReservedBytes));
         Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReservation(ram, 1024, 1024 + ram.ReservedBytes - 1));
+        foreach (var error in new[] { 19, 1117 })
+            QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReadOnlyWrite(true, false, error, 4, 5, 9, 9, true);
+        foreach (var bad in new (bool Before, bool During, int? Error, ulong ErrorsAfter, ulong Generation, bool Same)[]
+        {
+            (false, false, 19, 5, 9, true), (true, true, 19, 5, 9, true), (true, false, null, 5, 9, true), (true, false, 5, 5, 9, true),
+            (true, false, 1117, 4, 9, true), (true, false, 1117, 6, 9, true), (true, false, 19, 5, 10, true), (true, false, 19, 5, 9, false)
+        })
+            Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateReadOnlyWrite(
+                bad.Before, bad.During, bad.Error, 4, bad.ErrorsAfter, 9, bad.Generation, bad.Same));
     }
     #pragma warning restore CA1416
 

@@ -101,6 +101,12 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         var actual = BitConverter.ToUInt64(Io(0x700F0, [], 16), 8);
         if ((actual & 1) != (offline ? 1UL : 0UL)) throw new IOException("Windows did not apply the requested disk isolation state.");
     }
+    /// <summary>IOCTL_DISK_IS_WRITABLE: the class driver's view of the media write-protect bit.</summary>
+    public bool MediaWritable()
+    {
+        try { Io(0x70024, [], 0); return true; }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 19) { return false; }
+    }
     public ManagedDiskLayout Layout()
     {
         var bytes = Io(0x70050, [], 48 + 144 * 128);

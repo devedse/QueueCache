@@ -2568,3 +2568,18 @@ service-specific error 1 as soon as the first client connected. Creating the nex
 pipe server instance needs FILE_CREATE_PIPE_INSTANCE under the existing instance's
 DACL, which granted only read/write. LocalSystem now also gets CreateNewInstance;
 Administrators keep read/write only. Verified only by the VM run that follows.
+
+managed-provider first VM run, 2026-10-04 (installed 0.4.294.1, run
+`QueueCache-Verify-20261004-091256-40896b9416f24fc58239a8491ded2fdb`): at 512-byte
+sectors allocation-failure rollback (1/8/16 slabs), private zeroed storage and
+shared accounting, native range rejection, isolated VHDX logical transfer,
+redundant-cache refusal, file-relative TRIM zero/guards/rewrite, open-file lock
+veto, filesystem freeze/thaw and exact owned removal all PASSED. The read-only
+check failed: a raw write returned ERROR_IO_DEVICE instead of ERROR_WRITE_PROTECT.
+A direct probe showed the provider's sense reaches Windows intact (CHECK CONDITION,
+fixed sense 7/27h/00h), IOCTL_DISK_IS_WRITABLE reports ERROR_WRITE_PROTECT, and the
+write counted exactly one provider error with no generation change. Microsoft's
+classpnp maps DATA PROTECT with ASC 27h to STATUS_IO_DEVICE_ERROR (only other ASCs
+become STATUS_MEDIA_WRITE_PROTECTED), so the provider is correct SCSI and the test
+expectation was wrong. Plan 88 checks the class write-protect state instead. The
+4096-byte geometry did not run because the suite stops at the first failure.

@@ -150,18 +150,22 @@ internal static class ManagedProviderScenarios
             {
                 var offset = ram.CapacityBytes - (1UL << 20); var beforeBytes = new byte[sectorBytes];
                 await physical.ReadAsync(offset, beforeBytes, default);
+                var writableBefore = physical.MediaWritable();
                 ram = provider.SetReadOnly(ram, true);
                 try
                 {
                     if ((ram.Flags & RamDiskFlags.ReadOnly) == 0) throw new IOException("Read-only native state was not applied.");
-                    var protectedGeneration = ram.WriteGeneration; var rejected = false;
+                    var writableWhileReadOnly = physical.MediaWritable();
+                    var protectedState = provider.Query(ram); int? writeError = null;
                     try { await physical.WriteAsync(offset, new byte[sectorBytes], default); }
-                    catch (IOException ex) when ((ex.HResult & 0xFFFF) == 19) { rejected = true; }
-                    if (!rejected) throw new IOException("Native read-only disk did not reject a physical sector write with ERROR_WRITE_PROTECT.");
+                    catch (IOException ex) { writeError = ex.HResult & 0xFFFF; }
                     var afterBytes = new byte[sectorBytes]; await physical.ReadAsync(offset, afterBytes, default);
-                    if (!afterBytes.SequenceEqual(beforeBytes) || provider.Query(ram).WriteGeneration != protectedGeneration)
-                        throw new IOException("Rejected read-only write changed sectors or generation.");
-                    Pass("native-readonly-write-veto", "An actual physical sector write is rejected; sectors and generation remain unchanged.");
+                    var rejectedState = provider.Query(ram);
+                    snapshots.Add(new { Stage = "ReadOnlyWrite", WritableBefore = writableBefore, WritableWhileReadOnly = writableWhileReadOnly,
+                        WriteError = writeError, Before = protectedState, After = rejectedState });
+                    ManagedProviderEvidence.ValidateReadOnlyWrite(writableBefore, writableWhileReadOnly, writeError, protectedState.Errors,
+                        rejectedState.Errors, protectedState.WriteGeneration, rejectedState.WriteGeneration, afterBytes.SequenceEqual(beforeBytes));
+                    Pass("native-readonly-write-veto", $"Windows reports the media write-protected; a physical sector write fails (Win32 {writeError}) as exactly one provider rejection with unchanged sectors and generation.");
                 }
                 finally { ram = provider.SetReadOnly(ram, false); }
             }
