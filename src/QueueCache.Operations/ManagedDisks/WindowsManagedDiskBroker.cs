@@ -27,8 +27,12 @@ public sealed class WindowsManagedDiskBroker(IManagedDiskService service)
                 foreach (var done in clients.Where(c => c.Value.IsCompleted).ToArray())
                 { await done.Value; clients.TryRemove(done.Key, out _); }
                 var security = new PipeSecurity(); security.SetAccessRuleProtection(true, false);
-                foreach (var sid in new[] { WellKnownSidType.LocalSystemSid, WellKnownSidType.BuiltinAdministratorsSid })
-                    security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(sid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                // Each further server instance needs FILE_CREATE_PIPE_INSTANCE under the
+                // existing instance's DACL; only the LocalSystem broker may create them.
+                security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                    PipeAccessRights.ReadWrite | PipeAccessRights.CreateNewInstance, AccessControlType.Allow));
+                security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+                    PipeAccessRights.ReadWrite, AccessControlType.Allow));
                 var pipe = NamedPipeServerStreamAcl.Create(ManagedDiskBrokerProtocol.PipeName, PipeDirection.InOut, 16,
                     PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 65536, 65536, security);
                 try { await pipe.WaitForConnectionAsync(token); }

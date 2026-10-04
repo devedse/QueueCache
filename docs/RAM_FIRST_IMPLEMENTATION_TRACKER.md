@@ -2561,3 +2561,10 @@ flushes the SYSTEM hive and the system volume before starting the provider, so a
 crash there cannot zero the staged boot filter. Recovery used the documented
 offline rollback to the 0.4.264.1 filter path (hive backed up first), then deleted
 the two stale provider packages (oem3/oem5) that pointed at the old binary.
+
+Broker pipe instance fix, 2026-10-04 (found on installed 0.4.294.1): the broker
+started, reconciled and restored the saved Q: profile, then terminated with
+service-specific error 1 as soon as the first client connected. Creating the next
+pipe server instance needs FILE_CREATE_PIPE_INSTANCE under the existing instance's
+DACL, which granted only read/write. LocalSystem now also gets CreateNewInstance;
+Administrators keep read/write only. Verified only by the VM run that follows.
