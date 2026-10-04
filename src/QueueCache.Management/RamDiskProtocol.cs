@@ -4,7 +4,8 @@ namespace QueueCache.Management;
 
 public enum RamDiskAction : uint
 {
-    Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly, StartupSession
+    Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly, StartupSession,
+    DeveloperCreateAllocationFailure = 0x100
 }
 [Flags]
 public enum RamDiskFlags : uint { None = 0, Published = 1, ReadOnly = 2, Frozen = 4 }
@@ -16,6 +17,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
     ulong Flushes, ulong Trims, ulong Errors, ulong Transfers)
 {
     public const int WireSize = 168, MaximumTransferBytes = 1 << 20, MaximumDisks = 32;
+    public const uint AllocationSlabBytes = 4 << 20;
     public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038;
 
     public static byte[] Request(RamDiskAction action, RamDiskSnapshot? expected = null,
@@ -24,9 +26,11 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
     {
         if (!Enum.IsDefined(action) || transferBytes < 0 || transferBytes > MaximumTransferBytes ||
             (flags & ~RamDiskFlags.ReadOnly) != 0 || slot >= MaximumDisks || expected?.Slot >= MaximumDisks ||
-            (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create or RamDiskAction.StartupSession) && expected is null) ||
-            (action == RamDiskAction.Create && (resource == Guid.Empty || capacity < 16UL << 20 || capacity > 128UL << 30 ||
+            (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create or RamDiskAction.StartupSession or RamDiskAction.DeveloperCreateAllocationFailure) && expected is null) ||
+            (action is RamDiskAction.Create or RamDiskAction.DeveloperCreateAllocationFailure && (resource == Guid.Empty || capacity < 16UL << 20 || capacity > 128UL << 30 ||
                 sector is not (512 or 4096) || capacity % (1UL << 20) != 0)) ||
+            (action == RamDiskAction.DeveloperCreateAllocationFailure && (expected is not null || transferBytes != 0 ||
+                offset == 0 || offset > (capacity + AllocationSlabBytes - 1) / AllocationSlabBytes)) ||
             (action is RamDiskAction.Freeze or RamDiskAction.Thaw && freezeOwner == Guid.Empty))
             throw new ArgumentException("Invalid bounded RAM disk control request.");
         var data = new byte[WireSize + transferBytes];

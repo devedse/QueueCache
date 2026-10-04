@@ -40,6 +40,21 @@ internal static class ManagedProviderScenarios
         var imagePath = Path.Combine(directory, "provider-" + id.ToString("N") + ".vhdx");
         try
         {
+            var originalDisks = provider.Enumerate();
+            foreach (var afterSlabs in new uint[] { 1, 8, 16 })
+            {
+                var failedResource = Guid.NewGuid(); var proofBefore = provider.AllocationFailureProof(); var failed = false;
+                try { provider.CreateWithAllocationFailure(failedResource, 64UL << 20, sectorBytes, afterSlabs); }
+                catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1450) { failed = true; }
+                var proofAfter = provider.AllocationFailureProof(); var budgetAfter = cache.GetWriteCacheState();
+                snapshots.Add(new { Stage = "AllocationFailure", Resource = failedResource, RequestedSlabs = afterSlabs,
+                    Before = proofBefore, After = proofAfter, Cache = budgetAfter });
+                ManagedProviderEvidence.ValidateAllocationFailure(proofBefore, proofAfter, failedResource, afterSlabs,
+                    before.GlobalReservedBytes, budgetAfter.GlobalReservedBytes);
+                if (!failed || !provider.Enumerate().Select(Identity).SequenceEqual(originalDisks.Select(Identity)))
+                    throw new IOException("Native allocation failure did not reach its requested boundary, remove all private state and restore the exact shared reservation.");
+            }
+            Pass("allocation-failure-rollback", "Real allocations fail after 1/8/16 slabs, with native boundary proof, no surviving object and exact reservation restoration.");
             ram = provider.Create(id, 64UL << 20, sectorBytes); snapshots.Add(new { Stage = "Private", Native = ram });
             if ((ram.Flags & RamDiskFlags.Published) != 0 || provider.Enumerate().Single(d => d.ResourceId == id) != ram)
                 throw new IOException("Private creation unexpectedly published or lost its native ownership.");
@@ -176,6 +191,9 @@ internal static class ManagedProviderScenarios
                 primaryFailure is null ? cleanupFailure : new AggregateException(primaryFailure, cleanupFailure));
         }
         return checks;
+
+        static (Guid Resource, Guid Epoch, ulong Creation, ulong Capacity, uint Sector, uint Slot, ulong Reservation) Identity(RamDiskSnapshot disk)
+            => (disk.ResourceId, disk.BootEpoch, disk.CreationGeneration, disk.CapacityBytes, disk.SectorBytes, disk.Slot, disk.ReservedBytes);
 
         static async Task RejectRangeAsync(Func<Task> operation)
         {

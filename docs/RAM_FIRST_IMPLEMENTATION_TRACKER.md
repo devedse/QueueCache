@@ -2437,3 +2437,28 @@ and managed CLI compilation passed without warnings/errors. Plan-83 commit
 f36a64b also passed native Debug/Release, Windows management/desktop contracts,
 CLI and signed-installer CI 37177476249. Matching plan-84 CI and real Windows
 CLI execution remain required; this source addition is not native qualification.
+
+Allocation failure/lifetime implementation: plan 85 extends `managed-provider`
+with unique request-local new-creation failures after 1/8/16 allocated 4 MiB slabs
+in each geometry. Native proof changes only after that allocation/zeroing boundary
+is reached, identifies the exact resource and increments once. Acceptance rejects
+ordinary early OOM, changed epoch, wrong resource/boundary, lost objects and any
+reservation difference. No hook remains armed; normal product creation is
+unchanged. Subsequent normal storage must still be zeroed and writable.
+
+Review also found that reservation release previously called the allocating
+IoBuildDeviceIoControlRequest during low-memory teardown. It now uses an owned
+[IoAllocateIrp](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-ioallocateirp)
+request prepared before reserving memory, with a completion/event and explicit
+ownership; it is not attached to the creating thread's IRP queue.
+Its actual IRP size is included in the reservation. Failed and successful creation
+cleanup can return accounting without allocating another request. Physical pages
+still disappear before the reservation is released, and the provider retains
+the budget device/file reference until release completes.
+
+Verification: host management contracts passed without warnings/errors. ABI and
+acceptance contracts cover bounded request-local failure,
+missing/native boundary proof, wrong identity and leaked reservations. Native
+Debug/Release CI, real rollback/teardown under Verifier and complete before/after
+performance comparison remain required. This source fix does not establish VM
+allocation/lifetime qualification.

@@ -12,6 +12,7 @@ internal static class ManagedDiskTests
         DefinitionsAndStartup();
         ProviderRepair();
         ProviderTrimEvidence();
+        ProviderAllocationEvidence();
         ProductCliOwnership();
         NativeImageAbi();
         NativeRamAbi();
@@ -55,6 +56,19 @@ internal static class ManagedDiskTests
             }
             Throws<InvalidDataException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateTrim(before, after, original, observed[..^1], (int)sector, (int)sector));
         }
+    }
+    #pragma warning restore CA1416
+
+    #pragma warning disable CA1416 // Pure allocation-boundary acceptance; no native calls.
+    private static void ProviderAllocationEvidence()
+    {
+        var resource = Guid.NewGuid(); var before = new RamDiskAllocationFailureProof(Guid.NewGuid(), Guid.Empty, 0, 0);
+        var after = before with { ResourceId = resource, CompletedInjections = 1, AllocatedSlabs = 8 };
+        QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateAllocationFailure(before, after, resource, 8, 1024, 1024);
+        foreach (var bad in new[] { after with { CompletedInjections = 0 }, after with { CompletedInjections = 2 },
+            after with { ResourceId = Guid.NewGuid() }, after with { BootEpoch = Guid.NewGuid() }, after with { AllocatedSlabs = 7 } })
+            Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateAllocationFailure(before, bad, resource, 8, 1024, 1024));
+        Throws<IOException>(() => QueueCache.Developer.Verification.ManagedProviderEvidence.ValidateAllocationFailure(before, after, resource, 8, 1024, 1025));
     }
     #pragma warning restore CA1416
 
@@ -160,6 +174,12 @@ internal static class ManagedDiskTests
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Freeze, expected));
         Check(RamDiskSnapshot.Request(RamDiskAction.Read, expected, transferBytes: 4096).Length == RamDiskSnapshot.WireSize + 4096,
             "bounded RAM transfers carry bytes, never user pointers");
+        foreach (var boundary in new ulong[] { 1, 8, 16 })
+            Check(RamDiskSnapshot.Request(RamDiskAction.DeveloperCreateAllocationFailure, resource: Guid.NewGuid(), capacity: 64 * MiB,
+                offset: boundary).Length == RamDiskSnapshot.WireSize, "allocation failure is one bounded creation request without transfer buffers");
+        foreach (var invalid in new ulong[] { 0, 17, ulong.MaxValue })
+            Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.DeveloperCreateAllocationFailure, resource: Guid.NewGuid(), capacity: 64 * MiB, offset: invalid));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.DeveloperCreateAllocationFailure, expected, capacity: 64 * MiB, offset: 1));
     }
 
     private static void DefinitionsAndStartup()

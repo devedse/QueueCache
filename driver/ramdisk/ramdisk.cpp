@@ -9,7 +9,7 @@ extern "C" {
 #include "../shared/budgetprotocol.h"
 #include "../shared/ramdiskprotocol.h"
 
-static constexpr ULONG Tag = 'dRCQ', SlabBytes = 4 << 20;
+static constexpr ULONG Tag = 'dRCQ', SlabBytes = QcRamSlabBytes;
 static const GUID EmptyGuid{};
 static PDRIVER_OBJECT Driver;
 struct SLAB { PMDL Mdl; PUCHAR Bytes; ULONG Length; };
@@ -22,6 +22,9 @@ struct DISK
     QC_KERNEL_RESERVATION Reservation;
     PFILE_OBJECT BudgetFile;
     PDEVICE_OBJECT BudgetDevice;
+    PIRP ReleaseIrp;
+    KEVENT ReleaseDone;
+    NTSTATUS ReleaseStatus;
     KSPIN_LOCK IoLock;
     volatile LONG References;
     BOOLEAN Removing;
@@ -35,6 +38,8 @@ struct ADAPTER
     DISK* Disks[QcRamMaxDisks];
     GUID Epoch;
     ULONGLONG NextCreation;
+    GUID LastAllocationFailureResource;
+    ULONGLONG InjectedAllocationFailures, LastAllocationFailureSlabs;
     BOOLEAN Stopped;
 };
 extern "C" DRIVER_INITIALIZE DriverEntry;
@@ -84,6 +89,39 @@ static NTSTATUS BudgetCall(DISK* disk, ULONG action)
     if (status == STATUS_PENDING) KeWaitForSingleObject(&done, Executive, KernelMode, FALSE, nullptr);
     return result.Status;
 }
+static NTSTATUS ReleaseCompleted(PDEVICE_OBJECT, PIRP irp, PVOID context)
+{
+    auto disk = static_cast<DISK*>(context);
+    disk->ReleaseStatus = irp->IoStatus.Status;
+    KeSetEvent(&disk->ReleaseDone, IO_NO_INCREMENT, FALSE);
+    return STATUS_MORE_PROCESSING_REQUIRED; // Allocating caller owns and frees this IRP.
+}
+static NTSTATUS PrepareRelease(DISK* disk)
+{
+    // IoAllocateIrp has no originating thread association: this unused request may
+    // safely outlive the creating service callback. IoBuildDeviceIoControlRequest
+    // would instead leave it on that callback thread's cancellable IRP list.
+    disk->ReleaseIrp = IoAllocateIrp(disk->BudgetDevice->StackSize, FALSE);
+    if (!disk->ReleaseIrp) return STATUS_INSUFFICIENT_RESOURCES;
+    KeInitializeEvent(&disk->ReleaseDone, NotificationEvent, FALSE);
+    disk->ReleaseIrp->RequestorMode = KernelMode;
+    disk->ReleaseIrp->AssociatedIrp.SystemBuffer = &disk->Reservation;
+    auto stack = IoGetNextIrpStackLocation(disk->ReleaseIrp);
+    stack->MajorFunction = IRP_MJ_INTERNAL_DEVICE_CONTROL;
+    stack->Parameters.DeviceIoControl.IoControlCode = IOCTL_QCACHE_KERNEL_BUDGET;
+    stack->Parameters.DeviceIoControl.InputBufferLength = sizeof(disk->Reservation);
+    stack->Parameters.DeviceIoControl.OutputBufferLength = sizeof(disk->Reservation);
+    IoSetCompletionRoutine(disk->ReleaseIrp, ReleaseCompleted, disk, TRUE, TRUE, TRUE);
+    return STATUS_SUCCESS;
+}
+static NTSTATUS ReleaseReservation(DISK* disk)
+{
+    NT_ASSERT(disk->ReleaseIrp);
+    disk->Reservation.Action = QcBudgetRelease; disk->ReleaseStatus = STATUS_PENDING;
+    const auto status = IoCallDriver(disk->BudgetDevice, disk->ReleaseIrp);
+    if (status == STATUS_PENDING) KeWaitForSingleObject(&disk->ReleaseDone, Executive, KernelMode, FALSE, nullptr);
+    return disk->ReleaseStatus;
+}
 static NTSTATUS StartupSession(GUID* epoch, ULONGLONG* transitions)
 {
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
@@ -106,17 +144,19 @@ static void FreeDisk(DISK* disk)
     // Accounting survives until the last reference and last physical page are gone.
     if (disk->Reservation.Bytes && disk->BudgetFile)
     {
-        const auto status = BudgetCall(disk, QcBudgetRelease);
+        const auto status = ReleaseReservation(disk);
         NT_ASSERT(NT_SUCCESS(status)); UNREFERENCED_PARAMETER(status);
     }
+    if (disk->ReleaseIrp) IoFreeIrp(disk->ReleaseIrp);
     if (disk->BudgetFile) ObDereferenceObject(disk->BudgetFile);
     RtlSecureZeroMemory(disk, sizeof(*disk)); ExFreePoolWithTag(disk, Tag);
 }
-static NTSTATUS AllocateDisk(ADAPTER* adapter, QC_RAM_REQUEST* request, PIRP irp, DISK** result)
+static NTSTATUS AllocateDisk(ADAPTER* adapter, QC_RAM_REQUEST* request, PIRP irp, DISK** result, ULONG failAfterSlabs = 0)
 {
     if (request->Capacity < (16ULL << 20) || request->Capacity > (128ULL << 30) || request->Capacity % (1 << 20) ||
         (request->SectorBytes != 512 && request->SectorBytes != 4096) || request->Flags ||
         IsEqualGUID(request->Resource, EmptyGuid)) return STATUS_INVALID_PARAMETER;
+    if (failAfterSlabs > (request->Capacity + SlabBytes - 1) / SlabBytes) return STATUS_INVALID_PARAMETER;
     auto disk = static_cast<DISK*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(DISK), Tag));
     if (!disk) return STATUS_INSUFFICIENT_RESOURCES;
     KeInitializeSpinLock(&disk->IoLock); KeInitializeEvent(&disk->Idle, NotificationEvent, TRUE);
@@ -127,6 +167,9 @@ static NTSTATUS AllocateDisk(ADAPTER* adapter, QC_RAM_REQUEST* request, PIRP irp
     UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Device\\QueueCacheBudget");
     auto status = IoGetDeviceObjectPointer(&name, FILE_READ_DATA | FILE_WRITE_DATA, &disk->BudgetFile, &disk->BudgetDevice);
     if (!NT_SUCCESS(status)) { FreeDisk(disk); return status; }
+    status = PrepareRelease(disk);
+    if (!NT_SUCCESS(status)) { FreeDisk(disk); return status; }
+    disk->ReservedBytes += IoSizeOfIrp(disk->BudgetDevice->StackSize);
     disk->Reservation.Size = sizeof(disk->Reservation); disk->Reservation.Version = 1;
     disk->Reservation.Owner = Driver; disk->Reservation.Resource = disk->Resource;
     disk->Reservation.Bytes = disk->ReservedBytes;
@@ -142,6 +185,13 @@ static NTSTATUS AllocateDisk(ADAPTER* adapter, QC_RAM_REQUEST* request, PIRP irp
         slab->Bytes = QcAllocateLockedPages(slab->Length, &slab->Mdl);
         if (!slab->Bytes) { FreeDisk(disk); return STATUS_INSUFFICIENT_RESOURCES; }
         RtlZeroMemory(slab->Bytes, slab->Length);
+        if (failAfterSlabs && i + 1 == failAfterSlabs)
+        {
+            // Proof changes only after actual page allocation/zeroing reaches the requested boundary.
+            ++adapter->InjectedAllocationFailures; adapter->LastAllocationFailureResource = disk->Resource;
+            adapter->LastAllocationFailureSlabs = i + 1;
+            FreeDisk(disk); return STATUS_INSUFFICIENT_RESOURCES;
+        }
     }
     *result = disk; return STATUS_SUCCESS;
 }
@@ -191,7 +241,8 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     if (!Authorized(irp)) status = STATUS_ACCESS_DENIED;
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
-        reply->Action >= QcRamCapabilities && reply->Action <= QcRamStartupSession && input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
+        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamStartupSession) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
+        input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;
         // Service callbacks run at PASSIVE_LEVEL. Serialize control/transfer/remove,
@@ -203,9 +254,14 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
             RtlZeroMemory(reply, sizeof(*reply)); reply->Magic = QcRamMagic; reply->Version = QcRamVersion; reply->Size = sizeof(*reply);
             reply->Epoch = adapter->Epoch; reply->Capacity = 128ULL << 30; reply->Slot = QcRamMaxDisks;
             reply->TransferBytes = QcRamTransferBytes; status = STATUS_SUCCESS;
+            if (command.Action == QcRamCapabilities)
+            {
+                reply->Resource = adapter->LastAllocationFailureResource;
+                reply->Generation = adapter->InjectedAllocationFailures; reply->Transfers = adapter->LastAllocationFailureSlabs;
+            }
             if (command.Action == QcRamStartupSession) status = StartupSession(&reply->Epoch, &reply->Generation);
         }
-        else if (command.Action == QcRamCreate)
+        else if (command.Action == QcRamCreate || command.Action == QcRamDeveloperCreateAllocationFailure)
         {
             ULONG slot = QcRamMaxDisks; bool duplicate = false;
             for (ULONG i = 0; i < QcRamMaxDisks; ++i)
@@ -214,11 +270,14 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
                 if (!disk && slot == QcRamMaxDisks) slot = i;
                 if (disk && IsEqualGUID(disk->Resource, command.Resource)) duplicate = true;
             }
-            if (duplicate) status = STATUS_OBJECT_NAME_COLLISION;
+            if (command.Action == QcRamDeveloperCreateAllocationFailure && (!command.Offset || command.Offset > MAXULONG ||
+                input != sizeof(*reply) || output != sizeof(*reply))) status = STATUS_INVALID_PARAMETER;
+            else if (duplicate) status = STATUS_OBJECT_NAME_COLLISION;
             else if (slot == QcRamMaxDisks) status = STATUS_INSUFFICIENT_RESOURCES;
             else
             {
-                DISK* disk = nullptr; status = AllocateDisk(adapter, reply, irp, &disk);
+                DISK* disk = nullptr; status = AllocateDisk(adapter, reply, irp, &disk,
+                    command.Action == QcRamDeveloperCreateAllocationFailure ? static_cast<ULONG>(command.Offset) : 0);
                 if (NT_SUCCESS(status))
                 {
                     KIRQL irql; KeAcquireSpinLock(&adapter->TableLock, &irql); adapter->Disks[slot] = disk; KeReleaseSpinLock(&adapter->TableLock, irql);

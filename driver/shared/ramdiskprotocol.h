@@ -2,11 +2,14 @@
 #pragma once
 #include <ntddk.h>
 // Buffered, bounded Storport service IRPs. No user addresses in this ABI.
-constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 1, QcRamMaxDisks = 32, QcRamTransferBytes = 1 << 20;
+constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 1, QcRamMaxDisks = 32, QcRamTransferBytes = 1 << 20, QcRamSlabBytes = 4 << 20;
 enum QC_RAM_ACTION : ULONG
 {
     QcRamCapabilities = 1, QcRamEnumerate, QcRamCreate, QcRamQuery, QcRamRead,
-    QcRamWrite, QcRamPublish, QcRamFreeze, QcRamThaw, QcRamRemove, QcRamSetReadOnly, QcRamStartupSession
+    QcRamWrite, QcRamPublish, QcRamFreeze, QcRamThaw, QcRamRemove, QcRamSetReadOnly, QcRamStartupSession,
+    // Request-local test: Offset is the physical slab count after which this NEW creation fails.
+    // No hook survives the request; no existing disk is targeted. Same administrator authorization as Create.
+    QcRamDeveloperCreateAllocationFailure = 0x100
 };
 enum QC_RAM_FLAGS : ULONG { QcRamPublished = 1, QcRamReadOnly = 2, QcRamFrozen = 4 };
 struct QC_RAM_REQUEST
@@ -19,3 +22,5 @@ struct QC_RAM_REQUEST
     ULONGLONG ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers;
 };
 static_assert(sizeof(QC_RAM_REQUEST) == 168, "Managed/native RAM ABI size");
+// Capabilities also reports request-local fault proof: Resource = last injected resource,
+// Generation = injection count, Transfers = its allocated slabs. StartupSession retains its own generation semantics.

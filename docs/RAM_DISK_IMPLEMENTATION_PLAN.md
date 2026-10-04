@@ -70,6 +70,12 @@ recorded; independent exact-owner cleanup prevents a CLI output failure from
 orphaning storage silently. Windows CLI execution remains a separate acceptance
 gate from service API fixtures and parser-only CI tests.
 
+Plan 85 exercises physical allocation rollback after early, middle and final
+allocated slabs, with native boundary/resource proof and no persistent fault
+setting. The release IRP is prepared before reservation and included in its
+metadata accounting, so low-memory teardown needs no fresh allocation. Native
+Verifier/VM proof remains required for this lifetime change.
+
 ImageInRam always preserves the imported source file. Saves create standalone
 versioned VHDX checkpoints in a selected managed local directory. The resource's
 committed-image pointer determines the next load. Save As creates a new standalone

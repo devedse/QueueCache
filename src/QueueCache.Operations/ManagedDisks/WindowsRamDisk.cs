@@ -6,6 +6,8 @@ using QueueCache.Management;
 
 namespace QueueCache.Operations.ManagedDisks;
 
+public sealed record RamDiskAllocationFailureProof(Guid BootEpoch, Guid ResourceId, ulong CompletedInjections, ulong AllocatedSlabs);
+
 /// <summary>Bounded control of the installed in-tree provider; handles do not own RAM lifetime.</summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsRamDisk : IDisposable
@@ -31,6 +33,17 @@ public sealed class WindowsRamDisk : IDisposable
     }
 
     public RamDiskSnapshot Capabilities() => Send(RamDiskSnapshot.Request(RamDiskAction.Capabilities), capabilities: true);
+    /// <summary>Native proof of request-local developer failures; no persistent fault setting.</summary>
+    public RamDiskAllocationFailureProof AllocationFailureProof()
+    { var capabilities = Capabilities(); return new(capabilities.BootEpoch, capabilities.ResourceId, capabilities.WriteGeneration, capabilities.Transfers); }
+    /// <summary>Only the named new creation fails, after actual allocated slabs; existing resources are untouched.</summary>
+    public void CreateWithAllocationFailure(Guid resource, ulong capacity, uint sector, uint afterSlabs)
+    {
+        var wire = RamDiskSnapshot.Request(RamDiskAction.DeveloperCreateAllocationFailure, resource: resource,
+            capacity: capacity, sector: sector, offset: afterSlabs);
+        Call(wire, wire.Length, wire.Length);
+        throw new IOException("The requested native allocation failure unexpectedly succeeded.");
+    }
     /// <summary>Authoritative qcache cold/hybrid startup epoch; sleep/hibernate and service restarts do not advance it.</summary>
     public RamDiskSnapshot StartupSession() => Send(RamDiskSnapshot.Request(RamDiskAction.StartupSession), capabilities: true);
     public IReadOnlyList<RamDiskSnapshot> Enumerate()

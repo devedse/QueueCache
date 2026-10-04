@@ -133,6 +133,16 @@ source on removal; full-image RAM uses the CLI read-only load option.
 qcache developer verify T: --suite managed-cli --output C:\QueueCache-Results
 ```
 
+Plan 85 requires native allocation rollback in `managed-provider` for both
+geometries. Separate unique new creations fail after 1, 8 and 16 actual 4 MiB
+slabs. Request-local injection leaves no persistent hook and cannot target an
+existing disk. A native proof counter must advance exactly once and identify
+the requested resource/boundary; ordinary out-of-memory rejection before that
+boundary cannot pass. The complete prior native creation set and shared
+reservation must remain unchanged. Each subsequent normal creation must still
+provide zeroed writable storage. Raw snapshots retain the proof and budget.
+Existing write-performance workloads and deadlines remain unchanged.
+
 Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
 `image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
 images and transaction/cleanup evidence, and explicitly stop/forget their
