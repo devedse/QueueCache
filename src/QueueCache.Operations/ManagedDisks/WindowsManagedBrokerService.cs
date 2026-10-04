@@ -54,7 +54,7 @@ public static class WindowsManagedBrokerService
         {
             using var provider = WindowsRamDisk.Connect();
             var session = provider.StartupSession();
-            using var engine = new WindowsManagedDiskEngine(session.BootEpoch);
+            using var engine = new WindowsManagedDiskEngine(session.BootEpoch, session.WriteGeneration);
             await engine.InitializeAsync(new ServiceProgress());
             Report(Running);
             using var serving = new CancellationTokenSource();

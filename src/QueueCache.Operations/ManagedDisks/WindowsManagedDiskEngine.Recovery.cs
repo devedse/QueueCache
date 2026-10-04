@@ -129,13 +129,13 @@ public sealed partial class WindowsManagedDiskEngine
                 Update(entry, record with { PhysicalDiskNumber = null, VolumePath = null, StartupSession = startupSession,
                     Runtime = record.Runtime! with { State = ManagedDiskState.Stopped, Volume = null } }); return;
             }
-            if (record.StartupSession != startupSession || record.Runtime is null || record.PhysicalDiskNumber is null)
-                throw new IOException("An attached image lacks same-startup ownership evidence. It was not detached or adopted.");
+            if (record.Runtime is null || record.PhysicalDiskNumber is null)
+                throw new IOException("An attached image lacks durable ownership evidence. It was not detached or adopted.");
+            if (record.StartupSession != startupSession && !ManagedDiskStartup.IsPreviousHybridStartup(record.StartupSession, startupSession, hybridTransitions))
+                throw new IOException("The attached image is not from the immediately preceding native hybrid startup. It was not detached or adopted.");
             entry.Image.AdoptAttached(); entry.Disk?.Dispose(); entry.Disk = WindowsDiskStorage.Open(physicalPath, true);
-            if (!WindowsVirtualDisk.Inspect(record.OriginalSource.Path, true).SameImage(record.OriginalSource) ||
-                entry.Disk.Number != record.PhysicalDiskNumber || entry.Disk.CapacityBytes != record.Definition.CapacityBytes ||
-                entry.Disk.SectorBytes != record.Definition.SectorBytes)
-                throw new IOException("The attached VHDX does not match its remembered image and physical binding.");
+            ManagedDiskStartup.RequireAttachedImageIdentity(record, WindowsVirtualDisk.Inspect(record.OriginalSource.Path, true),
+                entry.Disk.Number, entry.Disk.CapacityBytes, entry.Disk.SectorBytes);
             if (ManagedDiskStartup.IsIncompleteCreation(record))
             {
                 Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.RecoveryRequired },
@@ -152,12 +152,25 @@ public sealed partial class WindowsManagedDiskEngine
                     LastError = "An interrupted creation/format is retained without being declared Ready. Stop the owned image or explicitly reformat it." });
                 return;
             }
-            WindowsDiskStorage.AssignLetter(volume, record.Definition.PreferredLetter);
-            await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId);
-            Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Ready }, LastError = null });
+            if (record.StartupSession != startupSession)
+            {
+                // Fast Startup may preserve a permanent VHDX attachment. After exact
+                // image/physical/GPT/volume/Ready-journal validation, stop/drain that
+                // owned attachment before reopening the remembered startup recipe.
+                Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Ready }, LastError = null });
+                await StopCoreAsync(entry, ManagedDiskStopIntent.DrainThenDetach, acceptDiscard: false, null, token);
+                Update(entry, entry.Record with { StartupSession = startupSession });
+            }
+            else
+            {
+                WindowsDiskStorage.AssignLetter(volume, record.Definition.PreferredLetter);
+                await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId);
+                Update(entry, record with { Runtime = record.Runtime with { State = ManagedDiskState.Ready }, LastError = null });
+            }
         }
         var current = entry.Record.Runtime!;
-        store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, ManagedDiskJournalStage.Ready, current.BootEpoch, current.CreationGeneration));
+        store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, current.State == ManagedDiskState.Stopped ? ManagedDiskJournalStage.Stopped : ManagedDiskJournalStage.Ready,
+            current.BootEpoch, current.CreationGeneration));
     }
     public async Task AttemptShutdownSavesAsync(CancellationToken token)
     {

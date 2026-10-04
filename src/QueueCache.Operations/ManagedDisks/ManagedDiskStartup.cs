@@ -5,6 +5,27 @@ public enum ManagedDiskStartupAction { LeaveStopped, AdoptLive, CreateAndFormatE
 /// <summary>Receives a proven Windows startup epoch; UI/service PID or uptime is not a boot classifier.</summary>
 public static class ManagedDiskStartup
 {
+    /// <summary>Matches the native v1 startup epoch codec, never a PID/uptime inference.</summary>
+    public static bool IsPreviousHybridStartup(Guid? previous, Guid current, ulong transitions)
+    {
+        if (previous is null || previous == Guid.Empty || current == Guid.Empty || transitions == 0) return false;
+        var bytes = current.ToByteArray();
+        // QC_STARTUP_EPOCH encodes the authoritative hybrid counter into GUID.Data4.
+        // Reverse only the immediately preceding transition of this same kernel epoch.
+        for (var i = 0; i < 8; i++) bytes[8 + i] ^= (byte)((transitions ^ (transitions - 1)) >> (i * 8));
+        return new Guid(bytes) == previous;
+    }
+
+    public static void RequireAttachedImageIdentity(ManagedDiskRecord record, ImageInspection actual,
+        int physicalNumber, ulong capacityBytes, uint sectorBytes)
+    {
+        if (record.Definition.Mode != ManagedDiskMode.CachedVhdx || record.OriginalSource is null || record.Runtime is null ||
+            record.PhysicalDiskNumber is null || physicalNumber != record.PhysicalDiskNumber ||
+            capacityBytes != record.Definition.CapacityBytes || sectorBytes != record.Definition.SectorBytes ||
+            !actual.SameImage(record.OriginalSource))
+            throw new IOException("The attached VHDX does not match its remembered image and physical binding.");
+    }
+
     public static bool IsIncompleteCreation(ManagedDiskRecord record) =>
         record.Runtime?.State is ManagedDiskState.Creating or ManagedDiskState.Loading or ManagedDiskState.Formatting or ManagedDiskState.Blocked or ManagedDiskState.Faulted or ManagedDiskState.RecoveryRequired &&
         (record.GptDiskId is null || record.VolumePath is null);

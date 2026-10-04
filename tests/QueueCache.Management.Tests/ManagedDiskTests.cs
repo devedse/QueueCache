@@ -14,6 +14,7 @@ internal static class ManagedDiskTests
         ProviderTrimEvidence();
         ProviderAllocationEvidence();
         ProductCliOwnership();
+        AttachedStartupOwnership();
         NativeImageAbi();
         NativeRamAbi();
         DurableCatalog();
@@ -33,6 +34,37 @@ internal static class ManagedDiskTests
         foreach (var blocked in new[] { unbound with { Service = "qcramdisk" }, unbound with { DevNodeStatus = 8 },
             unbound with { ProviderModuleLoaded = true }, unbound with { ModulesObserved = false }, unbound with { DevNodeStatus = null } })
             Check(!blocked.CanRepairUnbound, "bound, started, loaded or unobserved provider cannot bypass live-RAM preflight");
+    }
+
+    private static void AttachedStartupOwnership()
+    {
+        var cold = new Guid("11223344-5566-7788-0000-000000000000");
+        var hybrid1 = new Guid("11223344-5566-7788-0100-000000000000");
+        var hybrid2 = new Guid("11223344-5566-7788-0200-000000000000");
+        Check(ManagedDiskStartup.IsPreviousHybridStartup(cold, hybrid1, 1) && ManagedDiskStartup.IsPreviousHybridStartup(hybrid1, hybrid2, 2),
+            "native hybrid transition proof binds retained images to the immediately preceding kernel startup");
+        Check(!ManagedDiskStartup.IsPreviousHybridStartup(cold, hybrid1, 0) &&
+            !ManagedDiskStartup.IsPreviousHybridStartup(cold, hybrid2, 2) &&
+            !ManagedDiskStartup.IsPreviousHybridStartup(Guid.NewGuid(), hybrid1, 1) &&
+            !ManagedDiskStartup.IsPreviousHybridStartup(null, hybrid1, 1),
+            "cold, skipped, foreign and unavailable startup identities cannot authorize retained-image detach");
+        var definition = ManagedDiskDefinition.New(ManagedDiskMode.CachedVhdx) with
+        { CapacityBytes = 64 * MiB, ImagePath = @"T:\Owned\startup.vhdx", StartAtBoot = true };
+        var image = new ImageInspection(definition.ImagePath!, "host|exact-file", Guid.NewGuid(), definition.CapacityBytes, MiB, 512, false);
+        var runtime = new ManagedDiskRuntime(definition.ResourceId, Guid.NewGuid(), 1, definition.Mode, ManagedDiskState.Ready, 0, null);
+        var record = new ManagedDiskRecord(definition, runtime, OriginalSource: image, PhysicalDiskNumber: 7);
+        ManagedDiskStartup.RequireAttachedImageIdentity(record, image, 7, definition.CapacityBytes, 512);
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record, image with { FileIdentity = "host|foreign-file" }, 7, definition.CapacityBytes, 512));
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record, image with { DiskId = Guid.NewGuid() }, 7, definition.CapacityBytes, 512));
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record, image, 8, definition.CapacityBytes, 512));
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record, image, 7, definition.CapacityBytes + MiB, 512));
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record, image, 7, definition.CapacityBytes, 4096));
+        Throws<IOException>(() => ManagedDiskStartup.RequireAttachedImageIdentity(record with { PhysicalDiskNumber = null }, image, 7, definition.CapacityBytes, 512));
+        var stopped = runtime with { State = ManagedDiskState.Stopped };
+        Check(ManagedDiskStartup.ShouldStartAfterReconcile(definition, true, stopped) &&
+            !ManagedDiskStartup.ShouldStartAfterReconcile(definition, false, stopped) &&
+            !ManagedDiskStartup.ShouldStartAfterReconcile(definition with { StartAtBoot = false }, true, stopped),
+            "only automatic recipes reopen after a proven new startup, once the owned old attachment is stopped");
     }
 
     #pragma warning disable CA1416 // Pure acceptance oracle in the Windows-targeted runner assembly; no native calls.

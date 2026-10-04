@@ -14,6 +14,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
     private readonly ConcurrentDictionary<Guid, Entry> entries = new();
     private readonly SemaphoreSlim mutation = new(1, 1);
     private readonly Guid startupSession;
+    private readonly ulong hybridTransitions;
     private readonly Guid mountedEpoch;
     private ulong mountedGeneration;
     private readonly AsyncLocal<Entry?> imageOperation = new();
@@ -28,10 +29,10 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         public readonly ManagedImageIo ImageIo = new();
         public void Dispose() { Disk?.Dispose(); Image?.Dispose(); Provider?.Dispose(); Paths?.Dispose(); }
     }
-    public WindowsManagedDiskEngine(Guid startupSession)
+    public WindowsManagedDiskEngine(Guid startupSession, ulong hybridTransitions = 0)
     {
         if (startupSession == Guid.Empty) throw new ArgumentException("An authoritative Windows startup session is required.");
-        this.startupSession = startupSession; mountedEpoch = startupSession;
+        this.startupSession = startupSession; this.hybridTransitions = hybridTransitions; mountedEpoch = startupSession;
         ManagedDiskHostProtection.CreateProtectedDirectory(ManagedDiskHostProtection.CatalogDirectory);
         store = new(ManagedDiskHostProtection.CatalogDirectory);
         foreach (var record in store.List())

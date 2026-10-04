@@ -2462,3 +2462,26 @@ missing/native boundary proof, wrong identity and leaked reservations. Native
 Debug/Release CI, real rollback/teardown under Verifier and complete before/after
 performance comparison remain required. This source fix does not establish VM
 allocation/lifetime qualification.
+
+Fast Startup backed-image reconciliation correction: a permanent VHDX attachment
+can survive a hybrid startup. Reconciliation now validates the retained image
+file/virtual identity, exact physical number/geometry, GPT and volume identity
+and completed Ready journal before draining/stopping that owned attachment.
+The authoritative native hybrid counter/epoch must prove the immediately
+preceding startup of the same kernel session; cold/foreign/skipped/unknown
+startup identities cannot authorize retained-attachment retirement.
+It then remembers the new authoritative startup epoch; automatic recipes reopen
+through normal creation, while startup-off recipes remain stopped. Same-session
+broker restarts retain/adopt the live attachment. A missing/mismatched binding,
+incomplete journal or Windows lock veto still blocks; no foreign attachment is
+detached. Reconciliation also preserves the Stopped journal boundary after
+retiring a prior RAM/image creation instead of overwriting it with Ready.
+
+Verification: host management contracts and CLI Release compilation passed without
+warnings/errors. Ownership contracts reject changed file/virtual identity,
+physical number, capacity/sector geometry and missing binding, and distinguish
+new-startup automatic reopen from same-session/manual recipes. Allocation/lifetime
+commit 8a58b30 passed native Debug/Release, Windows management/desktop contracts,
+CLI and signed-installer CI 37178446155. Matching reconciliation CI and actual
+hybrid-startup/lifetime qualification remain required;
+normal restart evidence alone cannot qualify this path.
