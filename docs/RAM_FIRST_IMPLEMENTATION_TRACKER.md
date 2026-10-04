@@ -2123,7 +2123,7 @@ part of the UI implementation.
 | RD03 — RAM provider and one shared memory budget | In progress: cache shared helpers, kernel-only owned reserve/release endpoint, provider references, redundant-cache refusal and strict managed ABI | Native Debug/Release CI passed; managed ABI contracts passed; cross-driver VM proof pending |
 | RD04 — mounted VHDX with existing cache | Source implemented on feature branch: native mount/create, owned GPT/NTFS binding, independent shared cache transaction, explicit flush/drain/detach and veto restoration | Host build passed; product fixed/dynamic Strict/Fast VM case added, not run |
 | RD05 — pure RAM create/format/stop | Source implemented: full reservation, owned publication/format, explicit generation-bound discard, fresh recipe restart | Host definitions/UI/identity contracts passed; product VM case added, not run |
-| RD06 — whole-image import and RAM operation | Source implemented: read-only offline import, complete copy plus RAM digest verification, private GPT/NTFS/CRC validation, source detach before publication | Host transfer and corrupt/encrypted-layout tests passed; source-unavailable runtime/reload VM case added, not run |
+| RD06 — whole-image import and RAM operation | Source implemented: read-only letterless import, complete copy plus RAM digest verification, private GPT/NTFS/CRC validation, source detach before publication | Host transfer and corrupt/encrypted-layout tests passed; source-unavailable runtime/reload VM case added, not run |
 | RD07 — consistent checkpoint save/export/recovery | Source implemented: volume lock/native freeze, full-sector copy/flush/detach/read-back, durable journal/pointer, predecessor retention, export and save-stop | Host fault tests cover acquire/copy/flush/verify/journal/pointer/cleanup and cancellation; native crash/full-host/save-stop paths not VM-run |
 | RD08 — broker/startup/power/package lifecycle | Source implemented: LocalSystem SCM host in qcache, authenticated bounded local IPC, exact-generation adoption, native cold/hybrid startup epoch, opted-in preshutdown save, installer preflight and one startup coordinator | Host framing/identity contracts passed; SCM, power, upgrade/uninstall and native classifier require Windows qualification |
 | RD09 — completed three-mode UI and product CLI | Source implemented: creation and managed cards, all planned lifecycle/checkpoint/cache/startup/removal/recovery actions, shared cache editor, explicit erase/discard with fresh identity; physical discovery retained separately | Desktop creation/action/dashboard contracts passed; Windows CLI parser checks expanded; native UI walkthrough and CLI execution remain unrun |
@@ -2678,3 +2678,13 @@ re-read the private layout through the provider's service path after formatting 
 already published the disk, and the provider correctly refused that read with
 STATUS_DEVICE_BUSY. The private-layout check now runs only before first publication;
 the published layout is still checked. Provider errors now include the Windows reason.
+
+Checkpoint verification delay fixed, 2026-10-04 (installed 0.4.322.1): every image-in-RAM
+save and creation took about 185 s; per-phase timing showed verification spent
+inspect=7 ms, open=80 ms, read=169 ms and close=180022 ms. A standalone replay reproduced
+it: changing the disk attributes (taking it offline, and even restoring it online) on a
+read-only VHDX attachment made its later DetachVirtualDisk wait out a 180 s timeout,
+while writable attachments detached at once. Read-only import/verification views are
+no longer taken offline; read-only access and no drive letter already isolate them. A
+replay without the attribute change detached immediately and left the live volume's
+letter, volume GUID and NTFS mount intact. Plan 89 matches the provider read-back check.

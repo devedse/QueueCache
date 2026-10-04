@@ -210,8 +210,9 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             lease = File.OpenHandle(expected.Path, FileMode.Open, FileAccess.Read, FileShare.Read);
             var actual = WindowsVirtualDisk.Inspect(expected.Path);
             if (actual != expected) throw new IOException("The image identity changed after inspection.");
+            // Read-only and letterless already isolate this view. Changing disk attributes on a
+            // read-only VHD made its later detach wait out a 180 s timeout (found on the VM).
             image = WindowsVirtualDisk.Open(expected.Path, false, true); disk = WindowsDiskStorage.Open(image.Attach(true), true);
-            disk.SetOffline(true);
             if (disk.CapacityBytes != expected.VirtualBytes || disk.SectorBytes != expected.SectorBytes) throw new IOException("The staging disk geometry differs from the source.");
             var measured = (imageOperation.Value ?? throw new InvalidOperationException("Image import requires an owned resource measurement scope.")).ImageIo.Measure(disk);
             if (requireBlank) await ManagedImageLayout.RequireBlankAsync(measured, token);

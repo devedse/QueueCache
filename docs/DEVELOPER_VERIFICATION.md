@@ -36,7 +36,13 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 88)
+## Suites (plan version 89)
+
+Plan 89 stops taking read-only VHDX views offline: changing the disk attributes of a
+read-only attachment made its detach wait out a 180-second Windows timeout. The
+provider's isolated logical read-back and product image imports/verification now use a
+read-only, letterless attachment without attribute changes. Writable staging disks are
+still taken offline. Score workloads are unchanged.
 
 Plan 88 corrects the `managed-provider` read-only check. The provider answers a
 write to a read-only RAM disk with DATA PROTECT / WRITE PROTECTED (sense 7/27h/00h),

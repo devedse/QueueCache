@@ -86,9 +86,9 @@ internal static class ManagedProviderScenarios
             using (var image = WindowsVirtualDisk.Open(imagePath, false, true))
             using (var disk = WindowsDiskStorage.Open(image.Attach(true), true))
             {
-                disk.SetOffline(true); await LogicalImageTransfer.VerifyAsync(disk, digest);
+                await LogicalImageTransfer.VerifyAsync(disk, digest);
             }
-            Pass("isolated-vhdx-logical-transfer", "No-letter offline export and read-only offline full logical read-back match SHA-256.");
+            Pass("isolated-vhdx-logical-transfer", "No-letter offline export and read-only letterless full logical read-back match SHA-256.");
             ram = provider.Publish(ram); physical = await WindowsDiskStorage.ResolveRamAsync(provider, ram, default);
             physical.InitializeNewGpt(); volume = await physical.WaitVolumeAsync(default);
             await WindowsDiskStorage.FormatNtfsAsync(volume, physical.Number, "QC-Provider", default);
