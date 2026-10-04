@@ -85,7 +85,8 @@ jobs:
           if-no-files-found: error
   release_github:
     needs: [generate_version_number, build]
-    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    # Every pushed branch publishes; pull_request runs duplicate the branch push.
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -95,11 +96,31 @@ jobs:
           pattern: QueueCache-lab-setup-*
           path: release
           merge-multiple: true
+      - name: Release identity
+        id: identity
+        env:
+          VERSION: ${{ needs.generate_version_number.outputs.version }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$BRANCH" = master ]; then
+            echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "name=QueueCache $VERSION — test-signed" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            # Branch builds number from the run counter, master from its own counter;
+            # the branch suffix keeps tags unique without changing the build version.
+            slug=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')
+            echo "tag=$VERSION-$slug" >> "$GITHUB_OUTPUT"
+            echo "name=QueueCache $VERSION ($BRANCH) — test-signed pre-release" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.generate_version_number.outputs.version }}
-          name: QueueCache ${{ needs.generate_version_number.outputs.version }} — test-signed
-          prerelease: true
+          tag_name: ${{ steps.identity.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.identity.outputs.name }}
+          prerelease: ${{ steps.identity.outputs.prerelease }}
+          make_latest: ${{ steps.identity.outputs.prerelease == 'false' }}
           generate_release_notes: true
           body: 'Development build. QueueCache caches volumes: installation registers the filter as the topmost volume filter, which covers every volume after a restart; each volume has its own cache, and caching stays off unless configured or restored from a saved per-volume profile. Commands sent to a physical disk (health and SMART tools, SCSI/ATA pass-through) never reach the cache. Test-signing prerequisites apply. Successful CI is not kernel correctness certification; see docs/VOLUME_FILTER.md for the VM verification record.'
           files: |
