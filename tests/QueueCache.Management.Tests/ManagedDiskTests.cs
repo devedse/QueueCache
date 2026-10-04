@@ -10,6 +10,7 @@ internal static class ManagedDiskTests
     public static async Task RunAsync()
     {
         DefinitionsAndStartup();
+        ProviderRepair();
         NativeImageAbi();
         NativeRamAbi();
         DurableCatalog();
@@ -19,6 +20,16 @@ internal static class ManagedDiskTests
         await ManagedBrokerTests.RunAsync();
         await ManagedLayoutTests.RunAsync();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
+    }
+
+    private static void ProviderRepair()
+    {
+        var unbound = new RamProviderRegistration(null, 0, false, true, false);
+        Check(unbound.CanRepairUnbound, "proven unbound inactive provider can be repaired");
+        Check((unbound with { DevNodeStatus = null, Disconnected = true }).CanRepairUnbound, "disconnected unbound node can be repaired with module-absence proof");
+        foreach (var blocked in new[] { unbound with { Service = "qcramdisk" }, unbound with { DevNodeStatus = 8 },
+            unbound with { ProviderModuleLoaded = true }, unbound with { ModulesObserved = false }, unbound with { DevNodeStatus = null } })
+            Check(!blocked.CanRepairUnbound, "bound, started, loaded or unobserved provider cannot bypass live-RAM preflight");
     }
 
     private static void DurableCatalog()

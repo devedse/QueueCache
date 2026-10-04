@@ -2298,8 +2298,12 @@ but has no RAM-provider service entry; this disagreement does not prove the
 underlying crash or repair action. The old 0.4.264.1 driver file is present.
 The current SYSTEM hive was copied to the owned installer evidence directory
 before any proposed recovery edits. Original registration and logs are retained.
-Restoring the old driver path and one recovery boot require owner approval under
-the current prohibition on automatic reboot/reset recovery. No reset was issued.
+The owner approved the proposed scoped rollback and one normal recovery boot.
+The committed SYSTEM hive was saved before changing only qcachelab's ImagePath
+to the retained 0.4.264.1 immutable file. Windows booted successfully and SSH
+returned. No hypervisor reset was issued. The failed package, original hive and
+installer/repair logs remain available. This narrows the investigation but does
+not establish the crash cause.
 
 Implementation: review identified an independent boot hazard: the boot-start
 volume filter returned failure when `ExUuidCreate` could not generate an epoch.
@@ -2332,3 +2336,31 @@ management and desktop contracts passed. Contracts distinguish incomplete error
 states from fully bound resources and stopped recipes. Actual interrupted native
 creation/Windows veto qualification remains pending the recovered VM and matching
 CI; host tests do not prove physical detach ordering.
+
+### Interrupted provider installation repair and loaded-module observation
+
+Implementation: update preflight distinguishes an unbound inactive/disconnected
+owned adapter from a bound but unavailable provider. Repair requires a missing
+service binding, explicit devnode status and successful module enumeration proving
+qcramdisk is absent. Unknown status, missing privilege, started nodes, loaded
+provider modules and bound unavailable providers still block. The installer
+removes/recreates only that proven unbound root node and includes disconnected
+nodes when checking for duplicates. Live/private allocations and catalog recovery
+states retain their existing update/uninstall vetoes. Inno preflight uses its
+bundled CLI from temporary storage before replacing installed recovery tools,
+so an older CLI's inability to recognize the interrupted state cannot prevent
+safe repair.
+
+The maintained `qcache developer driver loaded` diagnostic and runner provenance
+now capture loaded paths through PSAPI, with temporary process SeDebugPrivilege
+restored afterwards. Windows 11 24H2's successful-but-null address result is an
+unavailable observation, never proof of absence. File hashes describe the current
+on-disk files; qualification must match the filter's immutable loaded filename
+and the signed artifact hash, rather than treating SCM registration as loaded
+identity. This adds provenance without changing workload/score contracts.
+
+Verification: the recovered VM reproduces the old preflight failure and has an
+unbound/disconnected adapter, no qcramdisk service and no current dump at either
+the OS or configured Q: dump location. Host repair-policy contracts reject unsafe
+and incomplete observations. Matching CI, the actual installer repair, subsequent
+loaded-driver boot and full Windows qualification remain outstanding.

@@ -148,6 +148,14 @@ internal static class DeveloperCommands
             return problems.Count == 0 ? 0 : 1;
         });
         driver.Subcommands.Add(registration);
+        var loaded = new Command("loaded", "Observe loaded QueueCache module paths and current file hashes as JSON; changes no driver configuration.");
+        loaded.SetAction(_ =>
+        {
+            var observation = QueueCache.Operations.LoadedDriverInspection.Capture();
+            Console.WriteLine(JsonSerializer.Serialize(observation, new JsonSerializerOptions { WriteIndented = true }));
+            return observation.Available ? 0 : 1;
+        });
+        driver.Subcommands.Add(loaded);
         root.Subcommands.Add(driver);
         var lab = new Command("lab-disk", "Volume-filter lab disk: an expandable VHDX with two formatted volumes (NTFS by default) and one unformatted volume, for the volumes and trim-cache suites and write-tests.");
         var labPath = new Argument<string>("vhdx") { Description = @"Local .vhdx path, e.g. C:\QueueCache-Lab\VolumeLab.vhdx." };

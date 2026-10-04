@@ -21,6 +21,15 @@ supported registration (`qcache developer driver registration`): QueueCache as t
 last Volume-class upper filter, not on the disk class, every volume covered, no
 lab `DiagnosticMode`.
 
+Before qualification, run `qcache developer driver loaded`. It observes loaded
+QueueCache module paths through PSAPI and reports current file hashes. Compare
+the filter's immutable loaded filename and hash with the intended signed artifact;
+SCM registration alone is insufficient. An unavailable observation, including
+Windows 11 24H2 returning null addresses without SeDebugPrivilege, is not proof
+that a driver is absent. The process temporarily enables its eligible debug
+privilege and restores it after observation. The same snapshot is recorded in
+each run's provenance; file hashes are not hashes of kernel memory.
+
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
 files must live on the selected disk; their distinct retained directory is recorded

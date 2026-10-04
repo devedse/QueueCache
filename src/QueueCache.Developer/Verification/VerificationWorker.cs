@@ -874,9 +874,7 @@ public static class VerificationWorker
     {
         using var service = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\qcachelab");
         var registered = service?.GetValue("ImagePath")?.ToString();
-        var binary = registered?.Trim('"').Replace(@"\??\", "");
-        if (binary?.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase) == true)
-            binary = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), binary[12..]);
+        var binary = registered is null ? null : LoadedDriverInspection.NormalizePath(registered);
         string? Hash(string? path) => path is not null && File.Exists(path) ?
             Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) : null;
         return new
@@ -890,7 +888,8 @@ public static class VerificationWorker
             EntryAssemblySha256 = Hash(System.Reflection.Assembly.GetEntryAssembly()?.Location),
             RegisteredDriverPath = registered,
             RegisteredDriverSha256 = Hash(binary),
-            Note = "Registered binary is not proof of loaded binary after an upgrade. Record/reboot to the intended release before comparison."
+            LoadedDrivers = LoadedDriverInspection.Capture(),
+            Note = "PSAPI paths observe loaded modules; file hashes describe current files. Registered paths are not proof of loaded identity. Match the filter's immutable loaded filename and signed artifact hash before comparison."
         };
     }
 }

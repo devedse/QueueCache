@@ -23,6 +23,7 @@ UninstallDisplayIcon={app}\desktop\QueueCache.Desktop.exe
 SetupIconFile=..\assets\branding\queuecache.ico
 
 [Files]
+Source: "{#PackageDir}\controller\*"; DestDir: "{tmp}\QueueCachePreflight"; Flags: dontcopy recursesubdirs createallsubdirs
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "Install-Driver.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "Recover-Registration.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
@@ -65,10 +66,12 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var Code: Integer; Controller: String;
 begin
   Result := '';
-  Controller := ExpandConstant('{app}\controller\qcache.exe');
-  if FileExists(Controller) then
-    if (not Exec(Controller, '--managed-update-preflight', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
-      Result := 'QueueCache update preflight failed. Stop or recover every managed disk first, then retry. RAM, images and recovery tools have been retained.';
+  // Use the bundled guard before replacing any installed recovery tools. An
+  // older CLI may be unable to distinguish an unbound interrupted installation.
+  ExtractTemporaryFiles('{tmp}\QueueCachePreflight\*');
+  Controller := ExpandConstant('{tmp}\QueueCachePreflight\qcache.exe');
+  if (not Exec(Controller, '--managed-update-preflight', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
+    Result := 'QueueCache update preflight failed. Stop or recover every managed disk first, then retry. RAM, images and recovery tools have been retained.';
 end;
 
 function RunDriverSetup(Uninstall: Boolean): Boolean;
