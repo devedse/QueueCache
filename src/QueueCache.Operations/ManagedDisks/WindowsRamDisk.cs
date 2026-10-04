@@ -81,7 +81,10 @@ public sealed class WindowsRamDisk : IDisposable
     {
         if (!DeviceIoControl(handle, RamDiskSnapshot.ServiceIoctl, buffer, (uint)inputLength,
                 buffer, (uint)outputLength, out var returned, IntPtr.Zero))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "RAM disk provider operation failed.");
+        {
+            var error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(error, "RAM disk provider operation failed: " + new Win32Exception(error).Message);
+        }
         if (returned < RamDiskSnapshot.WireSize || returned > outputLength)
             throw new InvalidDataException("Incomplete native RAM disk operation reply.");
         return checked((int)returned);

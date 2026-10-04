@@ -281,7 +281,10 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
         public async Task<string> PublishAsync(ManagedDiskDefinition value, CancellationToken token)
         {
-            if (value.Source == ManagedDiskSource.OpenExisting)
+            // Before first publication only: an explicitly initialized image was already published
+            // for formatting, the provider refuses private reads of a published disk, and the
+            // published layout is checked below.
+            if (value.Source == ManagedDiskSource.OpenExisting && !entry.Published)
             {
                 var privateLayout = await ManagedImageLayout.InspectAsync(RamStorage ?? entry.Disk!, token);
                 WindowsDiskStorage.RefuseOnlineClone(privateLayout, entry.Disk?.Number);

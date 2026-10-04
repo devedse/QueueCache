@@ -2669,3 +2669,12 @@ it to disk while its own virtual-disk handle (with write access) was still open.
 handle is now closed first. The broker also returned only the outer message, which
 hid the cause; error replies now include inner causes and failures are logged with
 their full exception in the broker log.
+
+Product suites on installed 0.4.318.1, 2026-10-04: `vhdx-backed` PASSED (real Windows
+Stop veto, Strict and explicit-Fast flush/detach/reopen byte oracles). `image-in-ram`
+passed save veto, export collision and whole-image save/export/runtime/reload at 512
+bytes, then failed creating from an explicitly initialized blank image: publication
+re-read the private layout through the provider's service path after formatting had
+already published the disk, and the provider correctly refused that read with
+STATUS_DEVICE_BUSY. The private-layout check now runs only before first publication;
+the published layout is still checked. Provider errors now include the Windows reason.
