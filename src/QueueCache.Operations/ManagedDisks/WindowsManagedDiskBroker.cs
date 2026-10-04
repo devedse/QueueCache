@@ -107,7 +107,8 @@ public sealed class WindowsManagedDiskBroker(IManagedDiskService service)
             }
             catch (Exception ex)
             {
-                await outbound.Writer.WriteAsync(new(1, id, "error", Error: ex.Message, Cancelled: ex is OperationCanceledException), CancellationToken.None);
+                if (ex is not OperationCanceledException) WindowsManagedBrokerService.Log($"Operation {id} failed: {ex}");
+                await outbound.Writer.WriteAsync(new(1, id, "error", Error: Describe(ex), Cancelled: ex is OperationCanceledException), CancellationToken.None);
             }
             finally
             {
@@ -143,6 +144,14 @@ public sealed class WindowsManagedDiskBroker(IManagedDiskService service)
                 catch (OperationCanceledException) when (operation.IsCancellationRequested) { }
             }
         }
+    }
+    // Outer messages state what was retained; the inner cause says why it failed.
+    private static string Describe(Exception ex)
+    {
+        var parts = new List<string>();
+        for (var current = ex; current is not null; current = current.InnerException)
+            if (!parts.Contains(current.Message)) parts.Add(current.Message);
+        return string.Join(" Cause: ", parts);
     }
     private sealed class BrokerProgress(Action<ManagedDiskProgress> report) : IProgress<ManagedDiskProgress> { public void Report(ManagedDiskProgress value) => report(value); }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]

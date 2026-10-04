@@ -107,6 +107,8 @@ public sealed partial class WindowsManagedDiskEngine
         public async Task CompleteAndDetachAsync(CancellationToken token)
         {
             await measured.FlushAsync(token); disk.Dispose(); image.Detach(); detached = true;
+            // The virtual-disk handle keeps write access to the container until it is closed.
+            image.Dispose();
             using var host = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.WriteThrough);
             counters.FlushAttempt();
             host.Flush(flushToDisk: true);

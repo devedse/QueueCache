@@ -2660,3 +2660,12 @@ with dismount and then opened the volume again to release the cache; only the lo
 handle can reach a locked volume. Both now lock without dismounting, release the cache
 through the locking handle, and then dismount, so exclusivity is still proven before
 the cache changes.
+
+Checkpoint candidate flush fix, 2026-10-04 (installed 0.4.312.1): every image-in-RAM
+creation failed at its initial checkpoint with "Save failed. The live RAM disk and
+preceding committed image are retained." The journal's recorded failure showed a
+sharing violation: after detaching the candidate, the save reopened the VHDX to flush
+it to disk while its own virtual-disk handle (with write access) was still open. The
+handle is now closed first. The broker also returned only the outer message, which
+hid the cause; error replies now include inner causes and failures are logged with
+their full exception in the broker log.
