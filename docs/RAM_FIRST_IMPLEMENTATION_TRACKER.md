@@ -2764,5 +2764,15 @@ IoLock. Implementation: admission, bounds, read-only/freeze checks and counters 
 IoLock; the memory copy runs after releasing it. Freeze and set-read-only wait for admitted
 writes (ActiveWrites) before returning, so checkpoints and the write-protect guarantee keep
 their meaning; removal already waits for request references. The adapter now reports 256
-I/Os per LUN (initial queue depth 256) instead of Storport defaults. Verification: pending
-(managed-provider/ram-disk suites and the same benchmark).
+I/Os per LUN (initial queue depth 256) instead of Storport defaults. Verification on
+0.4.338.1 (ecc0f1e, Verifier off, target Q: because the lab T: disk is gone): ram-disk and
+managed-provider PASS at 512/4096 sectors. Throughput did not change (R: 11.6 GB/s SEQ1M Q1
+and Q8, 34k IOPS RND4K Q1 and Q32), so IoLock was not the limiting serialization. Diagnosis
+on the same build: one DiskSpd thread is CPU-bound on one core (25% of 4) with identical Q1
+and Q32 results; 4 threads reach 320k IOPS RND4K through NTFS and 580k raw (#disk), and
+keeping idle cores busy does not help. StartIo copies and completes each request inside
+the submitting call, so a single submitter never has more than one request in flight.
+Next: complete transfers asynchronously off the submitting thread (worker/DPC per CPU)
+and profile the remaining single-thread per-request cost. Same run: cached VHDX (S:, 2 GiB
+Fast cache, image on C:) 35.3 GB/s SEQ1M Q8 / 391k IOPS RND4K Q32, image-in-RAM identical
+to the pure RAM disk, Q: 37.2 GB/s / 410k IOPS.
