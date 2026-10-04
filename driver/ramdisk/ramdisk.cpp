@@ -476,7 +476,7 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
 static void WorkerMain(PVOID context)
 {
     auto worker = static_cast<WORKER*>(context); auto adapter = worker->Adapter;
-    KeSetSystemAffinityThreadEx(AFFINITY_MASK(worker->Processor));
+    KeSetSystemAffinityThreadEx(static_cast<KAFFINITY>(1) << worker->Processor);
     bool spin = false;
     for (;;)
     {
