@@ -2526,3 +2526,16 @@ Maintained plan 87 additionally rejects an underreported native reservation even
 when matching global/provider counters agree. The independent lower bound includes
 x64 MDL/PFN/slab descriptors and the transfer workspace. Host evidence contracts
 reject the old omitted-metadata reservation and any global-accounting discrepancy.
+
+RAM adapter start robustness, 2026-10-04: `FindAdapter` refused to start the
+adapter when `ExUuidCreate` returned STATUS_RETRY, which Windows documents
+before its UUID seed is ready; a root-enumerated adapter can start that early
+at boot. The adapter epoch now falls back to a time/counter-seeded random
+version-4 value; it only distinguishes adapter instances. Review note on the
+unresolved 0.4.269.1 install failure: that build lacked
+`STOR_FEATURE_VIRTUAL_MINIPORT`, so Storport would have called the
+seven-argument virtual `FindAdapter` with the six-argument physical convention,
+making the code write configuration through the wrong pointer when setup
+started the root adapter. That is consistent with the setup log ending right
+after filter registration, but it remains a hypothesis, not a confirmed
+diagnosis. Fixed by 3bcbcb5; not yet VM-verified.

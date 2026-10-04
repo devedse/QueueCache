@@ -517,11 +517,26 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
     StorPortNotification(RequestComplete, adapter, srb);
     return TRUE;
 }
+static void AdapterEpoch(GUID* epoch)
+{
+    // ExUuidCreate returns STATUS_RETRY until the UUID seed is available, which can
+    // be later than root-enumerated adapter start during boot. The epoch only has to
+    // distinguish adapter instances, so a time/counter-seeded random value suffices.
+    if (NT_SUCCESS(ExUuidCreate(epoch))) return;
+    LARGE_INTEGER now; KeQuerySystemTimePrecise(&now);
+    const auto counter = KeQueryPerformanceCounter(nullptr).QuadPart;
+    ULONG seed = static_cast<ULONG>(now.QuadPart ^ (now.QuadPart >> 32) ^ counter ^ (counter >> 32));
+    auto words = reinterpret_cast<ULONG*>(epoch);
+    for (ULONG i = 0; i < sizeof(*epoch) / sizeof(ULONG); ++i)
+        words[i] = RtlRandomEx(&seed) ^ static_cast<ULONG>(counter >> (i * 8));
+    epoch->Data3 = static_cast<USHORT>((epoch->Data3 & 0x0FFF) | 0x4000);
+    epoch->Data4[0] = static_cast<UCHAR>((epoch->Data4[0] & 0x3F) | 0x80);
+}
 ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATION_INFORMATION configuration, PBOOLEAN again)
 {
     auto adapter = static_cast<ADAPTER*>(extension);
     KeInitializeSpinLock(&adapter->TableLock); ExInitializeFastMutex(&adapter->ControlLock);
-    if (!NT_SUCCESS(ExUuidCreate(&adapter->Epoch))) return SP_RETURN_ERROR;
+    AdapterEpoch(&adapter->Epoch);
     configuration->VirtualDevice = TRUE; configuration->NumberOfBuses = 1;
     configuration->MaximumNumberOfTargets = 1; configuration->MaximumNumberOfLogicalUnits = QcRamMaxDisks;
     configuration->MaximumTransferLength = QcRamTransferBytes;
