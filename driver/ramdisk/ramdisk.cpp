@@ -30,6 +30,8 @@ struct DISK
     KSPIN_LOCK IoLock;
     volatile LONG References;
     volatile LONG ActiveWrites; // admitted under IoLock while unfrozen; copied outside it
+    volatile LONG Outstanding;  // transfers queued to workers and not yet completed
+    LONG InlineStreak, Probe;   // adaptive inline/worker choice (racy hints only)
     BOOLEAN Removing;
     KEVENT Idle;
     ULONGLONG ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers;
@@ -47,7 +49,7 @@ struct WORKER
     PKTHREAD Thread;
     ADAPTER* Adapter;
 };
-struct TUNING { ULONG PerfFlags, Workers, SpinMicroseconds; };
+struct TUNING { ULONG PerfFlags, Workers, SpinMicroseconds, WorkerMinBytes, Adaptive; };
 struct ADAPTER
 {
     KSPIN_LOCK TableLock;
@@ -452,6 +454,18 @@ static void Sense(PSCSI_REQUEST_BLOCK srb, UCHAR key, UCHAR asc)
         sense[0] = 0x70; sense[2] = key; sense[7] = 10; sense[12] = asc; srb->SrbStatus |= SRB_STATUS_AUTOSENSE_VALID;
     }
 }
+// Small transfers are cheapest inline (completed during StartIo). A large transfer goes to
+// a worker when the submitter keeps others in flight; a run of transfers that each found
+// nothing outstanding means queue depth 1, so stay inline and probe a worker periodically.
+static constexpr LONG InlineAfter = 16, ProbeEvery = 64;
+static bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes)
+{
+    if (!adapter->WorkerCount || bytes < adapter->Tuning.WorkerMinBytes) return false;
+    if (!adapter->Tuning.Adaptive) return true;
+    if (ReadNoFence(&disk->Outstanding) > 0) { disk->InlineStreak = 0; return true; }
+    if (disk->InlineStreak < InlineAfter) { ++disk->InlineStreak; return true; }
+    return ++disk->Probe % ProbeEvery == 0;
+}
 static void Enqueue(ADAPTER* adapter, REQUEST* request)
 {
     const auto count = adapter->WorkerCount;
@@ -468,6 +482,7 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
 {
     Copy(request->Disk, request->Offset, request->Buffer, request->Bytes, request->Write);
     if (request->Write) InterlockedDecrement(&request->Disk->ActiveWrites);
+    InterlockedDecrement(&request->Disk->Outstanding);
     DereferenceDisk(request->Disk);
     KIRQL irql; KeRaiseIrql(DISPATCH_LEVEL, &irql);
     StorPortNotification(RequestComplete, adapter, request->Srb);
@@ -669,13 +684,14 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
             // illegal-request replies are not storage errors.
             if (!unsupported && (srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
             KeReleaseSpinLock(&disk->IoLock, irql);
-            if (copyBytes && adapter->WorkerCount)
+            if (copyBytes && UseWorker(adapter, disk, copyBytes))
             {
                 // Return to the submitter at once; a worker on another processor copies
                 // and completes. The disk reference moves with the request.
                 auto request = static_cast<REQUEST*>(srb->SrbExtension);
                 request->Srb = srb; request->Disk = disk; request->Buffer = copyBuffer; request->Offset = copyOffset;
                 request->Bytes = copyBytes; request->Write = copyWrite;
+                InterlockedIncrement(&disk->Outstanding);
                 Enqueue(adapter, request);
                 return TRUE;
             }
@@ -722,6 +738,8 @@ ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATI
     adapter->Tuning.PerfFlags = ReadDword(key, L"PerfFlags", 0);
     adapter->Tuning.Workers = ReadDword(key, L"Workers", 0);
     adapter->Tuning.SpinMicroseconds = min(ReadDword(key, L"SpinMicroseconds", 50), 1000UL);
+    adapter->Tuning.WorkerMinBytes = ReadDword(key, L"WorkerMinBytes", 128 * 1024);
+    adapter->Tuning.Adaptive = ReadDword(key, L"Adaptive", 1);
     if (key) ZwClose(key);
     StartWorkers(adapter);
     return SP_RETURN_FOUND;
