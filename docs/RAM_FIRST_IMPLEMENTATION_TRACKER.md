@@ -2697,3 +2697,9 @@ did not complete ... Access is denied." A refused exclusive volume lock (after t
 bounded retry) is now a WindowsVetoException that says Windows vetoed exclusive access;
 Stop, Save and Format report it that way, Stop records "Windows vetoed stopping" only
 for that exception, and the product/CLI veto checks accept the veto from either path.
+
+Read-only RAM disk stop fix, 2026-10-04 (installed 0.4.326.1): `image-in-ram`,
+`ram-disk`, `vhdx-backed` and `managed-provider` PASSED again. `managed-cli` reached
+command 79, where stopping a read-only image-in-RAM disk failed with "The media is write
+protected": volume locking flushed the locked volume, and a read-only volume answers
+that flush with ERROR_WRITE_PROTECT. That error is now treated as nothing to flush.

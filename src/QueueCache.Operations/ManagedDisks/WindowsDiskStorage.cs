@@ -264,7 +264,8 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
                     Thread.Sleep(250);
                 }
             }
-            if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            // A read-only volume has nothing to flush and reports ERROR_WRITE_PROTECT.
+            if (!FlushFileBuffers(handle) && Marshal.GetLastWin32Error() is var error && error != 19) throw new Win32Exception(error);
             var locked = new LockedVolume(handle, volume);
             if (dismount) locked.Dismount();
             return locked;
