@@ -2776,3 +2776,15 @@ Next: complete transfers asynchronously off the submitting thread (worker/DPC pe
 and profile the remaining single-thread per-request cost. Same run: cached VHDX (S:, 2 GiB
 Fast cache, image on C:) 35.3 GB/s SEQ1M Q8 / 391k IOPS RND4K Q32, image-in-RAM identical
 to the pure RAM disk, Q: 37.2 GB/s / 410k IOPS.
+
+RAM disk transfer experiments (temporary tuning switches): a WPR CPU profile of one DiskSpd
+thread at RND4K Q32 on 0.4.338.1 showed the thread CPU-bound (it never slept), with the
+provider's memcpy about 1% of busy time; Storport's completion DPC insertion (~12%), the
+completion DPC chain (~15%) and scatter-gather setup around StartIo (~17%) dominated. Cache
+hits on Q: avoid this path and use worker threads. Implementation: the adapter reads
+<service>\Parameters PerfFlags (StorPortInitializePerfOpts, masked to what Storport reports),
+Workers (0 = inline; N = per-processor worker threads that copy and complete transfers,
+never the submitting processor when another exists) and SpinMicroseconds (poll before
+sleeping). Queued transfers keep their disk reference; FreeAdapter stops workers only after
+their queues drain. Defaults keep the inline path. Verification: pending (variant benchmark,
+then suites; switches are removed once a configuration is chosen).
