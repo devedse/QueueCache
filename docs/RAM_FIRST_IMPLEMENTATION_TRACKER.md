@@ -2593,3 +2593,19 @@ rejected and the pipe closed before the client finished writing. ERROR_PIPE_LOCA
 now accepted as local (a returned name must still match). The broker also reads the
 bounded request before impersonating, as Windows documents for pipe impersonation.
 No product `qcache disk` operation had ever completed before this fix.
+
+Volume-arrival deadlock in the filter, 2026-10-04 (found on installed 0.4.298.1 with
+local kernel debugging): `managed-provider` intermittently hung the VM. New processes
+(SSH logons, Task Manager) could not start; the worker could not be terminated. A
+live `kd -kl` session showed a mount-manager online-notification worker sending
+IOCTL_VOLUME_ONLINE to a new volume; QueueCache forwarded it directly (counted in
+DirectCount), volsnap's VspOnline called IoVolumeDeviceToDosName and waited for the
+mount manager. The same volume's request worker had dequeued an ordered request and
+was waiting for DirectIdle at its first wait. The mount manager sends IOCTL_MOUNTDEV_*
+queries to volumes with its own lock held, and ordered requests queue behind
+DirectIdle, so this cycle never resolves, and with the mount manager stalled so does
+process creation. The filter now treats every IOCTL_MOUNTDEV_* control and the
+volume online/state queries as observations: forwarded at dispatch, never queued and
+never counted in DirectCount. IOCTL_VOLUME_OFFLINE and attribute changes stay ordered.
+None of these touch volume data, so cache ordering and invalidation are unchanged.
+Not yet VM-verified; the provider suite is repeated in a loop to check.
