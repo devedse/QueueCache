@@ -5,7 +5,6 @@ extern "C" {
 #include <storport.h>
 }
 #include <ntddscsi.h>
-#include <emmintrin.h>
 #include "../shared/lockedpages.h"
 #include "../shared/budgetprotocol.h"
 #include "../shared/ramdiskprotocol.h"
@@ -61,7 +60,7 @@ struct WORKER
     PKTHREAD Thread;
     ADAPTER* Adapter;
 };
-struct TUNING { ULONG PerfFlags, Workers, SpinMicroseconds, WorkerMinBytes, Adaptive, StreamMinBytes, SplitChunk; };
+struct TUNING { ULONG PerfFlags, Workers, SpinMicroseconds, WorkerMinBytes, Adaptive, SplitChunk; };
 struct ADAPTER
 {
     KSPIN_LOCK TableLock;
@@ -273,39 +272,16 @@ static bool Bounds(DISK* disk, ULONGLONG offset, ULONGLONG bytes)
 {
     return offset <= disk->Capacity && bytes <= disk->Capacity - offset && offset % disk->SectorBytes == 0 && bytes % disk->SectorBytes == 0;
 }
-static ULONG StreamMinBytes = MAXULONG;
-// Non-temporal stores skip reading each destination line before overwriting it. The
-// caller fences (StreamFence) before the transfer is reported complete.
-static void StreamCopy(PUCHAR destination, const UCHAR* source, SIZE_T bytes)
+static void Copy(DISK* disk, ULONGLONG offset, PUCHAR buffer, ULONG length, bool write, bool zero = false)
 {
-    while (bytes && (reinterpret_cast<ULONG_PTR>(destination) & 15)) { *destination++ = *source++; --bytes; }
-    const bool aligned = !(reinterpret_cast<ULONG_PTR>(source) & 15);
-    for (; bytes >= 64; bytes -= 64, source += 64, destination += 64)
-    {
-        auto from = reinterpret_cast<const __m128i*>(source); auto to = reinterpret_cast<__m128i*>(destination);
-        const auto a = aligned ? _mm_load_si128(from) : _mm_loadu_si128(from), b = aligned ? _mm_load_si128(from + 1) : _mm_loadu_si128(from + 1);
-        const auto c = aligned ? _mm_load_si128(from + 2) : _mm_loadu_si128(from + 2), d = aligned ? _mm_load_si128(from + 3) : _mm_loadu_si128(from + 3);
-        _mm_stream_si128(to, a); _mm_stream_si128(to + 1, b); _mm_stream_si128(to + 2, c); _mm_stream_si128(to + 3, d);
-    }
-    if (bytes) RtlCopyMemory(destination, source, bytes);
-}
-static void Move(PUCHAR destination, const UCHAR* source, SIZE_T bytes, ULONG total)
-{
-    if (total >= StreamMinBytes && bytes >= 64) StreamCopy(destination, source, bytes);
-    else RtlCopyMemory(destination, source, bytes);
-}
-static void StreamFence(ULONG total) { if (total >= StreamMinBytes) _mm_sfence(); }
-static void Copy(DISK* disk, ULONGLONG offset, PUCHAR buffer, ULONG length, bool write, bool zero = false, ULONG total = 0)
-{
-    if (!total) total = length;
     while (length)
     {
         const auto index = static_cast<ULONG>(offset / SlabBytes), within = static_cast<ULONG>(offset % SlabBytes);
         const auto bytes = min(length, disk->Slabs[index].Length - within);
         auto storage = disk->Slabs[index].Bytes + within;
         if (zero) RtlZeroMemory(storage, bytes);
-        else if (write) Move(storage, buffer, bytes, total);
-        else Move(buffer, storage, bytes, total);
+        else if (write) RtlCopyMemory(storage, buffer, bytes);
+        else RtlCopyMemory(buffer, storage, bytes);
         if (buffer) buffer += bytes;
         offset += bytes; length -= bytes;
     }
@@ -426,7 +402,6 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
                     else
                     {
                         Copy(disk, command.Offset, reinterpret_cast<PUCHAR>(reply + 1), command.TransferBytes, command.Action == QcRamWrite);
-                        StreamFence(command.TransferBytes);
                         ++disk->Transfers;
                         if (command.Action == QcRamWrite) ++disk->Generation;
                         else returned = sizeof(*reply) + command.TransferBytes;
@@ -492,11 +467,12 @@ static void Sense(PSCSI_REQUEST_BLOCK srb, UCHAR key, UCHAR asc)
 }
 // Small transfers are cheapest inline (completed during StartIo). A large transfer goes to
 // a worker when the submitter keeps others in flight; a run of transfers that each found
-// nothing outstanding means queue depth 1, so stay inline and probe a worker periodically.
+// nothing outstanding means queue depth 1, so copy it inline (split across idle workers)
+// and probe a worker periodically.
 static constexpr LONG InlineAfter = 16, ProbeEvery = 64;
 static bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes)
 {
-    if (!adapter->WorkerCount || bytes < adapter->Tuning.WorkerMinBytes || adapter->Tuning.SplitChunk) return false;
+    if (!adapter->WorkerCount || bytes < adapter->Tuning.WorkerMinBytes) return false;
     if (!adapter->Tuning.Adaptive) return true;
     if (ReadNoFence(&disk->Outstanding) > 0) { disk->InlineStreak = 0; return true; }
     if (disk->InlineStreak < InlineAfter) { ++disk->InlineStreak; return true; }
@@ -518,7 +494,6 @@ static void Enqueue(ADAPTER* adapter, REQUEST* request)
 static void Finish(ADAPTER* adapter, REQUEST* request)
 {
     Copy(request->Disk, request->Offset, request->Buffer, request->Bytes, request->Write);
-    StreamFence(request->Bytes);
     if (request->Write) InterlockedDecrement(&request->Disk->ActiveWrites);
     InterlockedDecrement(&request->Disk->Outstanding);
     DereferenceDisk(request->Disk);
@@ -607,9 +582,8 @@ static void CopyChunks(SPLIT* split)
         const auto index = static_cast<ULONG>(InterlockedIncrement(&split->Next) - 1);
         if (index >= split->Chunks) break;
         const auto start = static_cast<ULONG>(index) * split->Chunk, bytes = min(split->Chunk, split->Bytes - start);
-        Copy(split->Disk, split->Offset + start, split->Buffer + start, bytes, split->Write, false, split->Bytes);
+        Copy(split->Disk, split->Offset + start, split->Buffer + start, bytes, split->Write);
     }
-    StreamFence(split->Bytes);
 }
 // Copy a large transfer in chunks; workers that are awake join in. Unclaimed help requests
 // are withdrawn, so StartIo never waits for a sleeping worker to wake.
@@ -789,7 +763,6 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
             else if (copyBytes)
             {
                 Copy(disk, copyOffset, copyBuffer, copyBytes, copyWrite);
-                StreamFence(copyBytes);
                 if (copyWrite) InterlockedDecrement(&disk->ActiveWrites);
             }
         }
@@ -832,10 +805,8 @@ ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATI
     adapter->Tuning.SpinMicroseconds = min(ReadDword(key, L"SpinMicroseconds", 50), 1000UL);
     adapter->Tuning.WorkerMinBytes = ReadDword(key, L"WorkerMinBytes", 128 * 1024);
     adapter->Tuning.Adaptive = ReadDword(key, L"Adaptive", 1);
-    adapter->Tuning.StreamMinBytes = ReadDword(key, L"StreamMinBytes", MAXULONG);
     adapter->Tuning.SplitChunk = ReadDword(key, L"SplitChunk", 0);
     if (adapter->Tuning.SplitChunk && (adapter->Tuning.SplitChunk < 4096 || adapter->Tuning.SplitChunk % 4096)) adapter->Tuning.SplitChunk = 0;
-    StreamMinBytes = adapter->Tuning.StreamMinBytes;
     if (key) ZwClose(key);
     StartWorkers(adapter);
     return SP_RETURN_FOUND;
