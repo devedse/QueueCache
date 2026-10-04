@@ -118,10 +118,17 @@ public sealed partial class WindowsManagedDiskEngine
     }
     public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token)
     {
-        var expected = await InspectAsync(path, token);
-        await using var view = await OpenImportAsync(expected, token);
-        await LogicalImageTransfer.VerifyAsync(view.LogicalStorage, digest, token);
-        return expected;
+        var timer = System.Diagnostics.Stopwatch.StartNew(); var phases = new List<string>();
+        void Mark(string phase) { phases.Add($"{phase}={timer.ElapsedMilliseconds}ms"); timer.Restart(); }
+        try
+        {
+            var expected = await InspectAsync(path, token); Mark("inspect");
+            var view = await OpenImportAsync(expected, token); Mark("open");
+            try { await LogicalImageTransfer.VerifyAsync(view.LogicalStorage, digest, token); Mark("read"); }
+            finally { await view.DisposeAsync(); Mark("close"); }
+            return expected;
+        }
+        finally { WindowsManagedBrokerService.Log("Checkpoint verification " + string.Join(' ', phases)); }
     }
     private async Task<ManagedCheckpointResult> SaveCoreAsync(Entry entry, string? export, bool commit, IProgress<ManagedDiskProgress>? progress, CancellationToken token, bool stopAfterSave = false)
     {

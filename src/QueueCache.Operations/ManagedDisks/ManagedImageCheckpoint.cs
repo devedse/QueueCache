@@ -56,6 +56,7 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             }
             progress?.Report(new(ManagedDiskState.Saving, "Verifying every saved logical sector before committing the image."));
             var identity = await backend.VerifyCandidateAsync(path, digest, token);
+            progress?.Report(new(ManagedDiskState.Saving, "Saved image verified; committing it."));
             if (identity.VirtualBytes != record.Definition.CapacityBytes || identity.SectorBytes != record.Definition.SectorBytes || identity.Differencing)
                 throw new InvalidDataException("The verified checkpoint image geometry changed.");
             candidate = new(identity, digest, stable.Generation);
