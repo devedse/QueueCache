@@ -27,6 +27,7 @@ struct DISK
     NTSTATUS ReleaseStatus;
     KSPIN_LOCK IoLock;
     volatile LONG References;
+    volatile LONG ActiveWrites; // admitted under IoLock while unfrozen; copied outside it
     BOOLEAN Removing;
     KEVENT Idle;
     ULONGLONG ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers;
@@ -65,6 +66,14 @@ static DISK* ReferenceDisk(ADAPTER* adapter, ULONG slot, bool published)
 static void DereferenceDisk(DISK* disk)
 {
     if (InterlockedDecrement(&disk->References) == 0) KeSetEvent(&disk->Idle, IO_NO_INCREMENT, FALSE);
+}
+// Freeze and read-only stop admission under IoLock; wait for writes already admitted,
+// whose copies run outside the lock, so the caller sees a stable view afterwards.
+static void DrainWrites(DISK* disk)
+{
+    LARGE_INTEGER interval{}; interval.QuadPart = -1000; // 100 us
+    while (InterlockedCompareExchange(&disk->ActiveWrites, 0, 0))
+        KeDelayExecutionThread(KernelMode, FALSE, &interval);
 }
 static void WaitReferences(DISK* disk)
 {
@@ -346,6 +355,8 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
                 }
                 Snapshot(disk, reply, command.Slot);
                 KeReleaseSpinLock(&disk->IoLock, irql);
+                if (NT_SUCCESS(status) && (command.Action == QcRamFreeze || (command.Action == QcRamSetReadOnly && (command.Flags & QcRamReadOnly))))
+                    DrainWrites(disk);
                 if (NT_SUCCESS(status) && command.Action == QcRamPublish) StorPortNotification(BusChangeDetected, adapter, 0);
             }
             if (disk) DereferenceDisk(disk);
@@ -394,7 +405,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
     else if (srb->Function != SRB_FUNCTION_EXECUTE_SCSI) { srb->SrbStatus = SRB_STATUS_INVALID_REQUEST; srb->DataTransferLength = 0; }
     else
     {
-        PVOID mapped = nullptr;
+        PVOID mapped = nullptr; PUCHAR copyBuffer = nullptr; ULONGLONG copyOffset = 0; ULONG copyBytes = 0; bool copyWrite = false;
         if (srb->DataTransferLength && StorPortGetSystemAddress(adapter, srb, &mapped) != STOR_STATUS_SUCCESS) Sense(srb, 4, 0x44);
         else
         {
@@ -451,8 +462,9 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                     else if (write && (disk->Flags & QcRamFrozen)) { srb->SrbStatus = SRB_STATUS_BUSY; srb->DataTransferLength = 0; }
                     else
                     {
-                        Copy(disk, offset, data, bytes, write); srb->DataTransferLength = bytes;
-                        if (write) { disk->WriteBytes += bytes; if (bytes) ++disk->Generation; }
+                        // Admit here; copy after releasing IoLock so requests run in parallel.
+                        copyBuffer = data; copyOffset = offset; copyBytes = bytes; copyWrite = write; srb->DataTransferLength = bytes;
+                        if (write) { if (bytes) { InterlockedIncrement(&disk->ActiveWrites); ++disk->Generation; } disk->WriteBytes += bytes; }
                         else disk->ReadBytes += bytes;
                     }
                 }
@@ -513,6 +525,11 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
             // illegal-request replies are not storage errors.
             if (!unsupported && (srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
             KeReleaseSpinLock(&disk->IoLock, irql);
+            if (copyBytes)
+            {
+                Copy(disk, copyOffset, copyBuffer, copyBytes, copyWrite);
+                if (copyWrite) InterlockedDecrement(&disk->ActiveWrites);
+            }
         }
     }
     if (disk) DereferenceDisk(disk);
@@ -546,6 +563,7 @@ ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATI
     configuration->ScatterGather = TRUE; configuration->Master = TRUE;
     configuration->CachesData = TRUE; configuration->AlignmentMask = 0;
     configuration->WmiDataProvider = FALSE; *again = FALSE;
+    configuration->MaxNumberOfIO = 4096; configuration->MaxIOsPerLun = 256; configuration->InitialLunQueueDepth = 256;
     return SP_RETURN_FOUND;
 }
 BOOLEAN Initialize(PVOID) { return TRUE; }

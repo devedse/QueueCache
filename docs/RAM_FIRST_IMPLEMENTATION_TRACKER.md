@@ -2755,3 +2755,14 @@ publication after allocation/format; no definition, exact reservation). VM resul
 VM result on 0.4.334.1 (8e326fd): ram-disk PASS including failed-create-retired-512/4096
 (occupied D: refused at publication, no definition, exact reservation); managed-provider
 PASS. A CLI create killed after 2.5 s of a 4 GiB RAM create left no definition or volume.
+
+RAM disk throughput, 2026-10-04 (0.4.336.1, Verifier off, 1 GiB CDM-style rows, best of 3):
+the pure RAM disk reached only 11.7 GB/s SEQ1M at both Q1 and Q8 and 33-35k IOPS RND4K at
+both Q1 and Q32, against 36.9 GB/s / 427k IOPS for cache hits on Q:. Equal Q1/Q8/Q32 results
+showed requests were serialized: StartIo copied every transfer while holding the disk's
+IoLock. Implementation: admission, bounds, read-only/freeze checks and counters stay under
+IoLock; the memory copy runs after releasing it. Freeze and set-read-only wait for admitted
+writes (ActiveWrites) before returning, so checkpoints and the write-protect guarantee keep
+their meaning; removal already waits for request references. The adapter now reports 256
+I/Os per LUN (initial queue depth 256) instead of Storport defaults. Verification: pending
+(managed-provider/ram-disk suites and the same benchmark).
