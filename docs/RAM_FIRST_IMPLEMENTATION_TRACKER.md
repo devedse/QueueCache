@@ -2843,4 +2843,10 @@ Split-read helper preemption: StartIo spins (DISPATCH_LEVEL) until helpers that 
 split finish, but helpers ran at PASSIVE_LEVEL and could be preempted after joining.
 Implementation: a worker raises to DISPATCH_LEVEL before taking a queue entry and stays there
 while copying its help chunks, and no longer reads the stack-resident help entry after
-releasing it. Verification: pending (Verifier suites, stress, benchmark).
+releasing it. Verification on 0.4.362.1 (5cd999c) under Verifier with Q: Strict for the boot:
+managed-provider, ram-disk, image-in-ram, managed-cli and vhdx-backed PASS; stress verified
+65 GiB and 217 GiB byte-exact with ~3.2M DiskSpd I/Os; adapter restart reloaded qcramdisk
+cleanly; no bugcheck. Verifier off, Q: back on its saved Fast profile, all modes (GB/s or
+IOPS, read/write): RAM R: 25.0/24.2, 25.0/17.3, 225k/192k, 234k/192k; image-in-RAM I: 24.3/25.0,
+25.2/17.0, 225k/191k, 236k/192k; cached VHDX S: 36.7/21.3, 14.3/13.2, 412k/386k, 319k/255k;
+Q: 36.9/21.7, 15.1/13.9, 411k/406k, 341k/261k.

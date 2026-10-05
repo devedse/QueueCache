@@ -1,16 +1,30 @@
 # Managed RAM and VHDX disks
 
-All three modes are implemented and, on 2026-10-04, passed the maintained Windows
-VM suites on signed build 0.4.328.1 under Driver Verifier (filter and RAM provider):
+All three modes are implemented. On 2026-10-05 signed build 0.4.362.1 passed the
+maintained Windows VM suites under Driver Verifier (filter and RAM provider):
 `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram` and `managed-cli` at
-512-byte and 4096-byte sectors, `managed-broker-restart`, and a real Windows restart
-through `managed-lifecycle-prepare`/`-verify`/`-cleanup`. Installer upgrade refusal
-while a managed disk is live was also observed, and a matched 72-case write-performance
-run showed no regression for ordinary caches. Not yet covered: sleep, hibernate and
-Fast Startup (postponed; the test VM has no sleep states), a crash during checkpoint
-commit, a manual desktop UI walkthrough and physical hardware. The per-item record is
-in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md); remaining platform gates are in
-[the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
+512-byte and 4096-byte sectors, `managed-broker-restart`, a real Windows restart through
+`managed-lifecycle-prepare`/`-verify`/`-cleanup`, and a three-minute mixed-load stress run
+with byte-exact integrity checks. Installer upgrade refusal while a managed disk is live,
+a desktop UI walkthrough, and a matched 72-case write-performance run (no regression for
+ordinary caches) were also observed. Not yet covered: sleep, hibernate and Fast Startup
+(postponed; the test VM has no sleep states), a crash during checkpoint commit and
+physical hardware. The per-item record is in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md);
+remaining platform gates are in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
+
+Performance on the 4-core test VM (CrystalDiskMark-style rows, 1 GiB, Verifier off):
+
+| Disk | SEQ1M Q8 read/write | SEQ1M Q1 read/write | RND4K Q32 read/write | RND4K Q1 read/write |
+|---|---|---|---|---|
+| RAM disk / image-in-RAM | 25 / 24 GB/s | 25 / 17 GB/s | 225k / 192k IOPS | 235k / 192k IOPS |
+| Cached VHDX (2 GiB Fast cache) | 37 / 21 GB/s | 14 / 13 GB/s | 412k / 386k IOPS | 319k / 255k IOPS |
+
+A RAM disk is a real Windows disk, so each request passes the volume, partition, class and
+Storport layers; cache hits are answered above them. That is why small random I/O on a
+cached disk is faster than on a RAM disk while large transfers are comparable.
+
+Image hosts (the volume holding a VHDX or checkpoint) must not have a Fast cache: Fast
+can lose data the service treats as saved. Use Strict or no cache on that volume.
 
 Image host directories (and their parents) must be owned by Administrators or SYSTEM
 and must not give unprivileged accounts delete, permission or ownership rights. Volumes

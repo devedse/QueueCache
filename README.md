@@ -35,7 +35,7 @@ New tasks default to:
 - Fast write behavior, requiring explicit volatility acknowledgement in the CLI;
 - Automatic RAM allocation with retained writes and read promotion;
 - Idle background draining with a 5,000 ms first-dirty trigger, 250 ms idle
-  trigger, 40/80 watermarks, 256 KiB batches and parallelism 1.
+  trigger, 40/80 watermarks, 256 KiB batches and parallelism 2.
 
 Strict remains available. Existing profiles retain their saved Fast/Strict and
 drain settings. Background age starts scheduling and is not a durability deadline.
@@ -43,6 +43,25 @@ Explicit QueueCache flush, Pause, Remove and lifecycle boundaries still drain.
 Capacity exhaustion still applies backpressure.
 
 See [cache policies](docs/CACHE_POLICIES.md) for the complete contract.
+
+## Managed disks
+
+QueueCache can also create and manage disks of its own, through the desktop
+**Create disk** flow or `qcache disk`:
+
+- `ram`: a temporary RAM disk whose contents are discarded when it stops;
+- `cached-vhdx`: a VHDX file behind an ordinary QueueCache cache;
+- `image-in-ram`: a VHDX loaded completely into RAM and saved back as verified,
+  versioned checkpoints.
+
+They share the cache's RAM budget. Image hosts must not have a Fast cache. See
+[managed disks](docs/MANAGED_DISKS.md).
+
+```powershell
+qcache disk create --mode ram --size-mib 4096 --letter R
+qcache disk list
+qcache disk stop <id> --discard
+```
 
 ## Operator commands
 
