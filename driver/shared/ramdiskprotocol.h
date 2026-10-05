@@ -2,7 +2,10 @@
 #pragma once
 #include <ntddk.h>
 // Buffered, bounded Storport service IRPs. No user addresses in this ABI.
-constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 2, QcRamMaxDisks = 32, QcRamTransferBytes = 1 << 20, QcRamSlabBytes = 4 << 20;
+// Keep Version 1 and extend compatibly: the installer's update preflight runs the NEW CLI
+// against the still-installed OLD provider to prove no RAM disk is live; a version change
+// makes that check fail and blocks every update (found on the VM).
+constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 1, QcRamMaxDisks = 32, QcRamTransferBytes = 1 << 20, QcRamSlabBytes = 4 << 20;
 enum QC_RAM_ACTION : ULONG
 {
     QcRamCapabilities = 1, QcRamEnumerate, QcRamCreate, QcRamQuery, QcRamRead,

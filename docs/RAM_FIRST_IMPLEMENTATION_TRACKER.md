@@ -2864,8 +2864,10 @@ Direct access for RAM-backed disks (branch feature/ram-fast-path, plan 91). Impl
   unknown controls end Direct before forwarding; boot-sector change ends it). One
   lock-free check per read/write on other volumes. Device-control boilerplate moved to
   `devicecontrol.h`.
-- Product: `RamAccess` (default Direct for new RAM-backed disks), provider protocol v2
-  with Direct/DirectRegistered flags, broker bind after every publication (plus a
+- Product: `RamAccess` (default Direct for new RAM-backed disks), provider protocol
+  version 1 extended with Direct/DirectRegistered flags (a version bump made the installer's
+  update preflight, which runs the new CLI against the old provider, refuse every update;
+  found on the VM, reverted), broker bind after every publication (plus a
   `Win32_ShadowCopy` pre-check), live state in list/status/desktop card, CLI `--access`.
 - Verification: ram-disk and image-in-ram run Direct and Standard variants; new checks
   direct-coherence, direct-unrecognized-control, direct-snapshot-writes; lifecycle verify

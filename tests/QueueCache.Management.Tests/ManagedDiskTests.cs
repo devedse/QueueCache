@@ -277,7 +277,7 @@ internal static class ManagedDiskTests
         Throws<IOException>(() => decoded.RequireSameCreation(expected with { CreationGeneration = 8 }));
         Throws<IOException>(() => decoded.RequireSameCreation(expected with { Slot = 4 }));
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(wire[..^1]));
-        var badVersion = (byte[])wire.Clone(); badVersion[4] = 1;
+        var badVersion = (byte[])wire.Clone(); badVersion[4] = 2;
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(badVersion));
         var badFrozen = (byte[])wire.Clone(); badFrozen[108] |= (byte)RamDiskFlags.Frozen;
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(badFrozen));
@@ -289,7 +289,7 @@ internal static class ManagedDiskTests
         // Direct access is requested only at creation; the reply reports registration.
         var direct = RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB, flags: RamDiskFlags.Direct);
         Check(System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(direct.AsSpan(108)) == (uint)RamDiskFlags.Direct &&
-            System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(direct.AsSpan(4)) == RamDiskSnapshot.Version, "Create carries the Direct request in protocol version 2");
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(direct.AsSpan(4)) == RamDiskSnapshot.Version, "Create carries the Direct request without changing protocol version 1 (updates preflight across versions)");
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB, flags: RamDiskFlags.ReadOnly));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.SetReadOnly, expected, flags: RamDiskFlags.Direct));
         var registered = (byte[])wire.Clone();

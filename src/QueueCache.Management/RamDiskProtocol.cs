@@ -25,7 +25,9 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
 {
     public const int WireSize = 168, MaximumTransferBytes = 1 << 20, MaximumDisks = 32;
     public const uint AllocationSlabBytes = 4 << 20;
-    public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038, Version = 2;
+    // Keep 1 and extend compatibly: the update preflight (new CLI) must enumerate disks through the
+    // still-installed provider; a version change blocks every update (see ramdiskprotocol.h).
+    public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038, Version = 1;
 
     /// <summary>Conservative x64 headroom estimate, including PFN/MDL/slab metadata. Native reservation is authoritative.</summary>
     public static ulong EstimateReservationBytes(ulong capacity)
