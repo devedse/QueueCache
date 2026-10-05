@@ -247,9 +247,9 @@ static NTSTATUS DiskStackKnown(QC_RAM_BINDING* binding, ULONG diskNumber, PDRIVE
     WCHAR digits[12];
     UNICODE_STRING number = {0, sizeof(digits), digits};
     auto status = RtlIntegerToUnicodeString(diskNumber, 10, &number);
+    // Partition0 links to the disk's DR device; the DRn index is a global counter, not the disk number.
     if (NT_SUCCESS(status)) status = RtlAppendUnicodeStringToString(&name, &number);
-    if (NT_SUCCESS(status)) status = RtlAppendUnicodeToString(&name, L"\\DR");
-    if (NT_SUCCESS(status)) status = RtlAppendUnicodeStringToString(&name, &number);
+    if (NT_SUCCESS(status)) status = RtlAppendUnicodeToString(&name, L"\\Partition0");
     if (!NT_SUCCESS(status))
         return status;
     PFILE_OBJECT file = nullptr;
