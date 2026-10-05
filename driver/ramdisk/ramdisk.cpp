@@ -77,7 +77,7 @@ void FreeAdapter(PVOID extension)
     for (ULONG i = 0; i < QcRamMaxDisks; ++i)
     {
         auto disk = adapter->Disks[i]; if (!disk) continue;
-        disk->Removing = TRUE; adapter->Disks[i] = nullptr;
+        KIRQL irql; KeAcquireSpinLock(&adapter->TableLock, &irql); adapter->Disks[i] = nullptr; KeReleaseSpinLock(&adapter->TableLock, irql);
         WaitReferences(disk);
         FreeDisk(disk);
     }

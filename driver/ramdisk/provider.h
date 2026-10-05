@@ -37,11 +37,11 @@ struct DISK
     BOOLEAN ViewRegistered;
     PFILE_OBJECT BudgetFile;
     PDEVICE_OBJECT BudgetDevice;
-    volatile LONG References;   // SCSI requests and control calls using this disk.
+    // SCSI requests, queued transfers and control calls using this disk. Removal takes the
+    // disk out of the table, then runs this down: no user touches the disk after its release.
+    EX_RUNDOWN_REF Users;
     volatile LONG Outstanding;  // Transfers queued to workers and not yet completed.
     LONG InlineStreak, Probe;   // Adaptive inline/worker choice (racy hints only).
-    BOOLEAN Removing;
-    KEVENT Idle;
     volatile LONG64 ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers; // SCSI path only.
 };
 
@@ -89,7 +89,7 @@ HW_COMPLETE_SERVICE_IRP CompleteService;     // control.cpp
 // disk.cpp: lifetime, accounting and registration.
 DISK* ReferenceDisk(ADAPTER* adapter, ULONG slot, bool published);
 void DereferenceDisk(DISK* disk);
-void WaitReferences(DISK* disk);
+void WaitReferences(DISK* disk); // After removing the disk from the table; PASSIVE_LEVEL.
 void DrainWrites(DISK* disk);
 NTSTATUS AllocateDisk(ADAPTER* adapter, const QC_RAM_REQUEST* request, PIRP irp, DISK** result, ULONG failAfterSlabs);
 void FreeDisk(DISK* disk);

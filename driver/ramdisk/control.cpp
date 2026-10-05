@@ -140,7 +140,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
             else if (command.Action == QcRamRemove)
             {
                 KIRQL irql; KeAcquireSpinLock(&adapter->TableLock, &irql);
-                disk->Removing = TRUE; adapter->Disks[command.Slot] = nullptr;
+                adapter->Disks[command.Slot] = nullptr;
                 KeReleaseSpinLock(&adapter->TableLock, irql);
                 DereferenceDisk(disk);
                 WaitReferences(disk);

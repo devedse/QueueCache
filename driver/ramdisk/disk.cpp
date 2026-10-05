@@ -8,26 +8,15 @@ DISK* ReferenceDisk(ADAPTER* adapter, ULONG slot, bool published)
     if (slot >= QcRamMaxDisks) return nullptr;
     KIRQL irql; KeAcquireSpinLock(&adapter->TableLock, &irql);
     auto disk = adapter->Disks[slot];
-    if (!disk || disk->Removing || (published && !(ReadNoFence(&disk->Store.Flags) & QcRamPublished))) disk = nullptr;
-    if (disk && InterlockedIncrement(&disk->References) == 1) KeClearEvent(&disk->Idle);
+    if (disk && ((published && !(ReadNoFence(&disk->Store.Flags) & QcRamPublished)) || !ExAcquireRundownProtection(&disk->Users)))
+        disk = nullptr;
     KeReleaseSpinLock(&adapter->TableLock, irql);
     return disk;
 }
-void DereferenceDisk(DISK* disk)
-{
-    if (InterlockedDecrement(&disk->References) == 0) KeSetEvent(&disk->Idle, IO_NO_INCREMENT, FALSE);
-}
-void WaitReferences(DISK* disk)
-{
-    // A previous zero-reference signal may race a new reference before removal.
-    // Once Removing is set under TableLock, references can only decrease.
-    while (InterlockedCompareExchange(&disk->References, 0, 0))
-    {
-        KeClearEvent(&disk->Idle);
-        if (InterlockedCompareExchange(&disk->References, 0, 0))
-            KeWaitForSingleObject(&disk->Idle, Executive, KernelMode, FALSE, nullptr);
-    }
-}
+// A plain count plus an idle event let removal free the disk between the last decrement and
+// that thread's signal. The rundown release is the last access to the disk.
+void DereferenceDisk(DISK* disk) { ExReleaseRundownProtection(&disk->Users); }
+void WaitReferences(DISK* disk) { ExWaitForRundownProtectionRelease(&disk->Users); }
 // Freeze and read-only close the store's write gate first (QcRamStoreBeginWrite); this
 // waits for writes already admitted on either path, so the caller sees a stable view.
 void DrainWrites(DISK* disk)
@@ -145,7 +134,7 @@ NTSTATUS AllocateDisk(ADAPTER* adapter, const QC_RAM_REQUEST* request, PIRP irp,
     if (failAfterSlabs > (request->Capacity + QcRamSlabBytes - 1) / QcRamSlabBytes) return STATUS_INVALID_PARAMETER;
     auto disk = static_cast<DISK*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(DISK), Tag));
     if (!disk) return STATUS_INSUFFICIENT_RESOURCES;
-    KeInitializeEvent(&disk->Idle, NotificationEvent, TRUE);
+    ExInitializeRundownProtection(&disk->Users);
     auto& store = disk->Store;
     store.Size = sizeof(store); store.Version = QcRamStoreVersion;
     store.Capacity = request->Capacity; store.SectorBytes = request->SectorBytes;
