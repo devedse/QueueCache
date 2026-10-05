@@ -51,34 +51,43 @@ static_assert(sizeof(QC_RAM_DIRECT_STATE) == 160, "Managed/native Direct state A
 
 // Controls that change nothing a layer below would do with reads and writes. Anything else
 // ends Direct access before it is forwarded.
+// Windows declares controls that change device state with FILE_WRITE_ACCESS, so a control of
+// a storage, volume, mount-manager or BitLocker device type that needs no write access only
+// queries or notifies (found on the VM: BitLocker's status query on every new volume and
+// IOCTL_DISK_MEDIA_REMOVAL during lock/dismount). Known exceptions that change state without
+// write access stay excluded. Other device types (third-party drivers) always end it.
+constexpr ULONG QcFveDeviceType = 0x4556; // BitLocker (fvevol)
+constexpr bool QcRamDirectStateChangeWithoutWriteAccess(ULONG code)
+{
+    return code == QcVolumeControl(13, FILE_ANY_ACCESS) || // IOCTL_VOLUME_SET_GPT_ATTRIBUTES (read-only, hidden)
+           code == QcVolsnapFlushAndHoldWrites;           // A new snapshot: handled separately.
+}
 constexpr bool QcRamDirectHarmlessControl(ULONG code)
 {
     if (DEVICE_TYPE_FROM_CTL_CODE(code) == 0x8844 || QcObservationCode(code) || QcVolumeManagementCode(code))
         return true; // QueueCache's own controls, identity/health queries, mount/volume state.
-    if (DEVICE_TYPE_FROM_CTL_CODE(code) == 0x53 && code != QcVolsnapFlushAndHoldWrites)
-        return true; // Snapshot management; flush-and-hold (a new snapshot) is handled separately.
-    switch (code)
-    {
-    case IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES: // TRIM and allocation queries run on the standard path.
-    case IOCTL_STORAGE_CHECK_VERIFY:
-    case IOCTL_STORAGE_CHECK_VERIFY2:
-    case IOCTL_DISK_CHECK_VERIFY:
-    case IOCTL_DISK_GET_CACHE_INFORMATION:
-    case IOCTL_DISK_PERFORMANCE:
-    case IOCTL_STORAGE_GET_MEDIA_TYPES:
-    case IOCTL_STORAGE_GET_MEDIA_TYPES_EX:
-        return true;
-    default:
+    if (code == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES)
+        return true; // TRIM and allocation queries run on the standard path, coherent with Direct data.
+    if (QcRamDirectStateChangeWithoutWriteAccess(code))
         return false;
-    }
+    const auto type = DEVICE_TYPE_FROM_CTL_CODE(code);
+    const bool storageType = type == FILE_DEVICE_DISK || type == IOCTL_STORAGE_BASE || type == 0x56 /* volume */ ||
+                             type == QcMountDeviceType || type == 0x53 /* volsnap */ || type == QcFveDeviceType;
+    return storageType && !((code >> 14) & FILE_WRITE_ACCESS);
 }
 static_assert(QcRamDirectHarmlessControl(IOCTL_STORAGE_QUERY_PROPERTY));
-static_assert(QcRamDirectHarmlessControl(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES
+static_assert(QcRamDirectHarmlessControl(0x53C004));   // IOCTL_VOLSNAP_RELEASE_WRITES
+static_assert(QcRamDirectHarmlessControl(0x00074804)); // IOCTL_DISK_MEDIA_REMOVAL, seen on the VM during lock/dismount
+static_assert(QcRamDirectHarmlessControl(0x455610D4)); // BitLocker status query, seen on the VM on every new volume
+static_assert(QcRamDirectHarmlessControl(IOCTL_DISK_GET_CACHE_INFORMATION));
 static_assert(!QcRamDirectHarmlessControl(QcVolsnapFlushAndHoldWrites));
 static_assert(!QcRamDirectHarmlessControl(0x56C00C)); // IOCTL_VOLUME_OFFLINE
 static_assert(!QcRamDirectHarmlessControl(QcVolumeControl(13, FILE_ANY_ACCESS))); // SET_GPT_ATTRIBUTES
 static_assert(!QcRamDirectHarmlessControl(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
+static_assert(!QcRamDirectHarmlessControl(IOCTL_DISK_SET_CACHE_INFORMATION));
 static_assert(!QcRamDirectHarmlessControl(IOCTL_SCSI_PASS_THROUGH));
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(QcFveDeviceType, 0x435, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)));
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x22, 0xAAA, METHOD_BUFFERED, FILE_ANY_ACCESS))); // Unknown device type
 
 struct QC_RAM_VIEW;
 // Per volume (in the filter's device extension). Dispatch reads Access and the hot-path
