@@ -2788,3 +2788,25 @@ never the submitting processor when another exists) and SpinMicroseconds (poll b
 sleeping). Queued transfers keep their disk reference; FreeAdapter stops workers only after
 their queues drain. Defaults keep the inline path. Verification: pending (variant benchmark,
 then suites; switches are removed once a configuration is chosen).
+
+RAM disk transfer strategy, chosen from the switch experiments (0.4.344.1-0.4.352.1, R: 2 GiB,
+quick CDM rows, best of 3, Verifier off; IOPS / GB/s read):
+| Variant | SEQ1M Q8 | SEQ1M Q1 | RND4K Q32 | RND4K Q1 |
+|---|---|---|---|---|
+| inline, no perf options (before) | 11.7 | 11.6 | 34k | 34k |
+| inline + DPC redirection + completion during StartIo (0x11) | 15.7 | 15.9 | 223k | 234k |
+| 4 workers, no perf options | 21.3 | 9.3 | 320k | 19.6k |
+| 4 workers + 0x11 (completions redirected to the submitter) | 22.7 | 10.3 | 37k | 26k |
+| 0x11 + adaptive workers for >=128 KiB | 22.6 | 15.7 | 225k | 231k |
+| 0x11 + split reads (256 KiB chunks) | 24.8 | 24.8 | 229k | 232k |
+Completion during StartIo needs DPC redirection (0x10 alone and 0x30 were rejected) and
+redirection makes worker-completed 4 KiB transfers slow, so small transfers stay inline.
+Non-temporal (SSE2 streaming) copies gave nothing for workers and slowed split reads;
+removed. Split writes ran slower than worker writes at Q8 (16.2 vs 24.7 GB/s) and slightly
+slower than inline at Q1 (16.3 vs 17.0), so writes use adaptive workers. Worker count 3/4 and
+spin 50/200 us made no difference; 512 KiB chunks did not engage a helper in time.
+Implementation: switches removed; fixed strategy: perf options 0x11 when supported, one
+worker per processor (max 16), small transfers inline, large writes to workers while others
+are in flight (inline after 16 transfers that found none outstanding, probe every 64th),
+large reads split into 256 KiB chunks copied with idle workers and completed in StartIo.
+Verification: pending (suites, all-mode benchmark).

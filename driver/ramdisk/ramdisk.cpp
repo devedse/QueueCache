@@ -12,8 +12,11 @@ extern "C" {
 static constexpr ULONG Tag = 'dRCQ', SlabBytes = QcRamSlabBytes;
 static const GUID EmptyGuid{};
 static PDRIVER_OBJECT Driver;
-static UNICODE_STRING ServiceKey; // copied in DriverEntry; tuning lives under <service>\Parameters
-static constexpr ULONG MaxWorkers = 16;
+// Transfer strategy, chosen by measurement on the lab VM (docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md):
+// complete small transfers inline during StartIo; hand large writes to per-processor workers
+// while the submitter keeps others in flight; split large reads into chunks that idle workers
+// help copy before StartIo completes them.
+static constexpr ULONG MaxWorkers = 16, WorkerSpinMicroseconds = 50, WorkerMinBytes = 128 * 1024, SplitChunk = 256 * 1024;
 struct SLAB { PMDL Mdl; PUCHAR Bytes; ULONG Length; };
 struct DISK
 {
@@ -60,7 +63,6 @@ struct WORKER
     PKTHREAD Thread;
     ADAPTER* Adapter;
 };
-struct TUNING { ULONG PerfFlags, Workers, SpinMicroseconds, WorkerMinBytes, Adaptive, SplitChunk; };
 struct ADAPTER
 {
     KSPIN_LOCK TableLock;
@@ -71,13 +73,10 @@ struct ADAPTER
     GUID LastAllocationFailureResource;
     ULONGLONG InjectedAllocationFailures, LastAllocationFailureSlabs;
     BOOLEAN Stopped;
-    TUNING Tuning;
     WORKER Workers[MaxWorkers];
     ULONG WorkerCount;
     volatile LONG NextWorker;
     volatile BOOLEAN Closing;
-    ULONG PerfStatus, PerfSupported, PerfApplied;
-    BOOLEAN TuningReported;
 };
 extern "C" DRIVER_INITIALIZE DriverEntry;
 VIRTUAL_HW_FIND_ADAPTER FindAdapter;
@@ -89,33 +88,6 @@ HW_FREE_ADAPTER_RESOURCES FreeAdapter;
 HW_PROCESS_SERVICE_REQUEST ServiceRequest;
 HW_COMPLETE_SERVICE_IRP CompleteService;
 
-static HANDLE OpenParameters(bool create)
-{
-    UNICODE_STRING path{}; HANDLE key = nullptr;
-    path.MaximumLength = static_cast<USHORT>(ServiceKey.Length + sizeof(L"\\Parameters"));
-    path.Buffer = static_cast<PWCH>(ExAllocatePool2(POOL_FLAG_PAGED, path.MaximumLength, Tag));
-    if (!path.Buffer) return nullptr;
-    RtlCopyUnicodeString(&path, &ServiceKey); RtlAppendUnicodeToString(&path, L"\\Parameters");
-    OBJECT_ATTRIBUTES attributes; InitializeObjectAttributes(&attributes, &path, OBJ_KERNEL_HANDLE | OBJ_CASE_INSENSITIVE, nullptr, nullptr);
-    const auto status = create ? ZwCreateKey(&key, KEY_ALL_ACCESS, &attributes, 0, nullptr, REG_OPTION_NON_VOLATILE, nullptr)
-                               : ZwOpenKey(&key, KEY_READ, &attributes);
-    ExFreePoolWithTag(path.Buffer, Tag);
-    return NT_SUCCESS(status) ? key : nullptr;
-}
-static ULONG ReadDword(HANDLE key, PCWSTR name, ULONG fallback)
-{
-    UNICODE_STRING value; RtlInitUnicodeString(&value, name);
-    UCHAR buffer[sizeof(KEY_VALUE_PARTIAL_INFORMATION) + sizeof(ULONG)]{}; ULONG length = 0;
-    auto info = reinterpret_cast<PKEY_VALUE_PARTIAL_INFORMATION>(buffer);
-    if (key && NT_SUCCESS(ZwQueryValueKey(key, &value, KeyValuePartialInformation, info, sizeof(buffer), &length)) &&
-        info->Type == REG_DWORD && info->DataLength == sizeof(ULONG)) return *reinterpret_cast<ULONG*>(info->Data);
-    return fallback;
-}
-static void WriteDword(HANDLE key, PCWSTR name, ULONG data)
-{
-    UNICODE_STRING value; RtlInitUnicodeString(&value, name);
-    if (key) ZwSetValueKey(key, &value, 0, REG_DWORD, &data, sizeof(data));
-}
 static DISK* ReferenceDisk(ADAPTER* adapter, ULONG slot, bool published)
 {
     if (slot >= QcRamMaxDisks) return nullptr;
@@ -322,16 +294,6 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
         // leaving the SCSI hot path independent of this blocking mutex.
         KeEnterCriticalRegion();
         ExAcquireFastMutexUnsafe(&adapter->ControlLock);
-        if (!adapter->TuningReported)
-        {
-            adapter->TuningReported = TRUE;
-            if (auto key = OpenParameters(true))
-            {
-                WriteDword(key, L"PerfStatus", adapter->PerfStatus); WriteDword(key, L"PerfSupported", adapter->PerfSupported);
-                WriteDword(key, L"PerfApplied", adapter->PerfApplied); WriteDword(key, L"ActiveWorkers", adapter->WorkerCount);
-                ZwClose(key);
-            }
-        }
         if (command.Action == QcRamCapabilities || command.Action == QcRamStartupSession)
         {
             RtlZeroMemory(reply, sizeof(*reply)); reply->Magic = QcRamMagic; reply->Version = QcRamVersion; reply->Size = sizeof(*reply);
@@ -465,15 +427,14 @@ static void Sense(PSCSI_REQUEST_BLOCK srb, UCHAR key, UCHAR asc)
         sense[0] = 0x70; sense[2] = key; sense[7] = 10; sense[12] = asc; srb->SrbStatus |= SRB_STATUS_AUTOSENSE_VALID;
     }
 }
-// Small transfers are cheapest inline (completed during StartIo). A large transfer goes to
-// a worker when the submitter keeps others in flight; a run of transfers that each found
-// nothing outstanding means queue depth 1, so copy it inline (split across idle workers)
-// and probe a worker periodically.
+// Small transfers are cheapest inline (completed during StartIo). A large write goes to a
+// worker when the submitter keeps others in flight; a run of writes that each found nothing
+// outstanding means queue depth 1, so copy inline and probe a worker periodically.
 static constexpr LONG InlineAfter = 16, ProbeEvery = 64;
-static bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes)
+static bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes, bool write)
 {
-    if (!adapter->WorkerCount || bytes < adapter->Tuning.WorkerMinBytes) return false;
-    if (!adapter->Tuning.Adaptive) return true;
+    // Reads copy fastest split (CopySplit); queued writes gain more from returning at once.
+    if (!adapter->WorkerCount || !write || bytes < WorkerMinBytes) return false;
     if (ReadNoFence(&disk->Outstanding) > 0) { disk->InlineStreak = 0; return true; }
     if (disk->InlineStreak < InlineAfter) { ++disk->InlineStreak; return true; }
     return ++disk->Probe % ProbeEvery == 0;
@@ -525,12 +486,12 @@ static void WorkerMain(PVOID context)
             spin = true; continue;
         }
         if (adapter->Closing) break;
-        if (spin && adapter->Tuning.SpinMicroseconds)
+        if (spin)
         {
             // Just finished a request: poll briefly before paying for a sleep and wake-up.
             spin = false;
             LARGE_INTEGER frequency; const auto start = KeQueryPerformanceCounter(&frequency).QuadPart;
-            const auto limit = frequency.QuadPart * adapter->Tuning.SpinMicroseconds / 1000000;
+            const auto limit = frequency.QuadPart * WorkerSpinMicroseconds / 1000000;
             bool arrived = false;
             while (!(arrived = ReadPointerNoFence(reinterpret_cast<PVOID volatile*>(&worker->Queue.Flink)) != &worker->Queue) &&
                    !adapter->Closing && KeQueryPerformanceCounter(nullptr).QuadPart - start < limit)
@@ -559,7 +520,7 @@ static void StopWorkers(ADAPTER* adapter)
 static void StartWorkers(ADAPTER* adapter)
 {
     const auto processors = KeQueryActiveProcessorCountEx(0);
-    const auto wanted = min(min(adapter->Tuning.Workers, processors), MaxWorkers);
+    const auto wanted = min(processors, MaxWorkers);
     for (ULONG i = 0; i < wanted; ++i)
     {
         auto worker = &adapter->Workers[i];
@@ -590,7 +551,7 @@ static void CopyChunks(SPLIT* split)
 static void CopySplit(ADAPTER* adapter, DISK* disk, ULONGLONG offset, PUCHAR buffer, ULONG bytes, bool write)
 {
     SPLIT split{}; split.Disk = disk; split.Buffer = buffer; split.Offset = offset; split.Bytes = bytes; split.Write = write;
-    split.Chunk = adapter->Tuning.SplitChunk; split.Chunks = (bytes + split.Chunk - 1) / split.Chunk;
+    split.Chunk = SplitChunk; split.Chunks = (bytes + split.Chunk - 1) / split.Chunk;
     const auto current = KeGetCurrentProcessorNumberEx(nullptr);
     WORKER* targets[MaxWorkers]{}; ULONG helpers = 0;
     for (ULONG i = 0; i < adapter->WorkerCount && helpers + 1 < split.Chunks && helpers < RTL_NUMBER_OF(split.Help); ++i)
@@ -747,7 +708,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
             // illegal-request replies are not storage errors.
             if (!unsupported && (srb->SrbStatus & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN)) == SRB_STATUS_ERROR) ++disk->Errors;
             KeReleaseSpinLock(&disk->IoLock, irql);
-            if (copyBytes && UseWorker(adapter, disk, copyBytes))
+            if (copyBytes && UseWorker(adapter, disk, copyBytes, copyWrite))
             {
                 // Return to the submitter at once; a worker on another processor copies
                 // and completes. The disk reference moves with the request.
@@ -758,7 +719,7 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                 Enqueue(adapter, request);
                 return TRUE;
             }
-            if (copyBytes && adapter->Tuning.SplitChunk && adapter->WorkerCount && copyBytes >= 2 * adapter->Tuning.SplitChunk)
+            if (copyBytes && !copyWrite && adapter->WorkerCount > 1 && copyBytes >= 2 * SplitChunk)
                 CopySplit(adapter, disk, copyOffset, copyBuffer, copyBytes, copyWrite);
             else if (copyBytes)
             {
@@ -799,34 +760,19 @@ ULONG FindAdapter(PVOID extension, PVOID, PVOID, PVOID, PCHAR, PPORT_CONFIGURATI
     configuration->CachesData = TRUE; configuration->AlignmentMask = 0;
     configuration->WmiDataProvider = FALSE; *again = FALSE;
     configuration->MaxNumberOfIO = 4096; configuration->MaxIOsPerLun = 256; configuration->InitialLunQueueDepth = 256;
-    auto key = OpenParameters(false);
-    adapter->Tuning.PerfFlags = ReadDword(key, L"PerfFlags", 0);
-    adapter->Tuning.Workers = ReadDword(key, L"Workers", 0);
-    adapter->Tuning.SpinMicroseconds = min(ReadDword(key, L"SpinMicroseconds", 50), 1000UL);
-    adapter->Tuning.WorkerMinBytes = ReadDword(key, L"WorkerMinBytes", 128 * 1024);
-    adapter->Tuning.Adaptive = ReadDword(key, L"Adaptive", 1);
-    adapter->Tuning.SplitChunk = ReadDword(key, L"SplitChunk", 0);
-    if (adapter->Tuning.SplitChunk && (adapter->Tuning.SplitChunk < 4096 || adapter->Tuning.SplitChunk % 4096)) adapter->Tuning.SplitChunk = 0;
-    if (key) ZwClose(key);
     StartWorkers(adapter);
     return SP_RETURN_FOUND;
 }
 BOOLEAN Initialize(PVOID extension)
 {
-    auto adapter = static_cast<ADAPTER*>(extension);
-    if (adapter->Tuning.PerfFlags)
+    // Completing inside StartIo skips Storport's completion DPC (about 7x the 4 KiB rate on
+    // the lab VM); it requires DPC redirection. Unsupported systems keep the DPC path.
+    PERF_CONFIGURATION_DATA query{}; query.Version = STOR_PERF_VERSION_5; query.Size = sizeof(query);
+    if (StorPortInitializePerfOpts(extension, TRUE, &query) == STOR_STATUS_SUCCESS)
     {
-        PERF_CONFIGURATION_DATA query{}; query.Version = STOR_PERF_VERSION_5; query.Size = sizeof(query);
-        adapter->PerfStatus = StorPortInitializePerfOpts(extension, TRUE, &query);
-        if (adapter->PerfStatus == STOR_STATUS_SUCCESS)
-        {
-            adapter->PerfSupported = query.Flags;
-            PERF_CONFIGURATION_DATA apply{}; apply.Version = STOR_PERF_VERSION_5; apply.Size = sizeof(apply);
-            apply.Flags = adapter->Tuning.PerfFlags & query.Flags;
-            if (apply.Flags & STOR_PERF_CONCURRENT_CHANNELS) apply.ConcurrentChannels = KeQueryActiveProcessorCountEx(0);
-            adapter->PerfStatus = StorPortInitializePerfOpts(extension, FALSE, &apply);
-            if (adapter->PerfStatus == STOR_STATUS_SUCCESS) adapter->PerfApplied = apply.Flags;
-        }
+        PERF_CONFIGURATION_DATA apply{}; apply.Version = STOR_PERF_VERSION_5; apply.Size = sizeof(apply);
+        apply.Flags = query.Flags & (STOR_PERF_DPC_REDIRECTION | STOR_PERF_OPTIMIZE_FOR_COMPLETION_DURING_STARTIO);
+        if (apply.Flags) StorPortInitializePerfOpts(extension, FALSE, &apply);
     }
     return TRUE;
 }
@@ -860,10 +806,6 @@ void FreeAdapter(PVOID extension)
 extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     Driver = driver;
-    ServiceKey.MaximumLength = registry->Length; ServiceKey.Length = 0;
-    ServiceKey.Buffer = static_cast<PWCH>(ExAllocatePool2(POOL_FLAG_PAGED, registry->Length, Tag));
-    if (!ServiceKey.Buffer) return STATUS_INSUFFICIENT_RESOURCES;
-    RtlCopyUnicodeString(&ServiceKey, registry);
     HW_INITIALIZATION_DATA initialization{};
     initialization.HwInitializationDataSize = sizeof(initialization); initialization.AdapterInterfaceType = Internal;
     // HW_INITIALIZATION_DATA uses this flag to select virtual callbacks (including
