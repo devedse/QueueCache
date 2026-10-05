@@ -24,11 +24,11 @@
     <BuildVersionNumeric>$([System.String]::Copy('$(BuildVersion)').Replace('.', ','))</BuildVersionNumeric>
   </PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo><WarningLevel>Level4</WarningLevel><AdditionalOptions>/analyze /analyze:WX- %(AdditionalOptions)</AdditionalOptions><TreatWarningAsError>true</TreatWarningAsError><PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError><PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link><AdditionalDependencies>storport.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation></Link>
     <ResourceCompile><AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ResourceCompile>
   </ItemDefinitionGroup>
-  <ItemGroup><ClCompile Include="ramdisk.cpp" /><ResourceCompile Include="..\qcache\qcache.rc" /></ItemGroup>
+  <ItemGroup><ClCompile Include="ramdisk.cpp" /><ClCompile Include="disk.cpp" /><ClCompile Include="transfer.cpp" /><ClCompile Include="scsi.cpp" /><ClCompile Include="control.cpp" /><ResourceCompile Include="..\qcache\qcache.rc" /></ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="WriteQueueCacheVersion" BeforeTargets="ResourceCompile">
     <WriteLinesToFile File="$(IntDir)qcache-version.h" Lines="#define QCACHE_VERSION_STRING &quot;$(BuildVersion)&quot;;#define QCACHE_VERSION_NUMERIC $(BuildVersionNumeric);#define QCACHE_ORIGINAL_FILENAME &quot;qcramdisk.sys&quot;;#define QCACHE_DESCRIPTION &quot;QueueCache managed RAM disk provider&quot;" Overwrite="true" WriteOnlyWhenDifferent="true" />

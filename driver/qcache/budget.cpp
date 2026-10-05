@@ -4,6 +4,7 @@
 #include "../shared/budgetprotocol.h"
 #include "../shared/memorybudget.h"
 #include "../shared/startupepoch.h"
+#include "ramdirect.h"
 
 extern QC_MEMORY_BUDGET* QcSharedMemoryBudget();
 extern void QcInitializeMemoryBudget();
@@ -90,6 +91,12 @@ NTSTATUS QcBudgetDispatch(PDEVICE_OBJECT, PIRP irp)
     if (stack->MajorFunction == IRP_MJ_CREATE || stack->MajorFunction == IRP_MJ_CLOSE || stack->MajorFunction == IRP_MJ_CLEANUP)
         status = STATUS_SUCCESS;
     else if (stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL && irp->RequestorMode == KernelMode &&
+        stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_KERNEL_RAM_VIEW && KeGetCurrentIrql() == PASSIVE_LEVEL)
+    {
+        status = QcRamViewControl(irp);
+        returned = irp->IoStatus.Information;
+    }
+    else if (stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL && irp->RequestorMode == KernelMode &&
         stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_QCACHE_KERNEL_BUDGET &&
         stack->Parameters.DeviceIoControl.InputBufferLength == sizeof(QC_KERNEL_RESERVATION) &&
         stack->Parameters.DeviceIoControl.OutputBufferLength >= sizeof(QC_KERNEL_RESERVATION) && KeGetCurrentIrql() == PASSIVE_LEVEL)
@@ -161,7 +168,7 @@ Complete:
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     return status;
 }
-bool QcBudgetIsRamSerial(const char* serial, ULONG length)
+bool QcBudgetParseRamSerial(const char* serial, ULONG length, GUID* result)
 {
     if (!serial || length != 34 || serial[0] != 'Q' || serial[1] != 'C') return false;
     GUID resource{};
@@ -178,6 +185,11 @@ bool QcBudgetIsRamSerial(const char* serial, ULONG length)
         }
         raw[i] = static_cast<UCHAR>(value);
     }
+    *result = resource;
+    return true;
+}
+bool QcBudgetIsReserved(const GUID& resource)
+{
     bool found = false;
     ExAcquireFastMutex(&ReservationLock);
     for (auto link = Reservations.Flink; link != &Reservations; link = link->Flink)
