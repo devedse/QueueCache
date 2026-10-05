@@ -2809,4 +2809,18 @@ Implementation: switches removed; fixed strategy: perf options 0x11 when support
 worker per processor (max 16), small transfers inline, large writes to workers while others
 are in flight (inline after 16 transfers that found none outstanding, probe every 64th),
 large reads split into 256 KiB chunks copied with idle workers and completed in StartIo.
-Verification: pending (suites, all-mode benchmark).
+Verification on 0.4.354.1 (e47f99e, Verifier off, target Q:): ram-disk and managed-provider
+PASS at 512/4096 sectors; image-in-ram was refused by design because Q: has a Fast cache
+(image hosts must be Strict/uncached) and the lab T: disk is gone, so that suite is not
+re-run on this build (its transfers use the same SCSI path as ram-disk; image save/load uses
+the unchanged control path). All-mode benchmark (GB/s or IOPS, read/write):
+| Disk | SEQ1M Q8 | SEQ1M Q1 | RND4K Q32 | RND4K Q1 |
+|---|---|---|---|---|
+| RAM disk R: | 24.5/25.4 | 24.7/16.8 | 227k/193k | 232k/192k |
+| image-in-RAM I: | 24.5/24.7 | 24.8/16.9 | 225k/192k | 231k/192k |
+| cached VHDX S: (2 GiB Fast) | 35.4/21.6 | 14.9/14.0 | 401k/423k | 316k/272k |
+| Q: cache hits | 36.2/21.7 | 14.6/13.7 | 412k/408k | 332k/266k |
+A follow-up that split queue-depth-1 writes with a 150 us worker spin (0.4.356.1) left SEQ1M
+Q1 writes at 16.3 GB/s (profile: memcpy 38%, unattributed frames 28%, user-buffer probe/lock),
+so it was reverted. Remaining 4 KiB gap to cache hits is the Windows volume/partition/class/
+Storport stack below the cache filter (about 78% of busy time at RND4K Q1).
