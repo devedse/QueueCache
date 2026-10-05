@@ -282,10 +282,18 @@ is stored twice: the filter keeps no copy.
   (seen by the filter since boot, or reported by the broker's `Win32_ShadowCopy` query for
   loaded images) limit it to reads.
 - **Stepping aside** (permanent for the binding, with a reported reason): a volsnap
-  flush-and-hold ends Direct writes; any device control not on the harmless list ends
-  Direct access before it is forwarded; a changed boot-sector name (BitLocker conversion)
-  ends it at the next request. Ending waits for Direct requests in flight (rundown).
-  Volume removal and provider removal end it too. A new bind starts a fresh attempt.
+  flush-and-hold ends Direct writes; any device control that is not harmless ends Direct
+  access before it is forwarded; a changed boot-sector name (BitLocker conversion) ends it
+  at the next request. Ending waits for Direct requests in flight (rundown). Volume removal
+  and provider removal end it too. A new bind starts a fresh attempt.
+- **Harmless controls** (`QcRamDirectHarmlessControl`): QueueCache's own controls, the
+  filter's existing observation and volume-management sets, TRIM/allocation queries and
+  volsnap's snapshot management. Otherwise a control must use a Microsoft device type
+  (below 0x8000, not FILE_DEVICE_UNKNOWN, which third-party drivers reuse) without
+  FILE_WRITE_ACCESS: binding already requires every driver below to be a known Microsoft
+  storage driver, and Microsoft declares state-changing controls with write access. Known
+  exceptions (IOCTL_VOLUME_SET_GPT_ATTRIBUTES) stay excluded. Compile-time checks pin the
+  controls seen on the VM (BitLocker status, media removal, multitier memory queries).
 - **Hot path**: one lock-free check per read/write on every volume; bound volumes copy in
   the caller's thread, large transfers through the provider's split copy. Requests that
   are not served (read-only, frozen, unaligned, beyond the extent, unmappable) continue on

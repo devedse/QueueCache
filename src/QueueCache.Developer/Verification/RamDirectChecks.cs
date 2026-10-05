@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
+using QueueCache.Developer.FileTests;
 using QueueCache.Management;
 using QueueCache.Operations;
 using QueueCache.Operations.ManagedDisks;
@@ -112,9 +113,12 @@ internal static class RamDirectChecks
                 throw new IOException("The shadow copy lost the pre-snapshot bytes after a live write.");
             if (!File.ReadAllBytes(path).AsSpan().SequenceEqual(changed))
                 throw new IOException("The live volume did not keep the post-snapshot write.");
+            // Unbuffered: Windows' file cache would otherwise answer without any volume read.
+            if (!UnbufferedFileWrite.ReadPrefix(path, changed.Length).AsSpan().SequenceEqual(changed))
+                throw new IOException("An unbuffered read of the live file returned different bytes.");
             var reads = State(volume);
             if (reads.ReadRequests <= state.ReadRequests || reads.Access != RamDirectAccess.Reads)
-                throw new IOException("Reads did not stay Direct after the snapshot.");
+                throw new IOException($"Reads did not stay Direct after the snapshot: {reads.Describe()} (reads {state.ReadRequests}->{reads.ReadRequests}).");
             return $"Shadow copy {copy.Id}: {state.Describe()}; the snapshot kept the original 256 KiB while the live file took new bytes; reads stayed Direct.";
         }
         finally { ShadowCopies.Delete(copy.Id); File.Delete(path); }

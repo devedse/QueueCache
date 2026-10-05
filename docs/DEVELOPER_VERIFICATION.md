@@ -48,8 +48,8 @@ volume (Direct) and through NTFS afterwards, with Direct still active.
 `direct-unrecognized-control` sends a control request no layer recognizes: Direct access
 must end before it is forwarded, the standard path must return the same bytes, and a new
 bind must restore Direct access. `direct-snapshot-writes` takes a shadow copy: Direct writes
-must stop (reads stay Direct), the snapshot must keep the pre-snapshot bytes and the live
-file the new ones. A Standard-access disk must never be served directly. Score workloads
+must stop, the snapshot must keep the pre-snapshot bytes and the live file the new ones, and
+an unbuffered read of the live file (bypassing Windows' file cache) must still be Direct. A Standard-access disk must never be served directly. Score workloads
 are unchanged.
 
 Plan 90 adds `failed-create-retired` to `ram-disk`: a pure-RAM create on an occupied
