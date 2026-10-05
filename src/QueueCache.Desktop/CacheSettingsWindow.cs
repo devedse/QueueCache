@@ -12,7 +12,7 @@ public sealed record CacheSettingsResult(CacheConfiguration Configuration, bool 
 [System.Runtime.Versioning.SupportedOSPlatform("windows")]
 public sealed class CacheSettingsWindow : Window
 {
-    public CacheSettingsWindow(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096)
+    public CacheSettingsWindow(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096, bool showStartup = true)
     {
         Icon = AppBranding.CreateIcon();
         Title = state.BudgetBytes == 0 ? "Add cache" : "Cache settings";
@@ -70,7 +70,7 @@ public sealed class CacheSettingsWindow : Window
         var batchCustom = Number(4, 1024, options.BatchKiB);
         batchCustom.IsVisible = batch.SelectedIndex < 0;
         batch.SelectionChanged += (_, _) => batchCustom.IsVisible = batch.SelectedIndex < 0;
-        var startup = new ToggleSwitch { Content = "Start with Windows", IsChecked = persistent };
+        var startup = new ToggleSwitch { Content = "Start with Windows", IsChecked = persistent, IsVisible = showStartup };
         var panel = new StackPanel { Margin = new Thickness(28), Spacing = 12 };
         panel.Children.Add(MainWindow.Text(Title!, 25, null, FontWeight.SemiBold));
         panel.Children.Add(MainWindow.Text($"{volume.Name}  /  {MainWindow.Describe(volume)}", 13, MainWindow.Muted));
@@ -150,6 +150,12 @@ public sealed class CacheSettingsWindow : Window
         layout.Children.Add(new ScrollViewer { Content = panel });
         Content = layout;
     }
+    /// <summary>Remembered settings are editor input, never shown as live device counters.</summary>
+    public CacheSettingsWindow(VolumeDescription volume, CacheConfiguration configuration, int availableMiB = 4096)
+        : this(volume, EditorInput(configuration, (ulong)volume.Bytes), false, availableMiB, showStartup: false) { }
+    private static WriteCacheState EditorInput(CacheConfiguration configuration, ulong bytes) =>
+        new((configuration.Enabled ? 1U : 0U) | (configuration.Preset == CachePreset.Fast ? 32U : 0U) | 4096U,
+            0, bytes, checked((ulong)configuration.BudgetMiB << 20), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Options = configuration.Options };
     private static ComboBox Choice(string[] values, int selected) => new() { ItemsSource = values, SelectedIndex = selected, HorizontalAlignment = HorizontalAlignment.Stretch };
     private static NumericUpDown Number(int min, int max, int value) => new() { Minimum = min, Maximum = max, Value = value, Increment = 1 };
     // Shared wording: the draining percentages measure the write pool only, never cached reads.

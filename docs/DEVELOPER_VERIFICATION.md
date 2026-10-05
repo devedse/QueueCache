@@ -21,13 +21,193 @@ supported registration (`qcache developer driver registration`): QueueCache as t
 last Volume-class upper filter, not on the disk class, every volume covered, no
 lab `DiagnosticMode`.
 
+Before qualification, run `qcache developer driver loaded`. It observes loaded
+QueueCache module paths through PSAPI and reports current file hashes. Compare
+the filter's immutable loaded filename and hash with the intended signed artifact;
+SCM registration alone is insufficient. An unavailable observation, including
+Windows 11 24H2 returning null addresses without SeDebugPrivilege, is not proof
+that a driver is absent. The process temporarily enables its eligible debug
+privilege and restores it after observation. The same snapshot is recorded in
+each run's provenance; file hashes are not hashes of kernel memory.
+
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
 files must live on the selected disk; their distinct retained directory is recorded
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 77)
+## Suites (plan version 90)
+
+Plan 90 adds `failed-create-retired` to `ram-disk`: a pure-RAM create on an occupied
+drive letter is refused only at publication, after allocation and formatting. The
+rollback must leave no definition and restore the exact shared reservation. Earlier,
+only refusals before allocation retired the definition. Score workloads are unchanged.
+
+Plan 89 stops taking read-only VHDX views offline: changing the disk attributes of a
+read-only attachment made its detach wait out a 180-second Windows timeout. The
+provider's isolated logical read-back and product image imports/verification now use a
+read-only, letterless attachment without attribute changes. Writable staging disks are
+still taken offline. Score workloads are unchanged.
+
+Plan 88 corrects the `managed-provider` read-only check. The provider answers a
+write to a read-only RAM disk with DATA PROTECT / WRITE PROTECTED (sense 7/27h/00h),
+which is correct SCSI, but Windows classpnp maps that ASC to STATUS_IO_DEVICE_ERROR
+for raw writes (only other DATA PROTECT codes become STATUS_MEDIA_WRITE_PROTECTED).
+The check now requires IOCTL_DISK_IS_WRITABLE to succeed before and to fail with
+ERROR_WRITE_PROTECT while read-only, the raw write to fail with ERROR_WRITE_PROTECT or
+ERROR_IO_DEVICE, exactly one new provider error, and unchanged sectors/generation.
+
+Plan 87 requires `managed-provider` to prove that the native reservation includes
+all x64 MDL/PFN/slab metadata and its bounded transfer workspace, and that the
+existing authority increases by exactly that reservation. Underreported native
+metadata fails even if two incorrect counters agree. Allocation failure and final
+removal must still restore the exact previous authority total. Score workloads
+remain unchanged; shared allocator changes require the full matched 72-case run.
+
+Plan 86 extends `image-in-ram` at both sector sizes with actual open-file Save
+vetoes and an export destination collision. The preceding checkpoint/pointer and
+exact live dirty RAM must survive, the existing export's container hash must stay
+unchanged, and a subsequent filesystem write must succeed. Raw before/after
+records and errors remain in the same run. Host cancellation contracts separately
+require a cancellation result before commit; cleanup/reporting failures must
+remain failures requiring recovery. These additions do not change score workloads.
+
+Plan 81 adds opt-in managed lifecycle phases. `managed-broker-restart` prepares
+five 64 MiB fixtures, stops/starts only QueueCache's named SCM service, then proves
+the same native creations/content survive and an intentionally stopped automatic
+recipe stays stopped. It requires an empty managed catalog, a Strict/disabled
+image host, trusted result directories and no competing workloads. Service PID
+and creation time are retained as process ownership evidence; they do not classify
+Windows startup.
+
+`managed-lifecycle-prepare` retains those fixtures and a durable
+`managed-lifecycle-manifest.json` in its exact run directory. The fixtures cover
+automatic pure RAM, manual pure RAM, stopped automatic pure RAM, Strict backed
+VHDX and a full-RAM image with a committed file plus a later unsaved file. The
+manifest stores native identities, startup epoch, source/checkpoint pointers and
+independent byte hashes on another physical disk. Preparation success is not a
+power/lifecycle acceptance verdict. Do not reboot before its `FINISHED.txt` and
+complete manifest exist.
+
+Perform the intended external transition, then run `managed-lifecycle-verify`
+with the exact prior `--managed-oracle` and declared `--managed-transition`:
+`Restart`, `ColdStart`, `FastStartup`, `Sleep`, `Hibernate`, `BrokerRestart` or
+`BrokerCrash`. The runner never invokes shutdown, sleep, hibernate, reset or process
+kill. Retain hypervisor/Windows event/console evidence of the actual transition
+separately; the argument is a declaration, not proof that the transition happened.
+Native startup must change for a new startup and remain unchanged for resume or
+broker restart/crash. New-startup RAM must discard the unsaved session file while
+the committed full-image file and Strict backed bytes survive. Same-session RAM
+must keep its native creation/content. A stopped automatic recipe stays stopped
+on broker restart/resume but starts empty at a new Windows startup.
+
+After all checks pass, only manifest-owned fixtures are stopped/forgotten; all
+images/evidence remain. Failure preserves resources and raw trace instead of
+automatic destructive recovery. Explicit `managed-lifecycle-cleanup` consumes the
+completed manifest and fresh exact identities. If preparation failed before a
+complete manifest, inspect its `.preparing.json`, raw trace and `disk list`; use
+the product Stop/recover commands for those recorded owned resources. Independent
+cache reservations/profiles must remain stable across the transition; a global
+reservation mismatch is reported, never repaired by changing driver defaults.
+These cases remain outside `full`. Crash during checkpoint commit, physical
+persistence, installer, unavailable power capabilities and injected native faults
+remain independent qualification gates.
+
+```powershell
+qcache developer verify T: --suite managed-broker-restart --output C:\QueueCache-Results
+qcache developer verify T: --suite managed-lifecycle-prepare --output C:\QueueCache-Results
+# After the externally controlled transition; use the exact printed manifest:
+qcache developer verify T: --suite managed-lifecycle-verify --managed-oracle C:\QueueCache-Results\QueueCache-Verify-<id>\managed-lifecycle-manifest.json --managed-transition Restart --output C:\QueueCache-Results
+qcache developer verify T: --suite managed-lifecycle-cleanup --managed-oracle C:\QueueCache-Results\QueueCache-Verify-<id>\managed-lifecycle-manifest.json --output C:\QueueCache-Results
+```
+
+Plan 80 extends the image product cases with uniquely owned blank existing VHDX
+fixtures and explicit initialization. Backed mode initializes that owned file;
+full-image mode preserves it and commits a separate initial checkpoint. Normal
+RAM runtime must leave the resource's logical-image read/write/flush attempt
+counters unchanged in the same observation epoch. Missing counters or an epoch
+change fail that check; completed-transfer totals alone are insufficient. These
+counters include image-sector access and explicit candidate host flushes, not
+container metadata inspection or unrelated processes. Existing score workloads
+are unchanged.
+
+Plan 82 runs the provider and all three product suites with both 512-byte and
+4096-byte logical sectors. Each geometry uses distinct owned resources and raw
+evidence; provider checks additionally require native invalid-range rejection,
+an actual physical write-protection failure with unchanged bytes/generation,
+and refusal of redundant cache allocation without changing shared reservations.
+Provider geometry evidence has a retained index with an explicit completion flag;
+a failure in the first geometry cannot qualify the second. Existing score
+workloads, case IDs, deadlines and the 72-case performance matrix are unchanged.
+
+Plan 83 additionally requires file-relative TRIM on each owned native RAM fixture:
+the provider's TRIM count and write generation must advance without errors,
+the discarded middle range must read as zero, adjacent guards must remain intact,
+and a flushed rewrite must match exactly. Unsupported TRIM fails this provider
+contract; it is not a hardware-dependent SKIP. Primary test failures and separate
+teardown failures are both retained in native/product evidence. Existing score
+workloads and preparation/restoration deadlines are unchanged.
+
+Plan 84 adds opt-in `managed-cli`, executing the same qcache binary's product
+`disk` commands for all three modes and both sector geometries. Unique 64 MiB
+fixtures cover create/list/status, startup settings/recovery, flush, image
+save/export/inspect/owned-image deletion, backed-cache settings, Windows stop
+veto, stale erase refusal, explicit format, stop/configure/start and definition
+removal with source retention. Every child has immutable command/PID/exit/stdout/
+stderr evidence next to the worker reply; `*.cli.json` records ownership and
+separate primary/cleanup outcomes. Exact requested recipe and exclusion of
+preexisting resource IDs guard cleanup even if CLI output fails after creation.
+Fallback cleanup uses the broker independently and preserves images. The suite
+is excluded from `full`, does not reboot, and does not use DiskSpd; existing
+score workloads are unchanged. Image modes also reopen an existing image without
+formatting, infer its geometry, verify persisted bytes and retain the imported
+source on removal; full-image RAM uses the CLI read-only load option.
+
+```powershell
+qcache developer verify T: --suite managed-cli --output C:\QueueCache-Results
+```
+
+Plan 85 requires native allocation rollback in `managed-provider` for both
+geometries. Separate unique new creations fail after 1, 8 and 16 actual 4 MiB
+slabs. Request-local injection leaves no persistent hook and cannot target an
+existing disk. A native proof counter must advance exactly once and identify
+the requested resource/boundary; ordinary out-of-memory rejection before that
+boundary cannot pass. The complete prior native creation set and shared
+reservation must remain unchanged. Each subsequent normal creation must still
+provide zeroed writable storage. Raw snapshots retain the proof and budget.
+Existing write-performance workloads and deadlines remain unchanged.
+
+Plan 79 adds opt-in product broker suites `ram-disk`, `vhdx-backed` and
+`image-in-ram`. They create uniquely owned 64 MiB GPT/NTFS fixtures, preserve
+images and transaction/cleanup evidence, and explicitly stop/forget their
+resources after the case. They require the matching running managed service
+and native modules. Pure RAM covers Windows open-file veto and fresh recreation;
+backed VHDX covers dynamic/fixed images, independent Strict/Fast cache and
+flush/detach/reopen byte checks. Whole-image RAM covers full verified checkpoint,
+export without pointer change, runtime writes/flush/read with the owned source
+temporarily unavailable, dirty generation, discard and committed-image reload.
+These cases format only newly created owned devices or explicitly selected blank
+fixture images after complete zero-sector validation; ordinary physical targets
+are not formatted. Evidence is retained in `*.managed.json` next to worker
+replies. They are excluded from `full`. Cross-boot, broker-crash, physical power,
+installer and injected native-failure coverage remain separate required gates;
+these current-boot cases do not qualify those paths. Existing 72-case score
+contracts and historical raw output are unchanged.
+
+```powershell
+qcache developer verify T: --suite ram-disk --output C:\QueueCache-Results
+qcache developer verify T: --suite vhdx-backed --output C:\QueueCache-Results
+qcache developer verify T: --suite image-in-ram --output C:\QueueCache-Results
+```
+
+Plan 78 adds opt-in `managed-provider`. Use a disposable, clean non-OS host
+volume with the matching signed provider and budget driver loaded. The suite
+creates only uniquely owned RAM/VHDX fixtures, proves private-sector transfer,
+shared budget accounting, no-letter/offline image raw access, NTFS publication,
+open-file lock veto, freeze/thaw and exact reservation release. Native snapshots
+and cleanup failures are retained next to the worker reply. It is excluded from
+`full`; an incomplete native proof does not qualify product activation. Existing
+performance workload/score contracts are unchanged.
 
 Plan 73 requires per-volume lower write/flush attempt evidence, completed cache
 disable and filesystem flush before orderly-removal acceptance. Plan 72 added

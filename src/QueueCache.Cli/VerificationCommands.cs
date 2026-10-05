@@ -30,10 +30,18 @@ internal static class VerificationCommands
     public static Command Create()
     {
         var command = new Command("verify", """
-            Foreground current-boot verification. New files only; runtime policies restored. Never formats or reboots.
+            Foreground current-boot verification. Owned fixtures only; runtime policies restored. Managed suites format only their new owned devices. No automatic reboot.
 
             Suites:
               quick              File-integrity checks; default. No DiskSpd needed.
+              managed-provider   Native private-sector/shared-budget/VHDX/NTFS/freeze/remove proof. Opt-in, no DiskSpd.
+              ram-disk           Product pure-RAM create/format/lock veto/discard/recreate; unique owned fixture only.
+              vhdx-backed        Product fixed/dynamic VHDX with independent Strict/Fast cache; flush/detach/reopen byte oracle.
+              image-in-ram       Full import/checkpoint/export/dirty/reload; runtime bytes with the owned source unavailable. Opt-in.
+              managed-broker-restart Five owned fixtures; restart only QueueCache's broker and prove unchanged creations/bytes and stopped recipes. Empty managed catalog required.
+              managed-lifecycle-prepare Prepare five fixtures and a durable off-host manifest; retain live RAM. No reboot or power transition.
+              managed-lifecycle-verify Verify a prior --managed-oracle after the externally observed --managed-transition; cleanup only after all checks pass.
+              managed-lifecycle-cleanup Explicitly stop/forget only prior manifest-owned fixtures, retaining images/evidence.
               disk-removal-windows Native Windows eject while cache remains dirty/enabled, then live reconnect; no product preparation. Same disposable identity requirements.
               disk-removal       One disposable volume: Fast pending-write oracle, Windows eject, operator reconnect. Explicit disk identity and budget 256..512 MiB required; excludes surprise removal.
               system-preflight  Read-only C: identity/state check; no workload or cache changes.
@@ -104,9 +112,11 @@ internal static class VerificationCommands
         var oracle = new Option<string?>("--oracle") { Description = "system-post-restart only: prior system-files oracle.json on a separate physical disk." };
         var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal suites only: exact PnP instance of the disposable physical disk to eject." };
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
+        var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
+        var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -114,7 +124,7 @@ internal static class VerificationCommands
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
-            p.GetValue(disposableInstance), p.GetValue(disposableBytes)),
+            p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition)),
             new ConsoleProgress(), token);
         });
         return command;

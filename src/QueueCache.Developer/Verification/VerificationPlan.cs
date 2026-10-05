@@ -30,12 +30,22 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 77;
+    public const int Version = 90;
+    public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
     public static readonly string[] Suites =
     [
         "quick",
+        "managed-provider",
+        "managed-cli",
+        "ram-disk",
+        "vhdx-backed",
+        "image-in-ram",
+        "managed-broker-restart",
+        "managed-lifecycle-prepare",
+        "managed-lifecycle-verify",
+        "managed-lifecycle-cleanup",
         "disk-removal",
         "disk-removal-windows",
         "system-preflight",
@@ -87,6 +97,15 @@ public static class VerificationPlan
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
     {
         "quick" => [new("file-integrity", "files")],
+        "managed-provider" => [new("managed-provider-lifecycle", "managed-provider")],
+        "managed-cli" => [new("managed-product-cli", "managed-cli")],
+        "ram-disk" => [new("managed-pure-ram-lifecycle", "ram-disk")],
+        "vhdx-backed" => [new("managed-backed-vhdx-persistence", "vhdx-backed")],
+        "image-in-ram" => [new("managed-whole-image-checkpoints", "image-in-ram")],
+        "managed-broker-restart" => [new("managed-broker-restart", "managed-broker-restart")],
+        "managed-lifecycle-prepare" => [new("managed-lifecycle-prepare", "managed-lifecycle-prepare")],
+        "managed-lifecycle-verify" => [new("managed-lifecycle-verify", "managed-lifecycle-verify")],
+        "managed-lifecycle-cleanup" => [new("managed-lifecycle-cleanup", "managed-lifecycle-cleanup")],
         "disk-removal" => [new("disk-orderly-eject-reconnect", "disk-removal")],
         "disk-removal-windows" => [new("disk-windows-eject-reconnect", "disk-removal")],
         "system-preflight" => [new("system-preflight", "system-preflight")],
@@ -315,6 +334,22 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        var managedLifecycle = options.Suite is "managed-broker-restart" or "managed-lifecycle-prepare" or "managed-lifecycle-verify" or "managed-lifecycle-cleanup";
+        if (managedLifecycle)
+        {
+            if (options.DiskSpd is not null || options.CaseFilter is not null)
+                throw new ArgumentException("Managed lifecycle phases do not accept DiskSpd or case filters.");
+            if (options.Suite is "managed-lifecycle-verify" or "managed-lifecycle-cleanup")
+            {
+                if (string.IsNullOrWhiteSpace(options.ManagedOraclePath)) throw new ArgumentException("This phase requires --managed-oracle from the completed preparation run.");
+            }
+            else if (options.ManagedOraclePath is not null) throw new ArgumentException("Preparation chooses its own unique manifest path; --managed-oracle applies only to verify/cleanup.");
+            if ((options.Suite == "managed-lifecycle-verify") != (options.ManagedTransition is not null) ||
+                options.ManagedTransition is { } transition && !Enum.IsDefined(transition))
+                throw new ArgumentException("--managed-transition is required only for managed-lifecycle-verify and must name a supported externally observed transition.");
+        }
+        else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
+            throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
         if (options.Suite == "sequential-resident" && options.BudgetMiB != 2048)
             throw new ArgumentException("sequential-resident requires --budget-mib 2048 for its fixed 1 GiB prewarmed file.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")

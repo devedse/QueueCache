@@ -4,6 +4,31 @@ using QueueCache.Cli;
 if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("QueueCache requires Windows."); return 1; }
 try
 {
+    if (args.Length == 1 && args[0] == "--managed-service-host")
+        return QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.Run();
+    if (args.Length == 1 && args[0] == "--managed-service-install")
+    {
+        QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.Install(Environment.ProcessPath!); return 0;
+    }
+    if (args.Length == 1 && args[0] == "--managed-service-start")
+    {
+        QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.Start(); return 0;
+    }
+    if (args.Length == 1 && args[0] == "--managed-service-remove")
+    {
+        await QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.RequireUpdateReadyAsync();
+        QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.Remove(); return 0;
+    }
+    if (args.Length == 1 && args[0] == "--managed-update-preflight")
+    {
+        await QueueCache.Operations.ManagedDisks.WindowsManagedBrokerService.RequireUpdateReadyAsync(); return 0;
+    }
+    if (args.Length == 2 && args[0] == "--managed-provider-install")
+        return QueueCache.Operations.ManagedDisks.WindowsProviderInstallation.Install(args[1]) ? 3010 : 0;
+    if (args.Length == 1 && args[0] == "--managed-provider-remove")
+    {
+        QueueCache.Operations.ManagedDisks.WindowsProviderInstallation.Remove(); return 0;
+    }
     // Private transport for the foreground verification coordinator; still the same installed executable.
     if (args.Length == 2 && args[0] == "--verification-worker")
     {
@@ -29,5 +54,5 @@ try
     }
     return await parsed.InvokeAsync(new InvocationConfiguration { EnableDefaultExceptionHandler = false });
 }
-catch (OperationCanceledException) { Console.Error.WriteLine("Cancelled. Caching continues; inspect status."); return 130; }
+catch (OperationCanceledException) { Console.Error.WriteLine("Cancelled. Refresh status before retrying; completed commits remain effective."); return 130; }
 catch (Exception ex) { Console.Error.WriteLine(ex.Message); return 1; }

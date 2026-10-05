@@ -5,6 +5,8 @@
 #include "cachepolicy-check.h"
 #include "readselection-check.h"
 #include "usagepath-check.h"
+#include "../shared/memorybudget-check.h"
+#include "../shared/startupepoch-check.h"
 static_assert(sizeof(DEVICE_STATISTICS) == 184, "Update the managed statistics ABI");
 #define CHECK_OFFSET(field, offset) static_assert(offsetof(DEVICE_STATISTICS, field) == offset, #field)
 CHECK_OFFSET(Version, 0);

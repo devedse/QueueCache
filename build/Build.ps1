@@ -71,6 +71,14 @@ try
         }
         New-Item -ItemType Directory -Path "$stage/driver" | Out-Null
         Copy-Item "artifacts/driver/$flavor/$Configuration/$driverName.sys", "artifacts/driver/$flavor/$Configuration/$driverName.pdb" "$stage/driver"
+        Invoke-Checked $msbuild @('driver/ramdisk/QueueCache.RamDisk.vcxproj', '/m', '/t:Rebuild',
+            "/p:Configuration=$Configuration", '/p:Platform=x64', "/p:BuildVersion=$Version",
+            "/bl:artifacts/ramdisk-$Configuration.binlog")
+        New-Item -ItemType Directory -Path "$stage/ramdisk" | Out-Null
+        Copy-Item "artifacts/ramdisk/$Configuration/qcramdisk.sys", "artifacts/ramdisk/$Configuration/qcramdisk.pdb" "$stage/ramdisk"
+        (Get-Content driver/ramdisk/qcramdisk.inf -Raw).Replace('DriverVer=10/03/2026,0.1.0.0',
+            "DriverVer=$([DateTime]::UtcNow.ToString('MM/dd/yyyy')),$Version") |
+            Set-Content "$stage/ramdisk/qcramdisk.inf" -Encoding ascii
     }
     Copy-Item LICENSE, THIRD_PARTY_NOTICES.md, README.md $stage
     Copy-Item LICENSES "$stage/LICENSES" -Recurse

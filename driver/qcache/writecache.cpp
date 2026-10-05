@@ -6,10 +6,13 @@
 #include <ntddscsi.h>
 #include "observation.h"
 #include "sectorcoverage.h"
+#include "../shared/lockedpages.h"
+#include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
-static volatile LONG64 GlobalBudget, NextInstance;
+static QC_MEMORY_BUDGET SharedMemoryBudget{};
+static volatile LONG64 NextInstance;
 static ULONGLONG MemoryLimit()
 {
     auto ranges = MmGetPhysicalMemoryRangesEx2(nullptr, 0);
@@ -21,7 +24,12 @@ static ULONGLONG MemoryLimit()
     ExFreePool(ranges);
     return min(128ULL << 30, total / 4 * 3);
 }
-static ULONGLONG GlobalLimit;
+QC_MEMORY_BUDGET* QcSharedMemoryBudget() { return &SharedMemoryBudget; }
+void QcInitializeMemoryBudget()
+{
+    InterlockedExchange64(&SharedMemoryBudget.LimitBytes, static_cast<LONG64>(MemoryLimit()));
+}
+
 static ULONGLONG NowMs()
 {
     return KeQueryInterruptTime() / 10000;
@@ -109,8 +117,8 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.OldestDirtyMs = c->Head == NoSlot ? 0 : NowMs() - c->Slots[c->Head].DirtySince;
     c->ReadWriteSnapshot.Generation = c->Generation;
     c->ReadWriteSnapshot.Instance = c->Instance;
-    c->ReadWriteSnapshot.GlobalLimitBytes = GlobalLimit;
-    c->ReadWriteSnapshot.GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
+    c->ReadWriteSnapshot.GlobalLimitBytes = QcMemoryLimit(&SharedMemoryBudget);
+    c->ReadWriteSnapshot.GlobalReservedBytes = QcReservedMemory(&SharedMemoryBudget);
     c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
@@ -139,8 +147,8 @@ void QcCacheSnapshotV3(QC_CACHE* c, QC_STATE_V3* output)
     KIRQL irql;
     KeAcquireSpinLock(&c->SnapshotLock, &irql);
     *output = c->ReadWriteSnapshot;
-    output->GlobalReservedBytes = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-    output->GlobalLimitBytes = GlobalLimit;
+    output->GlobalReservedBytes = QcReservedMemory(&SharedMemoryBudget);
+    output->GlobalLimitBytes = QcMemoryLimit(&SharedMemoryBudget);
     KeReleaseSpinLock(&c->SnapshotLock, irql);
 }
 void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
@@ -1159,7 +1167,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->Options = QcDefaultOptions();
     c->CallerPath = QcDefaultCallerPath;
     c->Instance = InterlockedIncrement64(&NextInstance);
-    GlobalLimit = MemoryLimit();
+    InterlockedExchange64(&SharedMemoryBudget.LimitBytes, static_cast<LONG64>(MemoryLimit()));
     // A disk-class upper filter can accidentally be installed ABOVE partmgr.
     // Its generated background writes have no filesystem FileObject, so partmgr
     // rejects writes into mounted partitions. Stay usable as pass-through, but
@@ -1214,49 +1222,15 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     }
     return STATUS_SUCCESS;
 }
-// Cache payload comes from physical pages owned by this driver, not from the
-// shared nonpaged pool other drivers depend on. Fully required: a partial
-// allocation fails the whole slab. The mapping is kernel-only, cached, no-execute.
-static PUCHAR AllocateSlab(PMDL* mdl)
-{
-    PHYSICAL_ADDRESS low{}, high{}, skip{};
-    high.QuadPart = -1;
-    auto pages = MmAllocatePagesForMdlEx(low, high, skip, SlabBytes, MmCached, MM_ALLOCATE_FULLY_REQUIRED);
-    if (!pages)
-        return nullptr;
-    if (MmGetMdlByteCount(pages) != SlabBytes)
-    {
-        MmFreePagesFromMdl(pages);
-        ExFreePool(pages);
-        return nullptr;
-    }
-    auto mapping = static_cast<PUCHAR>(MmMapLockedPagesSpecifyCache(
-        pages, KernelMode, MmCached, nullptr, FALSE, NormalPagePriority | MdlMappingNoExecute));
-    if (!mapping)
-    {
-        MmFreePagesFromMdl(pages);
-        ExFreePool(pages);
-        return nullptr;
-    }
-    *mdl = pages;
-    return mapping;
-}
-static void FreeSlab(PMDL mdl, PUCHAR mapping)
-{
-    MmUnmapLockedPages(mapping, mdl);
-    MmFreePagesFromMdl(mdl);
-    ExFreePool(mdl);
-}
 // Shared across disk instances, not a separate 4 GiB reservation per disk.
 static void FreeSlots(QC_CACHE* c)
 {
-    if (c->State.BudgetBytes)
-        InterlockedAdd64(&GlobalBudget, -static_cast<LONG64>(c->State.BudgetBytes));
+    const auto reservation = c->State.BudgetBytes;
     if (c->Slots)
     {
         for (ULONG i = 0; i < c->Capacity; i += SlotsPerSlab)
             if (c->SlabMdls && c->SlabMdls[i / SlotsPerSlab] && c->Slots[i].Buffer)
-                FreeSlab(c->SlabMdls[i / SlotsPerSlab], c->Slots[i].Buffer);
+                QcFreeLockedPages(c->SlabMdls[i / SlotsPerSlab], c->Slots[i].Buffer);
         ExFreePoolWithTag(c->Slots, Tag);
     }
     if (c->SlabMdls)
@@ -1276,6 +1250,7 @@ static void FreeSlots(QC_CACHE* c)
         ExFreePoolWithTag(c->DrainBuffer, Tag);
     c->DrainBuffer = nullptr;
     c->State.ReservedBytes = c->State.PayloadCapacity = c->State.BudgetBytes = 0;
+    QcReleaseMemory(&SharedMemoryBudget, reservation); // Account pages until they are actually freed.
 }
 NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, PIRP request, ULONG code)
 {
@@ -1399,6 +1374,7 @@ void QcCacheDestroy(QC_CACHE* c)
 }
 static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
 {
+    if (c->OwnedRamDevice) return STATUS_NOT_SUPPORTED;
     if (budget < (1ULL << 20) || budget > (128ULL << 30))
         return STATUS_INVALID_PARAMETER;
     AcquireCache(c);
@@ -1411,17 +1387,11 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     if (allocationFault)
         c->InjectFault = 0;
     FreeSlots(c);
-    for (;;)
+    if (!QcReserveMemory(&SharedMemoryBudget, budget))
     {
-        auto total = InterlockedCompareExchange64(&GlobalBudget, 0, 0);
-        if (static_cast<ULONGLONG>(total) > GlobalLimit || budget > GlobalLimit - static_cast<ULONGLONG>(total))
-        {
-            Publish(c);
-            ReleaseCache(c);
-            return STATUS_INSUFFICIENT_RESOURCES;
-        }
-        if (InterlockedCompareExchange64(&GlobalBudget, total + budget, total) == total)
-            break;
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
     }
     c->State.BudgetBytes = budget;
     // Include both page-rounded descriptor and hash-index allocations in the hard budget.
@@ -1429,9 +1399,9 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
-    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) /
-                                (Chunk + sizeof(QC_SLOT) + sizeof(ULONG)));
-    n = n / SlotsPerSlab * SlotsPerSlab;
+    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + sizeof(ULONG)) +
+        QcLockedPageMetadataBytes(SlabBytes, 1);
+    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =
@@ -1475,7 +1445,7 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     for (ULONG i = 0; i < n; ++i)
     {
         c->Slots[i].Buffer = allocationFault == 7 && i == 2 * SlotsPerSlab ? nullptr
-                             : i % SlotsPerSlab == 0 ? AllocateSlab(&c->SlabMdls[i / SlotsPerSlab])
+                             : i % SlotsPerSlab == 0 ? QcAllocateLockedPages(SlabBytes, &c->SlabMdls[i / SlotsPerSlab])
                                                      : c->Slots[i - 1].Buffer + Chunk;
         if (!c->Slots[i].Buffer)
         {
@@ -1488,7 +1458,9 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     c->FreeHead = 0;
     c->State.BudgetBytes = budget;
-    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk;
+    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk +
+        QcLockedPageMetadataBytes(static_cast<ULONGLONG>(n) * Chunk, n / SlotsPerSlab);
+    NT_ASSERT(c->State.ReservedBytes <= budget);
     c->State.PayloadCapacity = static_cast<ULONGLONG>(n) * Chunk;
     ++c->Generation;
     Publish(c);
@@ -1552,7 +1524,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     {
         if (command.Value || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
-        else if (c->BlockedPlacement)
+        else if (c->BlockedPlacement || c->OwnedRamDevice)
             status = STATUS_INVALID_DEVICE_STATE;
         else if (!c->Capacity || c->Suspended || c->Gone || (c->SectorBytes != 512 && c->SectorBytes != 4096))
             status = STATUS_DEVICE_NOT_READY;

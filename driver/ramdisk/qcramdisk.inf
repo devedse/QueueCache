@@ -1,0 +1,45 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=SCSIAdapter
+ClassGuid={4d36e97b-e325-11ce-bfc1-08002be10318}
+Provider=%Provider%
+DriverVer=10/03/2026,0.1.0.0
+CatalogFile=qcramdisk.cat
+PnpLockdown=1
+
+[Manufacturer]
+%Provider%=Models,NTamd64
+[Models.NTamd64]
+%Adapter%=Install,ROOT\QueueCacheRamDisk
+[Install.NT]
+CopyFiles=DriverCopy
+[DriverCopy]
+qcramdisk.sys
+; DIRID 13 runs the service from its own driver-store package. A fixed System32\drivers
+; copy can be left behind as a protected hardlink and silently shadow a newer package.
+[DestinationDirs]
+DriverCopy=13
+[Install.NT.Services]
+AddService=qcramdisk,0x00000002,Service
+[Service]
+DisplayName=%Adapter%
+ServiceType=1
+StartType=3
+ErrorControl=1
+ServiceBinary=%13%\qcramdisk.sys
+LoadOrderGroup=SCSI Miniport
+Dependencies=qcachelab
+AddReg=ServiceSettings
+[ServiceSettings]
+HKR,,Security,0x00000000,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+[Install.NT.HW]
+AddReg=DeviceSecurity
+[DeviceSecurity]
+HKR,,Security,0x00000000,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+[SourceDisksNames]
+1=%Provider%,,,
+[SourceDisksFiles]
+qcramdisk.sys=1
+[Strings]
+Provider="QueueCache"
+Adapter="QueueCache RAM disk adapter"

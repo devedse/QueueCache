@@ -80,8 +80,11 @@ try
     {
         throw '64-bit setup is required.'
     }
+    Native $controller @('--managed-update-preflight')
     if ($Uninstall)
     {
+        Native $controller @('--managed-service-remove')
+        Native $controller @('--managed-provider-remove')
         $volumeInstalled = @((Get-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue).UpperFilters) -contains 'qcachelab'
         if ($volumeInstalled)
         {
@@ -234,11 +237,21 @@ public static class QueueCacheCodeIntegrity {
     [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $volumeClassPath -Expected $filters
-    $action = New-ScheduledTaskAction -Execute $controller -Argument 'policy restore'
-    $trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'
-    $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
-    Register-ScheduledTask -TaskName QueueCache-Restore -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    # Use the same signed distribution and root-device SetupAPI entrypoint.
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    # Installing the provider starts its root adapter immediately. Persist the staged
+    # boot filter, its registration and the installed files first, so a crash there
+    # cannot leave a zero-filled boot-start driver behind.
+    $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
+    try { $systemHive.Flush() } finally { $systemHive.Dispose() }
+    Write-VolumeCache -DriveLetter $env:SystemDrive.Substring(0, 1)
+    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
+    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
+    Native $controller @('--managed-service-install')
+    # One startup coordinator owns managed resources before regular saved profiles.
+    # Start at the required reboot, after the intended native modules are loaded.
+    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
     Write-Output "Driver staged at $destination. Reboot to load automatic volume coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 }

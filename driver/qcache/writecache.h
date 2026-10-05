@@ -339,6 +339,7 @@ struct QC_CACHE
     BOOLEAN RangeDrain, RangeForward;
     LONGLONG RangeStart, RangeEnd;
     BOOLEAN BlockedPlacement; // partmgr below us would reject generated background writes.
+    BOOLEAN OwnedRamDevice;   // Correlated against an active kernel-owned budget reservation.
     volatile LONG Gone, PagingPathCount;
     volatile LONG PagingUsageCount, HibernationUsageCount, DumpUsageCount;
     volatile LONG64 UsageInRequests[3], UsageOutRequests[3];

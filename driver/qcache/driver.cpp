@@ -3,9 +3,11 @@
 // explicit cache configuration enables routing for a supported disk.
 #include <ntifs.h>
 #include <ntdddisk.h>
+#include <ntddstor.h>
 #include "qcstats.h"
 #include "observation.h"
 #include "readselection.h"
+#include "../shared/budgetprotocol.h"
 #if QCACHE_CACHE_DRIVER
 #include "writecache.h"
 #endif
@@ -770,6 +772,26 @@ static void EnsureDeviceGeometry(QC_EXTENSION* ext)
         if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
             ext->Cache.SectorBytes = geometry.BytesPerSector;
     }
+    // Only the one-time geometry/control preparation probes identity. Harmless
+    // state polling and the RAM-first write admission path never query backing.
+    STORAGE_PROPERTY_QUERY identityQuery{};
+    identityQuery.PropertyId = StorageDeviceProperty; identityQuery.QueryType = PropertyStandardQuery;
+    UCHAR descriptor[1024]{};
+    KeClearEvent(&event);
+    query = IoBuildDeviceIoControlRequest(IOCTL_STORAGE_QUERY_PROPERTY, ext->Lower,
+        &identityQuery, sizeof(identityQuery), descriptor, sizeof(descriptor), FALSE, &event, &iosb);
+    if (query)
+    {
+        auto identityStatus = IoCallDriver(ext->Lower, query);
+        if (identityStatus == STATUS_PENDING) KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(STORAGE_DEVICE_DESCRIPTOR))
+        {
+            auto storage = reinterpret_cast<PSTORAGE_DEVICE_DESCRIPTOR>(descriptor);
+            const auto offset = storage->SerialNumberOffset;
+            if (offset && offset <= sizeof(descriptor) - 35 && iosb.Information >= offset + 35 && descriptor[offset + 34] == 0)
+                ext->Cache.OwnedRamDevice = QcBudgetIsRamSerial(reinterpret_cast<char*>(descriptor + offset), 34);
+        }
+    }
 #endif
     // Retry on a later request if the length could not be read.
     InterlockedExchange(&ext->GeometryState, InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0) > 0 ? 2 : 0);
@@ -801,11 +823,14 @@ static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp)
 
 NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 {
+    if (QcBudgetOwnsDevice(device)) return QcBudgetDispatch(device, irp);
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
     auto status = IoAcquireRemoveLock(&ext->RemoveLock, irp);
     if (!NT_SUCCESS(status))
         return Complete(irp, status);
     auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER && stack->Parameters.Power.Type == SystemPowerState)
+        QcBudgetObserveSystemPower(stack->Parameters.Power.State.SystemState, stack->Parameters.Power.SystemPowerStateContext);
     if (DiagnosticMode & 1)
     {
         IoSkipCurrentIrpStackLocation(irp);
@@ -1396,6 +1421,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
 
 void QcUnload(PDRIVER_OBJECT driver)
 {
+    QcBudgetDestroy();
     NT_ASSERT(driver->DeviceObject == nullptr);
     UNREFERENCED_PARAMETER(driver);
 }
@@ -1452,5 +1478,5 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
         driver->MajorFunction[i] = QcDispatch;
     driver->DriverExtension->AddDevice = QcAddDevice;
     driver->DriverUnload = QcUnload;
-    return STATUS_SUCCESS;
+    return QcBudgetInitialize(driver);
 }

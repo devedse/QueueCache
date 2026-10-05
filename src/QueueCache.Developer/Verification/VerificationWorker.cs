@@ -15,7 +15,9 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, bool RequireImageEvidence = false,
     string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
-    string? DisposableInstance = null, long? DisposableBytes = null);
+    string? DisposableInstance = null, long? DisposableBytes = null,
+    string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
+    string? ProductExecutable = null, string[]? ProductPrefix = null);
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
 
@@ -575,6 +577,34 @@ public static class VerificationWorker
         object result;
         switch (job.Operation)
         {
+            case "managed-cli":
+                var cliChecks = await ManagedCliScenarios.RunAsync(job, device);
+                RunStorage.AtomicJson(job.Reply, cliChecks); ReportFailures(cliChecks, Console.Error);
+                return cliChecks.Count > 0 && cliChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "managed-broker-restart":
+            case "managed-lifecycle-prepare":
+            case "managed-lifecycle-verify":
+            case "managed-lifecycle-cleanup":
+                if (job.ManagedOraclePath is null) throw new ArgumentException("Managed lifecycle oracle path is required.");
+                var lifecycleOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.ManagedOraclePath)!));
+                lifecycleOutput.ValidateCurrent();
+                if (lifecycleOutput.Instance.Equals(target.Instance, StringComparison.OrdinalIgnoreCase) || lifecycleOutput.Number == target.Number)
+                    throw new IOException("Managed lifecycle evidence must be off the image host physical disk.");
+                var lifecycleChecks = await ManagedLifecycleScenarios.RunAsync(job, target, device);
+                RunStorage.AtomicJson(job.Reply, lifecycleChecks); ReportFailures(lifecycleChecks, Console.Error);
+                return lifecycleChecks.Count > 0 && lifecycleChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "ram-disk":
+            case "vhdx-backed":
+            case "image-in-ram":
+                var managedChecks = await ManagedDiskScenarios.RunAsync(job.Operation, device, job.WorkDirectory!, job.Reply + ".managed.json");
+                RunStorage.AtomicJson(job.Reply, managedChecks);
+                ReportFailures(managedChecks, Console.Error);
+                return managedChecks.Count > 0 && managedChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "managed-provider":
+                var providerChecks = await ManagedProviderScenarios.RunAsync(target, device, job.WorkDirectory!, job.Reply + ".native.json");
+                RunStorage.AtomicJson(job.Reply, providerChecks);
+                ReportFailures(providerChecks, Console.Error);
+                return providerChecks.Count > 0 && providerChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "disk-removal-prepare":
                 result = DiskRemovalScenarios.Prepare(target, device, job.WorkDirectory!, job.BudgetMiB);
                 break;
@@ -849,9 +879,7 @@ public static class VerificationWorker
     {
         using var service = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\qcachelab");
         var registered = service?.GetValue("ImagePath")?.ToString();
-        var binary = registered?.Trim('"').Replace(@"\??\", "");
-        if (binary?.StartsWith(@"\SystemRoot\", StringComparison.OrdinalIgnoreCase) == true)
-            binary = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), binary[12..]);
+        var binary = registered is null ? null : LoadedDriverInspection.NormalizePath(registered);
         string? Hash(string? path) => path is not null && File.Exists(path) ?
             Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))) : null;
         return new
@@ -865,7 +893,8 @@ public static class VerificationWorker
             EntryAssemblySha256 = Hash(System.Reflection.Assembly.GetEntryAssembly()?.Location),
             RegisteredDriverPath = registered,
             RegisteredDriverSha256 = Hash(binary),
-            Note = "Registered binary is not proof of loaded binary after an upgrade. Record/reboot to the intended release before comparison."
+            LoadedDrivers = LoadedDriverInspection.Capture(),
+            Note = "PSAPI paths observe loaded modules; file hashes describe current files. Registered paths are not proof of loaded identity. Match the filter's immutable loaded filename and signed artifact hash before comparison."
         };
     }
 }

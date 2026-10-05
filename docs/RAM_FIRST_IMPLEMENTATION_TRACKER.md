@@ -2096,3 +2096,757 @@ hash. Q: saved 2048 MiB Fast/Idle profile is Active, clean and error-free. No
 owned benchmark process remains. Read-only Proxmox check confirms unused eject
 backing vm-109-disk-5 is preserved and detached. This restart is a planned
 benchmark-state restoration, not automatic recovery or a removal-path proof.
+
+
+### Managed disks planning, 2026-10-03
+
+Owner scope: three UI modes — pure RAM disk, VHDX-backed disk with independent
+RAM cache, and complete VHDX image loaded into RAM. Pure RAM with startup enabled
+must create/partition/format a new empty disk at each new Windows startup;
+image-backed and full-image modes preserve their existing filesystem/data.
+
+Planning: [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md) revision 3 contains the
+three-mode UI contract and S01–S64 scenario matrix.
+[RAM_DISK_IMPLEMENTATION_PLAN.md](RAM_DISK_IMPLEMENTATION_PLAN.md) defines the
+native provider, shared kernel RAM budget, broker/ownership, complete logical
+image transfer, consistent versioned image saves, startup/recovery, installer
+changes and maintained verification handoff for Luna or Sol. Full-image saves
+preserve the imported source and publish verified checkpoint generations; an
+ordinary file flush in RAM does not save an image. CLI product design remains
+later; shared operations and necessary internal service/runner plumbing are
+part of the UI implementation.
+
+| Work package | Implementation | Verification |
+|---|---|---|
+| RD01 — contracts, resource schema and UI flow | Partial: shared definitions/capabilities/runtime, cache configuration composition, creation flow, typed VHDX primitives, checksummed durable catalog/journal with predecessor and removal tombstones | Management/desktop foundation contracts passed; catalog recovery contracts added; native VHDX primitives not VM-tested |
+| RD02 — native provider / isolated image-transfer prototype | In progress: Storport provider, private allocations, bounded service ABI, SCSI data plane, native identity/layout/volume/format wrappers, signed package/root installation and maintained `managed-provider` proof suite | Native Debug/Release and signed package CI 37112939166 passed; new native staging/filesystem tests not yet run on VM |
+| RD03 — RAM provider and one shared memory budget | In progress: cache shared helpers, kernel-only owned reserve/release endpoint, provider references, redundant-cache refusal and strict managed ABI | Native Debug/Release CI passed; managed ABI contracts passed; cross-driver VM proof pending |
+| RD04 — mounted VHDX with existing cache | Source implemented on feature branch: native mount/create, owned GPT/NTFS binding, independent shared cache transaction, explicit flush/drain/detach and veto restoration | Host build passed; product fixed/dynamic Strict/Fast VM case added, not run |
+| RD05 — pure RAM create/format/stop | Source implemented: full reservation, owned publication/format, explicit generation-bound discard, fresh recipe restart | Host definitions/UI/identity contracts passed; product VM case added, not run |
+| RD06 — whole-image import and RAM operation | Source implemented: read-only letterless import, complete copy plus RAM digest verification, private GPT/NTFS/CRC validation, source detach before publication | Host transfer and corrupt/encrypted-layout tests passed; source-unavailable runtime/reload VM case added, not run |
+| RD07 — consistent checkpoint save/export/recovery | Source implemented: volume lock/native freeze, full-sector copy/flush/detach/read-back, durable journal/pointer, predecessor retention, export and save-stop | Host fault tests cover acquire/copy/flush/verify/journal/pointer/cleanup and cancellation; native crash/full-host/save-stop paths not VM-run |
+| RD08 — broker/startup/power/package lifecycle | Source implemented: LocalSystem SCM host in qcache, authenticated bounded local IPC, exact-generation adoption, native cold/hybrid startup epoch, opted-in preshutdown save, installer preflight and one startup coordinator | Host framing/identity contracts passed; SCM, power, upgrade/uninstall and native classifier require Windows qualification |
+| RD09 — completed three-mode UI and product CLI | Source implemented: creation and managed cards, all planned lifecycle/checkpoint/cache/startup/removal/recovery actions, shared cache editor, explicit erase/discard with fresh identity; physical discovery retained separately | Desktop creation/action/dashboard contracts passed; Windows CLI parser checks expanded; native UI walkthrough and CLI execution remain unrun |
+| RD10 — maintained verification integration | In progress: plan 81 adds broker-restart and durable managed lifecycle prepare/verify/cleanup phases; plan-80 blank-image fixtures/image-I/O attempts and plan-78 provider proof remain maintained | Host suite/epoch/identity/oracle contracts added; no new cases have run on VM. Actual cross-boot/crash/power and injected-native-failure qualification remains outstanding |
+| RD11 — correctness/performance qualification | Partial: existing maintained cache suites reused without workload changes; native managed-disk qualification outstanding | Foundation: 9/9 cases, 74 raw PASS, 4 SKIP. Old 0.4.264.1 write-performance baseline `20261003-092326-b5e1ac5fb38b4cd4b25014258222610e` INCOMPLETE 4/72: pre-case Flush timed out at 180s; restoration succeeded, evidence preserved. No matrix/performance acceptance claimed. |
+
+This entry records an initial implementation milestone, not completion or VM
+qualification of the new managed-disk modes. The initial foundation refused all
+creation; the subsequent feature-branch source supplies the provider, broker and
+product operations. Activation requires the matching running broker and native
+ABI. Simultaneous cross-driver memory enforcement and platform lifecycle contracts
+remain unqualified until their Windows evidence is recorded.
+Existing historical cache/driver verification does not qualify
+the new RAM provider, source import, checkpoint commit or power-state contracts.
+
+Source milestone `e64f163e1338e85a7ff443fd34db57b8b9a4b516` on
+`feature/managed-disks`: local managed Release solution build completed with
+zero warnings/errors, and both existing test executables passed with the new
+contracts. [CI run 37103995071](https://github.com/devedse/QueueCache/actions/runs/37103995071)
+passed native Debug/Release builds, Windows host-safe management/desktop tests,
+CLI contracts, package checks and lab installer creation. Exact CI logs were
+inspected; the four existing warnings in untouched cache I/O code remain, with
+no warnings in the extracted shared headers. No driver was installed, test VM
+restarted, or real RAM disk created for this initial milestone. The subsequent
+installation below covers existing-cache correctness; performance and new native
+modes still require qualification.
+
+### Managed disks shared-cache VM verification, 2026-10-03
+
+Implementation: no additional source/default/workload changes. Owner approved
+installing the completed build, rebooting and testing. Signed Release x64
+0.4.264.1 from commit `8e29bb159db10660ffcaa73ab07c54059993f66e`
+([CI 37104360105](https://github.com/devedse/QueueCache/actions/runs/37104360105))
+was installed using the existing installer. One planned reboot loaded the intended
+immutable kernel-module path with signed-artifact SHA-256 verified; Driver Verifier
+remained active at `0x209bb`, resetonbootfail, new module load 1 / unload 0.
+
+Verification: plan-77 `quick`, `policies`, `pressure` on disposable SATA T: and
+`volumes`, `trim-cache` on the existing developer lab VHDX completed **9/9 cases,
+74 raw PASS, 4 SKIP, 0 FAIL** with clean independent restoration. Policies included
+both injected allocation failure rollbacks, zero lower-I/O-attempt fitting-write
+intervals and exact concurrent/persisted bytes. Pressure preserved capacity
+backpressure; volumes proved independent sibling caches, harmless physical-disk
+discovery, resize recovery and VSS contents. All three TRIM cases passed, including
+in-flight drain guards. The SATA file-level TRIM case was unsupported and remains
+skipped; the quick run itself preserved zero-cache pass-through state.
+
+All exact final/raw/ownership/recovery/control/restoration evidence was inspected
+and retained privately. Original Q: 2 GiB Fast/Idle profile/settings are unchanged,
+active, clean and error-free; global reservations returned to exactly 2 GiB after
+every suite. Temporary caches are released, lab VHDX returned to detached state,
+and no test workload remains. No performance benchmark/comparison, new FAT32/ReFS
+run, production VHDX wrapper test, native RAM creation or boot/image-save tests were
+performed. Fully controlled old/new completion ordering remains open. Full commands,
+build hashes, exact run IDs, skip reasons and limits:
+[MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md](MANAGED_DISKS_FOUNDATION_VERIFICATION_20261003.md).
+
+
+### Managed-disk broker, product actions and checkpoint source milestone, 2026-10-03
+
+Implementation: on `feature/managed-disks`, all planned product CLI action bindings
+and corresponding UI actions now call the shared service API. The SCM broker owns
+Windows/native lifetime, authenticates local elevated callers, uses bounded framed
+IPC with streamed inventory and correlated cancellation, and reconciles exact
+resource/boot/creation identities. Catalogs and host directories are protected;
+managed host volumes cannot become Fast or depend on managed disks. Volume
+association removes duplicate generic startup profiles. Save/export freezes RAM,
+verifies complete logical sectors in a detached candidate, commits the durable
+image pointer and retains source/previous files. Private decoded GPT headers and
+arrays are checked before image publication, including NTFS/encryption rejection.
+Update preflight runs before Inno file replacement; the existing binary hosts the
+service and the existing installer registers it. No new installer/test executable.
+
+Verification: managed Release build and Linux management/desktop contracts pass.
+New contracts cover checkpoint failures/commit cancellation, framed/truncated IPC,
+selected erase generation, GPT checksums/bounds and encrypted-source refusal, plus
+UI discard/format/export/recovery and duplicate-card behavior. Windows CLI help
+and pre-broker validation contracts are added to CI. Native startup-context changes
+require the next native CI build and Windows proof. Driver/power/SCM/installer
+success is not inferred from these host checks.
+
+Follow-up source review: the broker now starts automatic recipes and restores
+ordinary saved profiles only at a proven new Windows startup. Restarting the
+broker preserves an intentionally stopped disk and runtime-only cache settings.
+A checksummed coordinator marker records completion without using uptime or a
+service PID. Host contracts pass. Windows CI 37128721293 passed both native
+builds and management/desktop tests, but exposed a malformed-GUID CLI validator
+returning runtime exit code 1 instead of syntax exit code 2; the validator is
+fixed in source. These fixes still require the next Windows CI/VM checks.
+
+Windows blocker: signed 0.4.269.1 from commit `980e5c83`/CI 37114226898 was
+staged and installer PID 7452 started. SSH disconnected during provider installation
+and TCP 22 subsequently timed out. The owner's screenshot and a direct Proxmox
+console capture confirm VM 109 is in Windows Recovery with automatic repair
+failed; it reports `D:\WINDOWS\System32\Logfiles\Srt\SrtTrail.txt`.
+Installation success, loaded provider identity and the underlying crash/boot
+failure cause remain unproven. Console access using the previously supplied API
+token is restored; owned installer/evidence paths and console captures stay private.
+No automatic reset/reboot was used as recovery. This blocks native qualification,
+not ongoing source implementation. Cross-boot/crash/power/native-fault coverage,
+exact loaded-provider evidence and the complete same-binary performance comparison
+remain required work. The old 72-case baseline is incomplete, not an acceptance.
+
+### Managed disk scenario completion follow-up, 2026-10-03
+
+Implementation: S16 now has a shared explicit blank-image initialization contract,
+UI checkbox and `disk create --load ... --initialize-raw`. Complete logical zero
+validation refuses nonempty/corrupt images; source identity is rechecked before
+allocation and formatting. Image-in-RAM preserves the blank source and creates a
+separate initial checkpoint. Consent is one-shot, with no repeated startup erase.
+Stopped recipe editing is exposed in the UI and `disk configure`; only pure RAM
+capacity may change. Managed dashboard cards report actual native reserved RAM
+and counters, and refresh ordinary inventory when managed ownership changes.
+Image-sector read/write/flush attempts include failed attempts and separate
+completion bytes, with a new observation epoch on broker restart. Plan 80's
+maintained image cases cover explicit blank initialization and require unchanged
+attempts during ordinary whole-image RAM I/O with its source unavailable.
+
+Verification: managed Release compilation has zero warnings/errors; management
+and desktop contracts pass, including complete blank-sector/tail/error checks,
+identity-bound initialization, stopped recipe restrictions and failed I/O attempt
+accounting. The preceding startup/CLI fixes passed Windows Debug/Release native,
+management, desktop, CLI and signed-package CI 37130121135 (`ebecff3`). The new
+scenario additions still require their matching Windows CI build. None has run on the inaccessible VM;
+the outstanding installer/console blocker and native qualification gaps remain.
+
+Follow-up recovery implementation: save/catalog reporting failures preserve the
+original error while independent thaw still runs; initial checkpoints restore
+only an existing letter, preventing premature publication. Creation records the
+actual owned GPT/volume before formatting or letter assignment. Read-only RAM is
+armed before Windows publication. Interrupted creation/formatting cannot be
+relabelled Ready without its durable completion boundary. Ordinary cache
+reconfiguration/control/removal refuses managed volume ownership; the broker
+uses the same shared cache transaction with its exact resource owner. Read-only
+IPC observations are bounded independently from mutation cancellation/commit.
+Elevated developer directory creation uses an eligible Administrators owner;
+the SYSTEM broker uses SYSTEM, with no implicit restore privilege activation
+([Windows owner rules](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setnamedsecurityinfoa)).
+
+Verification: recovery/catalog-reporting and interrupted-format adoption host
+contracts pass; managed build and desktop tests pass. The S16/settings/I/O-proof
+changes passed Windows Debug/Release and signed-package CI 37131210508 (`b164db6`).
+The subsequent hardening still needs matching CI and VM qualification.
+
+Lifecycle verification implementation: plan 81 adds an owned SCM broker-restart
+case and independent prepare/verify/cleanup phases with five fixtures, persistent
+file hashes, startup/native identities, pointer checks and exact shared-budget
+cleanup. The preparation marker explicitly does not qualify a transition. The
+operator selects/performs the actual transition; no automatic reboot, sleep,
+hibernate, reset or process kill is implemented. Failure retains resources and
+raw evidence. Host acceptance contracts reject changed epochs, incomplete/duplicate
+manifests, missing hashes, stale creations, changed pointers and recovery states.
+Native disappearance is reported as possible volatile loss, never inferred save;
+stopped image cards describe the retained checkpoint rather than live Saved RAM.
+
+Verification: local Release compilation passed with zero warnings/errors;
+management and desktop contracts passed, including the new lifecycle acceptance
+contracts. Matching Windows CI is still required. Cross-boot/power/SCM/native-crash
+evidence has not been collected while Windows remains in Recovery;
+prototype isolation, read-only/4Kn, failures,
+installer and complete performance qualification still need actual Windows runs.
+
+### VM 109 recovery investigation and boot identity correction, 2026-10-04
+
+Verification evidence: direct Proxmox API console access was recovered from the
+owner's previously supplied private credentials. Windows Recovery permits reading
+the OS volume as D:. No current failure minidump or `MEMORY.DMP` is present.
+The October 3 installer transcript ends after the volume-class filter registration;
+SetupAPI records importing the RAM-provider package and creating its service.
+A copied offline SYSTEM hive still selects the new 0.4.269.1 qcache ImagePath,
+but has no RAM-provider service entry; this disagreement does not prove the
+underlying crash or repair action. The old 0.4.264.1 driver file is present.
+The current SYSTEM hive was copied to the owned installer evidence directory
+before any proposed recovery edits. Original registration and logs are retained.
+The owner approved the proposed scoped rollback and one normal recovery boot.
+The committed SYSTEM hive was saved before changing only qcachelab's ImagePath
+to the retained 0.4.264.1 immutable file. Windows booted successfully and SSH
+returned. No hypervisor reset was issued. The failed package, original hive and
+installer/repair logs remain available. This narrows the investigation but does
+not establish the crash cause.
+
+Implementation: review identified an independent boot hazard: the boot-start
+volume filter returned failure when `ExUuidCreate` could not generate an epoch.
+Microsoft documents `STATUS_RETRY` while UUID generation is unavailable
+([ExUuidCreate](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-exuuidcreate)).
+Epoch seeding is deferred to an actual later service query; an unavailable UUID
+fails that query without fabricating identity or failing the filter's boot load.
+Hybrid transitions preceding the first query are preserved under the same spin
+lock, and concurrent successful queries retain one chosen epoch. Compile-time
+contracts cover deferred seeding and those transition/race invariants.
+
+Verification: hardening/lifecycle commit `5590d19` passed native Debug/Release,
+management/desktop contracts, CLI checks and signed-package CI 37158510520.
+The boot identity correction `9c16e99` passed both native builds and the managed,
+CLI and signed-package checks in CI 37159070887; an actual loaded-driver boot is
+still required. It is a plausible boot-risk fix, not a confirmed explanation of
+the install failure. Windows/native/performance acceptance remains outstanding.
+
+Incomplete-creation recovery implementation: explicit Stop now reuses the creation
+cleanup path when a published RAM disk or owned VHDX lacks its completed GPT/volume
+binding. It validates the actual native creation or image identity, geometry and
+physical attachment first, locks every enumerated volume and drains any backing
+cache before removal/detach. It does not format or infer Ready from a partial
+creation. Reconciliation retains those attachments for this explicit action;
+RAM requires fresh discard intent. Successful abort also clears the publication
+flag before a later creation. A foreign managed cache owner blocks cleanup.
+
+Verification: managed Release compilation passed with zero warnings/errors;
+management and desktop contracts passed. Contracts distinguish incomplete error
+states from fully bound resources and stopped recipes. Actual interrupted native
+creation/Windows veto qualification remains pending the recovered VM and matching
+CI; host tests do not prove physical detach ordering.
+
+### Interrupted provider installation repair and loaded-module observation
+
+Implementation: update preflight distinguishes an unbound inactive/disconnected
+owned adapter from a bound but unavailable provider. Repair requires a missing
+service binding, explicit devnode status and successful module enumeration proving
+qcramdisk is absent. Unknown status, missing privilege, started nodes, loaded
+provider modules and bound unavailable providers still block. The installer
+removes/recreates only that proven unbound root node and includes disconnected
+nodes when checking for duplicates. Live/private allocations and catalog recovery
+states retain their existing update/uninstall vetoes. Inno preflight uses its
+bundled CLI from temporary storage before replacing installed recovery tools,
+so an older CLI's inability to recognize the interrupted state cannot prevent
+safe repair.
+
+The maintained `qcache developer driver loaded` diagnostic and runner provenance
+now capture loaded paths through PSAPI, with temporary process SeDebugPrivilege
+restored afterwards. Windows 11 24H2's successful-but-null address result is an
+unavailable observation, never proof of absence. File hashes describe the current
+on-disk files; qualification must match the filter's immutable loaded filename
+and the signed artifact hash, rather than treating SCM registration as loaded
+identity. This adds provenance without changing workload/score contracts.
+
+Verification: the recovered VM reproduces the old preflight failure and has an
+unbound/disconnected adapter, no qcramdisk service and no current dump at either
+the OS or configured Q: dump location. Host repair-policy contracts reject unsafe
+and incomplete observations. Matching CI, the actual installer repair, subsequent
+loaded-driver boot and full Windows qualification remain outstanding.
+
+Native adapter initialization correction: review against Microsoft's
+[HW_INITIALIZATION_DATA contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/storport/ns-storport-_hw_initialization_data-r1)
+found that the provider omitted STOR_FEATURE_VIRTUAL_MINIPORT while supplying
+virtual service callbacks and the seven-argument virtual FindAdapter. DriverEntry
+now explicitly declares virtual miniport, legacy SCSI_REQUEST_BLOCK and BTL8
+addressing support before StorPortInitialize. Its physical-page transfer limit
+is bounded by the maximum transfer size plus an unaligned edge page, rather than
+MAXULONG. ConfigInfo.VirtualDevice remains set during FindAdapter; that later
+configuration is not a substitute for the initialization type declaration.
+
+Verification: d81424b's repair/observation code passed native Debug/Release,
+management/desktop, CLI and signed-installer CI 37175177698. Its maintained
+loaded-module diagnostic and unbound-node repair preflight both passed on the
+recovered VM with the 0.4.264.1 filter; no provider was installed during those
+observations. The adapter declaration correction still needs matching native
+CI and real installation/lifecycle proof. It is a concrete initialization defect,
+not a confirmed explanation of the original crash. The fresh, separate 72-case
+baseline runs on T: with the same DiskSpd hash, 2048 MiB budget and a recorded
+3600-second preparation flush deadline; it is not accepted until complete.
+
+Managed geometry verification implementation: plan 82 makes provider and product
+fixtures cover both 512-byte and 4096-byte logical sectors through one shared
+immutable geometry contract. Provider raw evidence is separate per geometry with
+an explicit enclosing completion index. Additional checks require native rejection
+of three invalid transfer ranges without generation changes, refusal of redundant
+RAM caching without an extra reservation, and an actual protected physical-sector
+write with unchanged bytes/generation. Score workloads and the complete 72-case
+performance contract are unchanged; the running plan-81 baseline is preserved.
+
+Verification: adapter declaration commit 3bcbcb5 passed native Debug/Release,
+host management/desktop contracts, CLI and signed-installer CI 37175645554.
+The additional plan-82 scenarios still require host build/contracts and matching
+Windows execution. Their source existence does not qualify either geometry or
+native write-protection behavior.
+
+Verification update: plan-82 commit 2c53b6a passed native Debug/Release,
+management/desktop contracts, CLI and signed-installer CI 37176587183. Signed
+0.4.278.1 is downloaded for qualification; it has not been installed. The fresh
+T: baseline remains in progress on the recovered 0.4.264.1 filter, with its exact
+run evidence retained. No complete comparison is claimed.
+
+Managed TRIM verification implementation: plan 83 adds file-relative TRIM of
+the middle 1 MiB of a newly owned 3 MiB RAM file in both sector geometries.
+Acceptance requires an advancing native TRIM count/write generation, unchanged
+errors, zero discarded bytes, intact adjacent guards and exact flushed rewrite.
+Missing/unsupported native behavior fails rather than becoming SKIP. Primary
+test and separate teardown failures are both retained in provider/product raw
+evidence and combined if both fail, preserving the original diagnostic.
+
+Verification: host evidence-oracle contracts cover missing progress, errors,
+changed boot/creation, corrupt guards/nonzero discarded bytes and incomplete
+read-back. Host management contracts passed on Linux without compiler warnings;
+Windows runner contracts, matching CI and actual signed VM execution are still
+required. Source implementation does not qualify native TRIM.
+
+Product CLI verification implementation: plan 84 adds explicit `managed-cli`
+through the maintained runner and existing qcache binary. All three modes and
+both geometries execute product create/list/status/startup/recover/flush,
+mode-specific save/export/inspect/delete-image/cache, Windows open-file and stale
+erase vetoes, format, stop/configure/start and remove. Unique recipe/ID guards
+exclude preexisting resources even during independent broker fallback cleanup.
+Each nested product child has immutable command, PID/start, exit, stdout/stderr
+evidence in the enclosing run, with primary and cleanup failures retained.
+Original images survive definition removal; no power transition or ordinary
+physical-disk format occurs. Existing 72-case score contracts are unchanged.
+
+Verification: new ownership contracts reject wrong letter/label/path/geometry/
+capacity and preexisting IDs before targeting cleanup. Host management contracts
+and managed CLI compilation passed without warnings/errors. Plan-83 commit
+f36a64b also passed native Debug/Release, Windows management/desktop contracts,
+CLI and signed-installer CI 37177476249. Matching plan-84 CI and real Windows
+CLI execution remain required; this source addition is not native qualification.
+
+Allocation failure/lifetime implementation: plan 85 extends `managed-provider`
+with unique request-local new-creation failures after 1/8/16 allocated 4 MiB slabs
+in each geometry. Native proof changes only after that allocation/zeroing boundary
+is reached, identifies the exact resource and increments once. Acceptance rejects
+ordinary early OOM, changed epoch, wrong resource/boundary, lost objects and any
+reservation difference. No hook remains armed; normal product creation is
+unchanged. Subsequent normal storage must still be zeroed and writable.
+
+Review also found that reservation release previously called the allocating
+IoBuildDeviceIoControlRequest during low-memory teardown. It now uses an owned
+[IoAllocateIrp](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-ioallocateirp)
+request prepared before reserving memory, with a completion/event and explicit
+ownership; it is not attached to the creating thread's IRP queue.
+Its actual IRP size is included in the reservation. Failed and successful creation
+cleanup can return accounting without allocating another request. Physical pages
+still disappear before the reservation is released, and the provider retains
+the budget device/file reference until release completes.
+
+Verification: host management contracts passed without warnings/errors. ABI and
+acceptance contracts cover bounded request-local failure,
+missing/native boundary proof, wrong identity and leaked reservations. Native
+Debug/Release CI, real rollback/teardown under Verifier and complete before/after
+performance comparison remain required. This source fix does not establish VM
+allocation/lifetime qualification.
+
+Fast Startup backed-image reconciliation correction: a permanent VHDX attachment
+can survive a hybrid startup. Reconciliation now validates the retained image
+file/virtual identity, exact physical number/geometry, GPT and volume identity
+and completed Ready journal before draining/stopping that owned attachment.
+The authoritative native hybrid counter/epoch must prove the immediately
+preceding startup of the same kernel session; cold/foreign/skipped/unknown
+startup identities cannot authorize retained-attachment retirement.
+It then remembers the new authoritative startup epoch; automatic recipes reopen
+through normal creation, while startup-off recipes remain stopped. Same-session
+broker restarts retain/adopt the live attachment. A missing/mismatched binding,
+incomplete journal or Windows lock veto still blocks; no foreign attachment is
+detached. Reconciliation also preserves the Stopped journal boundary after
+retiring a prior RAM/image creation instead of overwriting it with Ready.
+
+Verification: host management contracts and CLI Release compilation passed without
+warnings/errors. Ownership contracts reject changed file/virtual identity,
+physical number, capacity/sector geometry and missing binding, and distinguish
+new-startup automatic reopen from same-session/manual recipes. Allocation/lifetime
+commit 8a58b30 passed native Debug/Release, Windows management/desktop contracts,
+CLI and signed-installer CI 37178446155. Matching reconciliation CI and actual
+hybrid-startup/lifetime qualification remain required;
+normal restart evidence alone cannot qualify this path.
+
+Managed checkpoint cancellation and native failure coverage, 2026-10-04:
+precommit cancellation previously became a generic IOException after successful
+cleanup, so broker/UI/CLI could not report the real cancelled outcome. It now
+retains the request token and reports cancellation only before commit and when
+independent cleanup/catalog recording succeeded. A cleanup/reporting failure
+still reports failure/recovery; cancellation after pointer commit remains the
+actual committed result. Plan 86 extends the maintained `image-in-ram` suite with
+open-file Save veto and existing-destination Export refusal at both geometries.
+Required proof includes unchanged checkpoint pointers/destination container hash,
+the exact live dirty RAM/volume/GPT binding, and successful writes after failure.
+
+Verification: source and host contracts cover cancellation during copy and
+before commit, failed thaw after cancellation, late cancellation, and rejection
+of missing/frozen/read-only/changed native or checkpoint evidence. Matching CI and
+actual Windows failure runs remain required. Reconciliation commit be7a32f passed
+native Debug/Release, Windows management/desktop contracts, CLI and signed setup
+CI 37179484245. Its signed package 0.4.282.1 is downloaded but not installed.
+The exact fresh old-driver baseline on T: remains running; it is separate from
+the earlier incomplete Q: run and no performance acceptance is claimed.
+
+Shared locked-page metadata correction, 2026-10-04:
+the cache and provider reserved page payload and their own slab tables, but
+omitted the allocated MDL header/PFN arrays. A common locked-page sizing helper
+now charges those arrays in both paths. Cache slab admission includes that cost
+inside the selected hard budget; published reserved bytes include the actual
+descriptor count and remain bounded by the budget. Provider reservation includes
+all per-slab MDLs before allocation. The managed headroom estimate also includes
+PFNs and conservatively sized MDL/slab headers, without replacing authoritative
+kernel accounting. There are no changes to ordinary read/write hot-path I/O.
+
+Verification: bounded managed estimate contracts cover 16/17/64 MiB and maximum
+capacity, including PFN scaling and invalid/overflowing capacities. Native
+Debug/Release CI, actual shared allocation/rollback/removal and the complete
+72-case before/after comparison remain required. This is a source accounting
+fix, not a native allocation/performance acceptance verdict.
+
+Maintained plan 87 additionally rejects an underreported native reservation even
+when matching global/provider counters agree. The independent lower bound includes
+x64 MDL/PFN/slab descriptors and the transfer workspace. Host evidence contracts
+reject the old omitted-metadata reservation and any global-accounting discrepancy.
+
+RAM adapter start robustness, 2026-10-04: `FindAdapter` refused to start the
+adapter when `ExUuidCreate` returned STATUS_RETRY, which Windows documents
+before its UUID seed is ready; a root-enumerated adapter can start that early
+at boot. The adapter epoch now falls back to a time/counter-seeded random
+version-4 value; it only distinguishes adapter instances. Review note on the
+unresolved 0.4.269.1 install failure: that build lacked
+`STOR_FEATURE_VIRTUAL_MINIPORT`, so Storport would have called the
+seven-argument virtual `FindAdapter` with the six-argument physical convention,
+making the code write configuration through the wrong pointer when setup
+started the root adapter. That is consistent with the setup log ending right
+after filter registration, but it remains a hypothesis, not a confirmed
+diagnosis. Fixed by 3bcbcb5; not yet VM-verified.
+
+Provider install crash diagnosed, 2026-10-04 (0.4.292.1 install on the test VM):
+setup bugchecked with PAGE_FAULT_IN_NONPAGED_AREA in storport.sys while starting
+the root adapter, then the next boot failed with INACCESSIBLE_BOOT_DEVICE. The
+SetupAPI device log shows the cause: `Cannot overwrite Trusted Installer protected
+file 'C:\WINDOWS\System32\drivers\qcramdisk.sys'`. The interrupted 0.4.269.1 install
+had left that path as a hardlink into its own driver-store package, so the 0.4.292.1
+package was staged but Windows restarted the adapter with the old 0.4.269.1 binary,
+which lacks `STOR_FEATURE_VIRTUAL_MINIPORT` (seven-argument FindAdapter called with
+the physical convention). The new provider code never ran. The boot failure was a
+consequence: the crash discarded unflushed file data, leaving the newly staged
+boot-start filter and the Program Files copies entirely zero-filled (their SHA-256
+equals that of all-zero buffers of the same size). No dump was saved.
+
+Fixes: the INF uses DIRID 13, so the service runs from its own driver-store package
+and a stale fixed-path copy can no longer shadow a newer package. Provider setup
+removes leftover QueueCache provider packages whenever no adapter node is bound,
+so PnP cannot auto-select an older package for the new node. Install-Driver.ps1
+flushes the SYSTEM hive and the system volume before starting the provider, so a
+crash there cannot zero the staged boot filter. Recovery used the documented
+offline rollback to the 0.4.264.1 filter path (hive backed up first), then deleted
+the two stale provider packages (oem3/oem5) that pointed at the old binary.
+
+Broker pipe instance fix, 2026-10-04 (found on installed 0.4.294.1): the broker
+started, reconciled and restored the saved Q: profile, then terminated with
+service-specific error 1 as soon as the first client connected. Creating the next
+pipe server instance needs FILE_CREATE_PIPE_INSTANCE under the existing instance's
+DACL, which granted only read/write. LocalSystem now also gets CreateNewInstance;
+Administrators keep read/write only. Verified only by the VM run that follows.
+
+managed-provider first VM run, 2026-10-04 (installed 0.4.294.1, run
+`QueueCache-Verify-20261004-091256-40896b9416f24fc58239a8491ded2fdb`): at 512-byte
+sectors allocation-failure rollback (1/8/16 slabs), private zeroed storage and
+shared accounting, native range rejection, isolated VHDX logical transfer,
+redundant-cache refusal, file-relative TRIM zero/guards/rewrite, open-file lock
+veto, filesystem freeze/thaw and exact owned removal all PASSED. The read-only
+check failed: a raw write returned ERROR_IO_DEVICE instead of ERROR_WRITE_PROTECT.
+A direct probe showed the provider's sense reaches Windows intact (CHECK CONDITION,
+fixed sense 7/27h/00h), IOCTL_DISK_IS_WRITABLE reports ERROR_WRITE_PROTECT, and the
+write counted exactly one provider error with no generation change. Microsoft's
+classpnp maps DATA PROTECT with ASC 27h to STATUS_IO_DEVICE_ERROR (only other ASCs
+become STATUS_MEDIA_WRITE_PROTECTED), so the provider is correct SCSI and the test
+expectation was wrong. Plan 88 checks the class write-protect state instead. The
+4096-byte geometry did not run because the suite stops at the first failure.
+
+Broker local-client fix, 2026-10-04 (found on installed 0.4.298.1): with the pipe
+instance fix the broker stayed running, but every `qcache disk` call failed with
+"Pipe is broken". The broker's local-client check required
+GetNamedPipeClientComputerName to return this machine's name; a VM probe showed it
+fails with ERROR_PIPE_LOCAL (229) for local clients, so every local client was
+rejected and the pipe closed before the client finished writing. ERROR_PIPE_LOCAL is
+now accepted as local (a returned name must still match). The broker also reads the
+bounded request before impersonating, as Windows documents for pipe impersonation.
+No product `qcache disk` operation had ever completed before this fix.
+
+Volume-arrival deadlock in the filter, 2026-10-04 (found on installed 0.4.298.1 with
+local kernel debugging): `managed-provider` intermittently hung the VM. New processes
+(SSH logons, Task Manager) could not start; the worker could not be terminated. A
+live `kd -kl` session showed a mount-manager online-notification worker sending
+IOCTL_VOLUME_ONLINE to a new volume; QueueCache forwarded it directly (counted in
+DirectCount), volsnap's VspOnline called IoVolumeDeviceToDosName and waited for the
+mount manager. The same volume's request worker had dequeued an ordered request and
+was waiting for DirectIdle at its first wait. The mount manager sends IOCTL_MOUNTDEV_*
+queries to volumes with its own lock held, and ordered requests queue behind
+DirectIdle, so this cycle never resolves, and with the mount manager stalled so does
+process creation. The filter now treats every IOCTL_MOUNTDEV_* control and the
+volume online/state queries as observations: forwarded at dispatch, never queued and
+never counted in DirectCount. IOCTL_VOLUME_OFFLINE and attribute changes stay ordered.
+None of these touch volume data, so cache ordering and invalidation are unchanged.
+Not yet VM-verified; the provider suite is repeated in a loop to check.
+
+Broker startup with foreign RAM objects, 2026-10-04: during a boot where the
+developer provider suite's own native RAM fixture existed, broker initialization
+threw "Uncataloged owned RAM objects are retained for recovery" and the service
+exited, so the ordinary Q: saved profile was not restored on that boot. Unknown
+native objects are still retained untouched and logged, but the broker now keeps
+serving cataloged disks and restoring saved profiles.
+
+Deadlock fix check, 2026-10-04 (installed 0.4.302.1): the provider suite, which hung
+on its first iteration twice before the fix, completed six consecutive iterations
+(both geometries, all checks) with no hang. The seventh failed once with
+ERROR_ACCESS_DENIED from FSCTL_LOCK_VOLUME on the freshly written RAM volume, the
+usual sign of a background scanner briefly holding a handle. Volume locking now
+retries for up to five seconds on access denied; a handle that stays open is still
+reported as the Windows veto.
+
+Image-host validation and failed-create cleanup, 2026-10-04 (installed 0.4.302.1):
+`ram-disk` PASSED at both geometries (open-file Stop veto, fresh format/write/flush,
+explicit discard and recreate). `vhdx-backed` was refused by the image-host check:
+T:\ was owned by NETWORK SERVICE (volumes formatted through the Windows storage
+service get that owner). An owner implicitly has WRITE_DAC, so the refusal is
+correct; the test volume root was changed to Administrators. The check then refused
+Windows' default root ACL (Authenticated Users Modify on the root itself). A volume
+root cannot be deleted or renamed, so only Delete on the root is now ignored;
+FILE_DELETE_CHILD, permission and ownership rights still fail. Both messages now
+say how to fix the directory. The refused creates exposed a product bug: a create
+that failed before obtaining a runtime left a catalog definition that could not be
+stopped or removed (RemoveDefinition required an identity; the engine dereferenced
+a missing runtime). Create now retires such a definition before rethrowing, and
+RemoveDefinition accepts an identityless definition. Fixture cleanups no longer
+assume a runtime.
+
+Backed-image identity fix, 2026-10-04 (installed 0.4.308.1): `vhdx-backed` created,
+formatted and Stop-vetoed correctly, then Flush failed with "The owned VHDX attachment
+identity changed." A VM probe showed GET_VIRTUAL_DISK_INFO IDENTIFIER (version 2)
+returned the image's VirtualDiskId at creation but a different GUID once the VHDX had
+been opened for writing; VIRTUAL_DISK_ID (version 14) stayed equal to the recorded
+value. Every used backed image therefore failed Stop/Flush/startup identity checks,
+and checkpoint identities had the same exposure. Image inspection now records the
+VirtualDiskId. The suite's earlier "open-file veto" PASS was false: it accepted this
+identity error as the veto. The product and CLI veto checks now require the broker's
+recorded "Windows vetoed stopping" outcome.
+
+Backed Stop/Format cache release fix, 2026-10-04 (installed 0.4.312.1): with the
+identity fix, `vhdx-backed` passed the real Windows Stop veto (now checked against the
+broker's recorded veto) and Flush, then Stop (drain then detach) failed with "Cannot
+open \\?\Volume{...}: The device is not ready." Stop and Format took FSCTL_LOCK_VOLUME
+with dismount and then opened the volume again to release the cache; only the locking
+handle can reach a locked volume. Both now lock without dismounting, release the cache
+through the locking handle, and then dismount, so exclusivity is still proven before
+the cache changes.
+
+Checkpoint candidate flush fix, 2026-10-04 (installed 0.4.312.1): every image-in-RAM
+creation failed at its initial checkpoint with "Save failed. The live RAM disk and
+preceding committed image are retained." The journal's recorded failure showed a
+sharing violation: after detaching the candidate, the save reopened the VHDX to flush
+it to disk while its own virtual-disk handle (with write access) was still open. The
+handle is now closed first. The broker also returned only the outer message, which
+hid the cause; error replies now include inner causes and failures are logged with
+their full exception in the broker log.
+
+Product suites on installed 0.4.318.1, 2026-10-04: `vhdx-backed` PASSED (real Windows
+Stop veto, Strict and explicit-Fast flush/detach/reopen byte oracles). `image-in-ram`
+passed save veto, export collision and whole-image save/export/runtime/reload at 512
+bytes, then failed creating from an explicitly initialized blank image: publication
+re-read the private layout through the provider's service path after formatting had
+already published the disk, and the provider correctly refused that read with
+STATUS_DEVICE_BUSY. The private-layout check now runs only before first publication;
+the published layout is still checked. Provider errors now include the Windows reason.
+
+Checkpoint verification delay fixed, 2026-10-04 (installed 0.4.322.1): every image-in-RAM
+save and creation took about 185 s; per-phase timing showed verification spent
+inspect=7 ms, open=80 ms, read=169 ms and close=180022 ms. A standalone replay reproduced
+it: changing the disk attributes (taking it offline, and even restoring it online) on a
+read-only VHDX attachment made its later DetachVirtualDisk wait out a 180 s timeout,
+while writable attachments detached at once. Read-only import/verification views are
+no longer taken offline; read-only access and no drive letter already isolate them. A
+replay without the attribute change detached immediately and left the live volume's
+letter, volume GUID and NTFS mount intact. Plan 89 matches the provider read-back check.
+
+Product suites on installed 0.4.324.1, 2026-10-04: `image-in-ram` PASSED (83 s, was
+over 12 minutes), `ram-disk`, `vhdx-backed` and `managed-provider` PASSED. `managed-cli`
+ran 63 commands, then its image-in-RAM stop veto check failed: Stop with save is refused
+by Windows while a file is open (correct), but the outcome was recorded as "Checkpoint
+did not complete ... Access is denied." A refused exclusive volume lock (after the
+bounded retry) is now a WindowsVetoException that says Windows vetoed exclusive access;
+Stop, Save and Format report it that way, Stop records "Windows vetoed stopping" only
+for that exception, and the product/CLI veto checks accept the veto from either path.
+
+Read-only RAM disk stop fix, 2026-10-04 (installed 0.4.326.1): `image-in-ram`,
+`ram-disk`, `vhdx-backed` and `managed-provider` PASSED again. `managed-cli` reached
+command 79, where stopping a read-only image-in-RAM disk failed with "The media is write
+protected": volume locking flushed the locked volume, and a read-only volume answers
+that flush with ERROR_WRITE_PROTECT. That error is now treated as nothing to flush.
+
+VM qualification on signed 0.4.328.1 (`7b3f3c5`), 2026-10-04, Driver Verifier 0x209bb on
+the filter and RAM provider, T: on a non-OS SATA disk:
+- `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram` and `managed-cli` PASSED
+  at 512- and 4096-byte sectors (runs `QueueCache-Verify-20261004-144501-...`,
+  `-144541-...`, `-144621-...`, `-144821-...`, `-144112-...`); the provider suite also
+  passed six consecutive iterations after the volume-arrival deadlock fix.
+- `managed-broker-restart` PASSED (`C:\QueueCache-Trusted\QueueCache-Verify-20261004-144411-...`).
+- Restart lifecycle: `managed-lifecycle-prepare` (`-145012-...`), a real `shutdown /r`
+  (boot 14:38:18Z to 14:52:35Z), `managed-lifecycle-verify --managed-transition Restart`
+  (`-145548-...`) and `managed-lifecycle-cleanup` (`-145617-...`) all PASSED: automatic RAM
+  recreated empty, manual RAM reported lost, stopped automatic recipe started empty,
+  backed VHDX reopened, image-in-RAM reloaded its committed checkpoint.
+- Setup refused to upgrade while a managed disk was live (observed twice).
+- Matched 72-case `write-performance` (budget 2048 MiB, 3 repetitions, same DiskSpd SHA-256
+  DD4E57E1..., Verifier on the filter, kernel debug off) against the 0.4.264.1 baseline:
+  `QueueCache-Verify-20261004-145704-ef3b348e0f174ccd94ded385a5e1669f` COMPLETED 72/72 with
+  clean restoration. Median IOPS ratio new/old across the 16 cached (Eager/Idle)
+  configurations 1.004 (range 0.983..1.040); uncached Off rows vary in both directions with
+  the slow virtual SATA backend. A few cached Q1 write p99 values rose slightly (for
+  example 0.278 to 0.428 ms) without a throughput change. No regression from the shared
+  page-metadata accounting or the filter's observation change was measured.
+Not covered: sleep, hibernate and Fast Startup (postponed; no VM sleep states), crash during
+checkpoint commit, physical hardware.
+
+Desktop UI walkthrough, 2026-10-04 (installed 0.4.328.1, VM console): the app opened
+elevated, showed the Managed disks section, created a 1024 MiB pure RAM disk on R:
+through Create disk (Ready, 1027 MiB actual reservation), refused Stop without the
+discard acknowledgement ("Acknowledge the selected erase/discard before continuing"),
+stopped with it, and restarted the stopped disk; action availability followed each
+state. Polish from the walkthrough: the header counted only ordinary cache
+reservations and now shows the driver's shared total plus the RAM disk count; a stopped
+pure RAM card said "full capacity reserved in RAM" and now says it reserves it while
+running; every new RAM disk showed "errors 4" from Windows probing optional SCSI
+opcodes, VPD and mode pages, which the provider no longer counts as errors (range,
+write-protect and invalid UNMAP failures still count).
+
+Verified on 0.4.332.1 (fdc6b1b): managed-provider and ram-disk PASS at 512/4096 sectors; a
+new RAM disk reports errors 0 after Windows' probes and a file write.
+
+Failed creates retire their definition (plan 90). Implementation: CreateAsync retired a
+definition only when the refusal came before any runtime was recorded; StartCoreAsync
+always records a Stopped runtime when it fails, so a create that failed or was cancelled
+after allocation (for example a disconnected CLI client, seen on the VM) left a dead
+"Stopped" definition with LastError "The operation was canceled." It now retires
+whenever rollback left no provider object or attached image and the record holds no
+image identity; image modes that already recorded an image stay remembered.
+Verification: `ram-disk` gains `failed-create-retired` (occupied letter, refused at
+publication after allocation/format; no definition, exact reservation). VM result below.
+VM result on 0.4.334.1 (8e326fd): ram-disk PASS including failed-create-retired-512/4096
+(occupied D: refused at publication, no definition, exact reservation); managed-provider
+PASS. A CLI create killed after 2.5 s of a 4 GiB RAM create left no definition or volume.
+
+RAM disk throughput, 2026-10-04 (0.4.336.1, Verifier off, 1 GiB CDM-style rows, best of 3):
+the pure RAM disk reached only 11.7 GB/s SEQ1M at both Q1 and Q8 and 33-35k IOPS RND4K at
+both Q1 and Q32, against 36.9 GB/s / 427k IOPS for cache hits on Q:. Equal Q1/Q8/Q32 results
+showed requests were serialized: StartIo copied every transfer while holding the disk's
+IoLock. Implementation: admission, bounds, read-only/freeze checks and counters stay under
+IoLock; the memory copy runs after releasing it. Freeze and set-read-only wait for admitted
+writes (ActiveWrites) before returning, so checkpoints and the write-protect guarantee keep
+their meaning; removal already waits for request references. The adapter now reports 256
+I/Os per LUN (initial queue depth 256) instead of Storport defaults. Verification on
+0.4.338.1 (ecc0f1e, Verifier off, target Q: because the lab T: disk is gone): ram-disk and
+managed-provider PASS at 512/4096 sectors. Throughput did not change (R: 11.6 GB/s SEQ1M Q1
+and Q8, 34k IOPS RND4K Q1 and Q32), so IoLock was not the limiting serialization. Diagnosis
+on the same build: one DiskSpd thread is CPU-bound on one core (25% of 4) with identical Q1
+and Q32 results; 4 threads reach 320k IOPS RND4K through NTFS and 580k raw (#disk), and
+keeping idle cores busy does not help. StartIo copies and completes each request inside
+the submitting call, so a single submitter never has more than one request in flight.
+Next: complete transfers asynchronously off the submitting thread (worker/DPC per CPU)
+and profile the remaining single-thread per-request cost. Same run: cached VHDX (S:, 2 GiB
+Fast cache, image on C:) 35.3 GB/s SEQ1M Q8 / 391k IOPS RND4K Q32, image-in-RAM identical
+to the pure RAM disk, Q: 37.2 GB/s / 410k IOPS.
+
+RAM disk transfer experiments (temporary tuning switches): a WPR CPU profile of one DiskSpd
+thread at RND4K Q32 on 0.4.338.1 showed the thread CPU-bound (it never slept), with the
+provider's memcpy about 1% of busy time; Storport's completion DPC insertion (~12%), the
+completion DPC chain (~15%) and scatter-gather setup around StartIo (~17%) dominated. Cache
+hits on Q: avoid this path and use worker threads. Implementation: the adapter reads
+<service>\Parameters PerfFlags (StorPortInitializePerfOpts, masked to what Storport reports),
+Workers (0 = inline; N = per-processor worker threads that copy and complete transfers,
+never the submitting processor when another exists) and SpinMicroseconds (poll before
+sleeping). Queued transfers keep their disk reference; FreeAdapter stops workers only after
+their queues drain. Defaults keep the inline path. Verification: pending (variant benchmark,
+then suites; switches are removed once a configuration is chosen).
+
+RAM disk transfer strategy, chosen from the switch experiments (0.4.344.1-0.4.352.1, R: 2 GiB,
+quick CDM rows, best of 3, Verifier off; IOPS / GB/s read):
+| Variant | SEQ1M Q8 | SEQ1M Q1 | RND4K Q32 | RND4K Q1 |
+|---|---|---|---|---|
+| inline, no perf options (before) | 11.7 | 11.6 | 34k | 34k |
+| inline + DPC redirection + completion during StartIo (0x11) | 15.7 | 15.9 | 223k | 234k |
+| 4 workers, no perf options | 21.3 | 9.3 | 320k | 19.6k |
+| 4 workers + 0x11 (completions redirected to the submitter) | 22.7 | 10.3 | 37k | 26k |
+| 0x11 + adaptive workers for >=128 KiB | 22.6 | 15.7 | 225k | 231k |
+| 0x11 + split reads (256 KiB chunks) | 24.8 | 24.8 | 229k | 232k |
+Completion during StartIo needs DPC redirection (0x10 alone and 0x30 were rejected) and
+redirection makes worker-completed 4 KiB transfers slow, so small transfers stay inline.
+Non-temporal (SSE2 streaming) copies gave nothing for workers and slowed split reads;
+removed. Split writes ran slower than worker writes at Q8 (16.2 vs 24.7 GB/s) and slightly
+slower than inline at Q1 (16.3 vs 17.0), so writes use adaptive workers. Worker count 3/4 and
+spin 50/200 us made no difference; 512 KiB chunks did not engage a helper in time.
+Implementation: switches removed; fixed strategy: perf options 0x11 when supported, one
+worker per processor (max 16), small transfers inline, large writes to workers while others
+are in flight (inline after 16 transfers that found none outstanding, probe every 64th),
+large reads split into 256 KiB chunks copied with idle workers and completed in StartIo.
+Verification on 0.4.354.1 (e47f99e, Verifier off, target Q:): ram-disk and managed-provider
+PASS at 512/4096 sectors; image-in-ram was refused by design because Q: has a Fast cache
+(image hosts must be Strict/uncached) and the lab T: disk is gone, so that suite is not
+re-run on this build (its transfers use the same SCSI path as ram-disk; image save/load uses
+the unchanged control path). All-mode benchmark (GB/s or IOPS, read/write):
+| Disk | SEQ1M Q8 | SEQ1M Q1 | RND4K Q32 | RND4K Q1 |
+|---|---|---|---|---|
+| RAM disk R: | 24.5/25.4 | 24.7/16.8 | 227k/193k | 232k/192k |
+| image-in-RAM I: | 24.5/24.7 | 24.8/16.9 | 225k/192k | 231k/192k |
+| cached VHDX S: (2 GiB Fast) | 35.4/21.6 | 14.9/14.0 | 401k/423k | 316k/272k |
+| Q: cache hits | 36.2/21.7 | 14.6/13.7 | 412k/408k | 332k/266k |
+A follow-up that split queue-depth-1 writes with a 150 us worker spin (0.4.356.1) left SEQ1M
+Q1 writes at 16.3 GB/s (profile: memcpy 38%, unattributed frames 28%, user-buffer probe/lock),
+so it was reverted. Remaining 4 KiB gap to cache hits is the Windows volume/partition/class/
+Storport stack below the cache filter (about 78% of busy time at RND4K Q1).
+
+Verifier qualification of the transfer strategy (0.4.358.1, Verifier 0x209bb on the filter
+and qcramdisk, target Q: switched temporarily to a saved Strict profile so it can host
+images): managed-provider, ram-disk, vhdx-backed and managed-broker-restart PASS. managed-cli
+and image-in-ram failed when publishing an image loaded into RAM: RefuseOnlineClone opened
+every PhysicalDrive and one (the just-detached staging VHDX) returned ERROR_NO_SUCH_DEVICE
+(433), which was not among the ignored absent/not-ready codes. Implementation: treat 433 like
+the other absent-disk codes. Verification on 0.4.360.1 (057b6ab, Verifier): managed-cli and
+image-in-ram PASS; managed-lifecycle-prepare -> real Restart -> -verify Restart -> -cleanup PASS
+(Q: saved Strict for the transition); stress (stress-ram, 180 s: 512 B and 4 KiB-sector RAM
+disks, DiskSpd 4K/256K/1M mixed load plus four unbuffered integrity threads with 4 KiB-1 MiB
+requests) verified 66 GiB and 212 GiB byte-exact with ~3.1M DiskSpd I/Os and no bugcheck;
+an adapter restart unloaded/reloaded qcramdisk cleanly under Verifier. Verifier off, Q:
+restored to its exact saved Fast profile: R: 24.9/24.8, 24.3/16.8 GB/s, 229k/192k, 233k/192k.
+
+Split-read helper preemption: StartIo spins (DISPATCH_LEVEL) until helpers that joined a
+split finish, but helpers ran at PASSIVE_LEVEL and could be preempted after joining.
+Implementation: a worker raises to DISPATCH_LEVEL before taking a queue entry and stays there
+while copying its help chunks, and no longer reads the stack-resident help entry after
+releasing it. Verification on 0.4.362.1 (5cd999c) under Verifier with Q: Strict for the boot:
+managed-provider, ram-disk, image-in-ram, managed-cli and vhdx-backed PASS; stress verified
+65 GiB and 217 GiB byte-exact with ~3.2M DiskSpd I/Os; adapter restart reloaded qcramdisk
+cleanly; no bugcheck. Verifier off, Q: back on its saved Fast profile, all modes (GB/s or
+IOPS, read/write): RAM R: 25.0/24.2, 25.0/17.3, 225k/192k, 234k/192k; image-in-RAM I: 24.3/25.0,
+25.2/17.0, 225k/191k, 236k/192k; cached VHDX S: 36.7/21.3, 14.3/13.2, 412k/386k, 319k/255k;
+Q: 36.9/21.7, 15.1/13.9, 411k/406k, 341k/261k.

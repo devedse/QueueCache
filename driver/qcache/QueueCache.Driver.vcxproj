@@ -44,16 +44,20 @@
       <TreatWarningAsError>false</TreatWarningAsError>
       <PreprocessorDefinitions>QCACHE_CACHE_DRIVER=1;QCACHE_SERIALIZED_IO=1;POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
-    <Link><GenerateDebugInformation>true</GenerateDebugInformation></Link>
+    <Link><GenerateDebugInformation>true</GenerateDebugInformation><AdditionalDependencies>wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="driver.cpp" />
     <ClCompile Include="writecache.cpp" />
+    <ClCompile Include="budget.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="abi-check.cpp" />
     <ResourceCompile Include="qcache.rc" />
     <ClInclude Include="qcstats.h" />
+    <ClInclude Include="..\shared\lockedpages.h" />
+    <ClInclude Include="..\shared\memorybudget.h" />
+    <ClInclude Include="..\shared\memorybudget-check.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="WriteQueueCacheVersion" BeforeTargets="ResourceCompile">

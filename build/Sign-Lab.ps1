@@ -34,6 +34,13 @@ if (-not $sig.SignerCertificate -or $sig.SignerCertificate.Thumbprint -ne $cert.
 {
     throw 'Signed binary verification failed.'
 }
+& $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint "$stage/ramdisk/qcramdisk.sys"
+if ($LASTEXITCODE) { throw "RAM provider signing failed: $LASTEXITCODE" }
+$inf2cat = "$root/.packages/Microsoft.Windows.WDK.x64.10.0.28000.2526/c/bin/10.0.28000.0/x86/Inf2Cat.exe"
+& $inf2cat "/driver:$stage/ramdisk" /os:10_X64
+if ($LASTEXITCODE) { throw "RAM provider catalog generation failed: $LASTEXITCODE" }
+& $signtool sign /fd SHA256 /s My /sha1 $cert.Thumbprint "$stage/ramdisk/qcramdisk.cat"
+if ($LASTEXITCODE) { throw "RAM provider catalog signing failed: $LASTEXITCODE" }
 $metadata.driverSigned = $true
 $metadata | Add-Member -NotePropertyName testCertificateThumbprint -NotePropertyValue $cert.Thumbprint
 $metadata | Add-Member -NotePropertyName signingPurpose -NotePropertyValue 'Disposable lab only; not production-trusted'

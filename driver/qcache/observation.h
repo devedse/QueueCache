@@ -30,11 +30,41 @@ constexpr bool QcObservationCode(ULONG code)
         return false;
     }
 }
+// Mount manager and volume-state traffic touches no volume data. It must never queue
+// behind the ordered worker or hold DirectIdle: the mount manager sends these with its
+// own lock held, and volsnap completes IOCTL_VOLUME_ONLINE only after querying the mount
+// manager, so ordering either one deadlocked a new volume's arrival (found on the VM).
+// Offline and attribute changes stay ordered behind pending writes.
+constexpr ULONG QcMountDeviceType = 0x4D; // MOUNTDEVCONTROLTYPE: every IOCTL_MOUNTDEV_*
+constexpr ULONG QcVolumeControl(ULONG function, ULONG access) { return CTL_CODE(0x56, function, METHOD_BUFFERED, access); }
+constexpr bool QcVolumeManagementCode(ULONG code)
+{
+    if (DEVICE_TYPE_FROM_CTL_CODE(code) == QcMountDeviceType)
+        return true;
+    return code == QcVolumeControl(0, FILE_ANY_ACCESS) ||                       // GET_VOLUME_DISK_EXTENTS
+           code == QcVolumeControl(2, FILE_READ_ACCESS | FILE_WRITE_ACCESS) ||  // ONLINE
+           code == QcVolumeControl(4, FILE_ANY_ACCESS) ||                       // IS_OFFLINE
+           code == QcVolumeControl(5, FILE_ANY_ACCESS) ||                       // IS_IO_CAPABLE
+           code == QcVolumeControl(7, FILE_ANY_ACCESS) ||                       // QUERY_VOLUME_NUMBER
+           code == QcVolumeControl(10, FILE_ANY_ACCESS) ||                      // IS_PARTITION
+           code == QcVolumeControl(12, FILE_ANY_ACCESS) ||                      // IS_CLUSTERED
+           code == QcVolumeControl(14, FILE_ANY_ACCESS) ||                      // GET_GPT_ATTRIBUTES
+           code == QcVolumeControl(25, FILE_READ_ACCESS | FILE_WRITE_ACCESS);   // POST_ONLINE
+}
 inline bool QcObservationRequest(PIO_STACK_LOCATION stack)
 {
     return stack->MajorFunction == IRP_MJ_DEVICE_CONTROL &&
-           QcObservationCode(stack->Parameters.DeviceIoControl.IoControlCode);
+           (QcObservationCode(stack->Parameters.DeviceIoControl.IoControlCode) ||
+            QcVolumeManagementCode(stack->Parameters.DeviceIoControl.IoControlCode));
 }
+static_assert(QcVolumeManagementCode(CTL_CODE(QcMountDeviceType, 0, METHOD_BUFFERED, FILE_ANY_ACCESS))); // QUERY_UNIQUE_ID
+static_assert(QcVolumeManagementCode(CTL_CODE(QcMountDeviceType, 1, METHOD_BUFFERED, FILE_ANY_ACCESS))); // UNIQUE_ID_CHANGE_NOTIFY
+static_assert(QcVolumeManagementCode(0x56C008)); // IOCTL_VOLUME_ONLINE
+static_assert(QcVolumeManagementCode(0x560000)); // IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS
+static_assert(!QcVolumeManagementCode(0x56C00C)); // IOCTL_VOLUME_OFFLINE stays ordered
+static_assert(!QcVolumeManagementCode(QcVolumeControl(13, FILE_ANY_ACCESS))); // SET_GPT_ATTRIBUTES stays ordered
+static_assert(!QcVolumeManagementCode(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
+static_assert(!QcVolumeManagementCode(0x6D0008)); // mount manager's own (MOUNTMGRCONTROLTYPE) controls
 static_assert(QcObservationCode(IOCTL_STORAGE_QUERY_PROPERTY));
 static_assert(QcObservationCode(IOCTL_STORAGE_GET_HOTPLUG_INFO));
 static_assert(!QcObservationCode(IOCTL_STORAGE_SET_HOTPLUG_INFO));

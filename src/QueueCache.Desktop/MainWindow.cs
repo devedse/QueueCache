@@ -6,11 +6,12 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Desktop;
 
 [SupportedOSPlatform("windows")]
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     internal static readonly IBrush Ink = Brush.Parse("#172B42"), Muted = Brush.Parse("#66788A"), Accent = Brush.Parse("#087F8C");
     // Chart palette lives on CacheOccupancy so the bar, the chart and the legends agree.
@@ -24,10 +25,12 @@ public sealed class MainWindow : Window
     private bool busy, discovering, closed;
     private DateTimeOffset nextInventory = DateTimeOffset.MinValue;
     private readonly ICacheTaskService service;
+    private readonly IManagedDiskService managedDisks;
     public MainWindow() : this(new WindowsCacheTaskService()) { }
-    public MainWindow(ICacheTaskService service)
+    public MainWindow(ICacheTaskService service, IManagedDiskService? managedDisks = null)
     {
         this.service = service;
+        this.managedDisks = managedDisks ?? new WindowsManagedDiskService();
         Icon = AppBranding.CreateIcon();
         Title = "QueueCache";
         Width = 1080;
@@ -56,10 +59,14 @@ public sealed class MainWindow : Window
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
         controls.Children.Add(frequency);
         controls.Children.Add(Action("Refresh volumes", Refresh));
+        controls.Children.Add(Action("Create disk", CreateDisk));
         Grid.SetColumn(controls, 1);
         heading.Children.Add(controls);
         var body = new StackPanel { Margin = new Thickness(36), Spacing = 12 };
         body.Children.Add(heading);
+        body.Children.Add(Text("MANAGED DISKS", 12, Muted, FontWeight.SemiBold));
+        body.Children.Add(managedStatus);
+        body.Children.Add(managedCards);
         body.Children.Add(Text("VOLUMES & CACHES", 12, Muted, FontWeight.SemiBold));
         body.Children.Add(cards);
         body.Children.Add(disconnected);
@@ -83,6 +90,7 @@ public sealed class MainWindow : Window
             // Discovery never holds up telemetry; each volume has at most one outstanding sample.
             if (DateTimeOffset.UtcNow >= nextInventory && !busy)
                 _ = Refresh();
+            await SampleManagedDisks();
             await Sample();
         };
         Closing += (_, e) => { if (busy || views.Any(v => v.Busy)) { e.Cancel = true; message.Text = "Finishing the current operation…"; } else { closed = true; timer.Stop(); } };
@@ -97,7 +105,9 @@ public sealed class MainWindow : Window
         nextInventory = DateTimeOffset.UtcNow.AddMinutes(2);
         try
         {
+            await SampleManagedDisks();
             var volumes = await service.ListAsync();
+            volumes = volumes.Where(v => !managedViews.Values.Any(m => m.Record.VolumePath?.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
             var saved = await service.ListSavedAsync();
             if (closed)
                 return;
@@ -324,8 +334,21 @@ public sealed class MainWindow : Window
     {
         var fresh = views.Where(v => v.State is not null && DateTimeOffset.UtcNow - v.Sampled <= TimeSpan.FromSeconds(Math.Max(3, timer.Interval.TotalSeconds * 3))).ToArray();
         var active = fresh.Count(v => v.State!.Operational);
-        var memory = fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes);
-        summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} {(views.Count == 1 ? "volume" : "volumes")}";
+        // The driver's shared authority also covers managed RAM disks and managed-disk caches,
+        // whose volumes have no ordinary card here.
+        var memory = Math.Max(fresh.Aggregate(0UL, (total, v) => total + v.State!.ReservedBytes),
+            fresh.Select(v => v.State!.GlobalReservedBytes).DefaultIfEmpty(0UL).Max());
+        var ramDisks = managedViews.Values.Count(m => m.Record.Native is not null);
+        summary.Text = $"{active} active {(active == 1 ? "cache" : "caches")}" +
+            (ramDisks == 0 ? "" : $"  ·  {ramDisks} RAM {(ramDisks == 1 ? "disk" : "disks")}") +
+            $"  ·  {memory / 1048576:0} MB reserved  ·  {views.Count} {(views.Count == 1 ? "volume" : "volumes")}";
+    }
+    private async Task CreateDisk()
+    {
+        var result = await new ManagedDiskWindow(managedDisks).ShowDialog<ManagedDiskRuntime?>(this);
+        if (result is null) return;
+        await Refresh();
+        message.Text = $"Managed disk is ready at {result.Volume}.";
     }
     private async Task Edit(Card card)
     {
