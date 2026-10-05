@@ -19,6 +19,7 @@ public sealed class ManagedDiskActionWindow : Window
     private readonly TextBox label = new() { Name = "ManagedFormatLabel" };
     private readonly TextBox letter = new() { Name = "ManagedPreferredLetter", MaxLength = 1 };
     private readonly NumericUpDown capacity = new() { Name = "ManagedStoppedCapacityMiB", Minimum = 16, Maximum = 131072, FormatString = "0", Increment = 1 };
+    private readonly ComboBox access = new() { Name = "ManagedStoppedAccess", ItemsSource = new[] { "Standard access (full Windows disk stack)", "Direct access (read and written straight from RAM)" } };
     private readonly CheckBox acknowledge = new() { Name = "ManagedEraseAcknowledgement" };
     private readonly CheckBox commit = new() { Name = "ManagedExportCommit", Content = "Use the verified export as the future startup image" };
     private readonly ComboBox stop = new() { Name = "ManagedStopIntent" };
@@ -51,7 +52,7 @@ public sealed class ManagedDiskActionWindow : Window
             ManagedDiskAction.Export => "Write a NEW standalone VHDX containing every logical sector of the frozen RAM disk, then verify it. Existing files and the previous startup image are preserved.",
             ManagedDiskAction.SetStartup => record.Definition.StartupDescription + ". Shutdown saving is an attempt and cannot guarantee persistence during forced shutdown or power loss.",
             ManagedDiskAction.RemoveDefinition => "Forget this stopped disk's recipe. Image files and recovery evidence are retained.",
-            ManagedDiskAction.ConfigureStopped => "Change the preferred drive letter and remembered label while stopped. Pure RAM capacity changes apply to the next fresh creation. Existing images are never resized or formatted here.",
+            ManagedDiskAction.ConfigureStopped => "Change the preferred drive letter, remembered label and access path while stopped. Pure RAM capacity changes apply to the next fresh creation. Existing images are never resized or formatted here.",
             _ => "Delete only an unreferenced image created for this managed resource. Imported, retained, mounted and in-flight images are refused."
         };
         body.Children.Add(MainWindow.Text(hint, 14, MainWindow.Ink));
@@ -61,6 +62,8 @@ public sealed class ManagedDiskActionWindow : Window
         letter.PlaceholderText = "Preferred letter D–Z";
         capacity.IsVisible = action == ManagedDiskAction.ConfigureStopped && record.Definition.Mode == ManagedDiskMode.EphemeralRam;
         capacity.Value = record.Definition.CapacityBytes / ManagedDiskDefinition.MiB;
+        access.IsVisible = action == ManagedDiskAction.ConfigureStopped && record.Definition.Mode != ManagedDiskMode.CachedVhdx;
+        access.SelectedIndex = (int)record.Definition.Access;
         commit.IsVisible = action == ManagedDiskAction.Export;
         var ramStop = action == ManagedDiskAction.Stop && record.Definition.Mode != ManagedDiskMode.CachedVhdx;
         stop.IsVisible = ramStop && record.Definition.Mode == ManagedDiskMode.ImageInRam;
@@ -74,7 +77,7 @@ public sealed class ManagedDiskActionWindow : Window
         saveStop.IsVisible = shutdown.IsVisible = action == ManagedDiskAction.SetStartup && record.Definition.Mode == ManagedDiskMode.ImageInRam;
         saveStop.IsChecked = record.Definition.SaveBeforeStopping; shutdown.IsChecked = record.Definition.SaveDuringShutdown;
         saveStop.IsEnabled = shutdown.IsEnabled = !record.Definition.ReadOnly;
-        foreach (var control in new Control[] { path, label, letter, capacity, commit, stop, acknowledge, startup, saveStop, shutdown }) form.Children.Add(control);
+        foreach (var control in new Control[] { path, label, letter, capacity, access, commit, stop, acknowledge, startup, saveStop, shutdown }) form.Children.Add(control);
         body.Children.Add(form); body.Children.Add(status);
         apply.Content = Title;
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 10 };
@@ -102,7 +105,8 @@ public sealed class ManagedDiskActionWindow : Window
             StartAtBoot: startup.IsVisible ? startup.IsChecked == true : null, SaveBeforeStopping: saveStop.IsVisible ? saveStop.IsChecked == true : null,
             SaveDuringShutdown: shutdown.IsVisible ? shutdown.IsChecked == true : null, Label: label.IsVisible ? label.Text : null,
             PreferredLetter: letter.IsVisible ? char.ToUpperInvariant((letter.Text ?? "").SingleOrDefault()) : null,
-            CapacityBytes: capacity.IsVisible ? checked((ulong)(capacity.Value ?? 0) * ManagedDiskDefinition.MiB) : null);
+            CapacityBytes: capacity.IsVisible ? checked((ulong)(capacity.Value ?? 0) * ManagedDiskDefinition.MiB) : null,
+            Access: access.IsVisible ? (RamAccess)access.SelectedIndex : null);
         if (action == ManagedDiskAction.ConfigureStopped) _ = ManagedDiskConfiguration.EditStopped(record, request);
         return request;
     }

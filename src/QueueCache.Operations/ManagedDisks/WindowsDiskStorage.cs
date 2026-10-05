@@ -278,6 +278,8 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         /// <summary>Cache controls for the locked volume; no other handle can reach it while locked.</summary>
         public CacheDevice Cache() => CacheDevice.ForLockedHandle(handle, volume);
         public void Dismount() => Control(handle, 0x90020, [], 0);
+        /// <summary>Raw volume read through the lock holder (sector-aligned offset and length).</summary>
+        public int Read(long offset, Span<byte> buffer) => RandomAccess.Read(handle, buffer, offset);
         // Windows releases FSCTL_LOCK_VOLUME when the handle closes, including after device removal.
         public void Dispose() => handle.Dispose();
     }

@@ -90,6 +90,7 @@ public sealed partial class MainWindow
     private void UpdateManagedCard(ManagedView view)
     {
         var record = view.Record; var definition = record.Definition; var runtime = record.Runtime;
+        var ready = runtime?.State == ManagedDiskState.Ready;
         var mode = definition.Mode switch { ManagedDiskMode.EphemeralRam => "Pure RAM disk", ManagedDiskMode.CachedVhdx => "VHDX with RAM cache", _ => "Entire VHDX in RAM" };
         view.Name.Text = $"{definition.PreferredLetter}: {definition.Label} · {mode}";
         view.Status.Text = runtime is null ? "Runtime identity unavailable · Recover required" :
@@ -99,12 +100,14 @@ public sealed partial class MainWindow
                 runtime.HasUnsavedChanges ? " · Unsaved RAM changes" : " · Saved generation");
         view.Detail.Text = $"{definition.CapacityBytes / ManagedDiskDefinition.MiB:N0} MiB disk" +
             (definition.Cache is not null ? $" · {definition.Cache.BudgetMiB:N0} MiB cache · {definition.Cache.Preset}" : " · reserves its full capacity in RAM while running") +
-            (record.Native is null ? "" : $"\nActual reserved RAM: {record.Native.ReservedBytes / ManagedDiskDefinition.MiB:N0} MiB · read {record.Native.ReadBytes:N0} bytes · written {record.Native.WriteBytes:N0} bytes · flushes {record.Native.Flushes:N0} · errors {record.Native.Errors:N0}") +
+            (record.Native is null ? "" : $"\nActual reserved RAM: {record.Native.ReservedBytes / ManagedDiskDefinition.MiB:N0} MiB · read {record.Native.ReadBytes + (record.Direct?.ReadBytes ?? 0):N0} bytes · written {record.Native.WriteBytes + (record.Direct?.WriteBytes ?? 0):N0} bytes · flushes {record.Native.Flushes:N0} · errors {record.Native.Errors:N0}") +
+            (definition.Mode == ManagedDiskMode.CachedVhdx ? "" : definition.Access == RamAccess.Standard ? "\nAccess: Standard (full Windows disk stack)" :
+                $"\nAccess: {record.Direct?.Describe() ?? (ready ? "Direct requested; state unavailable" : "Direct when running")}") +
             $"\n{(definition.StartAtBoot ? definition.StartupDescription : "Automatic startup off; definition remembered")}." +
             (definition.Mode == ManagedDiskMode.EphemeralRam ? "\nContents are temporary; stopping or a new Windows startup loses them." : "") +
             (record.CommittedImage is null ? "" : $"\nStartup image: {record.CommittedImage.Identity.Path}\nLast committed save: {record.SavedAt?.ToString("u") ?? "imported source; no checkpoint yet"}. Flush stays in RAM; Save image commits a full checkpoint.") +
             (record.LastError is null ? "" : "\n" + record.LastError) + $"\nResource: {record.ResourceId}";
-        var ready = runtime?.State == ManagedDiskState.Ready; var stopped = runtime?.State == ManagedDiskState.Stopped;
+        var stopped = runtime?.State == ManagedDiskState.Stopped;
         foreach (var pair in view.Actions)
         {
             pair.Value.IsVisible = pair.Key switch

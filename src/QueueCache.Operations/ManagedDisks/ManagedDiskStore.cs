@@ -11,7 +11,7 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
     ImageInspection? OriginalSource = null, RamDiskSnapshot? Native = null, int? PhysicalDiskNumber = null,
     string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
     Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0,
-    ManagedImageIoSnapshot? ImageIo = null)
+    ManagedImageIoSnapshot? ImageIo = null, RamDirectState? Direct = null)
 {
     public Guid ResourceId => Definition.ResourceId;
     public void Validate()

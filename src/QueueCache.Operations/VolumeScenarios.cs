@@ -285,11 +285,11 @@ public static class VolumeScenarios
                 Thread.Sleep(200);
             }
         });
-        string created;
+        ShadowCopies.ShadowCopy? copy;
+        uint? failure;
         try
         {
-            created = PowerShell($"$ErrorActionPreference='Stop'; $r=Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments @{{Volume='{target.Root}'; Context='ClientAccessible'}}; " +
-            "if ($r.ReturnValue -ne 0) { \"FAILED $($r.ReturnValue)\" } else { $s=Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq $r.ShadowID; \"$($r.ShadowID)|$($s.DeviceObject)\" }").Trim();
+            copy = ShadowCopies.Create(target.Root, out failure);
         }
         finally
         {
@@ -297,22 +297,19 @@ public static class VolumeScenarios
             sampler.GetAwaiter().GetResult();
         }
         // Win32_ShadowCopy.Create 4 = volume not supported: Windows snapshots only NTFS and ReFS volumes.
-        if (created == "FAILED 4")
+        if (failure == 4)
             return [new("snapshot/pending-data-included", "SKIP", $"Windows does not take shadow copies of {new DriveInfo(target.Root).DriveFormat} volumes " +
                 $"(Win32_ShadowCopy.Create 4, volume not supported); the cache stayed healthy: {samples.LastOrDefault()}.")];
         // A cached volume must not stop Windows from taking a snapshot: failure here is a FAIL, with the samples.
-        if (created.StartsWith("FAILED", StringComparison.Ordinal))
+        if (copy is null)
             return [new("snapshot/pending-data-included", "FAIL", $"Windows could not create a shadow copy of {target.Device} " +
-                $"(Win32_ShadowCopy.Create {created}). Cache samples during the attempt: {string.Join("; ", samples)}")];
-        var parts = created.Split('|');
-        if (parts.Length != 2 || !Guid.TryParse(parts[0], out var id) || !parts[1].StartsWith(@"\\?\GLOBALROOT\Device\", StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Unexpected shadow copy identity: " + created);
+                $"(Win32_ShadowCopy.Create FAILED {failure}). Cache samples during the attempt: {string.Join("; ", samples)}")];
         try
         {
             var after = device.GetWriteCacheState();
-            var snapshotPath = parts[1] + Path.GetFullPath(path)[2..];
-            var copy = File.ReadAllBytes(snapshotPath);
-            var included = copy.AsSpan().SequenceEqual(data);
+            var snapshotPath = ShadowCopies.PathIn(copy, path);
+            var data2 = File.ReadAllBytes(snapshotPath);
+            var included = data2.AsSpan().SequenceEqual(data);
             var pass = included && after.DrainedBytes - before.DrainedBytes >= 32UL * MiB && !after.Faulted && after.LastError == 0;
             return [new("snapshot/pending-data-included", pass ? "PASS" : "FAIL",
                 $"Shadow copy of {target.Device} taken with {before.DirtyBytes / (double)MiB:0.0} MiB pending: the cache drained " +
@@ -321,31 +318,11 @@ public static class VolumeScenarios
         }
         finally
         {
-            PowerShell($"$ErrorActionPreference='Stop'; Get-CimInstance Win32_ShadowCopy | Where-Object ID -eq '{{{id}}}' | Remove-CimInstance");
+            ShadowCopies.Delete(copy.Id);
         }
     }
 
-    private static string PowerShell(string command)
-    {
-        var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe"))
-        {
-            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
-        };
-        start.ArgumentList.Add("-NoProfile");
-        start.ArgumentList.Add("-Command");
-        start.ArgumentList.Add(command);
-        using var process = System.Diagnostics.Process.Start(start) ?? throw new IOException("Cannot start PowerShell.");
-        var error = process.StandardError.ReadToEndAsync();
-        var output = process.StandardOutput.ReadToEnd();
-        if (!process.WaitForExit(TimeSpan.FromMinutes(5)))
-        {
-            process.Kill(true);
-            throw new TimeoutException("PowerShell did not finish within five minutes.");
-        }
-        if (process.ExitCode != 0)
-            throw new IOException($"PowerShell failed ({process.ExitCode}): {error.GetAwaiter().GetResult().Trim()}");
-        return output;
-    }
+    private static string PowerShell(string command) => ShadowCopies.PowerShell(command);
 
     private static void ResizePartition(char letter, long bytes)
     {

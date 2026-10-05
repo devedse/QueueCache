@@ -50,7 +50,8 @@ internal static class ManagedDiskCommands
         var startup = new Option<bool>("--startup") { Description = "Remember automatic Windows startup using this mode's recipe." };
         var discardOnStop = new Option<bool>("--discard-on-stop") { Description = "Image-in-RAM: disable default save-before-stop. Each actual discard still requires --discard." };
         var shutdownSave = new Option<bool>("--save-on-shutdown") { Description = "Image-in-RAM: attempt a bounded checkpoint during orderly shutdown; completion is not guaranteed." };
-        foreach (Option option in new Option[] { mode, size, letter, label, newImage, load, initializeBlank, checkpoints, fixedImage, sector, readOnly, startup, discardOnStop, shutdownSave }) create.Options.Add(option);
+        var access = AccessOption();
+        foreach (Option option in new Option[] { mode, size, letter, label, newImage, load, initializeBlank, checkpoints, fixedImage, sector, readOnly, startup, discardOnStop, shutdownSave, access }) create.Options.Add(option);
         var createCache = new CacheBinding(create);
         var createJson = JsonOption(create);
         create.SetAction(async (p, token) =>
@@ -69,6 +70,8 @@ internal static class ManagedDiskCommands
             if (selected != ManagedDiskMode.CachedVhdx && createCache.WasSpecified(p)) throw new ArgumentException("Cache options apply only to --mode cached-vhdx.");
             if (selected != ManagedDiskMode.ImageInRam && (p.GetValue(discardOnStop) || p.GetValue(shutdownSave))) throw new ArgumentException("Image-save policies apply only to --mode image-in-ram.");
             if (p.GetValue(fixedImage) && (selected == ManagedDiskMode.EphemeralRam || source is not null)) throw new ArgumentException("--fixed-image applies only when creating a new VHDX.");
+            var requestedAccess = ParseAccess(p.GetValue(access));
+            if (selected == ManagedDiskMode.CachedVhdx && requestedAccess == RamAccess.Direct) throw new ArgumentException("--access direct applies to RAM-backed disks; a VHDX-backed disk uses its cache.");
             // Validate the whole recipe before even read-only image inspection or broker connection.
             var definition = new ManagedDiskDefinition(Guid.NewGuid(), selected,
                 source is null ? ManagedDiskSource.CreateNew : ManagedDiskSource.OpenExisting,
@@ -76,7 +79,8 @@ internal static class ManagedDiskCommands
                 source ?? destination, p.GetValue(checkpoints), selected == ManagedDiskMode.CachedVhdx ? createCache.Read(p) : null,
                 selected == ManagedDiskMode.CachedVhdx && p.GetValue(createCache.Accept), p.GetValue(startup),
                 selected == ManagedDiskMode.ImageInRam && !p.GetValue(discardOnStop) && !p.GetValue(readOnly), p.GetValue(shutdownSave),
-                p.GetValue(readOnly), p.GetValue(fixedImage) ? ImageAllocation.Fixed : ImageAllocation.Dynamic, p.GetValue(sector));
+                p.GetValue(readOnly), p.GetValue(fixedImage) ? ImageAllocation.Fixed : ImageAllocation.Dynamic, p.GetValue(sector),
+                Access: selected == ManagedDiskMode.CachedVhdx ? RamAccess.Standard : requestedAccess ?? ManagedDiskDefinition.DefaultRamAccess);
             definition.Validate();
             if (source is not null)
             {
@@ -108,6 +112,7 @@ internal static class ManagedDiskCommands
             var configuredLetter = new Option<string>("--letter");
             configuredLetter.Validators.Add(r => { if (r.Tokens.Count != 0 && !ValidLetter(r.GetValueOrDefault<string>())) r.AddError("--letter must be a single drive letter D through Z."); });
             var configuredSize = new Option<ulong?>("--size-mib");
+            var configuredAccess = AccessOption();
             var enabled = ExplicitBool("--enabled"); var saveBefore = ExplicitBool("--save-before-stop"); var saveShutdown = ExplicitBool("--save-on-shutdown");
             var expectedBoot = new Option<Guid?>("--expected-boot"); var expectedCreation = new Option<ulong?>("--expected-creation"); var expectedWrite = new Option<ulong?>("--expected-write");
             foreach (var option in new Option[] { expectedBoot, expectedCreation, expectedWrite }) command.Options.Add(option);
@@ -117,7 +122,7 @@ internal static class ManagedDiskCommands
             if (action == ManagedDiskAction.Export) command.Options.Add(commit);
             if (action == ManagedDiskAction.Format) command.Options.Add(formatLabel);
             if (action == ManagedDiskAction.ConfigureStopped)
-            { command.Options.Add(formatLabel); command.Options.Add(configuredLetter); command.Options.Add(configuredSize); }
+            { command.Options.Add(formatLabel); command.Options.Add(configuredLetter); command.Options.Add(configuredSize); command.Options.Add(configuredAccess); }
             if (action == ManagedDiskAction.SetStartup) { command.Options.Add(enabled); command.Options.Add(saveBefore); command.Options.Add(saveShutdown); }
             CacheBinding? cache = action == ManagedDiskAction.ChangeCache ? new(command) : null;
             command.SetAction(async (p, token) =>
@@ -126,8 +131,8 @@ internal static class ManagedDiskCommands
                 var wantsSave = action == ManagedDiskAction.Stop && p.GetValue(saveStop);
                 if (action == ManagedDiskAction.ConfigureStopped)
                 {
-                    if (p.GetValue(formatLabel) is null && p.GetValue(configuredLetter) is null && p.GetValue(configuredSize) is null)
-                        throw new ArgumentException("Choose --letter, --label or --size-mib to change stopped creation settings.");
+                    if (p.GetValue(formatLabel) is null && p.GetValue(configuredLetter) is null && p.GetValue(configuredSize) is null && p.GetValue(configuredAccess) is null)
+                        throw new ArgumentException("Choose --letter, --label, --size-mib or --access to change stopped creation settings.");
                     if (p.GetValue(configuredSize) is < 16 || p.GetValue(configuredSize) > (ulong)long.MaxValue / ManagedDiskDefinition.MiB)
                         throw new ArgumentException("Invalid --size-mib capacity.");
                 }
@@ -153,7 +158,8 @@ internal static class ManagedDiskCommands
                     action == ManagedDiskAction.SetStartup ? p.GetValue(saveBefore) : null, action == ManagedDiskAction.SetStartup ? p.GetValue(saveShutdown) : null,
                     action is ManagedDiskAction.Format or ManagedDiskAction.ConfigureStopped ? p.GetValue(formatLabel) : null,
                     action == ManagedDiskAction.ConfigureStopped && p.GetValue(configuredLetter) is string newLetter ? char.ToUpperInvariant(newLetter[0]) : null,
-                    action == ManagedDiskAction.ConfigureStopped && p.GetValue(configuredSize) is ulong newSize ? checked(newSize * ManagedDiskDefinition.MiB) : null);
+                    action == ManagedDiskAction.ConfigureStopped && p.GetValue(configuredSize) is ulong newSize ? checked(newSize * ManagedDiskDefinition.MiB) : null,
+                    action == ManagedDiskAction.ConfigureStopped ? ParseAccess(p.GetValue(configuredAccess)) : null);
                 var result = await service.ExecuteAsync(request, new ConsoleProgress(), token);
                 if (p.GetValue(outputJson)) Console.WriteLine(JsonSerializer.Serialize(result, json));
                 else { Console.WriteLine(result.Message); Print(result.Record, false); }
@@ -163,6 +169,16 @@ internal static class ManagedDiskCommands
         }
     }
     private static Option<bool?> ExplicitBool(string name) => new(name) { Arity = ArgumentArity.ExactlyOne };
+    private static Option<string> AccessOption()
+    {
+        var option = new Option<string>("--access") { Description = "RAM-backed disks: direct (the volume filter copies reads and writes straight from the disk's memory, falling back to standard where needed) or standard (the full Windows disk stack)." };
+        option.Validators.Add(r => { if (r.Tokens.Count != 0 && ParseAccess(r.GetValueOrDefault<string>()) is null) r.AddError("--access must be direct or standard."); });
+        return option;
+    }
+    private static RamAccess? ParseAccess(string? value) => value?.ToLowerInvariant() switch
+    {
+        "direct" => RamAccess.Direct, "standard" => RamAccess.Standard, _ => null
+    };
     private static bool ValidLetter(string? value) => value?.Length == 1 && char.ToUpperInvariant(value[0]) is >= 'D' and <= 'Z';
     private static Argument<Guid> ResourceArgument(Command command)
     {
@@ -181,6 +197,8 @@ internal static class ManagedDiskCommands
             var runtime = record.Runtime;
             Console.WriteLine($"{record.ResourceId} | {record.Definition.Mode} | {record.Definition.PreferredLetter}: | {record.Definition.CapacityBytes / ManagedDiskDefinition.MiB} MiB | {runtime?.State.ToString() ?? "No runtime identity"} | startup={record.Definition.StartAtBoot}");
             if (runtime is not null) Console.WriteLine($"  boot={runtime.BootEpoch} creation={runtime.CreationGeneration} write={runtime.WriteGeneration} saved={runtime.SavedGeneration?.ToString() ?? "unavailable"}{(runtime.HasUnsavedChanges ? " | Unsaved RAM changes" : "")}");
+            if (record.Definition.Mode != ManagedDiskMode.CachedVhdx)
+                Console.WriteLine($"  access {record.Definition.Access}" + (record.Direct is { } direct ? $": {direct.Describe()} (direct reads {direct.ReadRequests}, writes {direct.WriteRequests})" : ""));
             if (record.CommittedImage is not null) Console.WriteLine($"  startup image: {record.CommittedImage.Identity.Path}; saved at {record.SavedAt?.ToString("O") ?? "not yet checkpointed"}");
             if (record.LastError is not null) Console.WriteLine("  " + record.LastError);
         }
@@ -188,7 +206,7 @@ internal static class ManagedDiskCommands
     private static string Describe(ManagedDiskAction action) => action switch
     {
         ManagedDiskAction.Stop => "Lock/quiesce and stop this owned disk. Backed images drain/detach; RAM discard is explicit; image-in-RAM defaults to its save-before-stop policy.",
-        ManagedDiskAction.ConfigureStopped => "Edit a stopped recipe's preferred letter/label, or pure-RAM capacity. Does not start, resize an image or format live storage.",
+        ManagedDiskAction.ConfigureStopped => "Edit a stopped recipe's preferred letter/label, pure-RAM capacity or RAM access path. Does not start, resize an image or format live storage.",
         ManagedDiskAction.Flush => "Flush RAM/device writes. Only backed VHDX flush is persistence; this never saves a whole RAM image.",
         ManagedDiskAction.Save => "Freeze, copy and verify all logical sectors, then commit a unique checkpoint; retain source and previous image.",
         ManagedDiskAction.Export => "Export a verified full frozen generation to a NEW .vhdx. Startup image changes only with --commit.",

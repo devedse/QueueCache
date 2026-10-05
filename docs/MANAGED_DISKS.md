@@ -23,6 +23,16 @@ A RAM disk is a real Windows disk, so each request passes the volume, partition,
 Storport layers; cache hits are answered above them. That is why small random I/O on a
 cached disk is faster than on a RAM disk while large transfers are comparable.
 
+RAM-backed disks (pure RAM and image-in-RAM) have an **access path**. *Direct* (the
+default) lets QueueCache's volume filter copy normal file reads and writes straight from
+the disk's memory, skipping the Windows layers below the volume; the data still exists
+only once. *Standard* sends everything through the full Windows disk stack. Direct access
+steps aside automatically, keeping data correct on the standard path, when BitLocker is
+used on the volume, when a shadow copy exists or is taken (writes only), when the volume
+is write-protected, or when an unrecognized control request reaches the volume; `disk
+list` and the desktop card show the reason. Change it with `disk configure <id> --access
+standard|direct` while the disk is stopped.
+
 Image hosts (the volume holding a VHDX or checkpoint) must not have a Fast cache: Fast
 can lose data the service treats as saved. Use Strict or no cache on that volume.
 

@@ -2850,3 +2850,29 @@ cleanly; no bugcheck. Verifier off, Q: back on its saved Fast profile, all modes
 IOPS, read/write): RAM R: 25.0/24.2, 25.0/17.3, 225k/192k, 234k/192k; image-in-RAM I: 24.3/25.0,
 25.2/17.0, 225k/191k, 236k/192k; cached VHDX S: 36.7/21.3, 14.3/13.2, 412k/386k, 319k/255k;
 Q: 36.9/21.7, 15.1/13.9, 411k/406k, 341k/261k.
+
+Direct access for RAM-backed disks (branch feature/ram-fast-path, plan 91). Implementation:
+- Shared store and write gate (`driver/shared/ramstore.h`) used by the provider's SCSI path
+  and the volume filter; kernel registration contract (`driver/shared/ramview.h`).
+- Provider split into disk/transfer/SCSI/control files; its SCSI path no longer takes a
+  per-disk spinlock (interlocked gate and counters instead); Direct creations register the
+  store, removal unregisters it before freeing pages.
+- Volume filter module `driver/qcache/ramdirect.cpp`: view registry, binding (identity,
+  single extent, known volume/disk stack drivers, BitLocker signature, write protection,
+  shadow copies), caller-thread copy (large transfers via the provider's split copy),
+  rundown for removal, permanent fallbacks with reasons (flush-and-hold ends writes;
+  unknown controls end Direct before forwarding; boot-sector change ends it). One
+  lock-free check per read/write on other volumes. Device-control boilerplate moved to
+  `devicecontrol.h`.
+- Product: `RamAccess` (default Direct for new RAM-backed disks), provider protocol v2
+  with Direct/DirectRegistered flags, broker bind after every publication (plus a
+  `Win32_ShadowCopy` pre-check), live state in list/status/desktop card, CLI `--access`.
+- Verification: ram-disk and image-in-ram run Direct and Standard variants; new checks
+  direct-coherence, direct-unrecognized-control, direct-snapshot-writes; lifecycle verify
+  requires Direct back after transitions. Host contract tests cover the protocol flags,
+  Direct state decoding and the Access validation.
+- Build: the cache driver now treats warnings as errors (two warning sources fixed). A
+  compiler `/analyze` probe reported only false positives and annotation-style notes, so
+  it is not part of the build.
+Verification: pending (VM suites under Verifier, stress, BitLocker manual check,
+write-performance regression for the filter dispatch change, benchmark).
