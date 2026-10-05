@@ -143,7 +143,8 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
                 if ((BitConverter.ToUInt64(other.Io(0x700F0, [], 16), 8) & 1) == 0 && new Guid(foreign.AsSpan(8, 16)) == layout.DiskId)
                     throw new IOException("Another online disk has this GPT identity. Stop that disk before publishing this image.");
             }
-            catch (Win32Exception ex) when (ex.NativeErrorCode is 2 or 3 or 21 or 55 or 1167) { }
+            // Absent, not ready or being removed (433: a just-detached staging VHDX) cannot be an online clone.
+            catch (Win32Exception ex) when (ex.NativeErrorCode is 2 or 3 or 21 or 55 or 433 or 1167) { }
         }
     }
     public void InitializeNewGpt()

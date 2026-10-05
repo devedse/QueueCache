@@ -2824,3 +2824,11 @@ A follow-up that split queue-depth-1 writes with a 150 us worker spin (0.4.356.1
 Q1 writes at 16.3 GB/s (profile: memcpy 38%, unattributed frames 28%, user-buffer probe/lock),
 so it was reverted. Remaining 4 KiB gap to cache hits is the Windows volume/partition/class/
 Storport stack below the cache filter (about 78% of busy time at RND4K Q1).
+
+Verifier qualification of the transfer strategy (0.4.358.1, Verifier 0x209bb on the filter
+and qcramdisk, target Q: switched temporarily to a saved Strict profile so it can host
+images): managed-provider, ram-disk, vhdx-backed and managed-broker-restart PASS. managed-cli
+and image-in-ram failed when publishing an image loaded into RAM: RefuseOnlineClone opened
+every PhysicalDrive and one (the just-detached staging VHDX) returned ERROR_NO_SUCH_DEVICE
+(433), which was not among the ignored absent/not-ready codes. Implementation: treat 433 like
+the other absent-disk codes. Verification: pending rerun.
