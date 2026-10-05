@@ -471,18 +471,28 @@ static void WorkerMain(PVOID context)
     for (;;)
     {
         WORK* work = nullptr;
-        KIRQL irql; KeAcquireSpinLock(&worker->Lock, &irql);
+        // Stay at DISPATCH_LEVEL from taking a help request until its chunks are copied:
+        // StartIo spins for this worker, so it must not be preempted in between.
+        KIRQL irql; KeRaiseIrql(DISPATCH_LEVEL, &irql);
+        KeAcquireSpinLockAtDpcLevel(&worker->Lock);
         if (!IsListEmpty(&worker->Queue))
         {
             work = CONTAINING_RECORD(RemoveHeadList(&worker->Queue), WORK, Link);
             // Taken and Helpers change under the queue lock that CopySplit's withdrawal holds.
             if (work->Kind == WorkHelp) { auto help = CONTAINING_RECORD(work, HELP, Work); help->Taken = TRUE; InterlockedIncrement(&help->Split->Helpers); }
         }
-        KeReleaseSpinLock(&worker->Lock, irql);
-        if (work)
+        KeReleaseSpinLockFromDpcLevel(&worker->Lock);
+        const bool found = work != nullptr;
+        if (found && work->Kind == WorkHelp)
         {
-            if (work->Kind == WorkRequest) Finish(adapter, CONTAINING_RECORD(work, REQUEST, Work));
-            else { auto split = CONTAINING_RECORD(work, HELP, Work)->Split; CopyChunks(split); InterlockedDecrement(&split->Helpers); }
+            // The help request lives on StartIo's stack; it may be gone after the decrement.
+            auto split = CONTAINING_RECORD(work, HELP, Work)->Split;
+            CopyChunks(split); InterlockedDecrement(&split->Helpers); work = nullptr;
+        }
+        KeLowerIrql(irql);
+        if (found)
+        {
+            if (work) Finish(adapter, CONTAINING_RECORD(work, REQUEST, Work));
             spin = true; continue;
         }
         if (adapter->Closing) break;

@@ -2831,4 +2831,16 @@ images): managed-provider, ram-disk, vhdx-backed and managed-broker-restart PASS
 and image-in-ram failed when publishing an image loaded into RAM: RefuseOnlineClone opened
 every PhysicalDrive and one (the just-detached staging VHDX) returned ERROR_NO_SUCH_DEVICE
 (433), which was not among the ignored absent/not-ready codes. Implementation: treat 433 like
-the other absent-disk codes. Verification: pending rerun.
+the other absent-disk codes. Verification on 0.4.360.1 (057b6ab, Verifier): managed-cli and
+image-in-ram PASS; managed-lifecycle-prepare -> real Restart -> -verify Restart -> -cleanup PASS
+(Q: saved Strict for the transition); stress (stress-ram, 180 s: 512 B and 4 KiB-sector RAM
+disks, DiskSpd 4K/256K/1M mixed load plus four unbuffered integrity threads with 4 KiB-1 MiB
+requests) verified 66 GiB and 212 GiB byte-exact with ~3.1M DiskSpd I/Os and no bugcheck;
+an adapter restart unloaded/reloaded qcramdisk cleanly under Verifier. Verifier off, Q:
+restored to its exact saved Fast profile: R: 24.9/24.8, 24.3/16.8 GB/s, 229k/192k, 233k/192k.
+
+Split-read helper preemption: StartIo spins (DISPATCH_LEVEL) until helpers that joined a
+split finish, but helpers ran at PASSIVE_LEVEL and could be preempted after joining.
+Implementation: a worker raises to DISPATCH_LEVEL before taking a queue entry and stays there
+while copying its help chunks, and no longer reads the stack-resident help entry after
+releasing it. Verification: pending (Verifier suites, stress, benchmark).
