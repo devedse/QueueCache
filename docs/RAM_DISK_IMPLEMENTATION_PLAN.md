@@ -295,9 +295,12 @@ is stored twice: the filter keeps no copy.
   exceptions (IOCTL_VOLUME_SET_GPT_ATTRIBUTES) stay excluded. Compile-time checks pin the
   controls seen on the VM (BitLocker status, media removal, multitier memory queries).
 - **Hot path**: one lock-free check per read/write on every volume; bound volumes copy in
-  the caller's thread, large transfers through the provider's split copy. Requests that
-  are not served (read-only, frozen, unaligned, beyond the extent, unmappable) continue on
-  the standard path, which returns its usual result.
+  the caller's thread, large reads through the provider's split copy. Writes of 512 KiB
+  or more take the standard path by design: its workers overlap queued writes across
+  processors, while a Direct write occupies its caller until copied (SEQ1M Q8T1 write on
+  the lab VM: 25.4 GB/s standard vs 17.4 GB/s Direct). Requests that are not served
+  (read-only, frozen, unaligned, beyond the extent, unmappable) continue on the standard
+  path, which returns its usual result.
 - **Product**: `RamAccess` on RAM-backed definitions (Standard or Direct; default Direct),
   `--access` on `disk create`/`disk configure`, the desktop access choice, and live state
   (path, reason, counters) in `disk list`/status and on the card.

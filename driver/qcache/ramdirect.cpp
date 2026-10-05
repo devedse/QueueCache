@@ -27,6 +27,10 @@ static FAST_MUTEX ViewLock;
 static LIST_ENTRY Views;
 static constexpr ULONG Tag = 'vRCQ';
 static constexpr ULONG LargeCopyBytes = 512 * 1024; // The provider splits copies from 2 x 256 KiB.
+// Writes this large take the standard path by design: the provider's workers overlap queued
+// writes across processors, while Direct copies each in its caller's thread, one at a time
+// (lab VM, 1 MiB writes: 25.4 GB/s standard vs 17.4 GB/s Direct at Q8, 16.7 vs 17.5 at Q1).
+static constexpr ULONG LargeWriteBytes = 512 * 1024;
 static const UCHAR BitLockerSignature[8] = {'-', 'F', 'V', 'E', '-', 'F', 'S', '-'};
 
 void QcRamDirectInitialize()
@@ -121,6 +125,8 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
     const bool write = stack->MajorFunction == IRP_MJ_WRITE;
     const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
     const ULONG length = stack->Parameters.Read.Length;
+    if (write && length >= LargeWriteBytes)
+        return false; // Not a decline: see LargeWriteBytes.
     const auto mdl = irp->MdlAddress;
     if ((write && !(access & QcRamDirectWrites)) || !length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length ||
         offset < 0 || static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset))

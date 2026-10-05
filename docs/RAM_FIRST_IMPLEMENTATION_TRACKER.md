@@ -2902,3 +2902,10 @@ write-performance regression for the filter dispatch change, benchmark).
   state-changing control (reason Control, 0x0056C04C, nothing declined), encryption
   reached FullyEncrypted, the file written before was intact and a write afterwards read
   back exactly.
+- Write-performance regression (filter dispatch change), Verifier off, Q: on its saved Fast
+  profile, CDM 9.0.3 DiskSpd (SHA-256 7281BF6D...): master 0.4.173.1 (549d237) and 0.4.380.2
+  (c43cc2b), both 72/72 MEASURED. Median IOPS ratio 0.997 over all 24 configurations and
+  1.007 over the 16 cached ones (0.948..1.022, repetition ranges overlapping); the Off cases
+  write through to the cluster-backed disk and vary 0.83..1.08 with single repetitions as
+  low as 50 vs 118 IOPS. No regression. A first master attempt stopped at case 29 on a
+  2.6 s telemetry gap (host stall) and was rerun in full, not combined.
