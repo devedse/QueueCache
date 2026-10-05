@@ -2886,8 +2886,16 @@ Direct access for RAM-backed disks (branch feature/ram-fast-path, plan 91). Impl
   landed in freed memory (a worker finishing a queued write can be preempted there).
   Implementation: an `EX_RUNDOWN_REF` replaces the count and event; its release is the last
   access, and idle-to-busy transitions no longer pay two event operations.
-Verification: pending (VM suites under Verifier, stress, BitLocker manual check,
-write-performance regression for the filter dispatch change, benchmark).
+Verification on 0.4.381.1 (dad0505) under Verifier (standard flags plus port/miniport
+checks, 0x309bb), Q: Strict for the runs: ram-disk, image-in-ram, managed-provider,
+managed-cli, vhdx-backed and managed-broker-restart PASS, including direct-coherence,
+direct-unrecognized-control and direct-snapshot-writes at 512 and 4096-byte sectors.
+managed-lifecycle-prepare, a real restart and managed-lifecycle-verify (Restart) PASS:
+automatic Direct disks came back with Direct access. Stress: 451 GiB verified byte-exact on
+two Direct disks with ~17.6M DiskSpd I/Os (writes of 4 KiB..1 MiB, so both paths). Adapter
+restart (broker stopped, as before) unloaded and reloaded qcramdisk (2 loads, 1 unload)
+and a new Direct disk worked; with the broker running PnP vetoes the stop, as on master.
+No bugcheck since the one below. Earlier results:
 - 0.4.377.1 (9a7c4ef) under Verifier: one bugcheck 0xA in `nt!KiInsertTimerTable` (a
   timer-table entry with a null link, hit by an unrelated thread) about 19 s into
   `ram-disk`, near the Direct variant's shadow-copy step and Stop. Only a minidump was
@@ -2909,3 +2917,12 @@ write-performance regression for the filter dispatch change, benchmark).
   write through to the cluster-backed disk and vary 0.83..1.08 with single repetitions as
   low as 50 vs 118 IOPS. No regression. A first master attempt stopped at case 29 on a
   2.6 s telemetry gap (host stall) and was rerun in full, not combined.
+- CDM-style rows (Verifier off, best of 3, GB/s or IOPS read/write; `.lab` bench-direct):
+  0.4.380.2 Direct R: SEQ1M Q8 26.7/17.4, Q1 26.7/17.5, RND4K Q32 430k/337k, Q1 452k/339k;
+  Standard T: 24.4/25.4, 24.2/16.7, 228k/194k, 236k/195k. A Direct write occupied its caller,
+  so Q8 writes could not overlap: writes of 512 KiB or more now take the standard path
+  (dad0505). 0.4.381.1: Direct R: 26.7/24.4, 27.1/17.2, 434k/330k, 453k/334k; image-in-RAM
+  Direct I: 26.5/25.1, 26.9/17.2, 429k/332k, 454k/328k; Standard T: 24.3/24.5, 24.9/17.2,
+  227k/193k, 232k/194k; Q: (Fast cache) 36.8/22.0, 14.8/13.9, 404k/411k, 331k/265k.
+  Direct leads at queue depth 1; Q: still leads at SEQ1M Q8 read and RND4K Q32 write
+  because its worker threads overlap queued requests.

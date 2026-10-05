@@ -16,12 +16,16 @@ Performance on the 4-core test VM (CrystalDiskMark-style rows, 1 GiB, Verifier o
 
 | Disk | SEQ1M Q8 read/write | SEQ1M Q1 read/write | RND4K Q32 read/write | RND4K Q1 read/write |
 |---|---|---|---|---|
-| RAM disk / image-in-RAM | 25 / 24 GB/s | 25 / 17 GB/s | 225k / 192k IOPS | 235k / 192k IOPS |
+| RAM disk / image-in-RAM, Direct | 27 / 24 GB/s | 27 / 17 GB/s | 434k / 330k IOPS | 453k / 334k IOPS |
+| RAM disk, Standard | 24 / 25 GB/s | 25 / 17 GB/s | 227k / 193k IOPS | 232k / 194k IOPS |
 | Cached VHDX (2 GiB Fast cache) | 37 / 21 GB/s | 14 / 13 GB/s | 412k / 386k IOPS | 319k / 255k IOPS |
 
-A RAM disk is a real Windows disk, so each request passes the volume, partition, class and
-Storport layers; cache hits are answered above them. That is why small random I/O on a
-cached disk is faster than on a RAM disk while large transfers are comparable.
+A RAM disk is a real Windows disk, so on the Standard path each request passes the volume,
+partition, class and Storport layers. Direct access answers normal reads and writes above
+them, which roughly doubles small random I/O and makes a RAM disk the fastest choice for
+one request at a time. A cached disk can still lead at deep queues: it hands queued
+requests to worker threads, so the submitting thread keeps issuing while other processors
+copy.
 
 RAM-backed disks (pure RAM and image-in-RAM) have an **access path**. *Direct* (the
 default) lets QueueCache's volume filter copy normal file reads and writes straight from
