@@ -16,7 +16,7 @@ static PDRIVER_OBJECT Driver;
 // complete small transfers inline during StartIo; hand large writes to per-processor workers
 // while the submitter keeps others in flight; split large reads into chunks that idle workers
 // help copy before StartIo completes them.
-static constexpr ULONG MaxWorkers = 16, WorkerSpinMicroseconds = 150, WorkerMinBytes = 128 * 1024, SplitChunk = 256 * 1024;
+static constexpr ULONG MaxWorkers = 16, WorkerSpinMicroseconds = 50, WorkerMinBytes = 128 * 1024, SplitChunk = 256 * 1024;
 struct SLAB { PMDL Mdl; PUCHAR Bytes; ULONG Length; };
 struct DISK
 {
@@ -719,11 +719,8 @@ BOOLEAN StartIo(PVOID extension, PSCSI_REQUEST_BLOCK srb)
                 Enqueue(adapter, request);
                 return TRUE;
             }
-            if (copyBytes && adapter->WorkerCount > 1 && copyBytes >= 2 * SplitChunk)
-            {
+            if (copyBytes && !copyWrite && adapter->WorkerCount > 1 && copyBytes >= 2 * SplitChunk)
                 CopySplit(adapter, disk, copyOffset, copyBuffer, copyBytes, copyWrite);
-                if (copyWrite) InterlockedDecrement(&disk->ActiveWrites);
-            }
             else if (copyBytes)
             {
                 Copy(disk, copyOffset, copyBuffer, copyBytes, copyWrite);
