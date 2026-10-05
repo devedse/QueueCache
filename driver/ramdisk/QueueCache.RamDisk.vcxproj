@@ -24,7 +24,7 @@
     <BuildVersionNumeric>$([System.String]::Copy('$(BuildVersion)').Replace('.', ','))</BuildVersionNumeric>
   </PropertyGroup>
   <ItemDefinitionGroup>
-    <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo><WarningLevel>Level4</WarningLevel><EnablePREfast>true</EnablePREfast><AdditionalOptions>/analyze:WX- %(AdditionalOptions)</AdditionalOptions><TreatWarningAsError>true</TreatWarningAsError><PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
+    <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo><WarningLevel>Level4</WarningLevel><AdditionalOptions>/analyze /analyze:WX- %(AdditionalOptions)</AdditionalOptions><TreatWarningAsError>true</TreatWarningAsError><PreprocessorDefinitions>POOL_NX_OPTIN=1;%(PreprocessorDefinitions)</PreprocessorDefinitions></ClCompile>
     <Link><AdditionalDependencies>storport.lib;%(AdditionalDependencies)</AdditionalDependencies><GenerateDebugInformation>true</GenerateDebugInformation></Link>
     <ResourceCompile><AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories></ResourceCompile>
   </ItemDefinitionGroup>
