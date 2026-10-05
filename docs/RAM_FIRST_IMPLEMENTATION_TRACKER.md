@@ -2876,5 +2876,29 @@ Direct access for RAM-backed disks (branch feature/ram-fast-path, plan 91). Impl
 - Build: the cache driver now treats warnings as errors (two warning sources fixed). A
   compiler `/analyze` probe reported only false positives and annotation-style notes, so
   it is not part of the build.
+- VM findings fixed: the bind opened the disk stack through `\Device\Harddisk<N>\DR<N>`
+  (DR numbers are a global counter; now `Partition0`); harmless Microsoft queries seen on
+  the VM ended Direct access (now the device-type/access-bit rule, see
+  RAM_DISK_IMPLEMENTATION_PLAN.md); `direct-snapshot-writes` read the live file through
+  Windows' file cache, so no read reached the volume (now unbuffered).
+- Provider reference race (also on master): `DereferenceDisk` decremented the count and
+  then signalled the idle event, so removal could free the disk in between and the signal
+  landed in freed memory (a worker finishing a queued write can be preempted there).
+  Implementation: an `EX_RUNDOWN_REF` replaces the count and event; its release is the last
+  access, and idle-to-busy transitions no longer pay two event operations.
 Verification: pending (VM suites under Verifier, stress, BitLocker manual check,
 write-performance regression for the filter dispatch change, benchmark).
+- 0.4.377.1 (9a7c4ef) under Verifier: one bugcheck 0xA in `nt!KiInsertTimerTable` (a
+  timer-table entry with a null link, hit by an unrelated thread) about 19 s into
+  `ram-disk`, near the Direct variant's shadow-copy step and Stop. Only a minidump was
+  configured. Not reproduced since: 9 more `ram-disk` runs, 4 reboot-then-suite rounds,
+  16 shadow-copy/Stop rounds (Direct, with and without a live snapshot) and a 180 s
+  stress (two Direct disks, 1.14 TiB verified byte-exact, ~9.5M DiskSpd I/Os), with Verifier
+  plus port/miniport checks. The VM now writes kernel dumps for the rest of this
+  verification so a recurrence identifies the overwritten memory. The cause is not proven;
+  the provider reference race above is the one use-after-free found in review.
+- BitLocker (manual, `.lab` script, filter unchanged since 0.4.377.1): Direct access was full
+  on a new 512 MiB Direct disk; `Enable-BitLocker` ended it before forwarding its first
+  state-changing control (reason Control, 0x0056C04C, nothing declined), encryption
+  reached FullyEncrypted, the file written before was intact and a write afterwards read
+  back exactly.
