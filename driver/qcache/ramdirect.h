@@ -90,7 +90,7 @@ static_assert(!QcRamDirectHarmlessControl(IOCTL_DISK_SET_CACHE_INFORMATION));
 static_assert(!QcRamDirectHarmlessControl(IOCTL_SCSI_PASS_THROUGH));
 static_assert(!QcRamDirectHarmlessControl(CTL_CODE(QcFveDeviceType, 0x435, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)));
 static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x22, 0xAAA, METHOD_BUFFERED, FILE_ANY_ACCESS))); // FILE_DEVICE_UNKNOWN
-static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x8123, 0x1, METHOD_BUFFERED, FILE_ANY_ACCESS))); // Third-party device type
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x8123UL, 0x1UL, METHOD_BUFFERED, FILE_ANY_ACCESS))); // Third-party device type
 
 struct QC_RAM_VIEW;
 // Per volume (in the filter's device extension). Dispatch reads Access and the hot-path
