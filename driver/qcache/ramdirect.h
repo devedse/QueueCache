@@ -68,11 +68,13 @@ constexpr bool QcRamDirectHarmlessControl(ULONG code)
         return true; // QueueCache's own controls, identity/health queries, mount/volume state.
     if (code == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES)
         return true; // TRIM and allocation queries run on the standard path, coherent with Direct data.
+    if (DEVICE_TYPE_FROM_CTL_CODE(code) == 0x53 && code != QcVolsnapFlushAndHoldWrites)
+        return true; // Snapshot management: flush-and-hold already ended Direct writes; live reads are unaffected.
     if (QcRamDirectStateChangeWithoutWriteAccess(code))
         return false;
     const auto type = DEVICE_TYPE_FROM_CTL_CODE(code);
     const bool storageType = type == FILE_DEVICE_DISK || type == IOCTL_STORAGE_BASE || type == 0x56 /* volume */ ||
-                             type == QcMountDeviceType || type == 0x53 /* volsnap */ || type == QcFveDeviceType;
+                             type == QcMountDeviceType || type == QcFveDeviceType;
     return storageType && !((code >> 14) & FILE_WRITE_ACCESS);
 }
 static_assert(QcRamDirectHarmlessControl(IOCTL_STORAGE_QUERY_PROPERTY));
