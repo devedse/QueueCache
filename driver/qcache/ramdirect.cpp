@@ -6,8 +6,6 @@
 // Stable public layouts (ntddvol.h, winioctl.h), declared here to keep the include set small.
 struct QC_DISK_EXTENT { ULONG DiskNumber; LARGE_INTEGER StartingOffset, ExtentLength; };
 struct QC_VOLUME_DISK_EXTENTS { ULONG NumberOfDiskExtents; QC_DISK_EXTENT Extents[1]; };
-constexpr ULONG QcGetVolumeDiskExtents = QcVolumeControl(0, FILE_ANY_ACCESS);
-constexpr ULONG QcGetGptAttributes = QcVolumeControl(14, FILE_ANY_ACCESS);
 constexpr ULONGLONG QcGptReadOnly = 0x1000000000000000ULL; // GPT_BASIC_DATA_ATTRIBUTE_READ_ONLY
 
 // One RAM disk offered by the provider. Freed after its registration and binding are gone.

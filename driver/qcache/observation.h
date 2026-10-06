@@ -3,6 +3,11 @@
 #include <ntddstor.h>
 #include <ntdddisk.h>
 #include <ntddscsi.h>
+// How the volume filter classifies device controls. The cache asks whether a control must
+// wait behind the writes it holds in RAM (observations, volume management and most
+// snapshot controls need not); Direct access asks whether a control could change what the
+// layers it skips do with reads and writes (QcRamDirectHarmlessControl, at the end).
+
 // Explicit buffer-based identity/health queries only. Access bits are permissions,
 // not proof of safety. No pass-through, reset, TRIM, media change or private command.
 constexpr bool QcObservationCode(ULONG code)
@@ -37,18 +42,21 @@ constexpr bool QcObservationCode(ULONG code)
 // Offline and attribute changes stay ordered behind pending writes.
 constexpr ULONG QcMountDeviceType = 0x4D; // MOUNTDEVCONTROLTYPE: every IOCTL_MOUNTDEV_*
 constexpr ULONG QcVolumeControl(ULONG function, ULONG access) { return CTL_CODE(0x56, function, METHOD_BUFFERED, access); }
+constexpr ULONG QcGetVolumeDiskExtents = QcVolumeControl(0, FILE_ANY_ACCESS);
+constexpr ULONG QcSetGptAttributes = QcVolumeControl(13, FILE_ANY_ACCESS);
+constexpr ULONG QcGetGptAttributes = QcVolumeControl(14, FILE_ANY_ACCESS);
 constexpr bool QcVolumeManagementCode(ULONG code)
 {
     if (DEVICE_TYPE_FROM_CTL_CODE(code) == QcMountDeviceType)
         return true;
-    return code == QcVolumeControl(0, FILE_ANY_ACCESS) ||                       // GET_VOLUME_DISK_EXTENTS
+    return code == QcGetVolumeDiskExtents ||
            code == QcVolumeControl(2, FILE_READ_ACCESS | FILE_WRITE_ACCESS) ||  // ONLINE
            code == QcVolumeControl(4, FILE_ANY_ACCESS) ||                       // IS_OFFLINE
            code == QcVolumeControl(5, FILE_ANY_ACCESS) ||                       // IS_IO_CAPABLE
            code == QcVolumeControl(7, FILE_ANY_ACCESS) ||                       // QUERY_VOLUME_NUMBER
            code == QcVolumeControl(10, FILE_ANY_ACCESS) ||                      // IS_PARTITION
            code == QcVolumeControl(12, FILE_ANY_ACCESS) ||                      // IS_CLUSTERED
-           code == QcVolumeControl(14, FILE_ANY_ACCESS) ||                      // GET_GPT_ATTRIBUTES
+           code == QcGetGptAttributes ||
            code == QcVolumeControl(25, FILE_READ_ACCESS | FILE_WRITE_ACCESS);   // POST_ONLINE
 }
 inline bool QcObservationRequest(PIO_STACK_LOCATION stack)
@@ -62,7 +70,7 @@ static_assert(QcVolumeManagementCode(CTL_CODE(QcMountDeviceType, 1, METHOD_BUFFE
 static_assert(QcVolumeManagementCode(0x56C008)); // IOCTL_VOLUME_ONLINE
 static_assert(QcVolumeManagementCode(0x560000)); // IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS
 static_assert(!QcVolumeManagementCode(0x56C00C)); // IOCTL_VOLUME_OFFLINE stays ordered
-static_assert(!QcVolumeManagementCode(QcVolumeControl(13, FILE_ANY_ACCESS))); // SET_GPT_ATTRIBUTES stays ordered
+static_assert(!QcVolumeManagementCode(QcSetGptAttributes)); // stays ordered
 static_assert(!QcVolumeManagementCode(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
 static_assert(!QcVolumeManagementCode(0x6D0008)); // mount manager's own (MOUNTMGRCONTROLTYPE) controls
 static_assert(QcObservationCode(IOCTL_STORAGE_QUERY_PROPERTY));
@@ -88,3 +96,37 @@ static_assert(!QcSnapshotControlWithoutDrain(QcVolsnapFlushAndHoldWrites));
 static_assert(QcSnapshotControlWithoutDrain(0x53C004)); // IOCTL_VOLSNAP_RELEASE_WRITES, seen on the VM
 static_assert(QcSnapshotControlWithoutDrain(0x53C038)); // seen on the VM during a snapshot
 
+// Direct access (ramdirect.h): may the control pass while Direct access continues? Anything
+// else ends Direct access before it is forwarded; flush-and-hold ends only Direct writes
+// (QcRamDirectObserveControl). Binding requires every driver below to be a known Microsoft
+// storage driver. Microsoft reserves device types below 0x8000 and declares state-changing
+// controls with FILE_WRITE_ACCESS, so a Microsoft control that needs no write access only
+// queries or notifies (found on the VM: BitLocker's status query on every new volume,
+// IOCTL_DISK_MEDIA_REMOVAL and a FILE_DEVICE_MULTITIER_MEMORY query during lock/dismount).
+// FILE_DEVICE_UNKNOWN, which third-party drivers commonly reuse, never passes.
+constexpr bool QcRamDirectHarmlessControl(ULONG code)
+{
+    const auto type = DEVICE_TYPE_FROM_CTL_CODE(code);
+    if (type == 0x8844 || QcObservationCode(code) || QcVolumeManagementCode(code) || QcSnapshotControlWithoutDrain(code))
+        return true; // QueueCache's own controls and the sets above.
+    if (code == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES)
+        return true; // TRIM and allocation queries run on the standard path, coherent with Direct data.
+    if (code == QcSetGptAttributes)
+        return false; // Changes state (read-only, hidden) without write access.
+    return type < 0x8000 && type != FILE_DEVICE_UNKNOWN && !((code >> 14) & FILE_WRITE_ACCESS);
+}
+static_assert(QcRamDirectHarmlessControl(IOCTL_STORAGE_QUERY_PROPERTY));
+static_assert(QcRamDirectHarmlessControl(0x53C004));   // IOCTL_VOLSNAP_RELEASE_WRITES
+static_assert(QcRamDirectHarmlessControl(0x00074804)); // IOCTL_DISK_MEDIA_REMOVAL, seen on the VM during lock/dismount
+static_assert(QcRamDirectHarmlessControl(0x455610D4)); // BitLocker status query, seen on the VM on every new volume
+static_assert(QcRamDirectHarmlessControl(IOCTL_DISK_GET_CACHE_INFORMATION));
+static_assert(QcRamDirectHarmlessControl(0x0066001B)); // FILE_DEVICE_MULTITIER_MEMORY query, seen on the VM during lock/dismount
+static_assert(!QcRamDirectHarmlessControl(QcVolsnapFlushAndHoldWrites));
+static_assert(!QcRamDirectHarmlessControl(0x56C00C)); // IOCTL_VOLUME_OFFLINE
+static_assert(!QcRamDirectHarmlessControl(QcSetGptAttributes));
+static_assert(!QcRamDirectHarmlessControl(IOCTL_DISK_SET_DRIVE_LAYOUT_EX));
+static_assert(!QcRamDirectHarmlessControl(IOCTL_DISK_SET_CACHE_INFORMATION));
+static_assert(!QcRamDirectHarmlessControl(IOCTL_SCSI_PASS_THROUGH));
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x4556UL, 0x435UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS))); // BitLocker (fvevol)
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x22UL, 0xAAAUL, METHOD_BUFFERED, FILE_ANY_ACCESS))); // FILE_DEVICE_UNKNOWN
+static_assert(!QcRamDirectHarmlessControl(CTL_CODE(0x8123UL, 0x1UL, METHOD_BUFFERED, FILE_ANY_ACCESS))); // Third-party device type
