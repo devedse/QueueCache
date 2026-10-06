@@ -37,8 +37,12 @@ struct QC_DIRECT_COPY
 static FAST_MUTEX ViewLock;
 static LIST_ENTRY Views;
 static NPAGED_LOOKASIDE_LIST CopyItems;
+static ULONG Processors;
 static constexpr ULONG Tag = 'vRCQ';
 static constexpr ULONG LargeCopyBytes = 512 * 1024; // The provider splits copies from 2 x 256 KiB.
+// Smaller copies cost less than handing them to a worker (lab VM, RND4K write: 336k IOPS
+// copied inline vs 297k queued at Q32T1, 1.09M vs 393k at Q8T4).
+static constexpr ULONG QueueMinBytes = 256 * 1024;
 static const UCHAR BitLockerSignature[8] = {'-', 'F', 'V', 'E', '-', 'F', 'S', '-'};
 
 void QcRamDirectInitialize()
@@ -46,6 +50,7 @@ void QcRamDirectInitialize()
     ExInitializeFastMutex(&ViewLock);
     InitializeListHead(&Views);
     ExInitializeNPagedLookasideList(&CopyItems, nullptr, nullptr, POOL_NX_ALLOCATION, sizeof(QC_DIRECT_COPY), Tag, 0);
+    Processors = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 }
 void QcRamDirectDestroy()
 {
@@ -116,12 +121,19 @@ static QcRamDirectOutcome Decline(QC_RAM_BINDING* binding)
     InterlockedIncrement64(&binding->Declined);
     return QcRamDirectOutcome::Standard;
 }
+// In the submitter's thread: split a large copy across the provider's workers unless they are
+// busy with queued copies.
 static void Copy(QC_RAM_BINDING* binding, QC_RAM_STORE* store, ULONGLONG at, PUCHAR buffer, ULONG length, bool write)
 {
-    if (length >= LargeCopyBytes && binding->LargeCopy)
+    const bool large = length >= QueueMinBytes;
+    if (large)
+        InterlockedIncrement(&binding->Copying);
+    if (length >= LargeCopyBytes && binding->LargeCopy && !ReadNoFence(&binding->Queued))
         binding->LargeCopy(binding->CopyContext, store, at, buffer, length, write);
     else
         QcRamStoreCopy(store, at, buffer, length, write);
+    if (large)
+        InterlockedDecrement(&binding->Copying);
 }
 // A copied request: close its write admission, count it and set its status.
 static void Served(QC_RAM_BINDING* binding, QC_RAM_STORE* store, PIRP irp, ULONG length, bool write)
@@ -155,12 +167,18 @@ static void CopyCompleted(QC_RAM_ASYNC_COPY* copy)
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     IoReleaseRemoveLock(removeLock, irp); // Last: the volume may be removed afterwards.
 }
-// Hands the copy to a provider worker while the submitter keeps others in flight (QcOffload),
-// so it can issue its next request at once. False: copy inline.
+// Hands a large copy to a provider worker while the submitter keeps others in flight
+// (QcOffload) and a processor is free: the submitter, other submitters copying inline and
+// queued copies each keep one busy. The submitter then issues its next request at once.
+// False: copy inline.
 static bool Queue(QC_RAM_BINDING* binding, QC_RAM_STORE* store, PIRP irp, PIO_REMOVE_LOCK removeLock,
     ULONGLONG at, PUCHAR buffer, ULONG length, bool write)
 {
-    if (!binding->QueueCopy || !QcOffload(&binding->Offload, ReadNoFence(&binding->Queued)))
+    if (!binding->QueueCopy || length < QueueMinBytes)
+        return false;
+    const auto queued = ReadNoFence(&binding->Queued);
+    if (1 + static_cast<ULONG>(ReadNoFence(&binding->Copying) + queued) >= Processors ||
+        !QcOffload(&binding->Offload, queued))
         return false;
     auto item = static_cast<QC_DIRECT_COPY*>(ExAllocateFromNPagedLookasideList(&CopyItems));
     if (!item)

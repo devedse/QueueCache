@@ -109,6 +109,7 @@ struct QC_RAM_BINDING
     PVOID CopyContext;
     QC_OFFLOAD_POLICY Offload; // Copy inline or on the provider's workers (racy hints).
     volatile LONG Queued;     // Copies on the provider's workers; each holds Rundown.
+    volatile LONG Copying;    // Large copies in their submitters' threads.
     ULONGLONG Offset, Length; // Volume extent on the RAM disk.
     UCHAR Signature[8];       // Boot sector OEM name at bind; BitLocker changes it.
     BOOLEAN SnapshotSeen;     // A flush-and-hold passed this volume (sticky).
