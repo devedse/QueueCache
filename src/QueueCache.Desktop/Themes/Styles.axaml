@@ -1,0 +1,122 @@
+<!-- Shared styles: the Windows type ramp (caption 12, body 14, subtitle 20, title 28), cards, and
+     the few QueueCache-specific looks. Spacing follows the 4 px grid. -->
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ctl="using:QueueCache.Desktop.Controls">
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontSize" Value="28" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="TextBlock.subtitle">
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="TextBlock.strong">
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="TextBlock.caption">
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+  <Style Selector="TextBlock.secondary">
+    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="TextBlock.value">
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <!-- Fixed-width digits: live numbers do not jitter. -->
+    <Setter Property="FontFeatures" Value="+tnum" />
+  </Style>
+  <Style Selector="TextBlock.number">
+    <Setter Property="FontFeatures" Value="+tnum" />
+  </Style>
+  <!-- Page layout: content starts below the title bar area, with a readable maximum width. -->
+  <Style Selector="StackPanel.page">
+    <Setter Property="Margin" Value="32,24,32,32" />
+    <Setter Property="MaxWidth" Value="1040" />
+  </Style>
+  <Style Selector="TextBlock.section">
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Margin" Value="0,12,0,0" />
+  </Style>
+  <!-- Chart and bar legends: swatch, label, value. -->
+  <Style Selector="StackPanel.legend">
+    <Setter Property="Orientation" Value="Horizontal" />
+    <Setter Property="Spacing" Value="6" />
+    <Setter Property="Margin" Value="0,0,20,4" />
+  </Style>
+  <Style Selector="StackPanel.legend > TextBlock">
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="SelectableTextBlock.mono">
+    <Setter Property="FontFamily" Value="Cascadia Mono, Consolas, Courier New, monospace" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <!-- Icon-and-text buttons in command rows. -->
+  <Style Selector="Button PathIcon">
+    <Setter Property="Width" Value="16" />
+    <Setter Property="Height" Value="16" />
+  </Style>
+  <!-- Dialog windows: the content on a layer, the buttons on the base, as in Windows content dialogs. -->
+  <Style Selector="Border.dialogBody">
+    <Setter Property="Background" Value="{DynamicResource LayerFillColorAltBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+  </Style>
+  <Style Selector="Grid.dialogButtons">
+    <Setter Property="Margin" Value="24" />
+  </Style>
+  <Style Selector="Grid.dialogButtons > Button">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="TextBlock.field">
+    <Setter Property="Margin" Value="0,0,0,4" />
+  </Style>
+  <Style Selector="TextBlock.error">
+    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <!-- A choice with consequences: a title and what it means. -->
+  <Style Selector="RadioButton.option">
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="Padding" Value="8,0,0,0" />
+    <Setter Property="Margin" Value="0,0,0,4" />
+  </Style>
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="8" />
+    <Setter Property="Padding" Value="16" />
+  </Style>
+  <!-- Figure tiles sit in a UniformGrid with a negative right/bottom margin, so the gaps are even. -->
+  <Style Selector="Border.tile">
+    <Setter Property="Margin" Value="0,0,8,8" />
+  </Style>
+  <Style Selector="UniformGrid.tiles">
+    <Setter Property="Margin" Value="0,0,-8,-8" />
+  </Style>
+  <Style Selector="Border.swatch">
+    <Setter Property="Width" Value="10" />
+    <Setter Property="Height" Value="10" />
+    <Setter Property="CornerRadius" Value="3" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <!-- Destructive commands are marked by color and always confirmed. -->
+  <Style Selector="Button.danger, MenuItem.danger">
+    <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+  </Style>
+  <Style Selector="ctl|SegmentBar">
+    <Setter Property="RestBrush" Value="{DynamicResource QcFreeBrush}" />
+  </Style>
+  <Style Selector="ctl|ActivityChart">
+    <Setter Property="ReadBrush" Value="{DynamicResource QcReadBrush}" />
+    <Setter Property="IncomingBrush" Value="{DynamicResource QcPendingBrush}" />
+    <Setter Property="DrainedBrush" Value="{DynamicResource QcOnDiskBrush}" />
+    <Setter Property="GridBrush" Value="{DynamicResource QcGridBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+  </Style>
+</Styles>

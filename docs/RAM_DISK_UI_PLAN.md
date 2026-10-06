@@ -95,6 +95,10 @@ allocation, available host space and checkpoint space needs separately.
 
 ## Main window
 
+The desktop layout is now described in [DESKTOP_UI.md](DESKTOP_UI.md): a
+Virtual disks page lists the disks and shows the selected one in detail. The
+fields, actions and rules below still apply.
+
 Use disk-level resource cards with child volume/cache rows where appropriate.
 Do not duplicate an owned virtual volume as an unrelated existing-volume task.
 

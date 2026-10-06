@@ -3,12 +3,16 @@
     <OutputType>WinExe</OutputType><AssemblyName>QueueCache.Desktop</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>../../assets/branding/queuecache.ico</ApplicationIcon>
+    <!-- Bindings are checked when the AXAML is compiled. -->
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="../../assets/branding/queuecache.ico" LogicalName="QueueCache.Icon" />
-    <EmbeddedResource Include="../../assets/branding/queuecache.png" LogicalName="QueueCache.Artwork" />
+    <AvaloniaResource Include="../../assets/branding/queuecache.ico" Link="Assets/queuecache.ico" />
+    <AvaloniaResource Include="../../assets/branding/queuecache.png" Link="Assets/queuecache.png" />
+    <InternalsVisibleTo Include="QueueCache.Desktop.Tests" />
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.2" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageReference Include="FluentAvaloniaUI" Version="3.1.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 </Project>

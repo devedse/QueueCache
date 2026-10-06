@@ -1,0 +1,136 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             xmlns:ctl="using:QueueCache.Desktop.Controls"
+             xmlns:fmt="using:QueueCache.Desktop.Formatting"
+             x:Class="QueueCache.Desktop.Views.VirtualDiskDetailsView"
+             x:DataType="vm:VirtualDiskViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" Margin="24,0,32,32" MaxWidth="880" HorizontalAlignment="Stretch">
+      <StackPanel Spacing="4">
+        <WrapPanel>
+          <TextBlock Classes="subtitle" Text="{Binding Title}" Margin="0,0,12,0" />
+          <ctl:StatusPill Health="{Binding Health}" Text="{Binding StatusText}" Margin="0,0,8,0" />
+          <ctl:StatusPill Health="Attention" Text="Unsaved changes" Margin="0,0,8,0" IsVisible="{Binding HasUnsavedChanges}" />
+          <ctl:VolatileBadge IsVisible="{Binding IsVolatile}" />
+        </WrapPanel>
+        <TextBlock Classes="secondary" Text="{Binding Subtitle}" />
+      </StackPanel>
+
+      <TextBlock Name="SaveStatusText" Text="{Binding SaveStatus}"
+                 IsVisible="{Binding SaveStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" TextWrapping="Wrap" />
+
+      <!-- The main action for the disk's state, the common ones, the rest under More. -->
+      <WrapPanel Name="Commands">
+        <Button Name="StartButton" Classes="accent" Margin="0,0,8,8" Command="{Binding StartCommand}" IsVisible="{Binding IsStoppedState}" IsEnabled="{Binding CanStart}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconStart}" />
+            <TextBlock Text="Start" />
+          </StackPanel>
+        </Button>
+        <Button Name="RecoverButton" Classes="accent" Margin="0,0,8,8" Command="{Binding RecoverCommand}" IsVisible="{Binding NeedsRecovery}" IsEnabled="{Binding CanRecover}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconRefresh}" />
+            <TextBlock Text="Recover" />
+          </StackPanel>
+        </Button>
+        <Button Name="SaveButton" Classes.accent="{Binding HasUnsavedChanges}" Margin="0,0,8,8" Command="{Binding SaveCommand}"
+                IsEnabled="{Binding CanSave}" ToolTip.Tip="Copies the whole disk to a new checkpoint file and verifies it">
+          <Button.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="ShowSave" />
+              <Binding Path="IsReadyState" />
+            </MultiBinding>
+          </Button.IsVisible>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconSave}" />
+            <TextBlock Text="Save now" />
+          </StackPanel>
+        </Button>
+        <Button Name="FlushButton" Margin="0,0,8,8" Command="{Binding FlushCommand}" IsEnabled="{Binding CanFlush}"
+                ToolTip.Tip="Write every pending write to the image file now">
+          <Button.IsVisible>
+            <MultiBinding Converter="{x:Static BoolConverters.And}">
+              <Binding Path="IsCachedImage" />
+              <Binding Path="IsReadyState" />
+            </MultiBinding>
+          </Button.IsVisible>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconFlush}" />
+            <TextBlock Text="Flush now" />
+          </StackPanel>
+        </Button>
+        <Button Name="StopButton" Margin="0,0,8,8" Command="{Binding StopCommand}" IsVisible="{Binding IsRunning}" IsEnabled="{Binding CanStop}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconStop}" />
+            <TextBlock Text="{Binding StopText}" />
+          </StackPanel>
+        </Button>
+        <Button Name="MoreButton" Margin="0,0,8,8" ToolTip.Tip="More actions" AutomationProperties.Name="More actions">
+          <PathIcon Data="{StaticResource IconMore}" />
+          <Button.Flyout>
+            <ui:FAMenuFlyout Placement="BottomEdgeAlignedLeft">
+              <ui:FAMenuFlyoutItem Text="Flush" Command="{Binding FlushCommand}" IsVisible="{Binding !IsCachedImage}" IsEnabled="{Binding CanFlush}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconFlush}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Text="Export a copy…" Command="{Binding ExportCommand}" IsVisible="{Binding ShowExport}" IsEnabled="{Binding CanExport}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconExport}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Text="Cache settings…" Command="{Binding EditCacheCommand}" IsVisible="{Binding ShowEditCache}" IsEnabled="{Binding CanEditCache}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconCache}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Text="Startup and shutdown…" Command="{Binding EditStartupCommand}" IsEnabled="{Binding CanEditStartup}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconWindow}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Text="Disk settings…" Command="{Binding EditStoppedCommand}" IsEnabled="{Binding CanEditStopped}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconSettings}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutSeparator />
+              <ui:FAMenuFlyoutItem Classes="danger" Text="Format…" Command="{Binding FormatCommand}" IsEnabled="{Binding CanFormat}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconClear}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Classes="danger" Text="Delete an image…" Command="{Binding DeleteImageCommand}" IsVisible="{Binding ShowDeleteImage}" IsEnabled="{Binding CanDeleteImage}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconDelete}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Classes="danger" Text="Forget disk…" Command="{Binding ForgetCommand}" IsEnabled="{Binding CanForget}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconDelete}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+            </ui:FAMenuFlyout>
+          </Button.Flyout>
+        </Button>
+      </WrapPanel>
+
+      <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding IsBusy}">
+        <ProgressBar IsIndeterminate="True" Width="120" VerticalAlignment="Center" />
+        <TextBlock Classes="secondary" Text="{Binding OperationText}" VerticalAlignment="Center" />
+      </StackPanel>
+
+      <ui:FAInfoBar Name="ProblemBar" Title="This disk needs attention" Message="{Binding Problem}" Severity="Error" IsClosable="False"
+                    IsOpen="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <ui:FAInfoBar Name="NoticeBar" Message="{Binding NoticeText}" IsClosable="True" IsOpen="{Binding HasNotice, Mode=TwoWay}" IsVisible="{Binding HasNotice}"
+                    Severity="{Binding NoticeSeverity, Converter={x:Static fmt:Converters.Severity}}" />
+
+      <Border Classes="card" Name="FactsCard">
+        <ItemsControl Name="Facts" ItemsSource="{Binding Facts}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel Spacing="10" /></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:Fact">
+              <Grid ColumnDefinitions="180,*">
+                <TextBlock Classes="secondary" Text="{Binding Label}" />
+                <SelectableTextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </Border>
+
+      <Expander Header="Details for support" HorizontalAlignment="Stretch">
+        <SelectableTextBlock Classes="mono" Text="{Binding SupportDetails}" />
+      </Expander>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

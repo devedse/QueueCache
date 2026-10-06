@@ -1,25 +1,29 @@
 using Avalonia;
-using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Themes.Fluent;
+using QueueCache.Desktop.Services;
 
 namespace QueueCache.Desktop;
 
 internal static class Program
 {
+    /// <summary>Set while this process owns the session's QueueCache window (Windows only).</summary>
+    internal static SingleInstance? Instance { get; private set; }
+
     [STAThread]
-    public static void Main(string[] args) => AppBuilder.Configure<App>().UsePlatformDetect().StartWithClassicDesktopLifetime(args);
-}
-public sealed class App : Application
-{
-    public override void Initialize()
+    public static void Main(string[] args)
     {
-        RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
-        Styles.Add(new FluentTheme());
-    }
-    public override void OnFrameworkInitializationCompleted()
-    {
-        if (OperatingSystem.IsWindows() && ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.MainWindow = new MainWindow();
-        base.OnFrameworkInitializationCompleted();
+        if (OperatingSystem.IsWindows())
+        {
+            Instance = SingleInstance.Acquire();
+            if (Instance is null)
+                return;
+        }
+        try
+        {
+            AppBuilder.Configure<App>().UsePlatformDetect().StartWithClassicDesktopLifetime(args);
+        }
+        finally
+        {
+            Instance?.Dispose();
+        }
     }
 }

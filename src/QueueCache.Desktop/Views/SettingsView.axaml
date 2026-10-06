@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             x:Class="QueueCache.Desktop.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+  <ScrollViewer>
+    <StackPanel Classes="page" Spacing="4">
+      <TextBlock Classes="title" Text="Settings" Margin="0,0,0,12" />
+
+      <TextBlock Classes="section" Text="Appearance" Margin="0,0,0,4" />
+      <ui:FASettingsExpander Header="App theme" Description="Light, dark, or the same as Windows">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconWindow}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpander.Footer>
+          <ComboBox Name="ThemeBox" MinWidth="200" ItemsSource="{Binding ThemeChoices}" SelectedIndex="{Binding Theme}" AutomationProperties.Name="App theme" />
+        </ui:FASettingsExpander.Footer>
+      </ui:FASettingsExpander>
+
+      <TextBlock Classes="section" Text="Live values" Margin="0,16,0,4" />
+      <ui:FASettingsExpander Header="Update interval" Description="How often caches and disks are read. Values older than three intervals show as unavailable.">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconActivity}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpander.Footer>
+          <ComboBox Name="UpdateBox" MinWidth="200" ItemsSource="{Binding UpdateChoices}" SelectedIndex="{Binding UpdateChoice}" AutomationProperties.Name="Update interval" />
+        </ui:FASettingsExpander.Footer>
+      </ui:FASettingsExpander>
+
+      <TextBlock Classes="section" Text="Notification area" Margin="0,16,0,4" />
+      <ui:FASettingsExpander Header="Keep running when the window is closed"
+                             Description="QueueCache stays in the notification area with its status and quick actions. Caches and disks keep running either way.">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconInfo}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpander.Footer>
+          <ToggleSwitch Name="TrayToggle" IsChecked="{Binding KeepRunningInTray}" AutomationProperties.Name="Keep running in the notification area" />
+        </ui:FASettingsExpander.Footer>
+      </ui:FASettingsExpander>
+
+      <TextBlock Classes="section" Text="About" Margin="0,16,0,4" />
+      <ui:FASettingsExpander Header="QueueCache" Description="RAM caches for volumes and disks that live in RAM">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconCache}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpander.Footer>
+          <SelectableTextBlock Classes="secondary" Text="{Binding Version}" VerticalAlignment="Center" />
+        </ui:FASettingsExpander.Footer>
+      </ui:FASettingsExpander>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

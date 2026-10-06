@@ -1,0 +1,195 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             xmlns:ctl="using:QueueCache.Desktop.Controls"
+             xmlns:fmt="using:QueueCache.Desktop.Formatting"
+             x:Class="QueueCache.Desktop.Views.VolumeDetailsView"
+             x:DataType="vm:VolumeViewModel">
+  <ScrollViewer>
+    <StackPanel Spacing="16" Margin="24,0,32,32" MaxWidth="880" HorizontalAlignment="Stretch">
+      <StackPanel Spacing="4">
+        <WrapPanel>
+          <TextBlock Classes="subtitle" Text="{Binding Title}" Margin="0,0,12,0" />
+          <ctl:StatusPill Health="{Binding Health}" Text="{Binding StatusText}" Margin="0,0,8,0" />
+          <ctl:VolatileBadge IsVisible="{Binding IsVolatile}" />
+        </WrapPanel>
+        <TextBlock Classes="secondary" Text="{Binding Subtitle}" />
+      </StackPanel>
+
+      <!-- One main action, the common ones, the rest under More. -->
+      <WrapPanel Name="Commands">
+        <Button Name="EditButton" Classes="accent" Margin="0,0,8,8" Command="{Binding EditCacheCommand}" IsEnabled="{Binding CanEdit}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconSettings}" />
+            <TextBlock Text="{Binding EditText}" />
+          </StackPanel>
+        </Button>
+        <Button Name="FlushButton" Margin="0,0,8,8" Command="{Binding FlushCommand}" IsVisible="{Binding HasCache}" IsEnabled="{Binding CanFlush}"
+                ToolTip.Tip="Write every pending write to the disk now">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconFlush}" />
+            <TextBlock Text="Flush now" />
+          </StackPanel>
+        </Button>
+        <Button Name="PauseButton" Margin="0,0,8,8" Command="{Binding TogglePauseCommand}" IsVisible="{Binding HasCache}" IsEnabled="{Binding CanPause}"
+                ToolTip.Tip="A paused cache writes everything to disk and stops caching; its RAM stays reserved">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <PathIcon Data="{StaticResource IconPause}" />
+            <TextBlock Text="{Binding PauseText}" />
+          </StackPanel>
+        </Button>
+        <Button Name="MoreButton" Margin="0,0,8,8" IsVisible="{Binding HasMoreActions}" ToolTip.Tip="More actions" AutomationProperties.Name="More actions">
+          <PathIcon Data="{StaticResource IconMore}" />
+          <Button.Flyout>
+            <ui:FAMenuFlyout Placement="BottomEdgeAlignedLeft">
+              <ui:FAMenuFlyoutItem Text="Clear read cache" Command="{Binding ClearReadCacheCommand}"
+                                   IsVisible="{Binding ShowClearReadCache}" IsEnabled="{Binding CanClearReadCache}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconClear}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutItem Text="{Binding Group.EjectText}" Command="{Binding Group.EjectCommand}" IsVisible="{Binding Group.CanEject}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconEject}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+              <ui:FAMenuFlyoutSeparator IsVisible="{Binding HasCache}" />
+              <ui:FAMenuFlyoutItem Text="Remove cache" Command="{Binding RemoveCommand}" IsVisible="{Binding HasCache}" IsEnabled="{Binding CanRemove}">
+                <ui:FAMenuFlyoutItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconDelete}" /></ui:FAMenuFlyoutItem.IconSource>
+              </ui:FAMenuFlyoutItem>
+            </ui:FAMenuFlyout>
+          </Button.Flyout>
+        </Button>
+      </WrapPanel>
+
+      <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding IsBusy}">
+        <ProgressBar IsIndeterminate="True" Width="120" VerticalAlignment="Center" />
+        <TextBlock Classes="secondary" Text="{Binding OperationText}" VerticalAlignment="Center" />
+      </StackPanel>
+
+      <!-- Messages appear on the item they concern, and say what to do. -->
+      <ui:FAInfoBar Name="ProblemBar" Title="Writes are failing" Message="{Binding Problem}" Severity="Error" IsClosable="False"
+                    IsOpen="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <ui:FAInfoBar.ActionButton>
+          <Button Content="Retry" Command="{Binding RetryCommand}" IsEnabled="{Binding CanRetry}" />
+        </ui:FAInfoBar.ActionButton>
+      </ui:FAInfoBar>
+      <ui:FAInfoBar Name="WarningBar" Title="No journal" Message="{Binding Warning}" Severity="Warning" IsClosable="False"
+                    IsOpen="{Binding Warning, Converter={x:Static ObjectConverters.IsNotNull}}"
+                    IsVisible="{Binding Warning, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <ui:FAInfoBar Name="NoticeBar" Message="{Binding NoticeText}" IsClosable="True" IsOpen="{Binding HasNotice, Mode=TwoWay}" IsVisible="{Binding HasNotice}"
+                    Severity="{Binding NoticeSeverity, Converter={x:Static fmt:Converters.Severity}}" />
+      <TextBlock Name="DescriptionText" Classes="secondary" Text="{Binding Description}"
+                 IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+      <StackPanel Spacing="16" IsVisible="{Binding HasCache}">
+        <TextBlock Classes="secondary">
+          <Run Text="{Binding BudgetText}" /><Run Text=" · " /><Run Text="{Binding PresetText}" /><Run Text=" · " /><Run Text="{Binding DrainText}" />
+        </TextBlock>
+
+        <!-- What is in RAM: reads, writes already on disk, writes not yet on disk, free. -->
+        <Border Classes="card" Name="OccupancyCard">
+          <StackPanel Spacing="12">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Classes="strong" Text="What is in RAM" />
+              <TextBlock Grid.Column="1" Classes="secondary number" Text="{Binding UsedText}" />
+            </Grid>
+            <ctl:SegmentBar First="{Binding ReadBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            Second="{Binding OnDiskBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            Third="{Binding PendingBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            Total="{Binding CapacityBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            FirstBrush="{DynamicResource QcReadBrush}" SecondBrush="{DynamicResource QcOnDiskBrush}" ThirdBrush="{DynamicResource QcPendingBrush}"
+                            AutomationProperties.Name="{Binding UsedText}" />
+            <UniformGrid Name="Legend" Columns="4">
+              <StackPanel Spacing="2" Margin="0,0,12,0">
+                <StackPanel Classes="legend" Margin="0">
+                  <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
+                  <TextBlock Classes="caption secondary" Text="Read cache" />
+                </StackPanel>
+                <TextBlock Classes="strong number" Text="{Binding ReadText}" />
+              </StackPanel>
+              <StackPanel Spacing="2" Margin="0,0,12,0">
+                <StackPanel Classes="legend" Margin="0">
+                  <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
+                  <TextBlock Classes="caption secondary" Text="On disk, kept for reads" />
+                </StackPanel>
+                <TextBlock Classes="strong number" Text="{Binding OnDiskText}" />
+              </StackPanel>
+              <StackPanel Spacing="2" Margin="0,0,12,0">
+                <StackPanel Classes="legend" Margin="0">
+                  <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+                  <TextBlock Classes="caption secondary" Text="Not yet on disk" />
+                </StackPanel>
+                <TextBlock Classes="strong number" Text="{Binding PendingText}" />
+              </StackPanel>
+              <StackPanel Spacing="2">
+                <StackPanel Classes="legend" Margin="0">
+                  <Border Classes="swatch" Background="{DynamicResource QcFreeBrush}" />
+                  <TextBlock Classes="caption secondary" Text="Free" />
+                </StackPanel>
+                <TextBlock Classes="strong number" Text="{Binding FreeText}" />
+              </StackPanel>
+            </UniformGrid>
+          </StackPanel>
+        </Border>
+
+        <UniformGrid Name="Tiles" Classes="tiles" Columns="4">
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Reads from RAM · since start" />
+              <TextBlock Classes="value" Text="{Binding ReadHitText}" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Oldest unwritten" />
+              <TextBlock Classes="value" Text="{Binding OldestUnwrittenText}" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Overwrites absorbed · since start" />
+              <TextBlock Classes="value" Text="{Binding OverwritesText}" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Disk errors · since start" />
+              <TextBlock Classes="value" Text="{Binding ErrorsText}" />
+            </StackPanel>
+          </Border>
+        </UniformGrid>
+
+        <Border Classes="card" Name="ActivityCard">
+          <StackPanel Spacing="8">
+            <TextBlock Classes="strong" Text="{Binding ActivityTitle}" />
+            <WrapPanel>
+              <StackPanel Classes="legend">
+                <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
+                <TextBlock Classes="caption secondary" Text="Reads" />
+                <TextBlock Classes="caption strong number" Text="{Binding ReadingText}" />
+              </StackPanel>
+              <StackPanel Classes="legend">
+                <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+                <TextBlock Classes="caption secondary" Text="Writes in" />
+                <TextBlock Classes="caption strong number" Text="{Binding IncomingText}" />
+              </StackPanel>
+              <StackPanel Classes="legend">
+                <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
+                <TextBlock Classes="caption secondary" Text="Written to disk" />
+                <TextBlock Classes="caption strong number" Text="{Binding DrainingText}" />
+              </StackPanel>
+            </WrapPanel>
+            <ctl:ActivityChart Name="Chart" Samples="{Binding Activity}" SecondsPerSample="{Binding SecondsPerSample}" Height="160"
+                               AutomationProperties.Name="Activity chart: reads, incoming writes and writes to disk in MiB/s" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <Expander Header="Details for support" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="8">
+          <SelectableTextBlock Classes="mono" Text="{Binding SupportDetails}" />
+          <SelectableTextBlock Classes="mono" Text="{Binding DriverText}" />
+        </StackPanel>
+      </Expander>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -1,0 +1,137 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:vm="using:QueueCache.Desktop.ViewModels"
+        xmlns:ctl="using:QueueCache.Desktop.Controls"
+        x:Class="QueueCache.Desktop.Views.CacheSettingsWindow"
+        x:DataType="vm:CacheSettingsViewModel"
+        Title="{Binding Title}" Icon="/Assets/queuecache.ico"
+        Width="580" SizeToContent="Height" MinWidth="460" MaxHeight="820"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+  <Grid RowDefinitions="*,Auto">
+    <Border Classes="dialogBody">
+      <ScrollViewer>
+        <StackPanel Margin="24" Spacing="20">
+          <StackPanel Spacing="4">
+            <TextBlock Classes="subtitle" Text="{Binding Title}" />
+            <TextBlock Classes="secondary" Text="{Binding Subtitle}" />
+          </StackPanel>
+
+          <StackPanel Spacing="4">
+            <TextBlock Classes="field strong" Text="RAM for this cache" />
+            <WrapPanel>
+              <ComboBox Name="MemoryBox" MinWidth="160" Margin="0,0,8,0" ItemsSource="{Binding MemoryChoices}" SelectedIndex="{Binding SelectedMemory}"
+                        AutomationProperties.Name="RAM for this cache" />
+              <ui:FANumberBox Name="CustomBudget" MinWidth="160" IsVisible="{Binding IsCustomMemory}" Value="{Binding CustomMiB}"
+                              Minimum="1" Maximum="{Binding AvailableMiB}" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact"
+                              PlaceholderText="MiB" AutomationProperties.Name="Custom size in MiB" />
+            </WrapPanel>
+            <TextBlock Classes="caption secondary" Text="{Binding AvailableText}" />
+          </StackPanel>
+
+          <!-- The choice that decides data safety, with its consequence stated. -->
+          <StackPanel Spacing="4">
+            <TextBlock Classes="field strong" Text="When a program saves a file" />
+            <RadioButton Name="FastOption" Classes="option" GroupName="Preset" IsChecked="{Binding IsFast}">
+              <StackPanel Spacing="2">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Classes="strong" Text="Fast" />
+                  <ctl:VolatileBadge />
+                </StackPanel>
+                <TextBlock Classes="secondary" Text="The save finishes in RAM and reaches the disk moments later. A crash or power cut can lose the last changes that were not written yet. Flush now always writes everything." />
+              </StackPanel>
+            </RadioButton>
+            <RadioButton Name="StrictOption" Classes="option" GroupName="Preset" IsChecked="{Binding IsStrict}">
+              <StackPanel Spacing="2">
+                <TextBlock Classes="strong" Text="Strict" />
+                <TextBlock Classes="secondary" Text="The save waits until the data is on the disk. Reads are still cached. Use this for data you cannot lose." />
+              </StackPanel>
+            </RadioButton>
+          </StackPanel>
+
+          <StackPanel Spacing="2" IsVisible="{Binding ShowStartup}">
+            <CheckBox Name="StartupBox" Content="Start with Windows" IsChecked="{Binding StartWithWindows}" />
+            <TextBlock Classes="caption secondary" Margin="28,0,0,0" Text="Keeps these settings and turns the cache on at every startup. Otherwise the cache lasts until Windows restarts." />
+          </StackPanel>
+
+          <Expander Name="AdvancedExpander" HorizontalAlignment="Stretch" IsExpanded="{Binding IsAdvancedOpen}">
+            <Expander.Header>
+              <StackPanel>
+                <TextBlock Text="Advanced tuning" />
+                <TextBlock Classes="caption secondary" Text="Memory sharing, when to write to disk, batch size, parallel writes" />
+              </StackPanel>
+            </Expander.Header>
+            <StackPanel Spacing="16">
+              <StackPanel Spacing="4">
+                <TextBlock Classes="field" Text="Memory sharing" />
+                <ComboBox Name="AllocationBox" MinWidth="260" ItemsSource="{Binding AllocationChoices}" SelectedIndex="{Binding Allocation}" AutomationProperties.Name="Memory sharing" />
+                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsFixedAllocation}">
+                  <ui:FANumberBox Name="WriteShare" MinWidth="120" Value="{Binding WritePercent}" Minimum="0" Maximum="100" SimpleNumberFormat="F0"
+                                  SpinButtonPlacementMode="Compact" AutomationProperties.Name="Write share in percent" />
+                  <TextBlock Classes="secondary" Text="% for writes" VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Classes="caption secondary" Text="{Binding AllocationText}" />
+              </StackPanel>
+              <CheckBox Name="RetainBox" IsChecked="{Binding RetainWrites}">
+                <TextBlock TextWrapping="Wrap" Text="Keep written data in RAM for later reads" />
+              </CheckBox>
+              <CheckBox Name="PromoteBox" IsChecked="{Binding PromoteOnRead}">
+                <TextBlock TextWrapping="Wrap" Text="Count kept writes as read cache once they are read" />
+              </CheckBox>
+
+              <StackPanel Spacing="4">
+                <TextBlock Classes="field" Text="When to write to disk" />
+                <ComboBox Name="DrainBox" MinWidth="200" ItemsSource="{Binding DrainChoices}" SelectedIndex="{Binding Drain}" AutomationProperties.Name="When to write to disk" />
+                <TextBlock Classes="caption secondary" Text="{Binding DrainText}" />
+              </StackPanel>
+              <WrapPanel IsVisible="{Binding ShowWatermarks}">
+                <StackPanel Spacing="4" Margin="0,0,16,8">
+                  <TextBlock Classes="field" Text="Start writing at (% full)" />
+                  <ui:FANumberBox Name="HighWatermark" MinWidth="140" Value="{Binding HighPercent}" Minimum="1" Maximum="100" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+                <StackPanel Spacing="4" Margin="0,0,16,8">
+                  <TextBlock Classes="field" Text="Stop writing at (% full)" />
+                  <ui:FANumberBox Name="LowWatermark" MinWidth="140" Value="{Binding LowPercent}" Minimum="0" Maximum="100" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+              </WrapPanel>
+              <WrapPanel>
+                <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowAge}">
+                  <TextBlock Classes="field" Text="Maximum age (ms)" />
+                  <ui:FANumberBox Name="MaxAge" MinWidth="140" Value="{Binding MaxDirtyAgeMs}" Minimum="0" Maximum="{Binding MaximumAgeMs}" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+                <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowIdle}">
+                  <TextBlock Classes="field" Text="Idle interval (ms)" />
+                  <ui:FANumberBox Name="IdleInterval" MinWidth="140" Value="{Binding IdleMs}" Minimum="0" Maximum="{Binding MaximumAgeMs}" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+              </WrapPanel>
+              <TextBlock Classes="caption secondary" IsVisible="{Binding ShowAge}"
+                         Text="The age is when writing starts, not a guarantee of when data is safe. Flush now, a full cache and shutdown always write everything." />
+
+              <WrapPanel>
+                <StackPanel Spacing="4" Margin="0,0,16,8">
+                  <TextBlock Classes="field" Text="Largest combined write" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ComboBox Name="BatchBox" MinWidth="140" ItemsSource="{Binding BatchChoices}" SelectedIndex="{Binding SelectedBatch}" AutomationProperties.Name="Largest combined write" />
+                    <ui:FANumberBox Name="CustomBatch" MinWidth="120" IsVisible="{Binding IsCustomBatch}" Value="{Binding CustomBatchKiB}" Minimum="4" SimpleNumberFormat="F0"
+                                    SpinButtonPlacementMode="Compact" PlaceholderText="KiB" AutomationProperties.Name="Custom batch size in KiB" />
+                  </StackPanel>
+                </StackPanel>
+                <StackPanel Spacing="4" Margin="0,0,16,8">
+                  <TextBlock Classes="field" Text="Parallel disk writes" />
+                  <ui:FANumberBox Name="Parallelism" MinWidth="120" Value="{Binding Parallelism}" Minimum="1" Maximum="64" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                </StackPanel>
+              </WrapPanel>
+              <TextBlock Classes="caption secondary" Text="Neighboring pending blocks are combined into one disk write up to the largest size. More parallel writes help random writing on fast disks." />
+            </StackPanel>
+          </Expander>
+          <TextBlock Name="ErrorText" Classes="error" Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+    <Grid Grid.Row="1" Classes="dialogButtons" ColumnDefinitions="*,8,*">
+      <Button Name="ApplyButton" Classes="accent" Content="{Binding ApplyText}" IsDefault="True" Click="OnApply" />
+      <Button Grid.Column="2" Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+    </Grid>
+  </Grid>
+</Window>
