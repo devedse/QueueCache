@@ -7,7 +7,11 @@ namespace QueueCache.Desktop.Views;
 /// <summary>Closes with a <see cref="CacheSettingsResult"/> when the settings are valid, or null.</summary>
 public sealed partial class CacheSettingsWindow : Window
 {
-    public CacheSettingsWindow() => InitializeComponent();
+    public CacheSettingsWindow()
+    {
+        InitializeComponent();
+        Opened += (_, _) => this.FitToScreen();
+    }
 
     private void OnApply(object? sender, RoutedEventArgs e)
     {

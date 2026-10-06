@@ -4,6 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using FluentAvalonia.Styling;
 using QueueCache.Desktop.Services;
 using QueueCache.Desktop.ViewModels;
@@ -35,6 +36,8 @@ public sealed class App : Application
             window.Closed += (_, _) => desktop.Shutdown();
             desktop.MainWindow = window;
             CreateTrayIcon(desktop);
+            if (Program.Instance is { } instance)
+                instance.ShowRequested += () => Dispatcher.UIThread.Post(ShowWindow);
         }
         base.OnFrameworkInitializationCompleted();
     }

@@ -23,6 +23,7 @@ public sealed partial class MainWindow : Window
         };
         Opened += async (_, _) =>
         {
+            this.FitToScreen();
             SelectNavigation();
             if (Shell is { } shell)
                 await shell.StartAsync();

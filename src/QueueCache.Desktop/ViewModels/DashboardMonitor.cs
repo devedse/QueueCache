@@ -242,8 +242,8 @@ public sealed partial class DashboardMonitor : ObservableObject
         var reserved = Math.Max(CachesReservedBytes + DisksReservedBytes, fresh.Select(v => v.State!.GlobalReservedBytes).DefaultIfEmpty(0UL).Max());
         HasRamLimit = limit > 0;
         FreeBytes = limit > reserved ? limit - reserved : 0;
-        CachesReservedText = Format.Bytes(CachesReservedBytes);
-        DisksReservedText = Format.Bytes(DisksReservedBytes);
+        CachesReservedText = CachesReservedBytes == 0 ? "None" : Format.Bytes(CachesReservedBytes);
+        DisksReservedText = DisksReservedBytes == 0 ? "None" : Format.Bytes(DisksReservedBytes);
         FreeText = Format.Bytes(FreeBytes);
         RamBarTotal = limit > 0 ? limit : reserved;
         RamSummary = limit > 0 ? $"{Format.Bytes(reserved)} of {Format.Bytes(limit)} allowed" : $"{Format.Bytes(reserved)} in use";

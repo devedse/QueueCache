@@ -15,6 +15,7 @@ public sealed partial class CreateDiskWindow : Window
     public CreateDiskWindow()
     {
         InitializeComponent();
+        Opened += (_, _) => this.FitToScreen();
         Closing += (_, e) =>
         {
             if (Editor is { IsWorking: true } editor)

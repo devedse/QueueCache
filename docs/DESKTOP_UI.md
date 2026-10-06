@@ -26,7 +26,10 @@ Pages: **Overview** (health, RAM used, every item with its one figure that
 matters, attention first), **Caches** (volumes grouped by physical disk, the
 selected volume in detail), **Virtual disks**, and in the navigation footer
 **Diagnostics** and **Settings** (theme, update interval, keep running in the
-notification area). Desktop settings are stored in
+notification area). Closing the window keeps QueueCache in the notification area
+(unless turned off); starting it again shows the running instance, as there is
+one per Windows session. Windows fit the screen's working area, so title bars
+and dialog buttons stay reachable on small screens. Desktop settings are stored in
 `%LOCALAPPDATA%\QueueCache\desktop.json`; they never affect caches or disks.
 
 ## Design rules

@@ -6,7 +6,7 @@
         x:DataType="vm:ShellViewModel"
         Title="QueueCache"
         Icon="/Assets/queuecache.ico"
-        Width="1180" Height="820" MinWidth="720" MinHeight="560"
+        Width="1120" Height="720" MinWidth="720" MinHeight="520"
         WindowStartupLocation="CenterScreen"
         TransparencyLevelHint="Mica"
         Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
