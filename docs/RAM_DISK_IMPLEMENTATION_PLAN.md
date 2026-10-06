@@ -294,15 +294,11 @@ is stored twice: the filter keeps no copy.
   storage driver, and Microsoft declares state-changing controls with write access. Known
   exceptions (IOCTL_VOLUME_SET_GPT_ATTRIBUTES) stay excluded. Compile-time checks pin the
   controls seen on the VM (BitLocker status, media removal, multitier memory queries).
-- **Hot path**: one lock-free check per read/write on every volume. A bound volume copies
-  a request in the caller's thread (large ones through the provider's split copy) unless
-  the caller keeps other requests in flight: then the copy goes to one of the provider's
-  per-processor workers and the request is completed from there, so the caller issues its
-  next request at once. The choice is the provider's existing inline-or-worker policy
-  (`driver/shared/offloadpolicy.h`), shared by its SCSI path: requests that each found
-  nothing in flight mean queue depth 1 (copy inline, probe a worker now and then). A queued
-  copy keeps its rundown reference, write admission and remove lock until it completes;
-  removal unregisters every view before the workers stop. Requests that are not served
+- **Hot path**: one lock-free check per read/write on every volume; bound volumes copy in
+  the caller's thread, large reads through the provider's split copy. Writes of 512 KiB
+  or more take the standard path by design: its workers overlap queued writes across
+  processors, while a Direct write occupies its caller until copied (SEQ1M Q8T1 write on
+  the lab VM: 25.4 GB/s standard vs 17.4 GB/s Direct). Requests that are not served
   (read-only, frozen, unaligned, beyond the extent, unmappable) continue on the standard
   path, which returns its usual result.
 - **Product**: `RamAccess` on RAM-backed definitions (Standard or Direct; default Direct),

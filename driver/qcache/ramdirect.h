@@ -2,7 +2,6 @@
 #pragma once
 #include <ntifs.h>
 #include "observation.h"
-#include "../shared/offloadpolicy.h"
 #include "../shared/ramview.h"
 
 // Direct access: the volume filter serves reads and writes for a volume on a QueueCache RAM
@@ -105,11 +104,7 @@ struct QC_RAM_BINDING
     ULONG Detail;
     QC_RAM_STORE* Store;      // Valid while Rundown is held.
     QC_RAM_LARGE_COPY* LargeCopy;
-    QC_RAM_QUEUE_COPY* QueueCopy;
-    PVOID CopyContext;
-    QC_OFFLOAD_POLICY Offload; // Copy inline or on the provider's workers (racy hints).
-    volatile LONG Queued;     // Copies on the provider's workers; each holds Rundown.
-    volatile LONG Copying;    // Large copies in their submitters' threads.
+    PVOID LargeCopyContext;
     ULONGLONG Offset, Length; // Volume extent on the RAM disk.
     UCHAR Signature[8];       // Boot sector OEM name at bind; BitLocker changes it.
     BOOLEAN SnapshotSeen;     // A flush-and-hold passed this volume (sticky).
@@ -120,17 +115,10 @@ struct QC_RAM_BINDING
 };
 
 void QcRamDirectInitialize();                                // DriverEntry
-void QcRamDirectDestroy();                                   // Unload
 void QcRamDirectInitialize(QC_RAM_BINDING* binding);        // AddDevice
 NTSTATUS QcRamViewControl(PIRP irp);                         // Budget device, kernel registration
-// Hot path for reads and writes holding removeLock (acquired with irp as its tag).
-enum class QcRamDirectOutcome
-{
-    Standard,  // Not served: continue on the standard path.
-    Completed, // Served: IoStatus is set; the caller releases removeLock and completes the IRP.
-    Pending,   // Marked pending and queued: a provider worker completes it and releases removeLock.
-};
-QcRamDirectOutcome QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp, PIO_REMOVE_LOCK removeLock);
+// Hot path. True when served: IoStatus is set and the caller completes the IRP.
+bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp);
 void QcRamDirectObserveControl(QC_RAM_BINDING* binding, ULONG code);
 // PASSIVE_LEVEL. lower is the next device in the volume stack.
 void QcRamDirectBind(QC_RAM_BINDING* binding, PDEVICE_OBJECT lower, const GUID& resource, ULONGLONG volumeBytes, ULONG flags);

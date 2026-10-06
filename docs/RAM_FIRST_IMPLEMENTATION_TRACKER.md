@@ -2929,16 +2929,18 @@ No bugcheck since the one below. Earlier results:
 - Why (same depth from 1 vs 4 submitting threads, DiskSpd per-CPU busy %): Direct RND4K write
   336k at both Q1T1 and Q32T1 with one CPU busy (100/1/0/0), 1.09M at Q8T4 (all 100); Q:
   264k at Q1T1, 402k at Q32T1 (98/31/40/32: its worker joins), 191k at Q8T4. SEQ1M read:
-  Direct 26.2 GB/s at Q8T1 (split copy, CPUs ~96% busy but coordinating one request at a
-  time), 39.2 GB/s at Q2T4; Q: 36.0 at Q8T1, 31.5 at Q2T4. A Direct request was always
-  finished by its submitter, so one thread's queue depth added nothing.
+  Direct 26.2 GB/s at Q8T1 (split copy), 39.2 GB/s at Q2T4; Q: 36.0 at Q8T1, 31.5 at Q2T4.
+  A Direct request is finished by its submitter, so one thread's queue depth adds nothing.
 - ImDisk 2.1.2 (virtual-memory RAM disk, 2 GiB NTFS) in the same session, same rows: 16.1/19.2,
   10.5/13.0 GB/s, 264k/131k, 44k/27k IOPS (Direct R: 26.8/24.8, 26.8/16.6, 432k/335k,
   451k/336k; Q: 29.2/21.0, 11.0/11.5, 431k/396k, 338k/268k).
-- Queued Direct copies. Implementation: when the submitter keeps other Direct requests in
-  flight, the copy goes to one of the provider's per-processor workers
-  (`QC_RAM_ASYNC_COPY`, kernel view contract version 2) and the request completes from
-  there; otherwise it is copied inline as before. The inline-or-worker policy is the
-  provider's existing one, moved to `driver/shared/offloadpolicy.h` and used by both. Writes
-  of 512 KiB or more are Direct again (they overlap on the workers). The adapter's removal
-  unregisters every view before stopping the workers. Verification: pending.
+- Queued Direct copies (3fb9d39, e8e31c8): tried and reverted. Handing Direct copies to the
+  provider's per-processor workers while the submitter kept others in flight (the provider's
+  inline-or-worker policy, shared) lost on this VM: queueing every request gave RND4K write
+  263k/297k/393k (Q1T1/Q32T1/Q8T4, inline 335k/336k/1.09M) and SEQ1M read 22.3 GB/s at Q8T1
+  and Q2T4 (inline 26.2/39.2); only RND4K Q32T1 read gained (532k vs 432k). Queueing only
+  copies of 256 KiB or more, and only to free processors, kept small I/O inline but still
+  lost large transfers (SEQ1M read 20.8 at Q8T1, 23.1 at Q2T4; CDM SEQ1M Q8 20.7/22.9 vs
+  26.7/24.4). A CPU profile of SEQ1M Q8T1 showed the workers spending 21% of busy samples
+  spinning between copies against 28% copying; the handoff and spin cost more than the
+  overlap gained. The inline design (dad0505) stays.

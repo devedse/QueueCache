@@ -13,13 +13,17 @@ struct SPLIT
     HELP Help[MaxWorkers];
 };
 
-// Small transfers are cheapest inline (completed during StartIo); a large write goes to a
-// worker when the submitter keeps others in flight (QcOffload).
+// Small transfers are cheapest inline (completed during StartIo). A large write goes to a
+// worker when the submitter keeps others in flight; a run of writes that each found nothing
+// outstanding means queue depth 1, so copy inline and probe a worker periodically.
+static constexpr LONG InlineAfter = 16, ProbeEvery = 64;
 bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes, bool write)
 {
     // Reads copy fastest split (CopySplit); queued writes gain more from returning at once.
     if (!adapter->WorkerCount || !write || bytes < WorkerMinBytes) return false;
-    return QcOffload(&disk->Offload, ReadNoFence(&disk->Outstanding));
+    if (ReadNoFence(&disk->Outstanding) > 0) { disk->InlineStreak = 0; return true; }
+    if (disk->InlineStreak < InlineAfter) { ++disk->InlineStreak; return true; }
+    return ++disk->Probe % ProbeEvery == 0;
 }
 static void Post(WORKER* worker, WORK* work)
 {
@@ -29,32 +33,14 @@ static void Post(WORKER* worker, WORK* work)
     KeReleaseSpinLock(&worker->Lock, irql);
     if (wake) KeSetEvent(&worker->Work, IO_NO_INCREMENT, FALSE);
 }
-// Round robin, skipping the submitter's own processor when there is another.
-static WORKER* PickWorker(ADAPTER* adapter)
+void QueueTransfer(ADAPTER* adapter, REQUEST* request)
 {
     const auto count = adapter->WorkerCount;
     auto index = static_cast<ULONG>(InterlockedIncrement(&adapter->NextWorker)) % count;
     if (count > 1 && adapter->Workers[index].Processor == KeGetCurrentProcessorNumberEx(nullptr)) index = (index + 1) % count;
-    return &adapter->Workers[index];
-}
-void QueueTransfer(ADAPTER* adapter, REQUEST* request)
-{
     InterlockedIncrement(&request->Disk->Outstanding);
     request->Work.Kind = WorkRequest;
-    Post(PickWorker(adapter), &request->Work);
-}
-// Direct access: registered only when workers exist; removal unregisters every view before
-// the workers stop, so a queued copy always finds its worker.
-void QueueCopy(PVOID context, QC_RAM_ASYNC_COPY* copy)
-{
-    auto work = reinterpret_cast<WORK*>(copy->Reserved);
-    work->Kind = WorkCopy;
-    Post(PickWorker(static_cast<ADAPTER*>(context)), work);
-}
-static void FinishCopy(QC_RAM_ASYNC_COPY* copy)
-{
-    QcRamStoreCopy(copy->Store, copy->Offset, copy->Buffer, copy->Bytes, copy->Write != FALSE);
-    copy->Completed(copy); // The submitter's; the copy may be gone afterwards.
+    Post(&adapter->Workers[index], &request->Work);
 }
 static void Finish(ADAPTER* adapter, REQUEST* request)
 {
@@ -106,8 +92,7 @@ static void WorkerMain(PVOID context)
         KeLowerIrql(irql);
         if (found)
         {
-            if (work && work->Kind == WorkCopy) FinishCopy(reinterpret_cast<QC_RAM_ASYNC_COPY*>(work));
-            else if (work) Finish(adapter, CONTAINING_RECORD(work, REQUEST, Work));
+            if (work) Finish(adapter, CONTAINING_RECORD(work, REQUEST, Work));
             spin = true; continue;
         }
         if (adapter->Closing) break;
