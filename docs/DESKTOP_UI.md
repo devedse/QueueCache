@@ -26,11 +26,35 @@ Pages: **Overview** (health, RAM used, every item with its one figure that
 matters, attention first), **Caches** (volumes grouped by physical disk, the
 selected volume in detail), **Virtual disks**, and in the navigation footer
 **Diagnostics** and **Settings** (theme, update interval, keep running in the
-notification area). Closing the window keeps QueueCache in the notification area
+notification area, and an **Advanced** section with developer settings). Closing the window keeps QueueCache in the notification area
 (unless turned off); starting it again shows the running instance, as there is
 one per Windows session. Windows fit the screen's working area, so title bars
 and dialog buttons stay reachable on small screens. Desktop settings are stored in
 `%LOCALAPPDATA%\QueueCache\desktop.json`; they never affect caches or disks.
+
+## Live figures
+
+A running RAM disk or image in RAM shows reads and writes per second (both access
+paths together), requests per second, totals since it started, the share served
+by Direct access, errors, and space used and free on its volume. An image in RAM
+also shows its last save (duration, size, speed) and an upper bound of what was
+written since. A disk image with a RAM cache shows its cache exactly as the
+Caches page does. Counters start again when a disk is started again; the chart
+then starts over instead of showing a negative rate.
+
+## Advanced settings
+
+- **Detailed driver timing** turns on the timing of the cache driver
+  (`PerformanceTiming`) and the RAM disk driver (`disk timing`) for every cache
+  and running RAM disk. The drivers start with it off; while QueueCache runs, the
+  monitor switches each driver whose state differs from the setting, once per
+  cache instance or disk creation. Figures appear on the item and on Diagnostics.
+- **Answer cache hits on the calling thread** (`CallerPath`, default on). The
+  driver does not report it, so the monitor assumes the default for a new cache
+  instance and sends the setting only when it differs.
+
+Lab delay and fault hooks are deliberately not settings: they stall or fail real
+writes and belong to `qcache developer verify`.
 
 ## Design rules
 
