@@ -14,11 +14,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # One build counter (the build-number-N tag) for every branch, pull request and master
+    # build. A push to a branch with an open pull request starts two runs at once; taking
+    # numbers one run at a time keeps both from claiming the same one.
+    concurrency:
+      group: queuecache-build-number
+      cancel-in-progress: false
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Generate build number
-        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
         id: buildnumber
         uses: onyxmueller/build-tag-number@v1
         with:
@@ -26,8 +31,9 @@ jobs:
       - name: Compose shared native and managed version
         id: version
         env:
-          BUILD_NUMBER: ${{ steps.buildnumber.outputs.build_number || github.run_number }}
+          BUILD_NUMBER: ${{ steps.buildnumber.outputs.build_number }}
         run: |
+          test -n "$BUILD_NUMBER"
           test "$BUILD_NUMBER" -le 65535
           test "$GITHUB_RUN_ATTEMPT" -le 65535
           echo "version=0.4.${BUILD_NUMBER}.${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
@@ -107,8 +113,8 @@ jobs:
             echo "name=QueueCache $VERSION — test-signed" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            # Branch builds number from the run counter, master from its own counter;
-            # the branch suffix keeps tags unique without changing the build version.
+            # Same build counter as master. The branch suffix marks a pre-release: the
+            # Update QueueCache shortcut installs only tags without one (master builds).
             slug=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')
             echo "tag=$VERSION-$slug" >> "$GITHUB_OUTPUT"
             echo "name=QueueCache $VERSION ($BRANCH) — test-signed pre-release" >> "$GITHUB_OUTPUT"
