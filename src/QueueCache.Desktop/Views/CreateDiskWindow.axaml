@@ -1,0 +1,162 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:vm="using:QueueCache.Desktop.ViewModels"
+        xmlns:ctl="using:QueueCache.Desktop.Controls"
+        x:Class="QueueCache.Desktop.Views.CreateDiskWindow"
+        x:DataType="vm:CreateDiskViewModel"
+        Title="New disk" Icon="/Assets/queuecache.ico"
+        Width="620" Height="780" MinWidth="480" MinHeight="460"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+  <Grid RowDefinitions="*,Auto">
+    <Border Classes="dialogBody">
+      <ScrollViewer>
+        <StackPanel Margin="24" Spacing="20" IsEnabled="{Binding !IsWorking}">
+          <TextBlock Classes="subtitle" Text="New disk" />
+
+          <!-- Three different kinds of disk: each says what happens at shutdown and power loss. -->
+          <StackPanel Spacing="4">
+            <TextBlock Classes="field strong" Text="Kind of disk" />
+            <RadioButton Name="RamDiskOption" Classes="option" GroupName="Mode" IsChecked="{Binding IsRamDisk}">
+              <StackPanel Spacing="2">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Classes="strong" Text="RAM disk" />
+                  <ctl:VolatileBadge />
+                </StackPanel>
+                <TextBlock Classes="secondary" Text="Fastest. Starts empty every time; everything on it is erased when it stops or Windows shuts down." />
+              </StackPanel>
+            </RadioButton>
+            <RadioButton Name="ImageOption" Classes="option" GroupName="Mode" IsChecked="{Binding IsImage}">
+              <StackPanel Spacing="2">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Classes="strong" Text="Image in RAM" />
+                  <ctl:VolatileBadge />
+                </StackPanel>
+                <TextBlock Classes="secondary" Text="Loads a .vhdx file completely into RAM. Save to keep changes; unsaved changes are lost at a restart or power cut." />
+              </StackPanel>
+            </RadioButton>
+            <RadioButton Name="CachedImageOption" Classes="option" GroupName="Mode" IsChecked="{Binding IsCachedImage}">
+              <StackPanel Spacing="2">
+                <TextBlock Classes="strong" Text="Disk image with RAM cache" />
+                <TextBlock Classes="secondary" Text="A .vhdx file on disk with a RAM cache in front. Data survives restarts." />
+              </StackPanel>
+            </RadioButton>
+          </StackPanel>
+
+          <!-- The image file -->
+          <StackPanel Spacing="8" IsVisible="{Binding ShowSource}">
+            <CheckBox Name="UseExistingBox" Content="Use an existing .vhdx file" IsChecked="{Binding UseExisting}" />
+            <StackPanel Spacing="4" IsVisible="{Binding ShowImage}">
+              <TextBlock Classes="field" Text="Image file" />
+              <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBox Name="DiskImagePath" Text="{Binding ImagePath}" PlaceholderText="D:\Disks\Disk.vhdx" AutomationProperties.Name="Image file" />
+                <Button Grid.Column="1" Name="BrowseImage" Margin="8,0,0,0" Content="Browse…" Click="OnBrowseImage" />
+                <Button Grid.Column="2" Name="InspectDiskImage" Margin="8,0,0,0" Content="Inspect" Command="{Binding InspectCommand}" IsVisible="{Binding UseExisting}"
+                        ToolTip.Tip="Reads the image's capacity and sector size" />
+              </Grid>
+              <TextBlock Name="InspectionText" Classes="caption secondary" Text="{Binding InspectionText}"
+                         IsVisible="{Binding InspectionText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            </StackPanel>
+            <CheckBox Name="DiskInitializeRaw" IsVisible="{Binding ShowInitializeBlank}" IsChecked="{Binding InitializeBlank}" IsEnabled="{Binding !ReadOnly}">
+              <TextBlock TextWrapping="Wrap" Text="{Binding InitializeText}" />
+            </CheckBox>
+          </StackPanel>
+
+          <WrapPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowCapacity}">
+              <TextBlock Classes="field" Text="Size (GiB)" />
+              <ui:FANumberBox Name="DiskCapacity" MinWidth="140" Value="{Binding CapacityGiB}" Minimum="0.01" SimpleNumberFormat="F2"
+                              SmallChange="1" LargeChange="8" SpinButtonPlacementMode="Compact" AutomationProperties.Name="Size in GiB" />
+            </StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowCache}">
+              <TextBlock Classes="field" Text="RAM cache (MiB)" />
+              <ui:FANumberBox Name="DiskCache" MinWidth="140" Value="{Binding CacheMiB}" Minimum="1" SimpleNumberFormat="F0"
+                              SmallChange="256" LargeChange="1024" SpinButtonPlacementMode="Compact" AutomationProperties.Name="RAM cache in MiB" />
+            </StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8">
+              <TextBlock Classes="field" Text="Drive letter" />
+              <ComboBox Name="DiskLetter" MinWidth="100" ItemsSource="{Binding Letters}" SelectedItem="{Binding Letter}" AutomationProperties.Name="Drive letter" />
+            </StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowLabel}">
+              <TextBlock Classes="field" Text="Name" />
+              <TextBox Name="DiskLabel" MinWidth="180" Text="{Binding Label}" AutomationProperties.Name="Name" />
+            </StackPanel>
+          </WrapPanel>
+          <TextBlock Name="MemoryText" Classes="secondary" Text="{Binding MemoryText}" />
+
+          <!-- How a disk image with a cache handles saves. -->
+          <StackPanel Spacing="4" IsVisible="{Binding ShowCache}">
+            <TextBlock Classes="field strong" Text="When a program saves a file" />
+            <RadioButton Name="FastOption" Classes="option" GroupName="CachePreset" IsChecked="{Binding IsFast}">
+              <StackPanel Spacing="2">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <TextBlock Classes="strong" Text="Fast" />
+                  <ctl:VolatileBadge />
+                </StackPanel>
+                <TextBlock Classes="secondary" Text="The save finishes in RAM and reaches the image file moments later. A crash, power cut or unsafe removal can lose the last changes." />
+              </StackPanel>
+            </RadioButton>
+            <RadioButton Name="StrictOption" Classes="option" GroupName="CachePreset" IsChecked="{Binding IsStrict}">
+              <StackPanel Spacing="2">
+                <TextBlock Classes="strong" Text="Strict" />
+                <TextBlock Classes="secondary" Text="The save waits until the data is in the image file. Reads are still cached." />
+              </StackPanel>
+            </RadioButton>
+          </StackPanel>
+
+          <!-- Saving an image in RAM -->
+          <StackPanel Spacing="8" IsVisible="{Binding ShowCheckpoint}">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="field" Text="Folder for saved copies" />
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBox Name="DiskCheckpointDirectory" Text="{Binding CheckpointDirectory}" PlaceholderText="D:\Disks\Checkpoints" AutomationProperties.Name="Folder for saved copies" />
+                <Button Grid.Column="1" Margin="8,0,0,0" Content="Browse…" Click="OnBrowseFolder" />
+              </Grid>
+              <TextBlock Classes="caption secondary" Text="Each save writes a complete new copy here and checks it before it replaces the previous one." />
+            </StackPanel>
+            <CheckBox Name="DiskReadOnly" IsVisible="{Binding ShowReadOnly}" IsChecked="{Binding ReadOnly}" Content="Read-only: never save changes to the image" />
+            <CheckBox Name="DiskSaveBeforeStop" IsChecked="{Binding SaveBeforeStop}" IsEnabled="{Binding !ReadOnly}" Content="Save before stopping" />
+            <CheckBox Name="DiskShutdownSave" IsChecked="{Binding SaveDuringShutdown}" IsEnabled="{Binding !ReadOnly}">
+              <TextBlock TextWrapping="Wrap" Text="Try to save during Windows shutdown (a forced shutdown or power cut can prevent it)" />
+            </CheckBox>
+          </StackPanel>
+
+          <StackPanel Spacing="2">
+            <CheckBox Name="DiskStartup" Content="Start with Windows" IsChecked="{Binding StartWithWindows}" />
+            <TextBlock Classes="caption secondary" Margin="28,0,0,0" Text="{Binding StartupText}" />
+          </StackPanel>
+
+          <Expander Name="AdvancedExpander" HorizontalAlignment="Stretch" IsExpanded="{Binding IsAdvancedOpen}">
+            <Expander.Header>
+              <StackPanel>
+                <TextBlock Text="Advanced" />
+                <TextBlock Classes="caption secondary" Text="Access path, image file allocation" />
+              </StackPanel>
+            </Expander.Header>
+            <StackPanel Spacing="16">
+              <StackPanel Spacing="4" IsVisible="{Binding ShowAccess}">
+                <TextBlock Classes="field" Text="Access path" />
+                <ComboBox Name="DiskAccess" MinWidth="320" ItemsSource="{Binding AccessChoices}" SelectedIndex="{Binding Access}" AutomationProperties.Name="Access path" />
+                <TextBlock Classes="caption secondary" Text="Direct reads and writes RAM without the Windows disk stack. Standard behaves like any other disk, for software that needs that." />
+              </StackPanel>
+              <StackPanel Spacing="4" IsVisible="{Binding ShowAllocation}">
+                <TextBlock Classes="field" Text="Image file allocation" />
+                <ComboBox Name="DiskAllocation" MinWidth="260" ItemsSource="{Binding AllocationChoices}" SelectedIndex="{Binding Allocation}" AutomationProperties.Name="Image file allocation" />
+              </StackPanel>
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+    <StackPanel Grid.Row="1">
+      <ProgressBar Margin="24,16,24,0" IsIndeterminate="True" IsVisible="{Binding IsWorking}" />
+      <TextBlock Name="Status" Margin="24,12,24,0" Text="{Binding Status}" Classes.error="{Binding StatusIsError}" TextWrapping="Wrap"
+                 IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      <Grid Classes="dialogButtons" ColumnDefinitions="*,8,*">
+        <Button Name="CreateManagedDisk" Classes="accent" Content="Create disk" Command="{Binding CreateCommand}" IsEnabled="{Binding CanCreate}" />
+        <Button Grid.Column="2" Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+      </Grid>
+    </StackPanel>
+  </Grid>
+</Window>

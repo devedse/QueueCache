@@ -46,7 +46,7 @@ formatted through the Windows storage service are often owned by NETWORK SERVICE
 ownership (`icacls X:\ /setowner Administrators`) or choose another volume. Windows'
 default root ACL is accepted.
 
-The desktop **Create disk** flow and `qcache disk` use one LocalSystem Windows
+The desktop **New disk** dialog and `qcache disk` use one LocalSystem Windows
 service and Operations API. Disk ownership outlives either frontend. The signed
 provider uses the same locked-page allocator and budget authority as ordinary
 caches. Filesystem operations identify the owned disk and volume; Windows open

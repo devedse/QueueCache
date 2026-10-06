@@ -24,4 +24,6 @@ shows otherwise, update the notices before distribution.
 
 External SDK/WDK headers, Visual Studio components, NuGet packages, .NET runtime,
 Avalonia and installer tooling remain separately licensed dependencies. Review
-their redistribution terms independently of this source license.
+their redistribution terms independently of this source license. The desktop app
+also ships FluentAvaloniaUI and CommunityToolkit.Mvvm (both MIT) and embeds icon
+paths from Fluent UI System Icons (MIT, see `THIRD_PARTY_NOTICES.md`).

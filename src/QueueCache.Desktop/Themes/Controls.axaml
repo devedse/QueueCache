@@ -1,0 +1,59 @@
+<!-- Control themes for QueueCache's own controls. Colors come from the Fluent theme and Colors.axaml. -->
+<ResourceDictionary xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:ctl="using:QueueCache.Desktop.Controls">
+
+  <ControlTheme x:Key="{x:Type ctl:StatusPill}" TargetType="ctl:StatusPill">
+    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    <Setter Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{TemplateBinding Background}" CornerRadius="10" Padding="7,2,10,2"
+                AutomationProperties.Name="{TemplateBinding Text}">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <PathIcon Name="PART_Icon" Width="12" Height="12" Foreground="{TemplateBinding Foreground}" Data="{StaticResource IconHealthUnknown}" />
+            <TextBlock Text="{TemplateBinding Text}" FontSize="12" FontWeight="SemiBold" Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+    <Style Selector="^:ok">
+      <Setter Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+      <Setter Property="Background" Value="{DynamicResource SystemFillColorSuccessBackgroundBrush}" />
+      <Style Selector="^ /template/ PathIcon#PART_Icon"><Setter Property="Data" Value="{StaticResource IconHealthOk}" /></Style>
+    </Style>
+    <Style Selector="^:attention">
+      <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+      <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBackgroundBrush}" />
+      <Style Selector="^ /template/ PathIcon#PART_Icon"><Setter Property="Data" Value="{StaticResource IconHealthAttention}" /></Style>
+    </Style>
+    <Style Selector="^:error">
+      <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+      <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+      <Style Selector="^ /template/ PathIcon#PART_Icon"><Setter Property="Data" Value="{StaticResource IconHealthError}" /></Style>
+    </Style>
+    <Style Selector="^:idle">
+      <Style Selector="^ /template/ PathIcon#PART_Icon"><Setter Property="Data" Value="{StaticResource IconPause}" /></Style>
+    </Style>
+  </ControlTheme>
+
+  <ControlTheme x:Key="{x:Type ctl:VolatileBadge}" TargetType="ctl:VolatileBadge">
+    <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="HorizontalAlignment" Value="Left" />
+    <Setter Property="ToolTip.Tip" Value="Data here is only in RAM until it reaches a disk: a crash or power cut loses it." />
+    <Setter Property="AutomationProperties.Name" Value="Volatile: data here is lost at a crash or power cut until it reaches a disk" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="6,1,9,1">
+          <StackPanel Orientation="Horizontal" Spacing="4">
+            <PathIcon Width="11" Height="11" Foreground="{TemplateBinding Foreground}" Data="{StaticResource IconCache}" />
+            <TextBlock Text="Volatile" FontSize="12" Foreground="{TemplateBinding Foreground}" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </ControlTheme>
+</ResourceDictionary>

@@ -1,0 +1,103 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             xmlns:ctl="using:QueueCache.Desktop.Controls"
+             xmlns:fmt="using:QueueCache.Desktop.Formatting"
+             x:Class="QueueCache.Desktop.Views.OverviewView"
+             x:DataType="vm:OverviewViewModel">
+  <ScrollViewer>
+    <StackPanel Classes="page" Spacing="16">
+      <TextBlock Classes="title" Text="Overview" />
+
+      <!-- Health first: one line that says whether everything is fine, and what is not. -->
+      <Border Classes="card" Name="HealthCard">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="2">
+            <TextBlock Classes="subtitle" Text="{Binding Monitor.HealthTitle}" />
+            <TextBlock Classes="secondary" Text="{Binding Monitor.HealthDetail}" />
+          </StackPanel>
+          <ctl:StatusPill Grid.Column="1" VerticalAlignment="Top" Health="{Binding Monitor.OverallHealth}" Text="{Binding Monitor.HealthWord}" />
+        </Grid>
+      </Border>
+
+      <!-- RAM split between caches and virtual disks. -->
+      <Border Classes="card" Name="RamCard">
+        <StackPanel Spacing="10">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="strong" Text="RAM used by QueueCache" />
+            <TextBlock Grid.Column="1" Classes="secondary number" Text="{Binding Monitor.RamSummary}" />
+          </Grid>
+          <ctl:SegmentBar First="{Binding Monitor.CachesReservedBytes, Converter={x:Static fmt:Converters.Amount}}"
+                          Second="{Binding Monitor.DisksReservedBytes, Converter={x:Static fmt:Converters.Amount}}"
+                          Total="{Binding Monitor.RamBarTotal}"
+                          FirstBrush="{DynamicResource QcCachesBrush}" SecondBrush="{DynamicResource QcDisksBrush}"
+                          AutomationProperties.Name="{Binding Monitor.RamSummary}" />
+          <WrapPanel>
+            <StackPanel Classes="legend">
+              <Border Classes="swatch" Background="{DynamicResource QcCachesBrush}" />
+              <TextBlock Text="Caches" />
+              <TextBlock Classes="strong number" Text="{Binding Monitor.CachesReservedText}" />
+            </StackPanel>
+            <StackPanel Classes="legend">
+              <Border Classes="swatch" Background="{DynamicResource QcDisksBrush}" />
+              <TextBlock Text="Virtual disks" />
+              <TextBlock Classes="strong number" Text="{Binding Monitor.DisksReservedText}" />
+            </StackPanel>
+            <StackPanel Classes="legend" IsVisible="{Binding Monitor.HasRamLimit}">
+              <Border Classes="swatch" Background="{DynamicResource QcFreeBrush}" />
+              <TextBlock Text="Free" />
+              <TextBlock Classes="strong number" Text="{Binding Monitor.FreeText}" />
+            </StackPanel>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+
+      <TextBlock Classes="section" Text="Caches and virtual disks" />
+      <TextBlock Classes="secondary" Text="{Binding Monitor.VirtualDisksStatus}"
+                 IsVisible="{Binding Monitor.VirtualDisksStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      <TextBlock Classes="secondary" Text="{Binding Monitor.VolumesStatus}"
+                 IsVisible="{Binding Monitor.VolumesStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+      <!-- Every item with its status and the one figure that matters; what needs attention first. -->
+      <ItemsControl Name="Items" ItemsSource="{Binding Items}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><StackPanel Spacing="4" /></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.DataTemplates>
+          <DataTemplate DataType="vm:VirtualDiskViewModel">
+            <ui:FASettingsExpander Header="{Binding Title}" Description="{Binding Kind}" IsClickEnabled="True"
+                                   Command="{Binding $parent[UserControl].((vm:OverviewViewModel)DataContext).OpenDiskCommand}"
+                                   CommandParameter="{Binding}" AutomationProperties.Name="{Binding Title}">
+              <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconVirtualDisk}" /></ui:FASettingsExpander.IconSource>
+              <ui:FASettingsExpander.Footer>
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="secondary number" VerticalAlignment="Center" Text="{Binding Headline}" MaxWidth="320" TextTrimming="CharacterEllipsis" />
+                  <ctl:VolatileBadge IsVisible="{Binding IsVolatile}" />
+                  <Button Content="Save now" Command="{Binding SaveCommand}" IsVisible="{Binding HasUnsavedChanges}" IsEnabled="{Binding CanSave}" />
+                  <ctl:StatusPill Health="{Binding Health}" Text="{Binding StatusText}" />
+                </StackPanel>
+              </ui:FASettingsExpander.Footer>
+            </ui:FASettingsExpander>
+          </DataTemplate>
+          <DataTemplate DataType="vm:VolumeViewModel">
+            <ui:FASettingsExpander Header="{Binding Title}" Description="{Binding KindText}" IsClickEnabled="True"
+                                   Command="{Binding $parent[UserControl].((vm:OverviewViewModel)DataContext).OpenVolumeCommand}"
+                                   CommandParameter="{Binding}" AutomationProperties.Name="{Binding Title}">
+              <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconCache}" /></ui:FASettingsExpander.IconSource>
+              <ui:FASettingsExpander.Footer>
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                  <TextBlock Classes="secondary number" VerticalAlignment="Center" Text="{Binding Headline}" MaxWidth="320" TextTrimming="CharacterEllipsis" />
+                  <ctl:VolatileBadge IsVisible="{Binding IsVolatile}" />
+                  <Button Content="Add cache" IsVisible="{Binding !HasCache}" IsEnabled="{Binding CanEdit}"
+                          Command="{Binding $parent[UserControl].((vm:OverviewViewModel)DataContext).AddCacheCommand}" CommandParameter="{Binding}" />
+                  <ctl:StatusPill Health="{Binding Health}" Text="{Binding StatusText}" IsVisible="{Binding ShowStatus}" />
+                </StackPanel>
+              </ui:FASettingsExpander.Footer>
+            </ui:FASettingsExpander>
+          </DataTemplate>
+        </ItemsControl.DataTemplates>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

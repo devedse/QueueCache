@@ -13,3 +13,9 @@ retains an adjacent copy of the referenced terms.
 External SDK/WDK headers, Visual Studio components, .NET packages and installer
 tools are separate dependencies governed by their own terms. They are not covered
 by the repository's MIT grant merely because the build references them.
+
+The desktop app embeds vector path data for a few icons from
+[Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)
+(`src/QueueCache.Desktop/Themes/Icons.axaml`), Copyright (c) 2020 Microsoft
+Corporation, used under the MIT License; its text is at
+[LICENSES/FluentUI-System-Icons-MIT.txt](LICENSES/FluentUI-System-Icons-MIT.txt).

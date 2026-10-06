@@ -1,0 +1,43 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:vm="using:QueueCache.Desktop.ViewModels"
+        x:Class="QueueCache.Desktop.Views.MainWindow"
+        x:DataType="vm:ShellViewModel"
+        Title="QueueCache"
+        Icon="/Assets/queuecache.ico"
+        Width="1180" Height="820" MinWidth="720" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        TransparencyLevelHint="Mica"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+  <ui:FANavigationView x:Name="Navigation"
+                       PaneDisplayMode="Auto"
+                       IsBackButtonVisible="False"
+                       IsSettingsVisible="False"
+                       IsPaneToggleButtonVisible="True"
+                       OpenPaneLength="232"
+                       CompactModeThresholdWidth="720"
+                       ExpandedModeThresholdWidth="1000"
+                       PaneTitle="QueueCache">
+    <ui:FANavigationView.MenuItems>
+      <ui:FANavigationViewItem Content="Overview" Tag="Overview" AutomationProperties.Name="Overview">
+        <ui:FANavigationViewItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconOverview}" /></ui:FANavigationViewItem.IconSource>
+      </ui:FANavigationViewItem>
+      <ui:FANavigationViewItem Content="Caches" Tag="Caches" AutomationProperties.Name="Caches">
+        <ui:FANavigationViewItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconCache}" /></ui:FANavigationViewItem.IconSource>
+      </ui:FANavigationViewItem>
+      <ui:FANavigationViewItem Content="Virtual disks" Tag="VirtualDisks" AutomationProperties.Name="Virtual disks">
+        <ui:FANavigationViewItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconVirtualDisk}" /></ui:FANavigationViewItem.IconSource>
+      </ui:FANavigationViewItem>
+    </ui:FANavigationView.MenuItems>
+    <ui:FANavigationView.FooterMenuItems>
+      <ui:FANavigationViewItem Content="Diagnostics" Tag="Diagnostics" AutomationProperties.Name="Diagnostics">
+        <ui:FANavigationViewItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconDiagnostics}" /></ui:FANavigationViewItem.IconSource>
+      </ui:FANavigationViewItem>
+      <ui:FANavigationViewItem Content="Settings" Tag="Settings" AutomationProperties.Name="Settings">
+        <ui:FANavigationViewItem.IconSource><ui:FAPathIconSource Data="{StaticResource IconSettings}" /></ui:FANavigationViewItem.IconSource>
+      </ui:FANavigationViewItem>
+    </ui:FANavigationView.FooterMenuItems>
+    <ContentControl Content="{Binding CurrentPage}" />
+  </ui:FANavigationView>
+</Window>

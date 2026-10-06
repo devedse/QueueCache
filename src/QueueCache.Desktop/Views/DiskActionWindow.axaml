@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        xmlns:vm="using:QueueCache.Desktop.ViewModels"
+        x:Class="QueueCache.Desktop.Views.DiskActionWindow"
+        x:DataType="vm:DiskActionViewModel"
+        Title="{Binding Title}" Icon="/Assets/queuecache.ico"
+        Width="560" SizeToContent="Height" MinWidth="440" MaxHeight="760"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" CanResize="False"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+  <Grid RowDefinitions="*,Auto">
+    <Border Classes="dialogBody">
+      <ScrollViewer>
+        <StackPanel Margin="24" Spacing="16" IsEnabled="{Binding !IsWorking}">
+          <TextBlock Classes="subtitle" Text="{Binding Title}" />
+          <TextBlock Classes="secondary" Text="{Binding Explanation}" />
+
+          <StackPanel Spacing="4" IsVisible="{Binding ShowPath}">
+            <TextBlock Classes="field" Text="Image file" />
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox Name="ActionPath" Text="{Binding Path}" PlaceholderText="{Binding PathPlaceholder}" AutomationProperties.Name="Image file" />
+              <Button Grid.Column="1" Margin="8,0,0,0" Content="Browse…" Click="OnBrowse" />
+            </Grid>
+          </StackPanel>
+          <CheckBox Name="ActionCommit" IsVisible="{Binding ShowCommit}" IsChecked="{Binding CommitExport}">
+            <TextBlock TextWrapping="Wrap" Text="Load this copy at the next Windows startup instead of the current startup image" />
+          </CheckBox>
+
+          <StackPanel Spacing="8" IsVisible="{Binding ShowStartup}">
+            <CheckBox Name="ActionStartup" Content="Start with Windows" IsChecked="{Binding StartWithWindows}" />
+            <StackPanel Spacing="8" IsVisible="{Binding ShowImageStartup}" IsEnabled="{Binding CanSaveAutomatically}">
+              <CheckBox Name="ActionSaveBeforeStop" Content="Save before stopping" IsChecked="{Binding SaveBeforeStop}" />
+              <CheckBox Name="ActionShutdownSave" IsChecked="{Binding SaveDuringShutdown}">
+                <TextBlock TextWrapping="Wrap" Text="Try to save during Windows shutdown" />
+              </CheckBox>
+            </StackPanel>
+          </StackPanel>
+
+          <WrapPanel IsVisible="{Binding ShowStoppedSettings}">
+            <StackPanel Spacing="4" Margin="0,0,16,8">
+              <TextBlock Classes="field" Text="Drive letter" />
+              <TextBox Name="ActionLetter" Width="80" MaxLength="1" Text="{Binding Letter}" AutomationProperties.Name="Drive letter" />
+            </StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8">
+              <TextBlock Classes="field" Text="Name" />
+              <TextBox Name="ActionLabel" MinWidth="180" Text="{Binding Label}" AutomationProperties.Name="Name" />
+            </StackPanel>
+            <StackPanel Spacing="4" Margin="0,0,16,8" IsVisible="{Binding ShowCapacity}">
+              <TextBlock Classes="field" Text="Size (GiB)" />
+              <ui:FANumberBox Name="ActionCapacity" MinWidth="140" Value="{Binding CapacityGiB}" Minimum="0.01" SimpleNumberFormat="F2"
+                              SpinButtonPlacementMode="Compact" AutomationProperties.Name="Size in GiB" />
+            </StackPanel>
+          </WrapPanel>
+          <StackPanel Spacing="4" IsVisible="{Binding ShowAccess}">
+            <TextBlock Classes="field" Text="Access path" />
+            <ComboBox Name="ActionAccess" MinWidth="320" ItemsSource="{Binding AccessChoices}" SelectedIndex="{Binding Access}" AutomationProperties.Name="Access path" />
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+    <StackPanel Grid.Row="1">
+      <ProgressBar Margin="24,16,24,0" IsIndeterminate="True" IsVisible="{Binding IsWorking}" />
+      <TextBlock Name="Status" Margin="24,12,24,0" Text="{Binding Status}" Classes.error="{Binding StatusIsError}" TextWrapping="Wrap"
+                 IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+      <Grid Classes="dialogButtons" ColumnDefinitions="*,8,*">
+        <Button Name="ApplyAction" Classes="accent" Classes.danger="{Binding IsDestructive}" Content="{Binding ApplyText}" Command="{Binding ApplyCommand}" />
+        <Button Grid.Column="2" Name="CancelButton" Content="Cancel" IsCancel="True" Click="OnCancel" />
+      </Grid>
+    </StackPanel>
+  </Grid>
+</Window>

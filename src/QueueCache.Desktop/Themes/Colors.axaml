@@ -1,0 +1,26 @@
+<!-- Colors QueueCache adds to the Fluent theme. Health colors come from the theme itself
+     (SystemFillColorSuccess/Caution/Critical); these are the data colors, one meaning each
+     everywhere: blue = reads, orange = writes not yet on disk, green-teal = writes on disk.
+     Validated as a set for color-vision deficiency and contrast in both themes. -->
+<ResourceDictionary xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <ResourceDictionary.ThemeDictionaries>
+    <ResourceDictionary x:Key="Light">
+      <SolidColorBrush x:Key="QcReadBrush" Color="#2A78D6" />
+      <SolidColorBrush x:Key="QcPendingBrush" Color="#EB6834" />
+      <SolidColorBrush x:Key="QcOnDiskBrush" Color="#1BAF7A" />
+      <SolidColorBrush x:Key="QcFreeBrush" Color="#E3E8E8" />
+      <SolidColorBrush x:Key="QcCachesBrush" Color="#087F8C" />
+      <SolidColorBrush x:Key="QcDisksBrush" Color="#7CC2C9" />
+      <SolidColorBrush x:Key="QcGridBrush" Color="#1F000000" />
+    </ResourceDictionary>
+    <ResourceDictionary x:Key="Dark">
+      <SolidColorBrush x:Key="QcReadBrush" Color="#3987E5" />
+      <SolidColorBrush x:Key="QcPendingBrush" Color="#D95926" />
+      <SolidColorBrush x:Key="QcOnDiskBrush" Color="#199E70" />
+      <SolidColorBrush x:Key="QcFreeBrush" Color="#3A3F40" />
+      <SolidColorBrush x:Key="QcCachesBrush" Color="#4FC3CF" />
+      <SolidColorBrush x:Key="QcDisksBrush" Color="#2A6F76" />
+      <SolidColorBrush x:Key="QcGridBrush" Color="#26FFFFFF" />
+    </ResourceDictionary>
+  </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

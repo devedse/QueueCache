@@ -1,0 +1,54 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             x:Class="QueueCache.Desktop.Views.DiagnosticsView"
+             x:DataType="vm:DiagnosticsViewModel">
+  <ScrollViewer>
+    <StackPanel Classes="page" Spacing="16">
+      <TextBlock Classes="title" Text="Diagnostics" />
+      <TextBlock Classes="secondary" Text="Checks you can run on a volume, and driver details for support." />
+
+      <Border Classes="card">
+        <StackPanel Spacing="12">
+          <TextBlock Classes="strong" Text="Test a volume" />
+          <WrapPanel>
+            <ComboBox Name="TargetBox" Margin="0,0,8,8" MinWidth="240" PlaceholderText="Choose a volume"
+                      ItemsSource="{Binding Monitor.Volumes}" SelectedItem="{Binding Target}" AutomationProperties.Name="Volume to test">
+              <ComboBox.ItemTemplate>
+                <DataTemplate DataType="vm:VolumeViewModel">
+                  <TextBlock Text="{Binding Title}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <Button Name="FileTestsButton" Margin="0,0,8,8" Content="Run file tests" Command="{Binding RunFileTestsCommand}"
+                    ToolTip.Tip="Writes, reads back and verifies test files" />
+            <Button Name="BenchmarkButton" Margin="0,0,8,8" Content="Run benchmark" Command="{Binding RunBenchmarkCommand}"
+                    ToolTip.Tip="Measures sequential and random throughput with test files" />
+            <Button Name="CancelButton" Margin="0,0,8,8" Content="Cancel" Command="{Binding CancelCommand}" IsVisible="{Binding IsRunning}" />
+          </WrapPanel>
+          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsRunning}" />
+          <SelectableTextBlock Name="OutputText" Classes="mono" Text="{Binding Output}" />
+        </StackPanel>
+      </Border>
+
+      <TextBlock Classes="section" Text="Driver timing per cache" />
+      <ItemsControl ItemsSource="{Binding Monitor.Volumes}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><StackPanel Spacing="4" /></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="vm:VolumeViewModel">
+            <Border Classes="card" IsVisible="{Binding HasCache}">
+              <StackPanel Spacing="4">
+                <TextBlock Classes="strong" Text="{Binding Title}" />
+                <SelectableTextBlock Classes="mono" Text="{Binding DriverText}" />
+                <SelectableTextBlock Classes="mono" Text="{Binding SupportDetails}" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

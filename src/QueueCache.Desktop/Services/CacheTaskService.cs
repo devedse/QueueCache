@@ -2,7 +2,7 @@ using System.Runtime.Versioning;
 using QueueCache.Management;
 using QueueCache.Operations;
 
-namespace QueueCache.Desktop;
+namespace QueueCache.Desktop.Services;
 
 // The view depends on task operations, never on a CLI process. This also lets
 // headless UI tests exercise real screens without opening physical disks.
@@ -18,6 +18,8 @@ public interface ICacheTaskService
     Task FlushAsync(VolumeDescription volume);
     Task DropCleanAsync(VolumeDescription volume);
     Task RemoveAsync(VolumeDescription volume);
+    /// <summary>Retries the disk writes of a faulted cache after the disk problem is fixed.</summary>
+    Task RetryAsync(VolumeDescription volume) => throw new NotSupportedException("Retry is unavailable in this service.");
     Task<DiskEjectPreview> PreviewEjectAsync(string volume) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
@@ -56,6 +58,8 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public async Task DropCleanAsync(VolumeDescription volume) =>
         await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.DropClean, expected: volume);
     public Task RemoveAsync(VolumeDescription volume) => CacheTasks.RemoveAsync(volume.Volume, expected: volume);
+    public async Task RetryAsync(VolumeDescription volume) =>
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.Retry, expected: volume);
     public Task<DiskEjectPreview> PreviewEjectAsync(string volume) => DiskEjection.PreviewAsync(volume);
     public Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => DiskEjection.EjectAsync(volume, progress, expected: expected);
     public async Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token)

@@ -46,8 +46,8 @@ See [cache policies](docs/CACHE_POLICIES.md) for the complete contract.
 
 ## Managed disks
 
-QueueCache can also create and manage disks of its own, through the desktop
-**Create disk** flow or `qcache disk`:
+QueueCache can also create and manage disks of its own, through **New disk** on
+the desktop app's Virtual disks page or `qcache disk`:
 
 - `ram`: a temporary RAM disk whose contents are discarded when it stops;
 - `cached-vhdx`: a VHDX file behind an ordinary QueueCache cache;
@@ -170,7 +170,7 @@ reboots automatically.
 | `src/QueueCache.Management` | Versioned protocol and device access |
 | `src/QueueCache.Operations` | Configuration, persistence and file workloads |
 | `src/QueueCache.Cli` | Operator and developer command binding |
-| `src/QueueCache.Desktop` | Avalonia task UI and telemetry |
+| `src/QueueCache.Desktop` | Avalonia desktop app: AXAML views, view-models, live telemetry ([structure](docs/DESKTOP_UI.md)) |
 | `src/QueueCache.Developer` | Maintained verification workers and scenarios |
 | `tests` | Host-safe protocol, orchestration and UI contracts |
 | `build`, `packaging` | Reproducible packaging, signing and installer workflow |

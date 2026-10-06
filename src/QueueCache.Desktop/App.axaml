@@ -1,0 +1,32 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sty="using:FluentAvalonia.Styling"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             xmlns:views="using:QueueCache.Desktop.Views"
+             x:Class="QueueCache.Desktop.App"
+             Name="QueueCache"
+             RequestedThemeVariant="Default">
+  <Application.Styles>
+    <!-- Windows 11 controls and type; follows the Windows light/dark setting; QueueCache teal accent.
+         PreferSystemTheme follows the Settings page (App.ApplyTheme), on Windows only. -->
+    <sty:FluentAvaloniaTheme PreferSystemTheme="False" PreferUserAccentColor="False" CustomAccentColor="#087F8C" />
+    <StyleInclude Source="/Themes/Styles.axaml" />
+  </Application.Styles>
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="/Themes/Colors.axaml" />
+        <ResourceInclude Source="/Themes/Icons.axaml" />
+        <ResourceInclude Source="/Themes/Controls.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+  <!-- Each page view-model is shown by its view. -->
+  <Application.DataTemplates>
+    <DataTemplate DataType="vm:OverviewViewModel"><views:OverviewView /></DataTemplate>
+    <DataTemplate DataType="vm:CachesViewModel"><views:CachesView /></DataTemplate>
+    <DataTemplate DataType="vm:VirtualDisksViewModel"><views:VirtualDisksView /></DataTemplate>
+    <DataTemplate DataType="vm:DiagnosticsViewModel"><views:DiagnosticsView /></DataTemplate>
+    <DataTemplate DataType="vm:SettingsViewModel"><views:SettingsView /></DataTemplate>
+  </Application.DataTemplates>
+</Application>
