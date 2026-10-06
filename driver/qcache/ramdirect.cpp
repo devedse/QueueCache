@@ -19,24 +19,37 @@ struct QC_RAM_VIEW
     GUID Resource;
     QC_RAM_STORE* Store;
     QC_RAM_LARGE_COPY* LargeCopy;
-    PVOID LargeCopyContext;
+    QC_RAM_QUEUE_COPY* QueueCopy;
+    PVOID CopyContext;
     QC_RAM_BINDING* Binding;    // ViewLock
     BOOLEAN Registered;         // ViewLock; the store may be used only while set.
 };
+// A Direct request copied on a provider worker (QcRamDirectOutcome::Pending). It holds a
+// Rundown reference, the caller's remove lock and, for a write, its admission through the
+// store's gate, until CopyCompleted.
+struct QC_DIRECT_COPY
+{
+    QC_RAM_ASYNC_COPY Copy;
+    QC_RAM_BINDING* Binding;
+    PIRP Irp;
+    PIO_REMOVE_LOCK RemoveLock;
+};
 static FAST_MUTEX ViewLock;
 static LIST_ENTRY Views;
+static NPAGED_LOOKASIDE_LIST CopyItems;
 static constexpr ULONG Tag = 'vRCQ';
 static constexpr ULONG LargeCopyBytes = 512 * 1024; // The provider splits copies from 2 x 256 KiB.
-// Writes this large take the standard path by design: the provider's workers overlap queued
-// writes across processors, while Direct copies each in its caller's thread, one at a time
-// (lab VM, 1 MiB writes: 25.4 GB/s standard vs 17.4 GB/s Direct at Q8, 16.7 vs 17.5 at Q1).
-static constexpr ULONG LargeWriteBytes = 512 * 1024;
 static const UCHAR BitLockerSignature[8] = {'-', 'F', 'V', 'E', '-', 'F', 'S', '-'};
 
 void QcRamDirectInitialize()
 {
     ExInitializeFastMutex(&ViewLock);
     InitializeListHead(&Views);
+    ExInitializeNPagedLookasideList(&CopyItems, nullptr, nullptr, POOL_NX_ALLOCATION, sizeof(QC_DIRECT_COPY), Tag, 0);
+}
+void QcRamDirectDestroy()
+{
+    ExDeleteNPagedLookasideList(&CopyItems);
 }
 void QcRamDirectInitialize(QC_RAM_BINDING* binding)
 {
@@ -86,7 +99,8 @@ static void EndLocked(QC_RAM_BINDING* binding, ULONG reason, ULONG detail = 0)
     binding->View = nullptr;
     binding->Store = nullptr;
     binding->LargeCopy = nullptr;
-    binding->LargeCopyContext = nullptr;
+    binding->QueueCopy = nullptr;
+    binding->CopyContext = nullptr;
     Release(view);
 }
 void QcRamDirectEnd(QC_RAM_BINDING* binding, ULONG reason)
@@ -97,79 +111,25 @@ void QcRamDirectEnd(QC_RAM_BINDING* binding, ULONG reason)
 }
 
 // ---- Hot path ----
-static bool Decline(QC_RAM_BINDING* binding)
+static QcRamDirectOutcome Decline(QC_RAM_BINDING* binding)
 {
     InterlockedIncrement64(&binding->Declined);
-    return false;
+    return QcRamDirectOutcome::Standard;
 }
 static void Copy(QC_RAM_BINDING* binding, QC_RAM_STORE* store, ULONGLONG at, PUCHAR buffer, ULONG length, bool write)
 {
     if (length >= LargeCopyBytes && binding->LargeCopy)
-        binding->LargeCopy(binding->LargeCopyContext, store, at, buffer, length, write);
+        binding->LargeCopy(binding->CopyContext, store, at, buffer, length, write);
     else
         QcRamStoreCopy(store, at, buffer, length, write);
 }
-// BitLocker replaces the volume's boot sector name on disk (below fvevol) when it starts.
-static bool SignatureIntact(const QC_RAM_BINDING* binding, const QC_RAM_STORE* store)
+// A copied request: close its write admission, count it and set its status.
+static void Served(QC_RAM_BINDING* binding, QC_RAM_STORE* store, PIRP irp, ULONG length, bool write)
 {
-    UCHAR now[8];
-    QcRamStoreCopy(store, binding->Offset + 3, now, sizeof(now), false);
-    return RtlEqualMemory(now, binding->Signature, sizeof(now));
-}
-bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
-{
-    const auto access = ReadNoFence(&binding->Access);
-    if (!access)
-        return false;
-    const auto stack = IoGetCurrentIrpStackLocation(irp);
-    const bool write = stack->MajorFunction == IRP_MJ_WRITE;
-    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
-    const ULONG length = stack->Parameters.Read.Length;
-    if (write && length >= LargeWriteBytes)
-        return false; // Not a decline: see LargeWriteBytes.
-    const auto mdl = irp->MdlAddress;
-    if ((write && !(access & QcRamDirectWrites)) || !length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length ||
-        offset < 0 || static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset))
-        return Decline(binding);
-    if (!ExAcquireRundownProtection(&binding->Rundown))
-        return Decline(binding);
-    auto store = binding->Store;
-    const auto at = binding->Offset + static_cast<ULONGLONG>(offset);
-    bool served = false;
-    if (!SignatureIntact(binding, store))
-    {
-        InterlockedExchange(&binding->Access, 0); // Ended for good; the next bind or removal finishes it.
-        Note(binding, QcRamDirectBitLocker);
-    }
-    else if (QcRamStoreBounds(store, at, length))
-    {
-        const auto priority = static_cast<ULONG>((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute;
-        if (auto buffer = static_cast<PUCHAR>(MmGetSystemAddressForMdlSafe(mdl, priority)))
-        {
-            if (!write)
-            {
-                Copy(binding, store, at, buffer, length, false);
-                served = true;
-            }
-            else
-            {
-                InterlockedIncrement(&binding->Writing); // Before re-checking Access: see EndWrites.
-                if ((InterlockedOr(&binding->Access, 0) & QcRamDirectWrites) && QcRamStoreBeginWrite(store) == QcRamAdmission::Admitted)
-                {
-                    QcRamStoreChanged(store);
-                    Copy(binding, store, at, buffer, length, true);
-                    QcRamStoreEndWrite(store);
-                    served = true;
-                }
-                InterlockedDecrement(&binding->Writing);
-            }
-        }
-    }
-    ExReleaseRundownProtection(&binding->Rundown);
-    if (!served)
-        return Decline(binding); // Read-only, frozen or unmappable: the standard path answers.
     if (write)
     {
+        QcRamStoreEndWrite(store);
+        InterlockedDecrement(&binding->Writing);
         InterlockedIncrement64(&binding->WriteRequests);
         InterlockedAdd64(&binding->WriteBytes, length);
     }
@@ -180,7 +140,102 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
     }
     irp->IoStatus.Status = STATUS_SUCCESS;
     irp->IoStatus.Information = length;
+}
+// Provider worker, PASSIVE_LEVEL.
+static void CopyCompleted(QC_RAM_ASYNC_COPY* copy)
+{
+    auto item = CONTAINING_RECORD(copy, QC_DIRECT_COPY, Copy);
+    const auto binding = item->Binding;
+    const auto irp = item->Irp;
+    const auto removeLock = item->RemoveLock;
+    Served(binding, copy->Store, irp, copy->Bytes, copy->Write != FALSE);
+    ExFreeToNPagedLookasideList(&CopyItems, item);
+    InterlockedDecrement(&binding->Queued);
+    ExReleaseRundownProtection(&binding->Rundown); // The store may be withdrawn from here on.
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+    IoReleaseRemoveLock(removeLock, irp); // Last: the volume may be removed afterwards.
+}
+// Hands the copy to a provider worker while the submitter keeps others in flight (QcOffload),
+// so it can issue its next request at once. False: copy inline.
+static bool Queue(QC_RAM_BINDING* binding, QC_RAM_STORE* store, PIRP irp, PIO_REMOVE_LOCK removeLock,
+    ULONGLONG at, PUCHAR buffer, ULONG length, bool write)
+{
+    if (!binding->QueueCopy || !QcOffload(&binding->Offload, ReadNoFence(&binding->Queued)))
+        return false;
+    auto item = static_cast<QC_DIRECT_COPY*>(ExAllocateFromNPagedLookasideList(&CopyItems));
+    if (!item)
+        return false;
+    item->Copy.Store = store;
+    item->Copy.Offset = at;
+    item->Copy.Buffer = buffer;
+    item->Copy.Bytes = length;
+    item->Copy.Write = write;
+    item->Copy.Completed = CopyCompleted;
+    item->Binding = binding;
+    item->Irp = irp;
+    item->RemoveLock = removeLock;
+    InterlockedIncrement(&binding->Queued);
+    IoMarkIrpPending(irp); // Before queueing: the worker may complete it at once.
+    binding->QueueCopy(binding->CopyContext, &item->Copy);
     return true;
+}
+// BitLocker replaces the volume's boot sector name on disk (below fvevol) when it starts.
+static bool SignatureIntact(const QC_RAM_BINDING* binding, const QC_RAM_STORE* store)
+{
+    UCHAR now[8];
+    QcRamStoreCopy(store, binding->Offset + 3, now, sizeof(now), false);
+    return RtlEqualMemory(now, binding->Signature, sizeof(now));
+}
+QcRamDirectOutcome QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp, PIO_REMOVE_LOCK removeLock)
+{
+    const auto access = ReadNoFence(&binding->Access);
+    if (!access)
+        return QcRamDirectOutcome::Standard;
+    const auto stack = IoGetCurrentIrpStackLocation(irp);
+    const bool write = stack->MajorFunction == IRP_MJ_WRITE;
+    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    const ULONG length = stack->Parameters.Read.Length;
+    const auto mdl = irp->MdlAddress;
+    if ((write && !(access & QcRamDirectWrites)) || !length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length ||
+        offset < 0 || static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset))
+        return Decline(binding);
+    if (!ExAcquireRundownProtection(&binding->Rundown))
+        return Decline(binding);
+    auto store = binding->Store;
+    const auto at = binding->Offset + static_cast<ULONGLONG>(offset);
+    PUCHAR buffer = nullptr;
+    bool admitted = false;
+    if (!SignatureIntact(binding, store))
+    {
+        InterlockedExchange(&binding->Access, 0); // Ended for good; the next bind or removal finishes it.
+        Note(binding, QcRamDirectBitLocker);
+    }
+    else if (QcRamStoreBounds(store, at, length))
+    {
+        const auto priority = static_cast<ULONG>((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute;
+        buffer = static_cast<PUCHAR>(MmGetSystemAddressForMdlSafe(mdl, priority));
+        admitted = buffer && !write;
+        if (buffer && write)
+        {
+            InterlockedIncrement(&binding->Writing); // Before re-checking Access: see EndWrites.
+            admitted = (InterlockedOr(&binding->Access, 0) & QcRamDirectWrites) && QcRamStoreBeginWrite(store) == QcRamAdmission::Admitted;
+            if (admitted)
+                QcRamStoreChanged(store);
+            else
+                InterlockedDecrement(&binding->Writing);
+        }
+    }
+    if (!admitted)
+    {
+        ExReleaseRundownProtection(&binding->Rundown);
+        return Decline(binding); // Read-only, frozen or unmappable: the standard path answers.
+    }
+    if (Queue(binding, store, irp, removeLock, at, buffer, length, write))
+        return QcRamDirectOutcome::Pending; // CopyCompleted finishes it.
+    Copy(binding, store, at, buffer, length, write);
+    Served(binding, store, irp, length, write);
+    ExReleaseRundownProtection(&binding->Rundown);
+    return QcRamDirectOutcome::Completed;
 }
 void QcRamDirectObserveControl(QC_RAM_BINDING* binding, ULONG code)
 {
@@ -374,7 +429,8 @@ void QcRamDirectBind(QC_RAM_BINDING* binding, PDEVICE_OBJECT lower, const GUID& 
     {
         binding->Store = view->Store;
         binding->LargeCopy = view->LargeCopy;
-        binding->LargeCopyContext = view->LargeCopyContext;
+        binding->QueueCopy = view->QueueCopy;
+        binding->CopyContext = view->CopyContext;
         binding->Offset = start;
         binding->Length = length - length % view->Store->SectorBytes;
         binding->View = view;
@@ -447,7 +503,8 @@ NTSTATUS QcRamViewControl(PIRP irp)
         view->Resource = request->Resource;
         view->Store = request->Store;
         view->LargeCopy = request->LargeCopy;
-        view->LargeCopyContext = request->LargeCopyContext;
+        view->QueueCopy = request->QueueCopy;
+        view->CopyContext = request->CopyContext;
         view->Registered = TRUE;
         ExAcquireFastMutex(&ViewLock);
         bool duplicate = false;

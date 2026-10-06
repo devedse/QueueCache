@@ -1237,13 +1237,20 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #endif
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
-    // caller's thread. Declined requests continue on the standard path below.
+    // caller's thread, or on the provider's workers while the caller keeps others in flight.
+    // Declined requests continue on the standard path below.
     if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
-        ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
+        ReadNoFence(&ext->RamDirect.Access))
     {
-        IoReleaseRemoveLock(&ext->RemoveLock, irp);
-        IoCompleteRequest(irp, IO_NO_INCREMENT);
-        return STATUS_SUCCESS;
+        const auto outcome = QcRamDirectTransfer(&ext->RamDirect, irp, &ext->RemoveLock);
+        if (outcome == QcRamDirectOutcome::Pending)
+            return STATUS_PENDING;
+        if (outcome == QcRamDirectOutcome::Completed)
+        {
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            IoCompleteRequest(irp, IO_NO_INCREMENT);
+            return STATUS_SUCCESS;
+        }
     }
 #endif
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
@@ -1466,6 +1473,9 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
 void QcUnload(PDRIVER_OBJECT driver)
 {
     QcBudgetDestroy();
+#if QCACHE_CACHE_DRIVER
+    QcRamDirectDestroy();
+#endif
     NT_ASSERT(driver->DeviceObject == nullptr);
     UNREFERENCED_PARAMETER(driver);
 }
@@ -1525,5 +1535,10 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
 #if QCACHE_CACHE_DRIVER
     QcRamDirectInitialize();
 #endif
-    return QcBudgetInitialize(driver);
+    status = QcBudgetInitialize(driver);
+#if QCACHE_CACHE_DRIVER
+    if (!NT_SUCCESS(status))
+        QcRamDirectDestroy(); // DriverUnload does not run after a failed DriverEntry.
+#endif
+    return status;
 }

@@ -7,6 +7,7 @@ extern "C" {
 }
 #include <ntddscsi.h>
 #include "../shared/lockedpages.h"
+#include "../shared/offloadpolicy.h"
 #include "../shared/budgetprotocol.h"
 #include "../shared/ramdiskprotocol.h"
 #include "../shared/ramstore.h"
@@ -41,18 +42,22 @@ struct DISK
     // disk out of the table, then runs this down: no user touches the disk after its release.
     EX_RUNDOWN_REF Users;
     volatile LONG Outstanding;  // Transfers queued to workers and not yet completed.
-    LONG InlineStreak, Probe;   // Adaptive inline/worker choice (racy hints only).
+    QC_OFFLOAD_POLICY Offload;  // Inline or worker for large writes (racy hints only).
     volatile LONG64 ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers; // SCSI path only.
 };
 
 // Transfer strategy, chosen by measurement on the lab VM (docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md):
 // complete small transfers inline during StartIo; hand large writes to per-processor workers
 // while the submitter keeps others in flight; split large reads into chunks that idle workers
-// help copy before StartIo completes them.
+// help copy before StartIo completes them. Direct access (volume filter) queues its copies to
+// the same workers when its submitter keeps others in flight.
 constexpr ULONG MaxWorkers = 16, WorkerSpinMicroseconds = 50, WorkerMinBytes = 128 * 1024, SplitChunk = 256 * 1024;
 struct ADAPTER;
-enum WORK_KIND : UCHAR { WorkRequest, WorkHelp };
+enum WORK_KIND : UCHAR { WorkRequest, WorkHelp, WorkCopy };
 struct WORK { LIST_ENTRY Link; WORK_KIND Kind; };
+// A Direct-access copy (QC_RAM_ASYNC_COPY) is queued through its reserved header.
+static_assert(sizeof(WORK) <= sizeof(QC_RAM_ASYNC_COPY::Reserved) && FIELD_OFFSET(QC_RAM_ASYNC_COPY, Reserved) == 0,
+    "QC_RAM_ASYNC_COPY must start with room for the provider's queue entry");
 // A transfer admitted by StartIo and completed by a worker thread (lives in the SRB extension).
 struct REQUEST { WORK Work; PSCSI_REQUEST_BLOCK Srb; DISK* Disk; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes; BOOLEAN Write; };
 struct WORKER
@@ -94,6 +99,7 @@ void DrainWrites(DISK* disk);
 NTSTATUS AllocateDisk(ADAPTER* adapter, const QC_RAM_REQUEST* request, PIRP irp, DISK** result, ULONG failAfterSlabs);
 void FreeDisk(DISK* disk);
 void RegisterView(ADAPTER* adapter, DISK* disk);
+void UnregisterView(DISK* disk);
 NTSTATUS StartupSession(GUID* epoch, ULONGLONG* transitions);
 
 // transfer.cpp: copies and worker threads.
@@ -103,3 +109,4 @@ bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes, bool write);
 void QueueTransfer(ADAPTER* adapter, REQUEST* request);
 void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR buffer, ULONG bytes, bool write);
 QC_RAM_LARGE_COPY LargeCopy;
+QC_RAM_QUEUE_COPY QueueCopy;

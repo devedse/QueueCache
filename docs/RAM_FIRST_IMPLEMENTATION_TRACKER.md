@@ -2926,3 +2926,19 @@ No bugcheck since the one below. Earlier results:
   227k/193k, 232k/194k; Q: (Fast cache) 36.8/22.0, 14.8/13.9, 404k/411k, 331k/265k.
   Direct leads at queue depth 1; Q: still leads at SEQ1M Q8 read and RND4K Q32 write
   because its worker threads overlap queued requests.
+- Why (same depth from 1 vs 4 submitting threads, DiskSpd per-CPU busy %): Direct RND4K write
+  336k at both Q1T1 and Q32T1 with one CPU busy (100/1/0/0), 1.09M at Q8T4 (all 100); Q:
+  264k at Q1T1, 402k at Q32T1 (98/31/40/32: its worker joins), 191k at Q8T4. SEQ1M read:
+  Direct 26.2 GB/s at Q8T1 (split copy, CPUs ~96% busy but coordinating one request at a
+  time), 39.2 GB/s at Q2T4; Q: 36.0 at Q8T1, 31.5 at Q2T4. A Direct request was always
+  finished by its submitter, so one thread's queue depth added nothing.
+- ImDisk 2.1.2 (virtual-memory RAM disk, 2 GiB NTFS) in the same session, same rows: 16.1/19.2,
+  10.5/13.0 GB/s, 264k/131k, 44k/27k IOPS (Direct R: 26.8/24.8, 26.8/16.6, 432k/335k,
+  451k/336k; Q: 29.2/21.0, 11.0/11.5, 431k/396k, 338k/268k).
+- Queued Direct copies. Implementation: when the submitter keeps other Direct requests in
+  flight, the copy goes to one of the provider's per-processor workers
+  (`QC_RAM_ASYNC_COPY`, kernel view contract version 2) and the request completes from
+  there; otherwise it is copied inline as before. The inline-or-worker policy is the
+  provider's existing one, moved to `driver/shared/offloadpolicy.h` and used by both. Writes
+  of 512 KiB or more are Direct again (they overlap on the workers). The adapter's removal
+  unregisters every view before stopping the workers. Verification: pending.
