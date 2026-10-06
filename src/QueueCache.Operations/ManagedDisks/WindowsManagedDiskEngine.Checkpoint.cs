@@ -46,6 +46,8 @@ public sealed partial class WindowsManagedDiskEngine
         public bool Removed;
         public RamDiskSnapshot Native => native;
         public ulong Generation => native.WriteGeneration;
+        public ulong? WrittenBytes { get; } = native.WriteBytes +
+            (RamDirectBinding.Query(entry.Record.Definition, entry.Record.VolumePath)?.WriteBytes ?? 0);
         public ILogicalDisk Storage => entry.Provider!.Storage(native, operation);
         public async ValueTask DisposeAsync()
         {

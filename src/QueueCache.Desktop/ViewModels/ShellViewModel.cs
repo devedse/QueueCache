@@ -12,18 +12,26 @@ public sealed partial class ShellViewModel : ObservableObject
     private readonly DispatcherTimer timer = new();
 
     public ShellViewModel(ICacheTaskService caches, IManagedDiskService disks, IDialogService dialogs, IDesktopSettingsStore settings,
-        Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null)
+        Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null,
+        Func<string, VolumeSpace?>? volumeSpace = null, Func<DateTimeOffset>? clock = null)
     {
-        Monitor = new DashboardMonitor(caches, disks, dialogs, availableRam: availableRam, usedLetters: usedLetters);
+        Monitor = new DashboardMonitor(caches, disks, dialogs, clock, availableRam, usedLetters, volumeSpace);
         Settings = new SettingsViewModel(settings);
         Overview = new OverviewViewModel(this);
         Caches = new CachesViewModel(Monitor);
         VirtualDisks = new VirtualDisksViewModel(Monitor);
         Diagnostics = new DiagnosticsViewModel(Monitor);
-        Monitor.Interval = timer.Interval = TimeSpan.FromSeconds(Settings.Current.UpdateSeconds);
-        Settings.Changed += (_, current) => Monitor.Interval = timer.Interval = TimeSpan.FromSeconds(current.UpdateSeconds);
+        Apply(Settings.Current);
+        Settings.Changed += (_, current) => Apply(current);
         timer.Tick += async (_, _) => await Monitor.TickAsync();
         currentPage = Overview;
+    }
+
+    private void Apply(DesktopSettings settings)
+    {
+        Monitor.Interval = timer.Interval = TimeSpan.FromSeconds(settings.UpdateSeconds);
+        Monitor.DriverTiming = settings.DriverTiming;
+        Monitor.CallerPath = settings.CallerPath;
     }
 
     public DashboardMonitor Monitor { get; }

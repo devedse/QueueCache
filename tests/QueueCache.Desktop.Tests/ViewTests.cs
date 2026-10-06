@@ -31,7 +31,10 @@ internal static class ViewTests
     {
         var volumes = new VolumeFixture { FaultStick = theme == "dark" };
         var dialogs = new FakeDialogs();
-        var shell = new ShellViewModel(volumes, DiskFixture.Sample(), dialogs, new MemorySettingsStore(), () => 8UL << 30, () => new HashSet<char>());
+        var disks = DiskFixture.Sample();
+        var now = DateTimeOffset.UtcNow;
+        var shell = new ShellViewModel(volumes, disks, dialogs, new MemorySettingsStore(), () => 8UL << 30, () => new HashSet<char>(),
+            _ => new VolumeSpace(2UL << 30, 1300UL << 20), () => now);
         var window = new MainWindow { DataContext = shell, Width = 1180, Height = 820 };
         window.Show();
         Settle(shell.Monitor.RefreshAsync());
@@ -64,11 +67,39 @@ internal static class ViewTests
               Named<Control>(window, "FactsCard").IsEffectivelyVisible, $"{theme}: a running image offers Save now, not Start, and lists its details");
         Save(window, output, $"virtual-disks-{theme}");
 
+        // A busy RAM disk: activity, totals, Direct share and (in dark) driver timing.
+        for (var i = 0; i < 20; i++)
+        {
+            now += TimeSpan.FromSeconds(1);
+            var ram = disks.Records[1];
+            var wave = (ulong)(400 + 300 * Math.Sin(i / 3.0));
+            disks.Records[1] = ram with
+            {
+                Native = ram.Native! with { ReadBytes = ram.Native.ReadBytes + (wave << 18), WriteBytes = ram.Native.WriteBytes + (wave << 17),
+                    Flags = theme == "dark" ? ram.Native.Flags | QueueCache.Management.RamDiskFlags.Timing : ram.Native.Flags },
+                Direct = ram.Direct! with { ReadBytes = ram.Direct.ReadBytes + (wave << 20), WriteBytes = ram.Direct.WriteBytes + (wave << 19) },
+                Statistics = ram.Statistics! with { ReadRequests = ram.Statistics.ReadRequests + wave * 40, TimedReads = 120_000, ReadTicks = 380_000,
+                    MaxReadTicks = 410, TimedWrites = 61_000, WriteTicks = 290_000, MaxWriteTicks = 880 }
+            };
+            Settle(shell.Monitor.SampleVirtualDisksAsync());
+        }
+        shell.VirtualDisks.Select(shell.Monitor.VirtualDisks.Single(d => d.IsRamDisk));
+        Dispatcher.UIThread.RunJobs();
+        Check(Named<Control>(window, "ActivityCard").IsEffectivelyVisible && Named<Control>(window, "SpaceCard").IsEffectivelyVisible &&
+              Named<Control>(window, "TimingCard").IsEffectivelyVisible == (theme == "dark"),
+            $"{theme}: a running RAM disk shows its space, activity and (when on) driver timing");
+        Save(window, output, $"ram-disk-{theme}");
+
         Show(window, shell, AppPage.Diagnostics);
         Save(window, output, $"diagnostics-{theme}");
         Show(window, shell, AppPage.Settings);
         Check(Named<ComboBox>(window, "UpdateBox").SelectedIndex == 1, $"{theme}: Settings shows the update interval");
         Save(window, output, $"settings-{theme}");
+        Named<FASettingsExpander>(window, "AdvancedSettings").IsExpanded = true;
+        Show(window, shell, AppPage.Settings);
+        Check(Named<ToggleSwitch>(window, "TimingToggle").IsChecked == false && Named<ToggleSwitch>(window, "CallerPathToggle").IsChecked == true,
+            $"{theme}: Advanced settings start with timing off and the caller path on");
+        Save(window, output, $"settings-advanced-{theme}");
 
         // The navigation and the shell agree in both directions.
         var navigation = Named<FANavigationView>(window, "Navigation");

@@ -80,7 +80,9 @@ public sealed class App : Application
         {
             var summary = shell.Monitor.HealthTitle;
             trayStatus.Header = summary;
-            tray.ToolTipText = "QueueCache · " + summary;
+            // Windows shows at most 127 characters.
+            var text = "QueueCache · " + summary + (shell.Monitor.ActivitySummary is { } activity ? "\n" + activity : "");
+            tray.ToolTipText = text.Length > 127 ? text[..127] : text;
         };
         desktop.Exit += (_, _) => tray.IsVisible = false;
     }

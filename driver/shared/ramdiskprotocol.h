@@ -10,6 +10,10 @@ enum QC_RAM_ACTION : ULONG
 {
     QcRamCapabilities = 1, QcRamEnumerate, QcRamCreate, QcRamQuery, QcRamRead,
     QcRamWrite, QcRamPublish, QcRamFreeze, QcRamThaw, QcRamRemove, QcRamSetReadOnly, QcRamStartupSession,
+    // Reply is QC_RAM_REQUEST followed by QC_RAM_STATISTICS. Offered when Capabilities has QcRamStatisticsSupported.
+    QcRamStatistics,
+    // Flags: QcRamTiming on or off. Turning it on starts the timing counters from zero.
+    QcRamSetTiming,
     // Request-local test: Offset is the physical slab count after which this NEW creation fails.
     // No hook survives the request; no existing disk is targeted. Same administrator authorization as Create.
     QcRamDeveloperCreateAllocationFailure = 0x100
@@ -19,6 +23,8 @@ enum QC_RAM_FLAGS : ULONG
     QcRamPublished = 1, QcRamReadOnly = 2, QcRamFrozen = 4,
     QcRamDirect = 8,            // Create: offer the store to the volume filter for Direct access.
     QcRamDirectRegistered = 16, // Reply: the volume filter accepted the store.
+    QcRamTiming = 32,           // Time every transfer (SCSI and Direct). Off at creation.
+    QcRamStatisticsSupported = 64, // Capabilities reply: Statistics and SetTiming are available.
 };
 struct QC_RAM_REQUEST
 {
@@ -30,5 +36,13 @@ struct QC_RAM_REQUEST
     ULONGLONG ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers;
 };
 static_assert(sizeof(QC_RAM_REQUEST) == 168, "Managed/native RAM ABI size");
+// Request counts of the SCSI path (Direct requests are counted by the volume filter), and
+// transfer timing of both paths while QcRamTiming is on. Ticks are in Frequency units.
+struct QC_RAM_STATISTICS
+{
+    ULONGLONG ReadRequests, WriteRequests, Frequency;
+    ULONGLONG TimedReads, TimedWrites, ReadTicks, WriteTicks, MaxReadTicks, MaxWriteTicks;
+};
+static_assert(sizeof(QC_RAM_STATISTICS) == 72, "Managed/native RAM statistics ABI size");
 // Capabilities also reports request-local fault proof: Resource = last injected resource,
 // Generation = injection count, Transfers = its allocated slabs. StartupSession retains its own generation semantics.

@@ -27,7 +27,9 @@ public static class CacheTasks
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
             target.ValidateCurrent(token, requireFileSystem: false);
-            if (action != WriteCacheAction.Flush || enableAfter)
+            // Timing and the caller path only change how requests are measured or served, so they
+            // also apply to the cache a managed disk owns.
+            if ((action != WriteCacheAction.Flush || enableAfter) && action is not (WriteCacheAction.PerformanceTiming or WriteCacheAction.CallerPath))
                 ManagedDisks.ManagedDiskConfiguration.RequireCacheOwner(ManagedDisks.ManagedDiskHostProtection.OwnerOfVolume(target.VolumeId), null);
             using var device = new CacheDevice(target.Device, writable: true);
             using var hostProtectionGate = ManagedDisks.ManagedDiskHostProtection.EnterPolicyGate();

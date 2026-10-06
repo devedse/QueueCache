@@ -133,6 +133,7 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
         return Decline(binding);
     auto store = binding->Store;
     const auto at = binding->Offset + static_cast<ULONGLONG>(offset);
+    const auto started = QcRamTimingStart(store);
     bool served = false;
     if (!SignatureIntact(binding, store))
     {
@@ -163,6 +164,8 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
             }
         }
     }
+    if (served)
+        QcRamTimingEnd(store, write, started);
     ExReleaseRundownProtection(&binding->Rundown);
     if (!served)
         return Decline(binding); // Read-only, frozen or unmappable: the standard path answers.

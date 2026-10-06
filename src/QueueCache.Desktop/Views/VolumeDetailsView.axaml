@@ -4,6 +4,7 @@
              xmlns:vm="using:QueueCache.Desktop.ViewModels"
              xmlns:ctl="using:QueueCache.Desktop.Controls"
              xmlns:fmt="using:QueueCache.Desktop.Formatting"
+             xmlns:views="using:QueueCache.Desktop.Views"
              x:Class="QueueCache.Desktop.Views.VolumeDetailsView"
              x:DataType="vm:VolumeViewModel">
   <ScrollViewer>
@@ -80,109 +81,14 @@
       <TextBlock Name="DescriptionText" Classes="secondary" Text="{Binding Description}"
                  IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
 
-      <StackPanel Spacing="16" IsVisible="{Binding HasCache}">
-        <TextBlock Classes="secondary">
-          <Run Text="{Binding BudgetText}" /><Run Text=" · " /><Run Text="{Binding PresetText}" /><Run Text=" · " /><Run Text="{Binding DrainText}" />
-        </TextBlock>
+      <views:CacheContentsView IsVisible="{Binding HasCache}" />
 
-        <!-- What is in RAM: reads, writes already on disk, writes not yet on disk, free. -->
-        <Border Classes="card" Name="OccupancyCard">
-          <StackPanel Spacing="12">
-            <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Classes="strong" Text="What is in RAM" />
-              <TextBlock Grid.Column="1" Classes="secondary number" Text="{Binding UsedText}" />
-            </Grid>
-            <ctl:SegmentBar First="{Binding ReadBytes, Converter={x:Static fmt:Converters.Amount}}"
-                            Second="{Binding OnDiskBytes, Converter={x:Static fmt:Converters.Amount}}"
-                            Third="{Binding PendingBytes, Converter={x:Static fmt:Converters.Amount}}"
-                            Total="{Binding CapacityBytes, Converter={x:Static fmt:Converters.Amount}}"
-                            FirstBrush="{DynamicResource QcReadBrush}" SecondBrush="{DynamicResource QcOnDiskBrush}" ThirdBrush="{DynamicResource QcPendingBrush}"
-                            AutomationProperties.Name="{Binding UsedText}" />
-            <UniformGrid Name="Legend" Columns="4">
-              <StackPanel Spacing="2" Margin="0,0,12,0">
-                <StackPanel Classes="legend" Margin="0">
-                  <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
-                  <TextBlock Classes="caption secondary" Text="Read cache" />
-                </StackPanel>
-                <TextBlock Classes="strong number" Text="{Binding ReadText}" />
-              </StackPanel>
-              <StackPanel Spacing="2" Margin="0,0,12,0">
-                <StackPanel Classes="legend" Margin="0">
-                  <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
-                  <TextBlock Classes="caption secondary" Text="On disk, kept for reads" />
-                </StackPanel>
-                <TextBlock Classes="strong number" Text="{Binding OnDiskText}" />
-              </StackPanel>
-              <StackPanel Spacing="2" Margin="0,0,12,0">
-                <StackPanel Classes="legend" Margin="0">
-                  <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
-                  <TextBlock Classes="caption secondary" Text="Not yet on disk" />
-                </StackPanel>
-                <TextBlock Classes="strong number" Text="{Binding PendingText}" />
-              </StackPanel>
-              <StackPanel Spacing="2">
-                <StackPanel Classes="legend" Margin="0">
-                  <Border Classes="swatch" Background="{DynamicResource QcFreeBrush}" />
-                  <TextBlock Classes="caption secondary" Text="Free" />
-                </StackPanel>
-                <TextBlock Classes="strong number" Text="{Binding FreeText}" />
-              </StackPanel>
-            </UniformGrid>
-          </StackPanel>
-        </Border>
-
-        <UniformGrid Name="Tiles" Classes="tiles" Columns="4">
-          <Border Classes="card tile">
-            <StackPanel Spacing="4">
-              <TextBlock Classes="caption secondary" Text="Reads from RAM · since start" />
-              <TextBlock Classes="value" Text="{Binding ReadHitText}" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card tile">
-            <StackPanel Spacing="4">
-              <TextBlock Classes="caption secondary" Text="Oldest unwritten" />
-              <TextBlock Classes="value" Text="{Binding OldestUnwrittenText}" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card tile">
-            <StackPanel Spacing="4">
-              <TextBlock Classes="caption secondary" Text="Overwrites absorbed · since start" />
-              <TextBlock Classes="value" Text="{Binding OverwritesText}" />
-            </StackPanel>
-          </Border>
-          <Border Classes="card tile">
-            <StackPanel Spacing="4">
-              <TextBlock Classes="caption secondary" Text="Disk errors · since start" />
-              <TextBlock Classes="value" Text="{Binding ErrorsText}" />
-            </StackPanel>
-          </Border>
-        </UniformGrid>
-
-        <Border Classes="card" Name="ActivityCard">
-          <StackPanel Spacing="8">
-            <TextBlock Classes="strong" Text="{Binding ActivityTitle}" />
-            <WrapPanel>
-              <StackPanel Classes="legend">
-                <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
-                <TextBlock Classes="caption secondary" Text="Reads" />
-                <TextBlock Classes="caption strong number" Text="{Binding ReadingText}" />
-              </StackPanel>
-              <StackPanel Classes="legend">
-                <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
-                <TextBlock Classes="caption secondary" Text="Writes in" />
-                <TextBlock Classes="caption strong number" Text="{Binding IncomingText}" />
-              </StackPanel>
-              <StackPanel Classes="legend">
-                <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
-                <TextBlock Classes="caption secondary" Text="Written to disk" />
-                <TextBlock Classes="caption strong number" Text="{Binding DrainingText}" />
-              </StackPanel>
-            </WrapPanel>
-            <ctl:ActivityChart Name="Chart" Samples="{Binding Activity}" SecondsPerSample="{Binding SecondsPerSample}" Height="160"
-                               AutomationProperties.Name="Activity chart: reads, incoming writes and writes to disk in MiB/s" />
-          </StackPanel>
-        </Border>
-      </StackPanel>
+      <Border Classes="card" Name="TimingCard" IsVisible="{Binding TimingOn}">
+        <StackPanel Spacing="6">
+          <TextBlock Classes="strong" Text="Driver timing" />
+          <SelectableTextBlock Name="TimingText" Classes="number" Text="{Binding TimingText}" TextWrapping="Wrap" />
+        </StackPanel>
+      </Border>
 
       <Expander Header="Details for support" HorizontalAlignment="Stretch">
         <StackPanel Spacing="8">

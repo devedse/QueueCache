@@ -65,6 +65,30 @@ static NTSTATUS Change(ADAPTER* adapter, DISK* disk, const QC_RAM_REQUEST& comma
         InterlockedAnd(&store.Flags, ~static_cast<LONG>(QcRamFrozen));
         disk->FreezeOwner = EmptyGuid;
         return STATUS_SUCCESS;
+    case QcRamStatistics:
+    {
+        if (output < sizeof(*reply) + sizeof(QC_RAM_STATISTICS) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
+        auto stats = reinterpret_cast<QC_RAM_STATISTICS*>(reply + 1);
+        LARGE_INTEGER frequency; KeQueryPerformanceCounter(&frequency);
+        stats->ReadRequests = ReadNoFence64(&disk->ReadRequests); stats->WriteRequests = ReadNoFence64(&disk->WriteRequests);
+        stats->Frequency = static_cast<ULONGLONG>(frequency.QuadPart);
+        stats->TimedReads = ReadNoFence64(&store.TimedReads); stats->TimedWrites = ReadNoFence64(&store.TimedWrites);
+        stats->ReadTicks = ReadNoFence64(&store.ReadTicks); stats->WriteTicks = ReadNoFence64(&store.WriteTicks);
+        stats->MaxReadTicks = ReadNoFence64(&store.MaxReadTicks); stats->MaxWriteTicks = ReadNoFence64(&store.MaxWriteTicks);
+        *returned = sizeof(*reply) + sizeof(QC_RAM_STATISTICS);
+        return STATUS_SUCCESS;
+    }
+    case QcRamSetTiming:
+        if (command.Flags & ~QcRamTiming) return STATUS_INVALID_PARAMETER;
+        if ((command.Flags & QcRamTiming) && !(flags & QcRamTiming))
+        {
+            InterlockedExchange64(&store.TimedReads, 0); InterlockedExchange64(&store.TimedWrites, 0);
+            InterlockedExchange64(&store.ReadTicks, 0); InterlockedExchange64(&store.WriteTicks, 0);
+            InterlockedExchange64(&store.MaxReadTicks, 0); InterlockedExchange64(&store.MaxWriteTicks, 0);
+            InterlockedOr(&store.Flags, QcRamTiming);
+        }
+        else if (!(command.Flags & QcRamTiming)) InterlockedAnd(&store.Flags, ~static_cast<LONG>(QcRamTiming));
+        return STATUS_SUCCESS;
     case QcRamSetReadOnly:
         if (command.Flags & ~QcRamReadOnly) return STATUS_INVALID_PARAMETER;
         if (command.Flags & QcRamReadOnly) { InterlockedOr(&store.Flags, QcRamReadOnly); DrainWrites(disk); }
@@ -84,7 +108,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     if (!Authorized(irp)) status = STATUS_ACCESS_DENIED;
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
-        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamStartupSession) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
+        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamSetTiming) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
         input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;
@@ -101,6 +125,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
             {
                 reply->Resource = adapter->LastAllocationFailureResource;
                 reply->Generation = adapter->InjectedAllocationFailures; reply->Transfers = adapter->LastAllocationFailureSlabs;
+                reply->Flags = QcRamStatisticsSupported;
             }
             if (command.Action == QcRamStartupSession) status = StartupSession(&reply->Epoch, &reply->Generation);
         }

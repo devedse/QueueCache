@@ -16,6 +16,8 @@ struct QC_RAM_STORE
     volatile LONG Flags;        // QC_RAM_FLAGS. Changed only with interlocked operations.
     volatile LONG ActiveWrites; // Writes admitted and still copying.
     volatile LONG64 Generation; // Advances with every admitted change (write or TRIM).
+    // Transfer timing, written only while QcRamTiming is set (by the provider and Direct access).
+    volatile LONG64 TimedReads, TimedWrites, ReadTicks, WriteTicks, MaxReadTicks, MaxWriteTicks;
 };
 constexpr ULONG QcRamStoreVersion = 1;
 
@@ -61,3 +63,23 @@ inline QcRamAdmission QcRamStoreBeginWrite(QC_RAM_STORE* store)
 // Call between BeginWrite and EndWrite, once the change is certain.
 inline void QcRamStoreChanged(QC_RAM_STORE* store) { InterlockedIncrement64(&store->Generation); }
 inline void QcRamStoreEndWrite(QC_RAM_STORE* store) { InterlockedDecrement(&store->ActiveWrites); }
+
+// Timing: a transfer reads the flag once; untimed transfers pay nothing else.
+inline LONG64 QcRamTimingStart(const QC_RAM_STORE* store)
+{
+    return (ReadNoFence(&store->Flags) & QcRamTiming) ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
+}
+inline void QcRamTimingEnd(QC_RAM_STORE* store, bool write, LONG64 started)
+{
+    if (!started) return;
+    const auto ticks = KeQueryPerformanceCounter(nullptr).QuadPart - started;
+    InterlockedIncrement64(write ? &store->TimedWrites : &store->TimedReads);
+    InterlockedAdd64(write ? &store->WriteTicks : &store->ReadTicks, ticks);
+    auto max = write ? &store->MaxWriteTicks : &store->MaxReadTicks;
+    for (auto seen = ReadNoFence64(max); ticks > seen;)
+    {
+        const auto prior = InterlockedCompareExchange64(max, ticks, seen);
+        if (prior == seen) break;
+        seen = prior;
+    }
+}

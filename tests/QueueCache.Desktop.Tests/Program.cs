@@ -10,6 +10,7 @@ var output = args.Length == 0 ? "artifacts/ui-tests" : args[0];
 Directory.CreateDirectory(output);
 CacheTests.Run();
 VirtualDiskTests.Run();
+StatisticsTests.Run();
 EditorTests.Run();
 ViewTests.Run(output);
 Console.WriteLine("Desktop checks passed; no real volume or disk operations performed.");

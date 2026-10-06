@@ -19,13 +19,16 @@ public sealed class ActivityChart : Control
     public static readonly StyledProperty<IBrush?> ReadBrushProperty = AvaloniaProperty.Register<ActivityChart, IBrush?>(nameof(ReadBrush));
     public static readonly StyledProperty<IBrush?> IncomingBrushProperty = AvaloniaProperty.Register<ActivityChart, IBrush?>(nameof(IncomingBrush));
     public static readonly StyledProperty<IBrush?> DrainedBrushProperty = AvaloniaProperty.Register<ActivityChart, IBrush?>(nameof(DrainedBrush));
+    /// <summary>False for a RAM disk: nothing is written on to another disk, so there is no third line.</summary>
+    public static readonly StyledProperty<bool> ShowDrainedProperty = AvaloniaProperty.Register<ActivityChart, bool>(nameof(ShowDrained), true);
+    public static readonly StyledProperty<string> IncomingLabelProperty = AvaloniaProperty.Register<ActivityChart, string>(nameof(IncomingLabel), "Writes in");
     public static readonly StyledProperty<IBrush?> GridBrushProperty = AvaloniaProperty.Register<ActivityChart, IBrush?>(nameof(GridBrush));
     public static readonly StyledProperty<IBrush?> ForegroundProperty = AvaloniaProperty.Register<ActivityChart, IBrush?>(nameof(Foreground));
     private int? hover;
 
     static ActivityChart()
     {
-        AffectsRender<ActivityChart>(SamplesProperty, CapacityProperty, ReadBrushProperty, IncomingBrushProperty, DrainedBrushProperty, GridBrushProperty, ForegroundProperty);
+        AffectsRender<ActivityChart>(SamplesProperty, CapacityProperty, ShowDrainedProperty, ReadBrushProperty, IncomingBrushProperty, DrainedBrushProperty, GridBrushProperty, ForegroundProperty);
         HeightProperty.OverrideDefaultValue<ActivityChart>(140);
     }
 
@@ -41,6 +44,8 @@ public sealed class ActivityChart : Control
     public IBrush? ReadBrush { get => GetValue(ReadBrushProperty); set => SetValue(ReadBrushProperty, value); }
     public IBrush? IncomingBrush { get => GetValue(IncomingBrushProperty); set => SetValue(IncomingBrushProperty, value); }
     public IBrush? DrainedBrush { get => GetValue(DrainedBrushProperty); set => SetValue(DrainedBrushProperty, value); }
+    public bool ShowDrained { get => GetValue(ShowDrainedProperty); set => SetValue(ShowDrainedProperty, value); }
+    public string IncomingLabel { get => GetValue(IncomingLabelProperty); set => SetValue(IncomingLabelProperty, value); }
     public IBrush? GridBrush { get => GetValue(GridBrushProperty); set => SetValue(GridBrushProperty, value); }
     public IBrush? Foreground { get => GetValue(ForegroundProperty); set => SetValue(ForegroundProperty, value); }
 
@@ -86,7 +91,7 @@ public sealed class ActivityChart : Control
         // The newest sample sits at the right edge; older ones extend left.
         double X(int index) => width * (capacity - samples.Count + index) / (capacity - 1);
         double Y(double value) => Top + plotHeight * (1 - Math.Clamp(value / top, 0, 1));
-        foreach (var (brush, pick) in new (IBrush?, Func<RateSample, double>)[] { (DrainedBrush, s => s.Drained), (IncomingBrush, s => s.Incoming), (ReadBrush, s => s.Read) })
+        foreach (var (brush, pick) in new (IBrush?, Func<RateSample, double>)[] { (DrainedBrush, s => s.Drained), (IncomingBrush, s => s.Incoming), (ReadBrush, s => s.Read) }.Skip(ShowDrained ? 0 : 1))
         {
             var line = new StreamGeometry();
             using (var g = line.Open())
@@ -127,7 +132,8 @@ public sealed class ActivityChart : Control
         hover = index;
         var sample = samples[index];
         var age = (samples.Count - 1 - index) * SecondsPerSample;
-        ToolTip.SetTip(this, $"{(age < 0.5 ? "Now" : $"{age:0.#} s ago")}\nReads {Format.Rate(sample.Read)}\nWrites in {Format.Rate(sample.Incoming)}\nWritten to disk {Format.Rate(sample.Drained)}");
+        ToolTip.SetTip(this, $"{(age < 0.5 ? "Now" : $"{age:0.#} s ago")}\nReads {Format.Rate(sample.Read)}\n{IncomingLabel} {Format.Rate(sample.Incoming)}" +
+            (ShowDrained ? $"\nWritten to disk {Format.Rate(sample.Drained)}" : ""));
         ToolTip.SetIsOpen(this, true);
         InvalidateVisual();
     }

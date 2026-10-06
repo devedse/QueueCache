@@ -82,7 +82,7 @@ foreach ($arguments in @(
     }
 }
 Write-Host 'Developer CLI contract checks passed. No disk handle opened.'
-foreach ($name in @('create', 'list', 'status', 'physical-list', 'capabilities', 'inspect', 'start', 'stop', 'flush', 'save', 'export', 'format', 'cache', 'startup', 'remove', 'delete-image', 'recover', 'configure'))
+foreach ($name in @('create', 'list', 'status', 'physical-list', 'capabilities', 'inspect', 'start', 'stop', 'flush', 'save', 'export', 'format', 'cache', 'startup', 'remove', 'delete-image', 'recover', 'configure', 'timing'))
 {
     & $cli disk $name --help
     if ($LASTEXITCODE) { throw "Managed disk help failed: $name" }
@@ -118,7 +118,8 @@ foreach ($arguments in @(
     @('disk', 'status', 'not-a-resource'),
     @('disk', 'configure', $managedId, '--letter', 'C'),
     @('disk', 'stop', '00000000-0000-0000-0000-000000000000'),
-    @('disk', 'export', $managedId)
+    @('disk', 'export', $managedId),
+    @('disk', 'timing', $managedId)
 ))
 {
     & $cli @arguments 2>&1 | Out-Host

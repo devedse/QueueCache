@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using QueueCache.Desktop.Formatting;
 using QueueCache.Desktop.Services;
+using QueueCache.Management;
 using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Desktop.ViewModels;
@@ -12,10 +13,17 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
 {
     private readonly DashboardMonitor monitor;
 
-    internal VirtualDiskViewModel(DashboardMonitor monitor, ManagedDiskRecord record)
+    private readonly List<RateSample> history = [];
+    private Counters? last;
+    private DateTimeOffset lastAt;
+
+    /// <summary>Everything read and written since the disk started, both access paths together.</summary>
+    private readonly record struct Counters(Guid Boot, ulong Creation, ulong Read, ulong Written, ulong? Requests);
+
+    internal VirtualDiskViewModel(DashboardMonitor monitor, ManagedDiskRecord record, DateTimeOffset now, VolumeSpace? space = null)
     {
         this.monitor = monitor;
-        Apply(record, DateTimeOffset.Now);
+        Apply(record, now, space);
     }
 
     public ManagedDiskRecord Record { get; private set; } = null!;
@@ -63,6 +71,32 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
     [ObservableProperty] private bool isReadyState;
     [ObservableProperty] private bool needsRecovery;
 
+    // Live figures of a running RAM disk or image in RAM.
+    [ObservableProperty] private bool hasActivity;
+    [ObservableProperty] private IReadOnlyList<RateSample> activity = [];
+    [ObservableProperty] private double secondsPerSample = 1;
+    [ObservableProperty] private string activityTitle = "Activity";
+    [ObservableProperty] private string readingText = "Idle";
+    [ObservableProperty] private string writingText = "Idle";
+    [ObservableProperty] private string requestsText = "";
+    [ObservableProperty] private string readTotalText = "";
+    [ObservableProperty] private string writtenTotalText = "";
+    [ObservableProperty] private string directShareText = "";
+    [ObservableProperty] private string errorsText = "";
+    [ObservableProperty] private bool hasSpace;
+    [ObservableProperty] private ulong usedBytes;
+    [ObservableProperty] private ulong spaceBytes;
+    [ObservableProperty] private string spaceText = "";
+    [ObservableProperty] private string usedText = "";
+    [ObservableProperty] private string freeText = "";
+    [ObservableProperty] private bool hasSaveFigures;
+    [ObservableProperty] private string writtenSinceSaveText = "";
+    [ObservableProperty] private string lastSaveText = "";
+    [ObservableProperty] private bool timingOn;
+    [ObservableProperty] private string timingText = "";
+    /// <summary>The cache of a disk image with a RAM cache (its volume), sampled like any cache.</summary>
+    [ObservableProperty] private VolumeViewModel? cache;
+
     /// <summary>Whether the result of the last action is shown; closing it clears it.</summary>
     public bool HasNotice
     {
@@ -73,7 +107,8 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
     public bool IsImage => Record.Definition.Mode == ManagedDiskMode.ImageInRam;
     public bool IsRamDisk => Record.Definition.Mode == ManagedDiskMode.EphemeralRam;
     public bool IsCachedImage => Record.Definition.Mode == ManagedDiskMode.CachedVhdx;
-    internal ulong ReservedBytes => Record.Native?.ReservedBytes ?? 0;
+    internal ulong ReservedBytes => Record.Native?.ReservedBytes ?? Cache?.State?.ReservedBytes ?? 0;
+    internal (Guid Boot, ulong Creation, bool Enabled)? TimingAttempt { get; set; }
 
     [RelayCommand] private Task Start() => monitor.RunDiskAsync(this, "Starting", ManagedDiskAction.Start);
     [RelayCommand] private Task Flush() => monitor.RunDiskAsync(this, "Flushing", ManagedDiskAction.Flush);
@@ -111,7 +146,7 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         UpdateActions();
     }
 
-    internal void Apply(ManagedDiskRecord record, DateTimeOffset now)
+    internal void Apply(ManagedDiskRecord record, DateTimeOffset now, VolumeSpace? space = null)
     {
         Record = record;
         StateUnavailable = false;
@@ -168,10 +203,7 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         if (definition.Cache is { } cache)
             list.Add(new("Cache", $"{Formatting.Format.Bytes((ulong)cache.BudgetMiB << 20)} · {cache.Preset}"));
         if (record.Native is { } native)
-        {
             list.Add(new("RAM reserved", Formatting.Format.Bytes(native.ReservedBytes)));
-            list.Add(new("Since start", $"read {Formatting.Format.Bytes(native.ReadBytes + (record.Direct?.ReadBytes ?? 0))} · written {Formatting.Format.Bytes(native.WriteBytes + (record.Direct?.WriteBytes ?? 0))} · {native.Errors:N0} errors"));
-        }
         if (definition.Mode != ManagedDiskMode.CachedVhdx)
             list.Add(new("Access path", definition.Access == RamAccess.Standard ? "Standard (full Windows disk stack)" :
                 record.Direct?.Describe() ?? (ready ? "Direct requested; state unavailable" : "Direct when running")));
@@ -180,11 +212,107 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         if (definition.ReadOnly)
             list.Add(new("Read-only", "Changes are never saved to the image"));
         Facts = list;
+        ApplyFigures(record, now, ready ? space : null);
+        if (ready && definition.Mode != ManagedDiskMode.CachedVhdx && !HasUnsavedChanges)
+        {
+            if (Busy(history.LastOrDefault()))
+                Headline = $"Reading {ReadingText} · writing {WritingText}";
+            else if (definition.Mode == ManagedDiskMode.EphemeralRam && HasSpace)
+                Headline = $"{UsedText} · erased when stopped";
+        }
+        else
+            CacheSampled();
         SupportDetails = $"Resource {record.ResourceId}" +
             (runtime is null ? "" : $"\nBoot epoch {runtime.BootEpoch} · creation {runtime.CreationGeneration} · RAM generation {runtime.WriteGeneration} · saved generation {runtime.SavedGeneration?.ToString() ?? "none"}") +
             (record.PhysicalDiskNumber is { } disk ? $"\nPhysical disk {disk}" : "") + (record.VolumePath is { } volume ? $"\nVolume {volume}" : "");
         UpdateActions();
     }
+
+    /// <summary>A running disk image's overview line is its cache's state.</summary>
+    internal void CacheSampled()
+    {
+        if (IsCachedImage && Record.Runtime?.State == ManagedDiskState.Ready && Cache is { HasCache: true, Headline: { Length: > 0 } cacheHeadline })
+            Headline = cacheHeadline;
+    }
+
+    private static bool Busy(RateSample sample) => sample.Read >= 0.05 || sample.Incoming >= 0.05;
+
+    /// <summary>Rates, totals, space, save and timing figures. Counters start again when the disk
+    /// is started again, so a new creation (or a counter going back) starts a new chart.</summary>
+    private void ApplyFigures(ManagedDiskRecord record, DateTimeOffset now, VolumeSpace? space)
+    {
+        var native = record.Native;
+        var direct = record.Direct;
+        HasActivity = native is not null && record.Runtime?.State == ManagedDiskState.Ready;
+        if (!HasActivity || native is null)
+        {
+            last = null;
+            history.Clear();
+            Activity = [];
+            HasSpace = false;
+            TimingOn = false;
+        }
+        else
+        {
+            var stats = record.Statistics;
+            var current = new Counters(native.BootEpoch, native.CreationGeneration, native.ReadBytes + (direct?.ReadBytes ?? 0),
+                native.WriteBytes + (direct?.WriteBytes ?? 0),
+                stats is null ? null : stats.ReadRequests + stats.WriteRequests + (direct?.ReadRequests ?? 0) + (direct?.WriteRequests ?? 0));
+            var seconds = (now - lastAt).TotalSeconds;
+            var continues = last is { } previous && previous.Boot == current.Boot && previous.Creation == current.Creation &&
+                current.Read >= previous.Read && current.Written >= previous.Written && seconds > 0;
+            if (!continues)
+                history.Clear();
+            double MiB(ulong before, ulong after) => (after - before) / 1048576.0 / seconds;
+            var sample = continues ? new RateSample(MiB(last!.Value.Read, current.Read), MiB(last.Value.Written, current.Written), 0) : default;
+            history.Add(sample);
+            while (history.Count > VolumeViewModel.HistoryLength)
+                history.RemoveAt(0);
+            Activity = history.ToArray();
+            SecondsPerSample = monitor.Interval.TotalSeconds;
+            ActivityTitle = $"Activity · last {Formatting.Format.Duration(TimeSpan.FromSeconds(VolumeViewModel.HistoryLength * SecondsPerSample))}";
+            ReadingText = Formatting.Format.Rate(sample.Read);
+            WritingText = Formatting.Format.Rate(sample.Incoming);
+            RequestsText = current.Requests is not { } requests ? "Unknown with this driver" :
+                continues && last!.Value.Requests is { } before && requests >= before ? $"{(requests - before) / seconds:N0} per second" : "0 per second";
+            last = current;
+            lastAt = now;
+
+            ReadTotalText = Formatting.Format.Bytes(current.Read);
+            WrittenTotalText = Formatting.Format.Bytes(current.Written);
+            ErrorsText = native.Errors.ToString("N0");
+            var directBytes = (direct?.ReadBytes ?? 0) + (direct?.WriteBytes ?? 0);
+            DirectShareText = record.Definition.Access == RamAccess.Standard ? "Not used (standard access)" :
+                current.Read + current.Written == 0 ? "No reads or writes yet" :
+                Formatting.Format.Percent(100.0 * directBytes / (current.Read + current.Written));
+
+            HasSpace = space is { TotalBytes: > 0 };
+            if (space is { TotalBytes: > 0 } volume)
+            {
+                SpaceBytes = volume.TotalBytes;
+                UsedBytes = volume.TotalBytes - Math.Min(volume.TotalBytes, volume.FreeBytes);
+                UsedText = $"{Formatting.Format.Bytes(UsedBytes)} of {Formatting.Format.Bytes(SpaceBytes)} used";
+                FreeText = Formatting.Format.Bytes(volume.FreeBytes);
+            }
+
+            TimingOn = (native.Flags & RamDiskFlags.Timing) != 0 && stats is not null;
+            TimingText = !TimingOn ? "" :
+                $"Reads: average {Time(stats!.TimedReads, stats.AverageReadMicroseconds)}, slowest {Time(stats.TimedReads, stats.MaxReadMicroseconds)} · {stats.TimedReads:N0} timed\n" +
+                $"Writes: average {Time(stats.TimedWrites, stats.AverageWriteMicroseconds)}, slowest {Time(stats.TimedWrites, stats.MaxWriteMicroseconds)} · {stats.TimedWrites:N0} timed";
+        }
+
+        HasSaveFigures = record.Definition.Mode == ManagedDiskMode.ImageInRam;
+        var save = record.LastSave;
+        LastSaveText = save is null ? record.SavedAt is null ? "Not saved yet" : "Unknown until the next save" :
+            $"{Formatting.Format.Duration(save.Duration)} for {Formatting.Format.Bytes(save.Bytes)} · {Formatting.Format.Rate(save.Bytes / 1048576.0 / Math.Max(save.Duration.TotalSeconds, 0.001))}";
+        WrittenSinceSaveText = record.SavedAt is null ? "Not saved yet" :
+            save is { WrittenBytes: { } atSave } && record.Native is { } now2 && now2.BootEpoch == save.BootEpoch &&
+            now2.CreationGeneration == save.CreationGeneration && record.WrittenBytes is { } written && written >= atSave
+                ? (written == atSave ? "Nothing" : "At most " + Formatting.Format.Bytes(written - atSave))
+                : "Unknown since the disk was restarted";
+    }
+
+    private static string Time(ulong count, double microseconds) => count == 0 ? "none yet" : Formatting.Format.Micro(microseconds);
 
     private void UpdateActions()
     {
@@ -219,6 +347,9 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
 
     internal void Refresh() => UpdateActions();
 }
+
+/// <summary>Size and free space of a volume, as Windows reports them.</summary>
+public readonly record struct VolumeSpace(ulong TotalBytes, ulong FreeBytes);
 
 /// <summary>One labelled value in a details list.</summary>
 public sealed record Fact(string Label, string Value);

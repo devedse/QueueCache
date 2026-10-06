@@ -62,6 +62,7 @@ internal sealed class VolumeFixture : ICacheTaskService
         GlobalReservedBytes = 14UL << 30
     };
     public int Pauses, Removes, CleanDrops, Flushes, Saves, Retries, Ejects, DataReads, BlockedReads, InventoryReads;
+    public List<(string Volume, bool Enabled)> TimingSets = [], CallerPathSets = [];
     public bool RawVolumeHasCache, FaultStick;
     public TaskCompletionSource<IReadOnlyList<VolumeDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingSystem;
@@ -90,7 +91,7 @@ internal sealed class VolumeFixture : ICacheTaskService
                 Flags = (State.Flags | 2) & ~32U, LastError = unchecked((int)0x80070015), BudgetBytes = 512UL << 20, ReservedBytes = 512UL << 20,
                 PayloadCapacity = 480UL << 20, DirtyBytes = 120UL << 20, CleanReadBytes = 200UL << 20, CleanWriteBytes = 0
             });
-        return Task.FromResult(volume.Volume == "Q:" || volume.Volume == "R:" && RawVolumeHasCache ? State : NoCache);
+        return Task.FromResult(volume.Volume is "Q:" or "V:" || volume.Volume == "R:" && RawVolumeHasCache ? State : NoCache);
     }
     public WriteCacheState NoCache => State with { Flags = 256 | 1024 | 4096, BudgetBytes = 0, ReservedBytes = 0, DirtyBytes = 0, PayloadCapacity = 0, CleanReadBytes = 0, CleanWriteBytes = 0 };
     public bool IsPersistent(VolumeDescription volume) => true;
@@ -124,6 +125,16 @@ internal sealed class VolumeFixture : ICacheTaskService
     {
         Saves++;
         Saved = configuration;
+        return Task.CompletedTask;
+    }
+    public Task SetTimingAsync(VolumeDescription volume, bool enabled)
+    {
+        TimingSets.Add((volume.Volume, enabled));
+        return Task.CompletedTask;
+    }
+    public Task SetCallerPathAsync(VolumeDescription volume, bool enabled)
+    {
+        CallerPathSets.Add((volume.Volume, enabled));
         return Task.CompletedTask;
     }
     public Task<DiskEjectPreview> PreviewEjectAsync(string volume) =>
@@ -165,7 +176,7 @@ internal sealed class DiskFixture : IManagedDiskService
         return Task.FromResult(new ManagedDiskOperationResult(Records.First(r => r.ResourceId == request.ResourceId), "Done by the fake broker."));
     }
 
-    private static RamDiskSnapshot Snapshot(ManagedDiskDefinition definition) =>
+    internal static RamDiskSnapshot Snapshot(ManagedDiskDefinition definition) =>
         new(definition.ResourceId, Guid.NewGuid(), 1, definition.CapacityBytes, 1, RamDiskSnapshot.EstimateReservationBytes(definition.CapacityBytes),
             Guid.Empty, 512, 0, 0, 3UL << 30, 1UL << 30, 10, 0, 0, 1000);
 
@@ -188,7 +199,9 @@ internal sealed class DiskFixture : IManagedDiskService
                 new(image, new(image.ResourceId, Guid.NewGuid(), 7, image.Mode, ManagedDiskState.Ready, 12, 9, "I:"), Native: Snapshot(image),
                     VolumePath: @"\\?\Volume{00000000-0000-0000-0000-0000000000a1}\", SavedAt: DateTimeOffset.Now.AddMinutes(-20)),
                 new(ram, new(ram.ResourceId, Guid.NewGuid(), 3, ram.Mode, ManagedDiskState.Ready, 1, null, "X:"), Native: Snapshot(ram),
-                    VolumePath: @"\\?\Volume{00000000-0000-0000-0000-0000000000a2}\"),
+                    VolumePath: @"\\?\Volume{00000000-0000-0000-0000-0000000000a2}\", Statistics: new(52_000, 21_000, 10_000_000, 0, 0, 0, 0, 0, 0),
+                    Direct: new(RamDirectAccess.Reads | RamDirectAccess.Writes, RamDirectReason.None, 0, ram.ResourceId, 0, 2UL << 30,
+                        410_000, 160_000, 9UL << 30, 3UL << 30, 12, "NTFS")),
                 new(cached, new(cached.ResourceId, Guid.NewGuid(), 2, cached.Mode, ManagedDiskState.Stopped, 0, null))
             ]
         };

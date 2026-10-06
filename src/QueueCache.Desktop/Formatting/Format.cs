@@ -40,6 +40,9 @@ public static class Format
         _ => $"{duration.TotalHours:0.#} h"
     };
 
+    /// <summary>A request time: microseconds below a millisecond.</summary>
+    public static string Micro(double microseconds) => microseconds < 1000 ? $"{Significant(microseconds)} µs" : $"{Significant(microseconds / 1000)} ms";
+
     public static string Percent(double percent) => percent >= 99.95 ? "100%" : $"{Significant(percent)}%";
 
     /// <summary>"14:02" today, "Yesterday 14:02", otherwise the date.</summary>

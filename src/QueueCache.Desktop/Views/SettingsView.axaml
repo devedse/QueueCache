@@ -33,6 +33,22 @@
         </ui:FASettingsExpander.Footer>
       </ui:FASettingsExpander>
 
+      <TextBlock Classes="section" Text="Advanced" Margin="0,16,0,4" />
+      <ui:FASettingsExpander Name="AdvancedSettings" Header="Developer settings"
+                             Description="Measurements and switches for comparing performance. You don't need these for normal use.">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconDiagnostics}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpanderItem Content="Detailed driver timing" Description="{Binding DriverTimingDescription}">
+          <ui:FASettingsExpanderItem.Footer>
+            <ToggleSwitch Name="TimingToggle" IsChecked="{Binding DriverTiming}" AutomationProperties.Name="Detailed driver timing" />
+          </ui:FASettingsExpanderItem.Footer>
+        </ui:FASettingsExpanderItem>
+        <ui:FASettingsExpanderItem Content="Answer cache hits on the calling thread" Description="{Binding CallerPathDescription}">
+          <ui:FASettingsExpanderItem.Footer>
+            <ToggleSwitch Name="CallerPathToggle" IsChecked="{Binding CallerPath}" AutomationProperties.Name="Answer cache hits on the calling thread" />
+          </ui:FASettingsExpanderItem.Footer>
+        </ui:FASettingsExpanderItem>
+      </ui:FASettingsExpander>
+
       <TextBlock Classes="section" Text="About" Margin="0,16,0,4" />
       <ui:FASettingsExpander Header="QueueCache" Description="RAM caches for volumes and disks that live in RAM">
         <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconCache}" /></ui:FASettingsExpander.IconSource>

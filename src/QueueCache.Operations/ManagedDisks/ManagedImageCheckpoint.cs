@@ -4,6 +4,8 @@ public interface IStableManagedImage : IAsyncDisposable
 {
     ulong Generation { get; }
     ILogicalDisk Storage { get; }
+    /// <summary>See <see cref="ManagedDiskRecord.WrittenBytes"/>, when frozen.</summary>
+    ulong? WrittenBytes => null;
 }
 public interface ICheckpointImage : IAsyncDisposable
 {
@@ -31,6 +33,7 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
         ManagedDiskPaths.ValidateImagePath(path);
         var runtime = record.Runtime;
         var operation = Guid.NewGuid();
+        var started = System.Diagnostics.Stopwatch.StartNew();
         var journal = new ManagedDiskJournal(operation, record.ResourceId, ManagedDiskJournalStage.Exporting,
             runtime.BootEpoch, runtime.CreationGeneration, Previous: record.CommittedImage, CandidatePath: path);
         store.SaveJournal(journal);
@@ -67,7 +70,8 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             var next = record with { Runtime = runtime with { State = ManagedDiskState.Ready, WriteGeneration = stable.Generation } };
             if (commit)
                 next = next with { CommittedImage = candidate, PreviousImage = record.CommittedImage,
-                    Runtime = next.Runtime!.RecordSaved(stable.Generation), SavedAt = DateTimeOffset.UtcNow, LastError = null };
+                    Runtime = next.Runtime!.RecordSaved(stable.Generation), SavedAt = DateTimeOffset.UtcNow, LastError = null,
+                    LastSave = new(started.Elapsed, record.Definition.CapacityBytes, stable.WrittenBytes, runtime.BootEpoch, runtime.CreationGeneration) };
             commitStarted = true;
             store.Save(next);
             committed = true;

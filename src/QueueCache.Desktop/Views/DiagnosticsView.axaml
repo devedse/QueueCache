@@ -32,8 +32,11 @@
         </StackPanel>
       </Border>
 
-      <TextBlock Classes="section" Text="Driver timing per cache" />
-      <ItemsControl ItemsSource="{Binding Monitor.Volumes}">
+      <TextBlock Classes="section" Text="Driver timing" />
+      <TextBlock Name="TimingHint" Classes="secondary" TextWrapping="Wrap"
+                 Text="Detailed timing is off. Turn on Detailed driver timing under Settings → Advanced to measure every read and write."
+                 IsVisible="{Binding !Monitor.DriverTiming}" />
+      <ItemsControl Name="CacheTiming" ItemsSource="{Binding Monitor.Volumes}">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate><StackPanel Spacing="4" /></ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
@@ -42,7 +45,25 @@
             <Border Classes="card" IsVisible="{Binding HasCache}">
               <StackPanel Spacing="4">
                 <TextBlock Classes="strong" Text="{Binding Title}" />
+                <SelectableTextBlock Classes="number" Text="{Binding TimingText}" TextWrapping="Wrap" IsVisible="{Binding TimingOn}" />
                 <SelectableTextBlock Classes="mono" Text="{Binding DriverText}" />
+                <SelectableTextBlock Classes="mono" Text="{Binding SupportDetails}" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+      <ItemsControl Name="DiskTiming" ItemsSource="{Binding Monitor.VirtualDisks}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate><StackPanel Spacing="4" /></ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="vm:VirtualDiskViewModel">
+            <Border Classes="card" IsVisible="{Binding HasActivity}">
+              <StackPanel Spacing="4">
+                <TextBlock Classes="strong" Text="{Binding Title}" />
+                <SelectableTextBlock Classes="number" Text="{Binding TimingText}" TextWrapping="Wrap" IsVisible="{Binding TimingOn}" />
+                <TextBlock Classes="secondary" Text="Timing is off for this disk." IsVisible="{Binding !TimingOn}" />
                 <SelectableTextBlock Classes="mono" Text="{Binding SupportDetails}" />
               </StackPanel>
             </Border>

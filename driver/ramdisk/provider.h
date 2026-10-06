@@ -43,6 +43,7 @@ struct DISK
     volatile LONG Outstanding;  // Transfers queued to workers and not yet completed.
     LONG InlineStreak, Probe;   // Adaptive inline/worker choice (racy hints only).
     volatile LONG64 ReadBytes, WriteBytes, Flushes, Trims, Errors, Transfers; // SCSI path only.
+    volatile LONG64 ReadRequests, WriteRequests; // SCSI path only.
 };
 
 // Transfer strategy, chosen by measurement on the lab VM (docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md):
@@ -54,7 +55,7 @@ struct ADAPTER;
 enum WORK_KIND : UCHAR { WorkRequest, WorkHelp };
 struct WORK { LIST_ENTRY Link; WORK_KIND Kind; };
 // A transfer admitted by StartIo and completed by a worker thread (lives in the SRB extension).
-struct REQUEST { WORK Work; PSCSI_REQUEST_BLOCK Srb; DISK* Disk; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes; BOOLEAN Write; };
+struct REQUEST { WORK Work; PSCSI_REQUEST_BLOCK Srb; DISK* Disk; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes; BOOLEAN Write; LONG64 Started; };
 struct WORKER
 {
     KSPIN_LOCK Lock;

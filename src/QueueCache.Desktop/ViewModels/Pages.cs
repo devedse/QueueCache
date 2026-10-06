@@ -200,6 +200,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         theme = (int)Current.Theme;
         updateChoice = Math.Max(0, Array.IndexOf(DesktopSettings.UpdateChoices, Current.UpdateSeconds));
         keepRunningInTray = Current.KeepRunningInTray;
+        driverTiming = Current.DriverTiming;
+        callerPath = Current.CallerPath;
         loading = false;
         Version = typeof(SettingsViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
     }
@@ -214,7 +216,17 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int theme;
     [ObservableProperty] private int updateChoice;
     [ObservableProperty] private bool keepRunningInTray;
+    [ObservableProperty] private bool driverTiming;
+    [ObservableProperty] private bool callerPath;
 
+    /// <summary>What timing costs, measured on the lab VM (docs/DESKTOP_UI.md).</summary>
+    public string DriverTimingDescription { get; } = "Measures how long every read and write takes inside the cache and RAM disk drivers. " +
+        "The figures appear on each cache and virtual disk, and on the Diagnostics page. Applies while QueueCache runs.";
+    public string CallerPathDescription { get; } = "On (recommended): reads already in a cache's RAM and writes that fit are answered at once, on the " +
+        "program's own thread. Off: every request goes through the cache's worker thread, which is slower. Only for comparing performance.";
+
+    partial void OnDriverTimingChanged(bool value) => Save();
+    partial void OnCallerPathChanged(bool value) => Save();
     partial void OnThemeChanged(int value) => Save();
     partial void OnUpdateChoiceChanged(int value) => Save();
     partial void OnKeepRunningInTrayChanged(bool value) => Save();
@@ -223,7 +235,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (loading)
             return;
-        Current = new(DesktopSettings.UpdateChoices[Math.Clamp(UpdateChoice, 0, DesktopSettings.UpdateChoices.Length - 1)], (AppTheme)Theme, KeepRunningInTray);
+        Current = new(DesktopSettings.UpdateChoices[Math.Clamp(UpdateChoice, 0, DesktopSettings.UpdateChoices.Length - 1)], (AppTheme)Theme, KeepRunningInTray, DriverTiming, CallerPath);
         try
         {
             store.Save(Current);
