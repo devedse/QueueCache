@@ -16,7 +16,7 @@ public sealed record ManagedDiskRequest(Guid ResourceId, ManagedDiskAction Actio
     ManagedDiskStopIntent? StopIntent = null, string? Path = null, bool CommitExport = false,
     bool AcceptDiscard = false, bool AcceptErase = false, CacheConfiguration? Cache = null,
     bool AcceptVolatileWrites = false, bool? StartAtBoot = null, bool? SaveBeforeStopping = null, bool? SaveDuringShutdown = null, string? Label = null,
-    char? PreferredLetter = null, ulong? CapacityBytes = null);
+    char? PreferredLetter = null, ulong? CapacityBytes = null, RamAccess? Access = null);
 public sealed record ManagedDiskOperationResult(ManagedDiskRecord Record, string Message, string? ImagePath = null);
 
 public static class ManagedDiskConfiguration
@@ -30,12 +30,13 @@ public static class ManagedDiskConfiguration
     {
         if (record.Runtime?.State != ManagedDiskState.Stopped || record.Native is not null || record.PhysicalDiskNumber is not null || record.VolumePath is not null)
             throw new IOException("Stop and reconcile the managed disk before editing its creation settings.");
-        if (request.PreferredLetter is null && request.Label is null && request.CapacityBytes is null)
-            throw new ArgumentException("Choose a preferred letter, label or pure-RAM capacity to change.");
+        if (request.PreferredLetter is null && request.Label is null && request.CapacityBytes is null && request.Access is null)
+            throw new ArgumentException("Choose a preferred letter, label, pure-RAM capacity or access path to change.");
         if (request.CapacityBytes is not null && record.Definition.Mode != ManagedDiskMode.EphemeralRam)
             throw new NotSupportedException("Existing images cannot be resized through creation settings.");
         var definition = record.Definition with { PreferredLetter = request.PreferredLetter ?? record.Definition.PreferredLetter,
-            Label = request.Label ?? record.Definition.Label, CapacityBytes = request.CapacityBytes ?? record.Definition.CapacityBytes };
+            Label = request.Label ?? record.Definition.Label, CapacityBytes = request.CapacityBytes ?? record.Definition.CapacityBytes,
+            Access = request.Access ?? record.Definition.Access };
         definition.Validate(); return definition;
     }
 }

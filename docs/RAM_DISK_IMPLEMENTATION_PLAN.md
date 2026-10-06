@@ -257,6 +257,54 @@ Refuse adding a redundant QueueCache cache to their volumes in both management
 and native configuration paths. Do not depend only on hiding the UI action.
 Normal Windows I/O still traverses required filters with cache disabled.
 
+### Direct access (one copy of the data, two ways in)
+
+Measured on the 4-core VM, a Storport RAM disk spends about 78% of a 4 KiB request in the
+volume, partition, disk class and Storport layers, so it cannot match cache hits that the
+volume filter answers above them. Direct access lets the volume filter serve normal reads
+and writes of a RAM-backed volume straight from the provider's pages; the provider keeps
+owning the memory and stays a real disk, so Disk Management, partitioning, raw-disk
+access, image save/export and every standard-path feature keep working unchanged. Nothing
+is stored twice: the filter keeps no copy.
+
+- **Store contract** (`driver/shared/ramstore.h`): pages, geometry, interlocked flags,
+  the write gate (ActiveWrites, which Freeze and SetReadOnly drain) and the generation.
+  Both paths admit writes through the same gate.
+- **Registration** (`driver/shared/ramview.h`): when a disk is created for Direct access
+  the provider offers its store over the existing kernel channel to the filter's budget
+  device. Unregistering returns only after no Direct request uses the store; the provider
+  frees memory afterwards. An older filter refuses registration: the disk stays Standard.
+- **Binding** (`driver/qcache/ramdirect.cpp`): the broker asks the filter to bind a
+  published volume. The filter requires the RAM disk's serial and reservation, exactly one
+  extent inside the store, only known drivers in the volume stack (volsnap, volume, fvevol,
+  iorate, rdyboost, volmgr) and the disk stack (partmgr, disk, the provider's PDO), and no
+  BitLocker signature. Write protection (disk or GPT read-only attribute) and shadow copies
+  (seen by the filter since boot, or reported by the broker's `Win32_ShadowCopy` query for
+  loaded images) limit it to reads.
+- **Stepping aside** (permanent for the binding, with a reported reason): a volsnap
+  flush-and-hold ends Direct writes; any device control that is not harmless ends Direct
+  access before it is forwarded; a changed boot-sector name (BitLocker conversion) ends it
+  at the next request. Ending waits for Direct requests in flight (rundown). Volume removal
+  and provider removal end it too. A new bind starts a fresh attempt.
+- **Harmless controls** (`QcRamDirectHarmlessControl`): QueueCache's own controls, the
+  filter's existing observation and volume-management sets, TRIM/allocation queries and
+  volsnap's snapshot management. Otherwise a control must use a Microsoft device type
+  (below 0x8000, not FILE_DEVICE_UNKNOWN, which third-party drivers reuse) without
+  FILE_WRITE_ACCESS: binding already requires every driver below to be a known Microsoft
+  storage driver, and Microsoft declares state-changing controls with write access. Known
+  exceptions (IOCTL_VOLUME_SET_GPT_ATTRIBUTES) stay excluded. Compile-time checks pin the
+  controls seen on the VM (BitLocker status, media removal, multitier memory queries).
+- **Hot path**: one lock-free check per read/write on every volume; bound volumes copy in
+  the caller's thread, large reads through the provider's split copy. Writes of 512 KiB
+  or more take the standard path by design: its workers overlap queued writes across
+  processors, while a Direct write occupies its caller until copied (SEQ1M Q8T1 write on
+  the lab VM: 25.4 GB/s standard vs 17.4 GB/s Direct). Requests that are not served
+  (read-only, frozen, unaligned, beyond the extent, unmappable) continue on the standard
+  path, which returns its usual result.
+- **Product**: `RamAccess` on RAM-backed definitions (Standard or Direct; default Direct),
+  `--access` on `disk create`/`disk configure`, the desktop access choice, and live state
+  (path, reason, counters) in `disk list`/status and on the card.
+
 ## 4. Shared operations, ownership and broker
 
 `IManagedDiskService` exposes InspectSource, ValidatePlan, Create/Start,

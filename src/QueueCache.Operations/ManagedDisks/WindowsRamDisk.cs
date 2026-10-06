@@ -56,8 +56,9 @@ public sealed class WindowsRamDisk : IDisposable
         }
         return disks;
     }
-    public RamDiskSnapshot Create(Guid resource, ulong capacity, uint sector) =>
-        Send(RamDiskSnapshot.Request(RamDiskAction.Create, resource: resource, capacity: capacity, sector: sector));
+    public RamDiskSnapshot Create(Guid resource, ulong capacity, uint sector, bool direct = false) =>
+        Send(RamDiskSnapshot.Request(RamDiskAction.Create, resource: resource, capacity: capacity, sector: sector,
+            flags: direct ? RamDiskFlags.Direct : RamDiskFlags.None));
     public RamDiskSnapshot Query(RamDiskSnapshot expected) => Send(RamDiskSnapshot.Request(RamDiskAction.Query, expected));
     public RamDiskSnapshot Publish(RamDiskSnapshot expected) => Send(RamDiskSnapshot.Request(RamDiskAction.Publish, expected));
     public RamDiskSnapshot Freeze(RamDiskSnapshot expected, Guid operation) => Send(RamDiskSnapshot.Request(RamDiskAction.Freeze, expected, freezeOwner: operation));

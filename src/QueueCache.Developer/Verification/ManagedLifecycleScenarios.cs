@@ -70,6 +70,9 @@ internal static class ManagedLifecycleScenarios
                     else CheckBytes(sessionFile, fixture.SessionSha256);
                     if (current.Definition.Mode == ManagedDiskMode.ImageInRam)
                         CheckBytes(FilePath(current, "committed.bin"), fixture.CommittedSha256!);
+                    // Direct access is a property of the live volume binding: it must be back after every transition.
+                    if (current.Definition.Access == RamAccess.Direct && current.Definition.Mode != ManagedDiskMode.CachedVhdx)
+                        RamDirectChecks.RequireActive(current);
                 }
                 trace.Add(new { Stage = "Verified", Transition = transition.ToString(), Fixture = fixture.Role, Record = current });
                 RunStorage.AtomicJson(evidence, trace);

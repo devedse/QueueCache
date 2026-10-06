@@ -159,6 +159,7 @@ public sealed partial class WindowsManagedDiskEngine
                         : WindowsDiskStorage.Open(entry.Image!.PhysicalPath(), true);
                     ValidateLive(entry);
                     WindowsDiskStorage.AssignLetter(record.VolumePath!, record.Definition.PreferredLetter);
+                    RamDirectBinding.Enable(record.Definition, record.VolumePath!);
                     if (mode == ManagedDiskMode.CachedVhdx)
                         await CacheTasks.SaveAsync(record.Definition.PreferredLetter + ":", record.Definition.Cache!, false, record.Definition.AcceptVolatileWrites, token: cleanup.Token, managedOwner: record.ResourceId);
                     // Only a refused exclusive lock is a Windows veto; anything later is a stop failure.
@@ -199,6 +200,7 @@ public sealed partial class WindowsManagedDiskEngine
             progress?.Report(new(ManagedDiskState.Formatting, "Formatting the exact owned NTFS volume."));
             ValidateLive(entry); await WindowsDiskStorage.FormatNtfsAsync(record.VolumePath!, entry.Disk!.Number, definition.Label, token);
             WindowsDiskStorage.AssignLetter(record.VolumePath!, definition.PreferredLetter);
+            RamDirectBinding.Enable(definition, record.VolumePath!);
             if (definition.Mode == ManagedDiskMode.CachedVhdx)
                 await CacheTasks.SaveAsync(definition.PreferredLetter + ":", definition.Cache!, false, definition.AcceptVolatileWrites, token: token, managedOwner: record.ResourceId);
             var generation = entry.Provider?.Query(record.Native!).WriteGeneration ?? record.Runtime!.WriteGeneration;

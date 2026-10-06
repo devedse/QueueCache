@@ -26,6 +26,8 @@ public sealed class ManagedDiskWindow : Window
     private readonly TextBox label = new() { Name = "DiskLabel", Text = "QueueCache" };
     private readonly ComboBox allocation = Choice("DiskAllocation", ["Dynamic VHDX", "Fixed VHDX"]);
     private readonly ComboBox behaviour = Choice("DiskWriteBehaviour", ["Strict", "Fast"]);
+    // Index order follows RamAccess (Standard, Direct); the default is selected in the constructor.
+    private readonly ComboBox access = Choice("DiskAccess", ["Standard (full Windows disk stack)", "Direct (fastest: read and written straight from RAM)"]);
     private readonly CheckBox volatility = new() { Name = "DiskVolatility", Content = "Accept loss of pending RAM writes after power loss or unsafe removal" };
     private readonly CheckBox startup = new() { Name = "DiskStartup", Content = "Start with Windows" };
     private readonly CheckBox saveBeforeStop = new() { Name = "DiskSaveBeforeStop", Content = "Save before stopping", IsChecked = true };
@@ -41,7 +43,7 @@ public sealed class ManagedDiskWindow : Window
     private readonly Button inspect = new() { Name = "InspectDiskImage", Content = "Inspect VHDX" };
     private readonly Button cancel = new() { Content = "Cancel" };
     private readonly StackPanel form = new() { Spacing = 12 };
-    private readonly Control sourceField, capacityField, imageField, cacheField, checkpointField, allocationField, behaviourField, labelField;
+    private readonly Control sourceField, capacityField, imageField, cacheField, checkpointField, allocationField, behaviourField, labelField, accessField;
     private IReadOnlyList<ManagedDiskCapability> capabilities = [];
     private ImageInspection? inspected;
     private CancellationTokenSource? operation;
@@ -73,9 +75,11 @@ public sealed class ManagedDiskWindow : Window
         checkpointField = Field("Checkpoint directory", checkpoints);
         allocationField = Field("New image allocation", allocation);
         behaviourField = Field("Cached write behaviour", behaviour);
+        access.SelectedIndex = (int)ManagedDiskDefinition.DefaultRamAccess;
+        accessField = Field("Access path", access);
         labelField = Field("New NTFS volume label", label);
         foreach (var control in new Control[] { sourceField, imageField, capacityField, memoryHint, cacheField,
-            allocationField, checkpointField, behaviourField, volatility, Field("Preferred drive letter (D–Z)", letter),
+            allocationField, checkpointField, behaviourField, volatility, accessField, Field("Preferred drive letter (D–Z)", letter),
             labelField, initializeBlank, readOnly, saveBeforeStop, shutdownSave, startup, startupHint })
             form.Children.Add(control);
         body.Children.Add(form);
@@ -131,7 +135,8 @@ public sealed class ManagedDiskWindow : Window
             fullImage && shutdownSave.IsChecked == true, fullImage && Existing && readOnly.IsChecked == true,
             (ImageAllocation)allocation.SelectedIndex, Existing ? current?.SectorBytes ?? 512 : 512,
             InitializeBlankImage: Existing && initializeBlank.IsChecked == true,
-            ExpectedBlankImage: Existing && initializeBlank.IsChecked == true ? current : null);
+            ExpectedBlankImage: Existing && initializeBlank.IsChecked == true ? current : null,
+            Access: backed ? RamAccess.Standard : (RamAccess)access.SelectedIndex);
     }
 
     private void Update()
@@ -142,6 +147,7 @@ public sealed class ManagedDiskWindow : Window
         sourceField.IsVisible = imageField.IsVisible = !pure;
         capacityField.IsVisible = !Existing;
         cacheField.IsVisible = behaviourField.IsVisible = backed;
+        accessField.IsVisible = !backed;
         checkpointField.IsVisible = saveBeforeStop.IsVisible = shutdownSave.IsVisible = Mode == ManagedDiskMode.ImageInRam;
         allocationField.IsVisible = !pure && !Existing;
         labelField.IsVisible = !Existing || initializeBlank.IsChecked == true;

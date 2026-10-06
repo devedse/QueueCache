@@ -2,6 +2,9 @@
 #pragma once
 #include <ntddk.h>
 // Buffered, bounded Storport service IRPs. No user addresses in this ABI.
+// Keep Version 1 and extend compatibly: the installer's update preflight runs the NEW CLI
+// against the still-installed OLD provider to prove no RAM disk is live; a version change
+// makes that check fail and blocks every update (found on the VM).
 constexpr ULONG QcRamMagic = 0x52444351, QcRamVersion = 1, QcRamMaxDisks = 32, QcRamTransferBytes = 1 << 20, QcRamSlabBytes = 4 << 20;
 enum QC_RAM_ACTION : ULONG
 {
@@ -11,7 +14,12 @@ enum QC_RAM_ACTION : ULONG
     // No hook survives the request; no existing disk is targeted. Same administrator authorization as Create.
     QcRamDeveloperCreateAllocationFailure = 0x100
 };
-enum QC_RAM_FLAGS : ULONG { QcRamPublished = 1, QcRamReadOnly = 2, QcRamFrozen = 4 };
+enum QC_RAM_FLAGS : ULONG
+{
+    QcRamPublished = 1, QcRamReadOnly = 2, QcRamFrozen = 4,
+    QcRamDirect = 8,            // Create: offer the store to the volume filter for Direct access.
+    QcRamDirectRegistered = 16, // Reply: the volume filter accepted the store.
+};
 struct QC_RAM_REQUEST
 {
     ULONG Magic, Version, Size, Action;

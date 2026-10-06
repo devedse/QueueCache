@@ -7,9 +7,11 @@
 #include "qcstats.h"
 #include "observation.h"
 #include "readselection.h"
+#include "devicecontrol.h"
 #include "../shared/budgetprotocol.h"
 #if QCACHE_CACHE_DRIVER
 #include "writecache.h"
+#include "ramdirect.h"
 #endif
 
 struct QC_EXTENSION
@@ -23,6 +25,9 @@ struct QC_EXTENSION
     LARGE_INTEGER Size;
 #if QCACHE_CACHE_DRIVER
     QC_CACHE Cache;
+    QC_RAM_BINDING RamDirect; // Direct access when the volume is on a QueueCache RAM disk.
+    GUID RamResource;         // From the RAM disk's serial (EnsureDeviceGeometry).
+    BOOLEAN RamSerial;
 #endif
 #if QCACHE_SERIALIZED_IO
     IO_CSQ Csq;
@@ -731,18 +736,10 @@ static NTSTATUS QueueRequest(QC_EXTENSION* ext, PIRP irp)
 // extended or shrunk while the filter is loaded.
 static void QueryDeviceLength(QC_EXTENSION* ext)
 {
-    KEVENT event;
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
     GET_LENGTH_INFORMATION length = {};
-    IO_STATUS_BLOCK iosb = {};
-    auto query = IoBuildDeviceIoControlRequest(
-        IOCTL_DISK_GET_LENGTH_INFO, ext->Lower, nullptr, 0, &length, sizeof(length), FALSE, &event, &iosb);
-    if (!query)
-        return;
-    auto queryStatus = IoCallDriver(ext->Lower, query);
-    if (queryStatus == STATUS_PENDING)
-        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-    if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(length) && length.Length.QuadPart > 0)
+    ULONG_PTR returned = 0;
+    if (NT_SUCCESS(QcSendControl(ext->Lower, IOCTL_DISK_GET_LENGTH_INFO, nullptr, 0, &length, sizeof(length), &returned)) &&
+        returned >= sizeof(length) && length.Length.QuadPart > 0)
         InterlockedExchange64(&ext->Size.QuadPart, length.Length.QuadPart);
 }
 
@@ -758,38 +755,26 @@ static void EnsureDeviceGeometry(QC_EXTENSION* ext)
     }
     QueryDeviceLength(ext);
 #if QCACHE_CACHE_DRIVER
-    KEVENT event;
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    IO_STATUS_BLOCK iosb = {};
     DISK_GEOMETRY geometry = {};
-    auto query = IoBuildDeviceIoControlRequest(
-        IOCTL_DISK_GET_DRIVE_GEOMETRY, ext->Lower, nullptr, 0, &geometry, sizeof(geometry), FALSE, &event, &iosb);
-    if (query)
-    {
-        auto queryStatus = IoCallDriver(ext->Lower, query);
-        if (queryStatus == STATUS_PENDING)
-            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(geometry))
-            ext->Cache.SectorBytes = geometry.BytesPerSector;
-    }
+    ULONG_PTR returned = 0;
+    if (NT_SUCCESS(QcSendControl(ext->Lower, IOCTL_DISK_GET_DRIVE_GEOMETRY, nullptr, 0, &geometry, sizeof(geometry), &returned)) &&
+        returned >= sizeof(geometry))
+        ext->Cache.SectorBytes = geometry.BytesPerSector;
     // Only the one-time geometry/control preparation probes identity. Harmless
     // state polling and the RAM-first write admission path never query backing.
     STORAGE_PROPERTY_QUERY identityQuery{};
     identityQuery.PropertyId = StorageDeviceProperty; identityQuery.QueryType = PropertyStandardQuery;
     UCHAR descriptor[1024]{};
-    KeClearEvent(&event);
-    query = IoBuildDeviceIoControlRequest(IOCTL_STORAGE_QUERY_PROPERTY, ext->Lower,
-        &identityQuery, sizeof(identityQuery), descriptor, sizeof(descriptor), FALSE, &event, &iosb);
-    if (query)
+    if (NT_SUCCESS(QcSendControl(ext->Lower, IOCTL_STORAGE_QUERY_PROPERTY, &identityQuery, sizeof(identityQuery),
+            descriptor, sizeof(descriptor), &returned)) && returned >= sizeof(STORAGE_DEVICE_DESCRIPTOR))
     {
-        auto identityStatus = IoCallDriver(ext->Lower, query);
-        if (identityStatus == STATUS_PENDING) KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
-        if (NT_SUCCESS(iosb.Status) && iosb.Information >= sizeof(STORAGE_DEVICE_DESCRIPTOR))
+        auto storage = reinterpret_cast<PSTORAGE_DEVICE_DESCRIPTOR>(descriptor);
+        const auto offset = storage->SerialNumberOffset;
+        if (offset && offset <= sizeof(descriptor) - 35 && returned >= offset + 35 && descriptor[offset + 34] == 0 &&
+            QcBudgetParseRamSerial(reinterpret_cast<char*>(descriptor + offset), 34, &ext->RamResource))
         {
-            auto storage = reinterpret_cast<PSTORAGE_DEVICE_DESCRIPTOR>(descriptor);
-            const auto offset = storage->SerialNumberOffset;
-            if (offset && offset <= sizeof(descriptor) - 35 && iosb.Information >= offset + 35 && descriptor[offset + 34] == 0)
-                ext->Cache.OwnedRamDevice = QcBudgetIsRamSerial(reinterpret_cast<char*>(descriptor + offset), 34);
+            ext->RamSerial = TRUE;
+            ext->Cache.OwnedRamDevice = QcBudgetIsReserved(ext->RamResource);
         }
     }
 #endif
@@ -818,6 +803,39 @@ static bool BeyondKnownEnd(QC_EXTENSION* ext, PIRP irp)
     const auto size = InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0);
     const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
     return offset >= 0 && (offset > size || stack->Parameters.Read.Length > static_cast<ULONGLONG>(size - offset));
+}
+#endif
+
+#if QCACHE_CACHE_DRIVER
+// Bind (PASSIVE_LEVEL) and/or report Direct access for this volume.
+static NTSTATUS RamDirectControl(QC_EXTENSION* ext, PIRP irp, ULONG code)
+{
+    auto stack = IoGetCurrentIrpStackLocation(irp);
+    if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_RAM_DIRECT_STATE))
+        return STATUS_BUFFER_TOO_SMALL;
+    if (code == IOCTL_QCACHE_RAM_DIRECT_BIND_V1)
+    {
+        QC_RAM_DIRECT_BIND bind = {};
+        if (stack->Parameters.DeviceIoControl.InputBufferLength != sizeof(bind))
+            return STATUS_INVALID_PARAMETER;
+        RtlCopyMemory(&bind, irp->AssociatedIrp.SystemBuffer, sizeof(bind));
+        if (bind.Size != sizeof(bind) || bind.Version != 1 || bind.Reserved || (bind.Flags & ~QcRamDirectBindReadsOnly))
+            return STATUS_INVALID_PARAMETER;
+        if (KeGetCurrentIrql() != PASSIVE_LEVEL)
+            return STATUS_INVALID_DEVICE_STATE;
+        // EnsureDeviceGeometry ran for this management request (dispatch, above).
+        QC_STATE cache;
+        QcCacheSnapshot(&ext->Cache, &cache);
+        if (!ext->RamSerial || !ext->Cache.OwnedRamDevice)
+            QcRamDirectRefuse(&ext->RamDirect, QcRamDirectNotRamDisk);
+        else if (cache.Flags & 1)
+            QcRamDirectRefuse(&ext->RamDirect, QcRamDirectCacheActive);
+        else
+            QcRamDirectBind(&ext->RamDirect, ext->Lower, ext->RamResource,
+                static_cast<ULONGLONG>(InterlockedCompareExchange64(&ext->Size.QuadPart, 0, 0)), bind.Flags);
+    }
+    QcRamDirectState(&ext->RamDirect, static_cast<QC_RAM_DIRECT_STATE*>(irp->AssociatedIrp.SystemBuffer));
+    return STATUS_SUCCESS;
 }
 #endif
 
@@ -870,6 +888,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #endif
             // Close admission and wait before allowing the lower stack to disappear.
             IoReleaseRemoveLockAndWait(&ext->RemoveLock, irp);
+#if QCACHE_CACHE_DRIVER
+            QcRamDirectEnd(&ext->RamDirect, QcRamDirectRemoved);
+#endif
 #if QCACHE_SERIALIZED_IO
             ZwWaitForSingleObject(ext->Worker, FALSE, nullptr);
             ZwClose(ext->Worker);
@@ -980,6 +1001,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         IoReleaseRemoveLock(&ext->RemoveLock, irp);
         return Complete(irp, STATUS_DEVICE_NOT_CONNECTED);
     }
+    // Before any control is acted on or forwarded: Direct access steps aside first.
+    if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
+        QcRamDirectObserveControl(&ext->RamDirect, stack->Parameters.DeviceIoControl.IoControlCode);
 #endif
     if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL)
     {
@@ -995,6 +1019,12 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         }
 #endif
 #if QCACHE_CACHE_DRIVER
+        if (code == IOCTL_QCACHE_RAM_DIRECT_STATE_V1 || code == IOCTL_QCACHE_RAM_DIRECT_BIND_V1)
+        {
+            status = RamDirectControl(ext, irp, code);
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, status, NT_SUCCESS(status) ? sizeof(QC_RAM_DIRECT_STATE) : 0);
+        }
         if (code == IOCTL_QCACHE_STATE_V3)
         {
             if (stack->Parameters.DeviceIoControl.OutputBufferLength < sizeof(QC_STATE_V3))
@@ -1205,6 +1235,17 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         return Forward(ext, irp);
     }
 #endif
+#if QCACHE_CACHE_DRIVER
+    // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
+    // caller's thread. Declined requests continue on the standard path below.
+    if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
+        ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
+    {
+        IoReleaseRemoveLock(&ext->RemoveLock, irp);
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        return STATUS_SUCCESS;
+    }
+#endif
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
     // requests which must retain the original caller context. A control request
     // atomically switches subsequent traffic to the ordered worker.
@@ -1349,6 +1390,9 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
         return status;
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
     RtlZeroMemory(ext, sizeof(*ext));
+#if QCACHE_CACHE_DRIVER
+    QcRamDirectInitialize(&ext->RamDirect);
+#endif
     ext->Self = device;
     ext->Pdo = pdo;
     IoInitializeRemoveLock(&ext->RemoveLock, 'bLCQ', 0, 0);
@@ -1478,5 +1522,8 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registryP
         driver->MajorFunction[i] = QcDispatch;
     driver->DriverExtension->AddDevice = QcAddDevice;
     driver->DriverUnload = QcUnload;
+#if QCACHE_CACHE_DRIVER
+    QcRamDirectInitialize();
+#endif
     return QcBudgetInitialize(driver);
 }

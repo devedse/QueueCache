@@ -36,7 +36,21 @@ files must live on the selected disk; their distinct retained directory is recor
 in `workloads.json` or the integrity worker's report/log. Reports should live on a
 different disk so telemetry writes do not contaminate the workload.
 
-## Suites (plan version 90)
+## Suites (plan version 91)
+
+Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
+reads and writes straight from the provider's memory). `ram-disk` runs once with Standard
+and once with Direct access; `image-in-ram` runs its two variants with Direct and one with
+Standard. Every Direct variant requires full Direct access after creation and after an
+image reload. `direct-coherence` proves Direct writes are what a raw standard-path disk read
+sees, and that a raw-disk overwrite under lock/dismount reads back through the locked
+volume (Direct) and through NTFS afterwards, with Direct still active.
+`direct-unrecognized-control` sends a control request no layer recognizes: Direct access
+must end before it is forwarded, the standard path must return the same bytes, and a new
+bind must restore Direct access. `direct-snapshot-writes` takes a shadow copy: Direct writes
+must stop, the snapshot must keep the pre-snapshot bytes and the live file the new ones, and
+an unbuffered read of the live file (bypassing Windows' file cache) must still be Direct. A Standard-access disk must never be served directly. Score workloads
+are unchanged.
 
 Plan 90 adds `failed-create-retired` to `ram-disk`: a pure-RAM create on an occupied
 drive letter is refused only at publication, after allocation and formatting. The

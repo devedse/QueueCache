@@ -14,22 +14,28 @@ internal static class ManagedDiskScenarios
         var service = new ManagedDiskBrokerClient(); var checks = new List<CheckResult>(); var trace = new List<object>();
         var mode = operation switch { "ram-disk" => ManagedDiskMode.EphemeralRam, "vhdx-backed" => ManagedDiskMode.CachedVhdx, "image-in-ram" => ManagedDiskMode.ImageInRam, _ => throw new ArgumentException("Unknown managed product scenario.") };
         var originalBudget = hostCache.GetWriteCacheState().GlobalReservedBytes;
-        var variants = mode == ManagedDiskMode.CachedVhdx ? new[] { (ImageAllocation.Dynamic, false), (ImageAllocation.Fixed, false), (ImageAllocation.Dynamic, true) } :
-            mode == ManagedDiskMode.ImageInRam ? [(ImageAllocation.Dynamic, false), (ImageAllocation.Dynamic, true)] : [(ImageAllocation.Dynamic, false)];
+        // RAM-backed modes run with Direct access (the product default) and once on the Standard path.
+        var variants = mode == ManagedDiskMode.CachedVhdx
+            ? new[] { (ImageAllocation.Dynamic, false, RamAccess.Standard), (ImageAllocation.Fixed, false, RamAccess.Standard), (ImageAllocation.Dynamic, true, RamAccess.Standard) }
+            : mode == ManagedDiskMode.ImageInRam
+                ? [(ImageAllocation.Dynamic, false, RamAccess.Direct), (ImageAllocation.Dynamic, true, RamAccess.Direct), (ImageAllocation.Dynamic, false, RamAccess.Standard)]
+                : [(ImageAllocation.Dynamic, false, RamAccess.Standard), (ImageAllocation.Dynamic, false, RamAccess.Direct)];
         foreach (var sectorBytes in VerificationPlan.ManagedSectorSizes)
-        foreach (var (allocation, initializeRaw) in variants)
+        foreach (var (allocation, initializeRaw, access) in variants)
         {
+            var direct = access == RamAccess.Direct && mode != ManagedDiskMode.CachedVhdx;
+            var tag = (initializeRaw ? "-raw" : "") + (mode != ManagedDiskMode.CachedVhdx && !direct ? "-standard" : "");
             var id = Guid.NewGuid(); var directory = Path.Combine(work, id.ToString("N"));
             var definition = ManagedDiskDefinition.New(mode) with { ResourceId = id, CapacityBytes = 64UL << 20,
                 SectorBytes = sectorBytes,
                 PreferredLetter = FreeLetter(), Label = "QC-Managed", Allocation = allocation,
                 ImagePath = mode == ManagedDiskMode.EphemeralRam ? null : Path.Combine(directory, "source.vhdx"),
                 CheckpointDirectory = mode == ManagedDiskMode.ImageInRam ? Path.Combine(directory, "Checkpoints") : null,
-                Cache = mode == ManagedDiskMode.CachedVhdx ? new CacheConfiguration(64, CachePreset.Strict) : null };
+                Cache = mode == ManagedDiskMode.CachedVhdx ? new CacheConfiguration(64, CachePreset.Strict) : null, Access = access };
             var created = false; string? movedSource = null; Exception? primaryFailure = null;
             try
             {
-                if (mode == ManagedDiskMode.EphemeralRam) await RequireFailedCreateRetiredAsync();
+                if (mode == ManagedDiskMode.EphemeralRam && !direct) await RequireFailedCreateRetiredAsync();
                 if (initializeRaw)
                 {
                     ManagedDiskHostProtection.CreateProtectedDirectory(directory);
@@ -44,6 +50,20 @@ internal static class ManagedDiskScenarios
                 var file = definition.PreferredLetter + @":\managed-sentinel.bin";
                 var bytes = Enumerable.Range(0, 4 << 20).Select(n => (byte)(n * 17 + 11)).ToArray();
                 Write(file, bytes);
+                if (direct)
+                {
+                    var root = definition.PreferredLetter + @":\";
+                    RamDirectChecks.RequireActive(ready);
+                    Pass("direct-coherence" + tag, await RamDirectChecks.Coherence(ready, root));
+                    if (mode == ManagedDiskMode.EphemeralRam)
+                    {
+                        Pass("direct-unrecognized-control", RamDirectChecks.UnrecognizedControlFallback(ready, root, file, bytes));
+                        Pass("direct-snapshot-writes", RamDirectChecks.SnapshotFallback(ready, root));
+                    }
+                    trace.Add(new { Stage = "DirectChecked", State = RamDirectChecks.State(ready.VolumePath!) });
+                }
+                else if (mode != ManagedDiskMode.CachedVhdx && RamDirectChecks.State(ready.VolumePath!).Access != RamDirectAccess.None)
+                    throw new IOException("A Standard-access RAM disk was served by Direct access.");
                 using (var open = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                 {
                     if (mode == ManagedDiskMode.ImageInRam)
@@ -55,7 +75,7 @@ internal static class ManagedDiskScenarios
                         var saveAfter = await RecordAsync(); ManagedCheckpointEvidence.RequireRetained(saveBefore, saveAfter);
                         if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Save veto changed live filesystem bytes.");
                         trace.Add(new { Stage = "SaveVetoRetained", Before = saveBefore, After = saveAfter });
-                        Pass("save-open-file-veto" + (initializeRaw ? "-raw" : ""), "Save refuses the open filesystem and retains the prior checkpoint, exact live RAM and dirty bytes.");
+                        Pass("save-open-file-veto" + tag, "Save refuses the open filesystem and retains the prior checkpoint, exact live RAM and dirty bytes.");
                     }
                     var preview = await RecordAsync();
                     try
@@ -74,7 +94,7 @@ internal static class ManagedDiskScenarios
                             throw new IOException("Stop veto did not retain the live contents/binding.");
                     }
                 }
-                Pass("managed-open-file-veto-" + allocation + (initializeRaw ? "-raw" : ""), "Product Stop honours Windows locks and preserves the owned live disk.");
+                Pass("managed-open-file-veto-" + allocation + tag, "Product Stop honours Windows locks and preserves the owned live disk.");
                 await ActAsync(ManagedDiskAction.Flush);
                 if (mode == ManagedDiskMode.ImageInRam)
                 {
@@ -97,7 +117,7 @@ internal static class ManagedDiskScenarios
                     Write(probe, bytes); if (!File.ReadAllBytes(probe).SequenceEqual(bytes)) throw new IOException("Failed export left RAM writes blocked.");
                     File.Delete(probe);
                     trace.Add(new { Stage = "ExportCollisionRetained", Before = exportBefore, After = exportAfter, ExistingImageSha256 = existingHash });
-                    Pass("save-destination-collision" + (initializeRaw ? "-raw" : ""), "Existing export bytes, preceding checkpoint and live dirty RAM survive; filesystem remains writable.");
+                    Pass("save-destination-collision" + tag, "Existing export bytes, preceding checkpoint and live dirty RAM survive; filesystem remains writable.");
                     var saved = await ActAsync(ManagedDiskAction.Save);
                     if (saved.Record.CommittedImage?.Digest is null || saved.Record.PreviousImage != before.CommittedImage)
                         throw new IOException("Save did not verify the full image and retain the preceding checkpoint.");
@@ -118,7 +138,8 @@ internal static class ManagedDiskScenarios
                     await ActAsync(ManagedDiskAction.Start);
                     bytes[0] ^= 0xFF;
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Restarted image did not load the committed checkpoint, excluding discarded RAM changes.");
-                    Pass("whole-image-save-export-runtime" + (initializeRaw ? "-raw" : ""), "Full verified save, unchanged-source export, RAM-only runtime with unavailable source and unchanged image-I/O attempts, dirty generation and committed reload match bytes.");
+                    if (direct) RamDirectChecks.RequireActive(await RecordAsync()); // Re-enabled after save, stop and reload.
+                    Pass("whole-image-save-export-runtime" + tag, "Full verified save, unchanged-source export, RAM-only runtime with unavailable source and unchanged image-I/O attempts, dirty generation and committed reload match bytes.");
                 }
                 else if (mode == ManagedDiskMode.CachedVhdx)
                 {
@@ -130,13 +151,14 @@ internal static class ManagedDiskScenarios
                     bytes[0] ^= 0xFF; Write(file, bytes); await ActAsync(ManagedDiskAction.Flush);
                     await ActAsync(ManagedDiskAction.Stop); await ActAsync(ManagedDiskAction.Start);
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Fast backed VHDX explicit flush/detach/reopen differs.");
-                    Pass("backed-vhdx-persistence-" + allocation + (initializeRaw ? "-raw" : ""), "Independent shared cache, Strict and explicit Fast flush/detach/reopen preserve the owned byte oracle.");
+                    Pass("backed-vhdx-persistence-" + allocation + tag, "Independent shared cache, Strict and explicit Fast flush/detach/reopen preserve the owned byte oracle.");
                 }
                 else
                 {
                     await ActAsync(ManagedDiskAction.Stop, discard: true); await ActAsync(ManagedDiskAction.Start);
                     if (File.Exists(file)) throw new IOException("A new pure RAM creation reused the preceding filesystem contents.");
-                    Pass("pure-ram-fresh-creation", "Product format/write/flush/explicit discard/recreate produces a fresh NTFS disk.");
+                    if (direct) RamDirectChecks.RequireActive(await RecordAsync());
+                    Pass("pure-ram-fresh-creation" + tag, "Product format/write/flush/explicit discard/recreate produces a fresh NTFS disk.");
                 }
             }
             catch (Exception ex) { primaryFailure = ex; throw; }

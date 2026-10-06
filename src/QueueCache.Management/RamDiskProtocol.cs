@@ -8,7 +8,14 @@ public enum RamDiskAction : uint
     DeveloperCreateAllocationFailure = 0x100
 }
 [Flags]
-public enum RamDiskFlags : uint { None = 0, Published = 1, ReadOnly = 2, Frozen = 4 }
+public enum RamDiskFlags : uint
+{
+    None = 0, Published = 1, ReadOnly = 2, Frozen = 4,
+    /// <summary>Create: offer the disk to the volume filter for Direct access.</summary>
+    Direct = 8,
+    /// <summary>Reply: the volume filter accepted the disk for Direct access.</summary>
+    DirectRegistered = 16
+}
 
 /// <summary>Versioned Storport control ABI. All offsets are independent of CLR packing.</summary>
 public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong CreationGeneration,
@@ -18,7 +25,9 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
 {
     public const int WireSize = 168, MaximumTransferBytes = 1 << 20, MaximumDisks = 32;
     public const uint AllocationSlabBytes = 4 << 20;
-    public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038;
+    // Keep 1 and extend compatibly: the update preflight (new CLI) must enumerate disks through the
+    // still-installed provider; a version change blocks every update (see ramdiskprotocol.h).
+    public const uint Magic = 0x52444351, ServiceIoctl = 0x0004D038, Version = 1;
 
     /// <summary>Conservative x64 headroom estimate, including PFN/MDL/slab metadata. Native reservation is authoritative.</summary>
     public static ulong EstimateReservationBytes(ulong capacity)
@@ -34,7 +43,8 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
         ulong offset = 0, int transferBytes = 0, Guid freezeOwner = default, RamDiskFlags flags = RamDiskFlags.None)
     {
         if (!Enum.IsDefined(action) || transferBytes < 0 || transferBytes > MaximumTransferBytes ||
-            (flags & ~RamDiskFlags.ReadOnly) != 0 || slot >= MaximumDisks || expected?.Slot >= MaximumDisks ||
+            (flags & ~(action switch { RamDiskAction.Create => RamDiskFlags.Direct, RamDiskAction.SetReadOnly => RamDiskFlags.ReadOnly, _ => RamDiskFlags.None })) != 0 ||
+            slot >= MaximumDisks || expected?.Slot >= MaximumDisks ||
             (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create or RamDiskAction.StartupSession or RamDiskAction.DeveloperCreateAllocationFailure) && expected is null) ||
             (action is RamDiskAction.Create or RamDiskAction.DeveloperCreateAllocationFailure && (resource == Guid.Empty || capacity < 16UL << 20 || capacity > 128UL << 30 ||
                 sector is not (512 or 4096) || capacity % (1UL << 20) != 0)) ||
@@ -44,7 +54,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
             throw new ArgumentException("Invalid bounded RAM disk control request.");
         var data = new byte[WireSize + transferBytes];
         BinaryPrimitives.WriteUInt32LittleEndian(data, Magic);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), Version);
         BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), WireSize);
         BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(12), (uint)action);
         (expected?.ResourceId ?? resource).TryWriteBytes(data.AsSpan(16, 16));
@@ -64,7 +74,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
     public static RamDiskSnapshot Decode(ReadOnlySpan<byte> data, bool capabilities = false)
     {
         if (data.Length < WireSize || BinaryPrimitives.ReadUInt32LittleEndian(data) != Magic ||
-            BinaryPrimitives.ReadUInt32LittleEndian(data[4..]) != 1 || BinaryPrimitives.ReadUInt32LittleEndian(data[8..]) != WireSize)
+            BinaryPrimitives.ReadUInt32LittleEndian(data[4..]) != Version || BinaryPrimitives.ReadUInt32LittleEndian(data[8..]) != WireSize)
             throw new InvalidDataException("Incompatible or truncated RAM disk provider reply.");
         var result = new RamDiskSnapshot(new(data.Slice(16, 16)), new(data.Slice(32, 16)),
             Read64(data, 48), Read64(data, 56), Read64(data, 72), Read64(data, 80), new(data.Slice(88, 16)),
@@ -72,7 +82,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
             BinaryPrimitives.ReadUInt32LittleEndian(data[116..]), Read64(data, 120), Read64(data, 128),
             Read64(data, 136), Read64(data, 144), Read64(data, 152), Read64(data, 160));
         if (result.BootEpoch == Guid.Empty || result.CapacityBytes == 0 || result.CapacityBytes > long.MaxValue ||
-            (result.Flags & ~(RamDiskFlags.Published | RamDiskFlags.ReadOnly | RamDiskFlags.Frozen)) != 0 ||
+            (result.Flags & ~(RamDiskFlags.Published | RamDiskFlags.ReadOnly | RamDiskFlags.Frozen | RamDiskFlags.DirectRegistered)) != 0 ||
             (!capabilities && (result.ResourceId == Guid.Empty || result.CreationGeneration == 0 || result.Slot >= MaximumDisks ||
                 result.SectorBytes is not (512 or 4096) || result.CapacityBytes % result.SectorBytes != 0 ||
                 result.ReservedBytes < result.CapacityBytes ||

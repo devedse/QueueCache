@@ -2096,7 +2096,8 @@ static bool DistinctPages(PIRP irp)
     if (!mdl || mdl->Next)
         return false;
     const auto pages = MmGetMdlPfnArray(mdl);
-    const auto count = ADDRESS_AND_SIZE_TO_SPAN_PAGES(MmGetMdlVirtualAddress(mdl), MmGetMdlByteCount(mdl));
+    // One MDL describes at most a ULONG byte count, so its page span fits a ULONG.
+    const auto count = static_cast<ULONG>(ADDRESS_AND_SIZE_TO_SPAN_PAGES(MmGetMdlVirtualAddress(mdl), MmGetMdlByteCount(mdl)));
     if (count <= 64)
     {
         for (ULONG i = 1; i < count; ++i)
@@ -2800,7 +2801,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     irp->IoStatus.Information = 0;
-    if (c->State.DeviceBytes != deviceBytes)
+    if (c->State.DeviceBytes != static_cast<ULONGLONG>(deviceBytes))
     {
         // Unchanged for nearly every request: skip the mutex and snapshot copy then.
         AcquireCache(c);

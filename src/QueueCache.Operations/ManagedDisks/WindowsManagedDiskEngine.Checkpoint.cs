@@ -64,6 +64,8 @@ public sealed partial class WindowsManagedDiskEngine
                 }
             }
             finally { volumeLock.Dispose(); }
+            // Lock and dismount may have ended Direct access; resume it (a no-op while still bound).
+            if (!Removed && entry.Record.VolumePath is not null) RamDirectBinding.Enable(entry.Record.Definition, entry.Record.VolumePath);
         }
     }
     public Task StopFrozenAsync(ManagedDiskRecord record, IStableManagedImage stable, CancellationToken token)

@@ -79,7 +79,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             catch (Exception ex) when (ex is IOException or Win32Exception)
             { record = record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired, LastError = ex.Message }, LastError = ex.Message }; }
         }
-        return record with { ImageIo = entry.ImageIo.Snapshot() };
+        return record with { ImageIo = entry.ImageIo.Snapshot(),
+            Direct = record.Runtime?.State == ManagedDiskState.Ready ? RamDirectBinding.Query(record.Definition, record.VolumePath) : null };
     }
     public async Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition, IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default)
     {
@@ -179,7 +180,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             MemoryBudget.ValidateIncrease(0, RamDiskSnapshot.EstimateReservationBytes(definition.CapacityBytes));
             entry.Provider = WindowsRamDisk.Connect();
             token.ThrowIfCancellationRequested();
-            var native = entry.Provider.Create(definition.ResourceId, definition.CapacityBytes, definition.SectorBytes);
+            var native = entry.Provider.Create(definition.ResourceId, definition.CapacityBytes, definition.SectorBytes, RamDirectBinding.Requested(definition));
             var runtime = new ManagedDiskRuntime(definition.ResourceId, native.BootEpoch, native.CreationGeneration, definition.Mode, ManagedDiskState.Creating, native.WriteGeneration, null);
             entry.Record = entry.Record with { Runtime = runtime, Native = native, StartupSession = startupSession };
             Update(entry, entry.Record);
@@ -299,6 +300,7 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             engine.Update(entry, entry.Record with { VolumePath = volume, GptDiskId = layout.DiskId });
             WindowsDiskStorage.AssignLetter(volume, value.PreferredLetter);
             ManagedDiskHostProtection.RegisterVolume(value.ResourceId, volume);
+            RamDirectBinding.Enable(value, volume);
             if (value.Mode == ManagedDiskMode.CachedVhdx)
                 await CacheTasks.SaveAsync(value.PreferredLetter + ":", value.Cache!, false, value.AcceptVolatileWrites, token: token, managedOwner: value.ResourceId);
             transferred = true;

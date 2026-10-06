@@ -7,6 +7,10 @@ public enum ManagedDiskSource { CreateNew, OpenExisting }
 public enum ImageAllocation { Dynamic, Fixed }
 public enum ManagedDiskState { Stopped, Creating, Loading, Formatting, Ready, Saving, Stopping, Blocked, Faulted, RecoveryRequired }
 public enum ManagedDiskStopIntent { DiscardThenStop, DrainThenDetach, SaveThenStop }
+/// <summary>How normal file reads and writes reach a RAM-backed disk. Standard goes through the full Windows
+/// disk stack; Direct lets the volume filter copy them straight from the disk's memory (one copy of the data),
+/// stepping back to Standard whenever a layer below could treat I/O differently (BitLocker, shadow copies, ...).</summary>
+public enum RamAccess { Standard, Direct }
 
 /// <summary>A remembered recipe is separate from startup enablement and live device identity.</summary>
 public sealed record ManagedDiskDefinition(
@@ -28,18 +32,22 @@ public sealed record ManagedDiskDefinition(
     uint SectorBytes = 512,
     int SchemaVersion = 1,
     bool InitializeBlankImage = false,
-    ImageInspection? ExpectedBlankImage = null)
+    ImageInspection? ExpectedBlankImage = null,
+    RamAccess Access = RamAccess.Standard)
 {
     public const ulong MiB = 1UL << 20;
+    /// <summary>Access path for new RAM-backed disks in the CLI and desktop.</summary>
+    public const RamAccess DefaultRamAccess = RamAccess.Direct;
     public static ManagedDiskDefinition New(ManagedDiskMode mode) => new(Guid.NewGuid(), mode,
         ManagedDiskSource.CreateNew, 1024 * MiB, 'R', "QueueCache",
         Cache: mode == ManagedDiskMode.CachedVhdx ? new CacheConfiguration(256, CachePreset.Strict) : null,
-        SaveBeforeStopping: mode == ManagedDiskMode.ImageInRam);
+        SaveBeforeStopping: mode == ManagedDiskMode.ImageInRam,
+        Access: mode == ManagedDiskMode.CachedVhdx ? RamAccess.Standard : DefaultRamAccess);
 
     public void Validate()
     {
         if (SchemaVersion != 1 || ResourceId == Guid.Empty || !Enum.IsDefined(Mode) || !Enum.IsDefined(Source) ||
-            !Enum.IsDefined(Allocation))
+            !Enum.IsDefined(Allocation) || !Enum.IsDefined(Access))
             throw new ArgumentException("Invalid managed disk definition or schema version.");
         if (SectorBytes is not (512 or 4096) || CapacityBytes < 16 * MiB || CapacityBytes > long.MaxValue || CapacityBytes % MiB != 0)
             throw new ArgumentException("Capacity must be an aligned whole MiB, at least 16 MiB, with a supported sector size.");
@@ -73,6 +81,8 @@ public sealed record ManagedDiskDefinition(
                 Cache.Validate(AcceptVolatileWrites);
                 if (ReadOnly)
                     throw new NotSupportedException("Read-only VHDX read-cache activation requires separate qualification.");
+                if (Access != RamAccess.Standard)
+                    throw new ArgumentException("Direct access applies to RAM-backed disks; a VHDX-backed disk uses its cache.");
             }
             else
             {

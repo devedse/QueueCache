@@ -112,7 +112,11 @@ public sealed partial class WindowsManagedDiskEngine
                 await StopCoreAsync(entry, ManagedDiskStopIntent.DiscardThenStop, acceptDiscard: true, null, token);
                 Update(entry, entry.Record with { StartupSession = startupSession });
             }
-            else WindowsDiskStorage.AssignLetter(volume, record.Definition.PreferredLetter);
+            else
+            {
+                WindowsDiskStorage.AssignLetter(volume, record.Definition.PreferredLetter);
+                RamDirectBinding.Enable(record.Definition, volume);
+            }
         }
         else
         {

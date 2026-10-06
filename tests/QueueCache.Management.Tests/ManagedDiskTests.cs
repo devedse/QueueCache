@@ -19,6 +19,7 @@ internal static class ManagedDiskTests
         AttachedStartupOwnership();
         NativeImageAbi();
         NativeRamAbi();
+        RamDirectContracts();
         DurableCatalog();
         await LogicalTransfers();
         await CreationTransactions();
@@ -26,6 +27,37 @@ internal static class ManagedDiskTests
         await ManagedBrokerTests.RunAsync();
         await ManagedLayoutTests.RunAsync();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");
+    }
+
+    private static void RamDirectContracts()
+    {
+        // Access is a RAM-backed setting; VHDX-backed disks use their cache.
+        (Definition(ManagedDiskMode.EphemeralRam) with { Access = RamAccess.Direct }).Validate();
+        (Definition(ManagedDiskMode.ImageInRam) with { Access = RamAccess.Direct }).Validate();
+        Throws<ArgumentException>(() => (Definition(ManagedDiskMode.CachedVhdx) with { Access = RamAccess.Direct }).Validate());
+        Throws<ArgumentException>(() => (Definition(ManagedDiskMode.EphemeralRam) with { Access = (RamAccess)7 }).Validate());
+
+        var bind = RamDirectState.BindRequest(readsOnly: true);
+        Check(bind.Length == RamDirectState.BindWireSize && BitConverter.ToUInt32(bind, 0) == 16 && BitConverter.ToUInt32(bind, 4) == 1 &&
+            BitConverter.ToUInt32(bind, 8) == RamDirectState.BindReadsOnly, "bind request matches QC_RAM_DIRECT_BIND");
+        Check(RamDirectState.StateIoctl == 0x88443460 && RamDirectState.BindIoctl == 0x8844F464, "Direct controls match the driver's CTL_CODEs");
+
+        var wire = new byte[RamDirectState.WireSize];
+        BitConverter.TryWriteBytes(wire.AsSpan(0), 160u); BitConverter.TryWriteBytes(wire.AsSpan(4), 1u);
+        BitConverter.TryWriteBytes(wire.AsSpan(8), 1u); BitConverter.TryWriteBytes(wire.AsSpan(12), (uint)RamDirectReason.Snapshot);
+        var resource = Guid.NewGuid(); resource.TryWriteBytes(wire.AsSpan(24));
+        BitConverter.TryWriteBytes(wire.AsSpan(40), 1UL << 20); BitConverter.TryWriteBytes(wire.AsSpan(48), 63UL << 20);
+        BitConverter.TryWriteBytes(wire.AsSpan(56), 5UL); BitConverter.TryWriteBytes(wire.AsSpan(88), 2UL);
+        System.Text.Encoding.Unicode.GetBytes(@"\Driver\snapman").CopyTo(wire, 96);
+        var state = RamDirectState.Decode(wire);
+        Check(state.Access == RamDirectAccess.Reads && state.Reason == RamDirectReason.Snapshot && state.ResourceId == resource &&
+            state.OffsetBytes == 1UL << 20 && state.LengthBytes == 63UL << 20 && state.ReadRequests == 5 && state.DeclinedRequests == 2 &&
+            state.Driver == @"\Driver\snapman" && !state.Full && state.Describe().Contains("shadow copy"), "Direct state decodes at the native offsets");
+        var writesOnly = (byte[])wire.Clone(); writesOnly[8] = 2;
+        Throws<InvalidDataException>(() => RamDirectState.Decode(writesOnly)); // Writes never without reads.
+        var unknownReason = (byte[])wire.Clone(); unknownReason[12] = 99;
+        Throws<InvalidDataException>(() => RamDirectState.Decode(unknownReason));
+        Throws<InvalidDataException>(() => RamDirectState.Decode(wire.AsSpan(0, 159)));
     }
 
     private static void ReservationHeadroom()
@@ -254,6 +286,17 @@ internal static class ManagedDiskTests
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Write, expected, transferBytes: RamDiskSnapshot.MaximumTransferBytes + 1));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB + 512));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Remove));
+        // Direct access is requested only at creation; the reply reports registration.
+        var direct = RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB, flags: RamDiskFlags.Direct);
+        Check(System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(direct.AsSpan(108)) == (uint)RamDiskFlags.Direct &&
+            System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(direct.AsSpan(4)) == RamDiskSnapshot.Version, "Create carries the Direct request without changing protocol version 1 (updates preflight across versions)");
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB, flags: RamDiskFlags.ReadOnly));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.SetReadOnly, expected, flags: RamDiskFlags.Direct));
+        var registered = (byte[])wire.Clone();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(registered.AsSpan(108), (uint)(RamDiskFlags.Published | RamDiskFlags.DirectRegistered));
+        Check(RamDiskSnapshot.Decode(registered).Flags.HasFlag(RamDiskFlags.DirectRegistered), "replies report Direct registration");
+        var unknownFlag = (byte[])wire.Clone(); unknownFlag[108] |= 0x40;
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(unknownFlag));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Freeze, expected));
         Check(RamDiskSnapshot.Request(RamDiskAction.Read, expected, transferBytes: 4096).Length == RamDiskSnapshot.WireSize + 4096,
             "bounded RAM transfers carry bytes, never user pointers");

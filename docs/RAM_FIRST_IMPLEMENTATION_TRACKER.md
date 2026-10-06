@@ -2850,3 +2850,97 @@ cleanly; no bugcheck. Verifier off, Q: back on its saved Fast profile, all modes
 IOPS, read/write): RAM R: 25.0/24.2, 25.0/17.3, 225k/192k, 234k/192k; image-in-RAM I: 24.3/25.0,
 25.2/17.0, 225k/191k, 236k/192k; cached VHDX S: 36.7/21.3, 14.3/13.2, 412k/386k, 319k/255k;
 Q: 36.9/21.7, 15.1/13.9, 411k/406k, 341k/261k.
+
+Direct access for RAM-backed disks (branch feature/ram-fast-path, plan 91). Implementation:
+- Shared store and write gate (`driver/shared/ramstore.h`) used by the provider's SCSI path
+  and the volume filter; kernel registration contract (`driver/shared/ramview.h`).
+- Provider split into disk/transfer/SCSI/control files; its SCSI path no longer takes a
+  per-disk spinlock (interlocked gate and counters instead); Direct creations register the
+  store, removal unregisters it before freeing pages.
+- Volume filter module `driver/qcache/ramdirect.cpp`: view registry, binding (identity,
+  single extent, known volume/disk stack drivers, BitLocker signature, write protection,
+  shadow copies), caller-thread copy (large transfers via the provider's split copy),
+  rundown for removal, permanent fallbacks with reasons (flush-and-hold ends writes;
+  unknown controls end Direct before forwarding; boot-sector change ends it). One
+  lock-free check per read/write on other volumes. Device-control boilerplate moved to
+  `devicecontrol.h`.
+- Product: `RamAccess` (default Direct for new RAM-backed disks), provider protocol
+  version 1 extended with Direct/DirectRegistered flags (a version bump made the installer's
+  update preflight, which runs the new CLI against the old provider, refuse every update;
+  found on the VM, reverted), broker bind after every publication (plus a
+  `Win32_ShadowCopy` pre-check), live state in list/status/desktop card, CLI `--access`.
+- Verification: ram-disk and image-in-ram run Direct and Standard variants; new checks
+  direct-coherence, direct-unrecognized-control, direct-snapshot-writes; lifecycle verify
+  requires Direct back after transitions. Host contract tests cover the protocol flags,
+  Direct state decoding and the Access validation.
+- Build: the cache driver now treats warnings as errors (two warning sources fixed). A
+  compiler `/analyze` probe reported only false positives and annotation-style notes, so
+  it is not part of the build.
+- VM findings fixed: the bind opened the disk stack through `\Device\Harddisk<N>\DR<N>`
+  (DR numbers are a global counter; now `Partition0`); harmless Microsoft queries seen on
+  the VM ended Direct access (now the device-type/access-bit rule, see
+  RAM_DISK_IMPLEMENTATION_PLAN.md); `direct-snapshot-writes` read the live file through
+  Windows' file cache, so no read reached the volume (now unbuffered).
+- Provider reference race (also on master): `DereferenceDisk` decremented the count and
+  then signalled the idle event, so removal could free the disk in between and the signal
+  landed in freed memory (a worker finishing a queued write can be preempted there).
+  Implementation: an `EX_RUNDOWN_REF` replaces the count and event; its release is the last
+  access, and idle-to-busy transitions no longer pay two event operations.
+Verification on 0.4.381.1 (dad0505) under Verifier (standard flags plus port/miniport
+checks, 0x309bb), Q: Strict for the runs: ram-disk, image-in-ram, managed-provider,
+managed-cli, vhdx-backed and managed-broker-restart PASS, including direct-coherence,
+direct-unrecognized-control and direct-snapshot-writes at 512 and 4096-byte sectors.
+managed-lifecycle-prepare, a real restart and managed-lifecycle-verify (Restart) PASS:
+automatic Direct disks came back with Direct access. Stress: 451 GiB verified byte-exact on
+two Direct disks with ~17.6M DiskSpd I/Os (writes of 4 KiB..1 MiB, so both paths). Adapter
+restart (broker stopped, as before) unloaded and reloaded qcramdisk (2 loads, 1 unload)
+and a new Direct disk worked; with the broker running PnP vetoes the stop, as on master.
+No bugcheck since the one below. Earlier results:
+- 0.4.377.1 (9a7c4ef) under Verifier: one bugcheck 0xA in `nt!KiInsertTimerTable` (a
+  timer-table entry with a null link, hit by an unrelated thread) about 19 s into
+  `ram-disk`, near the Direct variant's shadow-copy step and Stop. Only a minidump was
+  configured. Not reproduced since: 9 more `ram-disk` runs, 4 reboot-then-suite rounds,
+  16 shadow-copy/Stop rounds (Direct, with and without a live snapshot) and a 180 s
+  stress (two Direct disks, 1.14 TiB verified byte-exact, ~9.5M DiskSpd I/Os), with Verifier
+  plus port/miniport checks. The VM now writes kernel dumps for the rest of this
+  verification so a recurrence identifies the overwritten memory. The cause is not proven;
+  the provider reference race above is the one use-after-free found in review.
+- BitLocker (manual, `.lab` script, filter unchanged since 0.4.377.1): Direct access was full
+  on a new 512 MiB Direct disk; `Enable-BitLocker` ended it before forwarding its first
+  state-changing control (reason Control, 0x0056C04C, nothing declined), encryption
+  reached FullyEncrypted, the file written before was intact and a write afterwards read
+  back exactly.
+- Write-performance regression (filter dispatch change), Verifier off, Q: on its saved Fast
+  profile, CDM 9.0.3 DiskSpd (SHA-256 7281BF6D...): master 0.4.173.1 (549d237) and 0.4.380.2
+  (c43cc2b), both 72/72 MEASURED. Median IOPS ratio 0.997 over all 24 configurations and
+  1.007 over the 16 cached ones (0.948..1.022, repetition ranges overlapping); the Off cases
+  write through to the cluster-backed disk and vary 0.83..1.08 with single repetitions as
+  low as 50 vs 118 IOPS. No regression. A first master attempt stopped at case 29 on a
+  2.6 s telemetry gap (host stall) and was rerun in full, not combined.
+- CDM-style rows (Verifier off, best of 3, GB/s or IOPS read/write; `.lab` bench-direct):
+  0.4.380.2 Direct R: SEQ1M Q8 26.7/17.4, Q1 26.7/17.5, RND4K Q32 430k/337k, Q1 452k/339k;
+  Standard T: 24.4/25.4, 24.2/16.7, 228k/194k, 236k/195k. A Direct write occupied its caller,
+  so Q8 writes could not overlap: writes of 512 KiB or more now take the standard path
+  (dad0505). 0.4.381.1: Direct R: 26.7/24.4, 27.1/17.2, 434k/330k, 453k/334k; image-in-RAM
+  Direct I: 26.5/25.1, 26.9/17.2, 429k/332k, 454k/328k; Standard T: 24.3/24.5, 24.9/17.2,
+  227k/193k, 232k/194k; Q: (Fast cache) 36.8/22.0, 14.8/13.9, 404k/411k, 331k/265k.
+  Direct leads at queue depth 1; Q: still leads at SEQ1M Q8 read and RND4K Q32 write
+  because its worker threads overlap queued requests.
+- Why (same depth from 1 vs 4 submitting threads, DiskSpd per-CPU busy %): Direct RND4K write
+  336k at both Q1T1 and Q32T1 with one CPU busy (100/1/0/0), 1.09M at Q8T4 (all 100); Q:
+  264k at Q1T1, 402k at Q32T1 (98/31/40/32: its worker joins), 191k at Q8T4. SEQ1M read:
+  Direct 26.2 GB/s at Q8T1 (split copy), 39.2 GB/s at Q2T4; Q: 36.0 at Q8T1, 31.5 at Q2T4.
+  A Direct request is finished by its submitter, so one thread's queue depth adds nothing.
+- ImDisk 2.1.2 (virtual-memory RAM disk, 2 GiB NTFS) in the same session, same rows: 16.1/19.2,
+  10.5/13.0 GB/s, 264k/131k, 44k/27k IOPS (Direct R: 26.8/24.8, 26.8/16.6, 432k/335k,
+  451k/336k; Q: 29.2/21.0, 11.0/11.5, 431k/396k, 338k/268k).
+- Queued Direct copies (3fb9d39, e8e31c8): tried and reverted. Handing Direct copies to the
+  provider's per-processor workers while the submitter kept others in flight (the provider's
+  inline-or-worker policy, shared) lost on this VM: queueing every request gave RND4K write
+  263k/297k/393k (Q1T1/Q32T1/Q8T4, inline 335k/336k/1.09M) and SEQ1M read 22.3 GB/s at Q8T1
+  and Q2T4 (inline 26.2/39.2); only RND4K Q32T1 read gained (532k vs 432k). Queueing only
+  copies of 256 KiB or more, and only to free processors, kept small I/O inline but still
+  lost large transfers (SEQ1M read 20.8 at Q8T1, 23.1 at Q2T4; CDM SEQ1M Q8 20.7/22.9 vs
+  26.7/24.4). A CPU profile of SEQ1M Q8T1 showed the workers spending 21% of busy samples
+  spinning between copies against 28% copying; the handoff and spin cost more than the
+  overlap gained. The inline design (dad0505) stays.

@@ -152,6 +152,25 @@ public sealed class CacheDevice : IDisposable
             throw new InvalidDataException("Unexpected policy response.");
     }
 
+    /// <summary>Direct access state of a volume on a QueueCache RAM disk.</summary>
+    public RamDirectState GetRamDirectState()
+    {
+        var data = new byte[RamDirectState.WireSize];
+        if (!Native.DeviceIoControl(handle, RamDirectState.StateIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Direct access state unavailable (requires the matching driver).");
+        return RamDirectState.Decode(data.AsSpan(0, (int)returned));
+    }
+    /// <summary>Asks the volume filter to serve this RAM-disk volume directly. Requires a writable handle;
+    /// the returned state says what was enabled and why anything was not.</summary>
+    public RamDirectState BindRamDirect(bool readsOnly)
+    {
+        var request = RamDirectState.BindRequest(readsOnly);
+        var data = new byte[RamDirectState.WireSize];
+        if (!Native.DeviceIoControlExchange(handle, RamDirectState.BindIoctl, request, (uint)request.Length, data, (uint)data.Length, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Direct access request failed (requires the matching driver).");
+        return RamDirectState.Decode(data.AsSpan(0, (int)returned));
+    }
+
     public CacheStatistics GetStatistics()
     {
         var data = new byte[CacheStatistics.WireSize];
@@ -191,6 +210,10 @@ public sealed class CacheDevice : IDisposable
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool DeviceIoControlCommand(SafeFileHandle device, uint code, byte[] input,
             uint inputLength, IntPtr output, uint outputLength, out uint returned, IntPtr overlapped);
+        [DllImport("kernel32.dll", EntryPoint = "DeviceIoControl", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool DeviceIoControlExchange(SafeFileHandle device, uint code, byte[] input,
+            uint inputLength, [Out] byte[] output, uint outputLength, out uint returned, IntPtr overlapped);
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
         internal static extern SafeFileHandle CreateFileW(string name, uint access, uint share,
             IntPtr security, uint creation, uint flags, IntPtr template);
