@@ -89,6 +89,11 @@ internal static class ViewTests
               Named<Control>(window, "TimingCard").IsEffectivelyVisible == (theme == "dark"),
             $"{theme}: a running RAM disk shows its space, activity and (when on) driver timing");
         Save(window, output, $"ram-disk-{theme}");
+        // The whole details pane, down to the driver timing and facts.
+        window.Height = 1400;
+        Show(window, shell, AppPage.VirtualDisks);
+        Save(window, output, $"ram-disk-full-{theme}");
+        window.Height = 820;
 
         Show(window, shell, AppPage.Diagnostics);
         Save(window, output, $"diagnostics-{theme}");
