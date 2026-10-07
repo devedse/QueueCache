@@ -4,6 +4,7 @@
              xmlns:vm="using:QueueCache.Desktop.ViewModels"
              xmlns:ctl="using:QueueCache.Desktop.Controls"
              xmlns:fmt="using:QueueCache.Desktop.Formatting"
+             xmlns:views="using:QueueCache.Desktop.Views"
              x:Class="QueueCache.Desktop.Views.VirtualDiskDetailsView"
              x:DataType="vm:VirtualDiskViewModel">
   <ScrollViewer>
@@ -111,6 +112,110 @@
                     IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
       <ui:FAInfoBar Name="NoticeBar" Message="{Binding NoticeText}" IsClosable="True" IsOpen="{Binding HasNotice, Mode=TwoWay}" IsVisible="{Binding HasNotice}"
                     Severity="{Binding NoticeSeverity, Converter={x:Static fmt:Converters.Severity}}" />
+
+      <!-- A disk image with a RAM cache: its cache, as on the Caches page. -->
+      <ui:FAInfoBar Name="CacheProblemBar" Title="Writes to the image are failing" Message="{Binding Cache.Problem, FallbackValue={x:Null}}" Severity="Error" IsClosable="False"
+                    IsOpen="{Binding Cache.Problem, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}"
+                    IsVisible="{Binding Cache.Problem, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}">
+        <ui:FAInfoBar.ActionButton>
+          <Button Content="Retry" Command="{Binding Cache.RetryCommand, FallbackValue={x:Null}}" IsEnabled="{Binding Cache.CanRetry, FallbackValue=False}" />
+        </ui:FAInfoBar.ActionButton>
+      </ui:FAInfoBar>
+      <views:CacheContentsView Name="CacheContents" DataContext="{Binding Cache}" IsVisible="{Binding HasCache, FallbackValue=False}" />
+
+      <!-- A running RAM disk or image in RAM: space, totals, activity. -->
+      <StackPanel Name="Figures" Spacing="16" IsVisible="{Binding HasActivity}">
+        <Border Classes="card" Name="SpaceCard" IsVisible="{Binding HasSpace}">
+          <StackPanel Spacing="12">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Classes="strong" Text="Space on the disk" />
+              <TextBlock Grid.Column="1" Classes="secondary number" Text="{Binding UsedText}" />
+            </Grid>
+            <ctl:SegmentBar First="{Binding UsedBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            Total="{Binding SpaceBytes, Converter={x:Static fmt:Converters.Amount}}"
+                            FirstBrush="{DynamicResource QcDisksBrush}" AutomationProperties.Name="{Binding UsedText}" />
+            <TextBlock Classes="caption secondary" TextWrapping="Wrap">
+              <Run Text="Free: " /><Run Text="{Binding FreeText}" /><Run Text=". The disk's RAM is reserved in full while it runs; deleting files does not give RAM back." />
+            </TextBlock>
+          </StackPanel>
+        </Border>
+
+        <UniformGrid Name="Tiles" Classes="tiles" Columns="4">
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Read · since start" />
+              <TextBlock Classes="value" Text="{Binding ReadTotalText}" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Written · since start" />
+              <TextBlock Classes="value" Text="{Binding WrittenTotalText}" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile" ToolTip.Tip="Share of the bytes copied straight from the disk's RAM by the volume filter, instead of through the full Windows disk stack">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Through Direct access" />
+              <TextBlock Classes="value" Text="{Binding DirectShareText}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Errors · since start" />
+              <TextBlock Classes="value" Text="{Binding ErrorsText}" />
+            </StackPanel>
+          </Border>
+        </UniformGrid>
+
+        <UniformGrid Name="SaveTiles" Classes="tiles" Columns="2" IsVisible="{Binding HasSaveFigures}">
+          <Border Classes="card tile" ToolTip.Tip="Everything written since the last save. Writing the same place twice counts twice, so the changes can be smaller.">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Written since the last save" />
+              <TextBlock Classes="value" Text="{Binding WrittenSinceSaveText}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+          <Border Classes="card tile">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption secondary" Text="Last save" />
+              <TextBlock Classes="value" Text="{Binding LastSaveText}" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+        </UniformGrid>
+
+        <Border Classes="card" Name="ActivityCard">
+          <StackPanel Spacing="8">
+            <TextBlock Classes="strong" Text="{Binding ActivityTitle}" />
+            <WrapPanel>
+              <StackPanel Classes="legend">
+                <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
+                <TextBlock Classes="caption secondary" Text="Reads" />
+                <TextBlock Classes="caption strong number" Text="{Binding ReadingText}" />
+              </StackPanel>
+              <StackPanel Classes="legend">
+                <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+                <TextBlock Classes="caption secondary" Text="Writes" />
+                <TextBlock Classes="caption strong number" Text="{Binding WritingText}" />
+              </StackPanel>
+              <StackPanel Classes="legend">
+                <TextBlock Classes="caption secondary" Text="Requests" />
+                <TextBlock Classes="caption strong number" Text="{Binding RequestsText}" />
+              </StackPanel>
+            </WrapPanel>
+            <ctl:ActivityChart Name="Chart" Samples="{Binding Activity}" SecondsPerSample="{Binding SecondsPerSample}" Height="160"
+                               ShowDrained="False" IncomingLabel="Writes"
+                               AutomationProperties.Name="Activity chart: reads and writes in MiB/s" />
+            <TextBlock Classes="caption secondary" TextWrapping="Wrap"
+                       Text="Counts what reaches the disk. Windows answers many reads from its own file cache first." />
+          </StackPanel>
+        </Border>
+
+        <Border Classes="card" Name="TimingCard" IsVisible="{Binding TimingOn}">
+          <StackPanel Spacing="6">
+            <TextBlock Classes="strong" Text="Driver timing" />
+            <SelectableTextBlock Name="TimingText" Classes="number" Text="{Binding TimingText}" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
 
       <Border Classes="card" Name="FactsCard">
         <ItemsControl Name="Facts" ItemsSource="{Binding Facts}">

@@ -47,6 +47,7 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
     auto disk = request->Disk;
     QcRamStoreCopy(&disk->Store, request->Offset, request->Buffer, request->Bytes, request->Write);
     if (request->Write) QcRamStoreEndWrite(&disk->Store);
+    QcRamTimingEnd(&disk->Store, request->Write, request->Started);
     InterlockedDecrement(&disk->Outstanding);
     DereferenceDisk(disk);
     KIRQL irql; KeRaiseIrql(DISPATCH_LEVEL, &irql);

@@ -6,7 +6,8 @@ public enum AppTheme { System, Light, Dark }
 
 /// <summary>Per-user preferences of the desktop app. Kept apart from cache and disk configuration,
 /// which belong to the driver and the managed-disk service.</summary>
-public sealed record DesktopSettings(double UpdateSeconds = 1, AppTheme Theme = AppTheme.System, bool KeepRunningInTray = true)
+public sealed record DesktopSettings(double UpdateSeconds = 1, AppTheme Theme = AppTheme.System, bool KeepRunningInTray = true,
+    bool DriverTiming = false, bool CallerPath = true)
 {
     public static readonly double[] UpdateChoices = [0.5, 1, 2, 5, 10];
 }

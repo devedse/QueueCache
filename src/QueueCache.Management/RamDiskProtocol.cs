@@ -5,6 +5,8 @@ namespace QueueCache.Management;
 public enum RamDiskAction : uint
 {
     Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly, StartupSession,
+    /// <summary>Reply followed by <see cref="RamDiskStatistics"/>; offered when Capabilities reports StatisticsSupported.</summary>
+    Statistics, SetTiming,
     DeveloperCreateAllocationFailure = 0x100
 }
 [Flags]
@@ -14,7 +16,35 @@ public enum RamDiskFlags : uint
     /// <summary>Create: offer the disk to the volume filter for Direct access.</summary>
     Direct = 8,
     /// <summary>Reply: the volume filter accepted the disk for Direct access.</summary>
-    DirectRegistered = 16
+    DirectRegistered = 16,
+    /// <summary>Every transfer is timed (SetTiming). Off when a disk is created.</summary>
+    Timing = 32,
+    /// <summary>Capabilities reply: the provider offers Statistics and SetTiming.</summary>
+    StatisticsSupported = 64
+}
+
+/// <summary>Request counts of the provider's SCSI path, and transfer timing of the SCSI and Direct
+/// paths while <see cref="RamDiskFlags.Timing"/> is on (native QC_RAM_STATISTICS).</summary>
+public sealed record RamDiskStatistics(ulong ReadRequests, ulong WriteRequests, ulong Frequency,
+    ulong TimedReads, ulong TimedWrites, ulong ReadTicks, ulong WriteTicks, ulong MaxReadTicks, ulong MaxWriteTicks)
+{
+    public const int WireSize = 72;
+    public static RamDiskStatistics Decode(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < WireSize)
+            throw new InvalidDataException("Truncated RAM disk statistics.");
+        var v = new ulong[9];
+        for (var i = 0; i < v.Length; ++i)
+            v[i] = BinaryPrimitives.ReadUInt64LittleEndian(data[(i * 8)..]);
+        var result = new RamDiskStatistics(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
+        if (result.Frequency == 0)
+            throw new InvalidDataException("RAM disk statistics without a timer frequency.");
+        return result;
+    }
+    [System.Text.Json.Serialization.JsonIgnore] public double AverageReadMicroseconds => TimedReads == 0 ? 0 : 1e6 * ReadTicks / TimedReads / Frequency;
+    [System.Text.Json.Serialization.JsonIgnore] public double AverageWriteMicroseconds => TimedWrites == 0 ? 0 : 1e6 * WriteTicks / TimedWrites / Frequency;
+    [System.Text.Json.Serialization.JsonIgnore] public double MaxReadMicroseconds => 1e6 * MaxReadTicks / Frequency;
+    [System.Text.Json.Serialization.JsonIgnore] public double MaxWriteMicroseconds => 1e6 * MaxWriteTicks / Frequency;
 }
 
 /// <summary>Versioned Storport control ABI. All offsets are independent of CLR packing.</summary>
@@ -43,7 +73,8 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
         ulong offset = 0, int transferBytes = 0, Guid freezeOwner = default, RamDiskFlags flags = RamDiskFlags.None)
     {
         if (!Enum.IsDefined(action) || transferBytes < 0 || transferBytes > MaximumTransferBytes ||
-            (flags & ~(action switch { RamDiskAction.Create => RamDiskFlags.Direct, RamDiskAction.SetReadOnly => RamDiskFlags.ReadOnly, _ => RamDiskFlags.None })) != 0 ||
+            (flags & ~(action switch { RamDiskAction.Create => RamDiskFlags.Direct, RamDiskAction.SetReadOnly => RamDiskFlags.ReadOnly,
+                RamDiskAction.SetTiming => RamDiskFlags.Timing, _ => RamDiskFlags.None })) != 0 ||
             slot >= MaximumDisks || expected?.Slot >= MaximumDisks ||
             (action is not (RamDiskAction.Capabilities or RamDiskAction.Enumerate or RamDiskAction.Create or RamDiskAction.StartupSession or RamDiskAction.DeveloperCreateAllocationFailure) && expected is null) ||
             (action is RamDiskAction.Create or RamDiskAction.DeveloperCreateAllocationFailure && (resource == Guid.Empty || capacity < 16UL << 20 || capacity > 128UL << 30 ||
@@ -82,7 +113,8 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
             BinaryPrimitives.ReadUInt32LittleEndian(data[116..]), Read64(data, 120), Read64(data, 128),
             Read64(data, 136), Read64(data, 144), Read64(data, 152), Read64(data, 160));
         if (result.BootEpoch == Guid.Empty || result.CapacityBytes == 0 || result.CapacityBytes > long.MaxValue ||
-            (result.Flags & ~(RamDiskFlags.Published | RamDiskFlags.ReadOnly | RamDiskFlags.Frozen | RamDiskFlags.DirectRegistered)) != 0 ||
+            (result.Flags & ~(capabilities ? RamDiskFlags.StatisticsSupported :
+                RamDiskFlags.Published | RamDiskFlags.ReadOnly | RamDiskFlags.Frozen | RamDiskFlags.DirectRegistered | RamDiskFlags.Timing)) != 0 ||
             (!capabilities && (result.ResourceId == Guid.Empty || result.CreationGeneration == 0 || result.Slot >= MaximumDisks ||
                 result.SectorBytes is not (512 or 4096) || result.CapacityBytes % result.SectorBytes != 0 ||
                 result.ReservedBytes < result.CapacityBytes ||

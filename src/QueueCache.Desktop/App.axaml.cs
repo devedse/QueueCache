@@ -27,15 +27,19 @@ public sealed class App : Application
         if (OperatingSystem.IsWindows() && ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var dialogs = new DialogService(() => window);
-            shell = new ShellViewModel(new WindowsCacheTaskService(), new WindowsManagedDiskService(), dialogs, new DesktopSettingsStore(DesktopSettingsStore.DefaultPath));
+            shell = new ShellViewModel(new WindowsCacheTaskService(), new WindowsManagedDiskService(), dialogs, new DesktopSettingsStore(DesktopSettingsStore.DefaultPath),
+                signIn: new WindowsSignInTask());
             ApplyTheme(shell.Settings.Current.Theme);
             shell.Settings.Changed += (_, settings) => ApplyTheme(settings.Theme);
             // The window may hide to the notification area; the app ends only on Exit or a real close.
             desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             window = new MainWindow { DataContext = shell };
             window.Closed += (_, _) => desktop.Shutdown();
-            desktop.MainWindow = window;
+            // Started at sign-in (--tray): only the notification-area icon until the window is asked for.
+            if (!Program.InTray)
+                desktop.MainWindow = window;
             CreateTrayIcon(desktop);
+            _ = shell.StartAsync();
             if (Program.Instance is { } instance)
                 instance.ShowRequested += () => Dispatcher.UIThread.Post(ShowWindow);
         }
@@ -80,7 +84,9 @@ public sealed class App : Application
         {
             var summary = shell.Monitor.HealthTitle;
             trayStatus.Header = summary;
-            tray.ToolTipText = "QueueCache · " + summary;
+            // Windows shows at most 127 characters.
+            var text = "QueueCache · " + summary + (shell.Monitor.ActivitySummary is { } activity ? "\n" + activity : "");
+            tray.ToolTipText = text.Length > 127 ? text[..127] : text;
         };
         desktop.Exit += (_, _) => tray.IsVisible = false;
     }

@@ -5,14 +5,21 @@ using QueueCache.Management;
 namespace QueueCache.Operations.ManagedDisks;
 
 public enum ManagedDiskJournalStage { Creating, Loading, Ready, Exporting, CandidateVerified, Committed, Stopping, Stopped, RecoveryRequired, Formatting }
+/// <summary>The last committed save: how long it took, how much it copied, and the disk's
+/// <see cref="ManagedDiskRecord.WrittenBytes"/> when it was frozen (for "written since").</summary>
+public sealed record ManagedSaveStatistics(TimeSpan Duration, ulong Bytes, ulong? WrittenBytes, Guid BootEpoch, ulong CreationGeneration);
 public sealed record ManagedImageReference(ImageInspection Identity, LogicalImageDigest? Digest, ulong? Generation);
 public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, ManagedDiskRuntime? Runtime = null,
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
     ImageInspection? OriginalSource = null, RamDiskSnapshot? Native = null, int? PhysicalDiskNumber = null,
     string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
     Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0,
-    ManagedImageIoSnapshot? ImageIo = null, RamDirectState? Direct = null)
+    ManagedImageIoSnapshot? ImageIo = null, RamDirectState? Direct = null, RamDiskStatistics? Statistics = null,
+    ManagedSaveStatistics? LastSave = null)
 {
+    /// <summary>Everything written to the RAM disk since it started, through either access path.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public ulong? WrittenBytes => Native is null ? null : Native.WriteBytes + (Direct?.WriteBytes ?? 0);
     public Guid ResourceId => Definition.ResourceId;
     public void Validate()
     {

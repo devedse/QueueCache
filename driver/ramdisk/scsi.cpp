@@ -36,15 +36,16 @@ static Outcome Transfer(ADAPTER* adapter, DISK* disk, PSCSI_REQUEST_BLOCK srb, P
     if (lba > MAXULONGLONG / store.SectorBytes || blocks > MAXULONG / store.SectorBytes) { Sense(srb, 5, 0x21); return Outcome::Completed; }
     const auto offset = lba * store.SectorBytes; const auto bytes = static_cast<ULONG>(blocks * store.SectorBytes);
     if (srb->DataTransferLength < bytes || !QcRamStoreBounds(&store, offset, bytes)) { Sense(srb, 5, 0x21); return Outcome::Completed; }
+    const auto started = QcRamTimingStart(&store);
     if (write)
     {
         const auto admission = QcRamStoreBeginWrite(&store);
         if (admission == QcRamAdmission::ReadOnly) { Sense(srb, 7, 0x27); return Outcome::Completed; }
         if (admission == QcRamAdmission::Frozen) { Busy(srb); return Outcome::Completed; }
         if (bytes) QcRamStoreChanged(&store);
-        InterlockedAdd64(&disk->WriteBytes, bytes);
+        InterlockedAdd64(&disk->WriteBytes, bytes); InterlockedIncrement64(&disk->WriteRequests);
     }
-    else InterlockedAdd64(&disk->ReadBytes, bytes);
+    else { InterlockedAdd64(&disk->ReadBytes, bytes); InterlockedIncrement64(&disk->ReadRequests); }
     srb->DataTransferLength = bytes;
     if (bytes && UseWorker(adapter, disk, bytes, write))
     {
@@ -52,13 +53,14 @@ static Outcome Transfer(ADAPTER* adapter, DISK* disk, PSCSI_REQUEST_BLOCK srb, P
         // completes. The disk reference and the admitted write move with the request.
         auto request = static_cast<REQUEST*>(srb->SrbExtension);
         request->Srb = srb; request->Disk = disk; request->Buffer = data; request->Offset = offset;
-        request->Bytes = bytes; request->Write = write;
+        request->Bytes = bytes; request->Write = write; request->Started = started;
         QueueTransfer(adapter, request);
         return Outcome::Queued;
     }
     if (bytes && !write && adapter->WorkerCount > 1 && bytes >= 2 * SplitChunk) CopySplit(adapter, &store, offset, data, bytes, false);
     else if (bytes) QcRamStoreCopy(&store, offset, data, bytes, write);
     if (write) QcRamStoreEndWrite(&store);
+    QcRamTimingEnd(&store, write, started);
     return Outcome::Completed;
 }
 

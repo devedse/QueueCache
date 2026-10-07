@@ -20,11 +20,16 @@ public sealed partial class DashboardMonitor : ObservableObject
     internal static readonly TimeSpan InventoryFallback = TimeSpan.FromMinutes(2);
     private readonly Func<DateTimeOffset> clock;
     private readonly Func<ulong> availableRam;
+    private readonly Func<string, VolumeSpace?> volumeSpace;
+    /// <summary>Volumes of disk images with a RAM cache: sampled here, shown on the virtual disk.</summary>
+    private readonly List<VolumeViewModel> diskVolumes = [];
     private bool discovering, samplingDisks, closed;
 
     public DashboardMonitor(ICacheTaskService caches, IManagedDiskService disks, IDialogService dialogs,
-        Func<DateTimeOffset>? clock = null, Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null)
+        Func<DateTimeOffset>? clock = null, Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null,
+        Func<string, VolumeSpace?>? volumeSpace = null)
     {
+        this.volumeSpace = volumeSpace ?? (path => OperatingSystem.IsWindows() ? VolumeSpaceReader.Read(path) : null);
         Caches = caches;
         Disks = disks;
         Dialogs = dialogs;
@@ -48,6 +53,12 @@ public sealed partial class DashboardMonitor : ObservableObject
     internal DateTimeOffset NextInventory { get; set; } = DateTimeOffset.MinValue;
     internal bool GlobalBusy { get; private set; }
 
+    /// <summary>Settings → Advanced: detailed driver timing for every cache and RAM disk. The drivers
+    /// start with it off; the monitor turns it on (or off) wherever it differs.</summary>
+    [ObservableProperty] private bool driverTiming;
+    /// <summary>Settings → Advanced: serve cache hits on the calling thread (driver default on).</summary>
+    [ObservableProperty] private bool callerPath = true;
+
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasMessage))] private string? message;
     [ObservableProperty] private NoticeSeverity messageSeverity;
     [ObservableProperty] private string? volumesStatus = "Looking for volumes…";
@@ -56,6 +67,7 @@ public sealed partial class DashboardMonitor : ObservableObject
     [ObservableProperty] private string healthTitle = "Checking caches and disks…";
     [ObservableProperty] private string healthDetail = "";
     [ObservableProperty] private string healthWord = "Checking";
+    [ObservableProperty] private string? activitySummary;
     [ObservableProperty] private double ramBarTotal;
     [ObservableProperty] private ulong cachesReservedBytes;
     [ObservableProperty] private ulong disksReservedBytes;
@@ -86,7 +98,7 @@ public sealed partial class DashboardMonitor : ObservableObject
     public async Task TickAsync()
     {
         var now = clock();
-        foreach (var volume in Volumes.Where(v => v.State is not null && !v.IsStale && now - v.Sampled > StaleAfter))
+        foreach (var volume in Volumes.Concat(diskVolumes).Where(v => v.State is not null && !v.IsStale && now - v.Sampled > StaleAfter))
             volume.MarkStale();
         UpdateSummary();
         if (closed)
@@ -110,12 +122,21 @@ public sealed partial class DashboardMonitor : ObservableObject
             await SampleVirtualDisksAsync();
             var listed = await Caches.ListAsync();
             // A virtual disk's volume belongs to the virtual disk, not to the ordinary cache list.
-            var volumes = listed.Where(v => !VirtualDisks.Any(d => d.Record.VolumePath?.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase) == true)).ToArray();
+            bool Managed(VolumeDescription v) => VirtualDisks.Any(d => d.Record.VolumePath?.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase) == true);
+            var volumes = listed.Where(v => !Managed(v)).ToArray();
+            var cached = listed.Where(v => Managed(v) && VirtualDisks.Any(d => d.IsCachedImage &&
+                d.Record.VolumePath!.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase))).ToArray();
             var saved = await Caches.ListSavedAsync();
             if (closed)
                 return;
             if (!Volumes.Any(v => v.IsBusy) && Signature(volumes) != Signature(Volumes.Select(v => v.Volume)))
                 Rebuild(volumes);
+            if (Signature(cached) != Signature(diskVolumes.Select(v => v.Volume)))
+            {
+                diskVolumes.Clear();
+                diskVolumes.AddRange(cached.Select(v => new VolumeViewModel(this, v)));
+            }
+            AttachDiskCaches();
             var present = volumes.Select(v => v.VolumeId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             Disconnected.Clear();
             foreach (var profile in saved.Where(p => !present.Contains(p.VolumeId)))
@@ -135,7 +156,18 @@ public sealed partial class DashboardMonitor : ObservableObject
     }
 
     /// <summary>Reads every volume's cache state at once; each volume at most once at a time.</summary>
-    public Task SampleAsync() => Task.WhenAll(Volumes.ToArray().Select(SampleVolumeAsync));
+    public Task SampleAsync() => Task.WhenAll(Volumes.Concat(diskVolumes).ToArray().Select(SampleVolumeAsync));
+
+    /// <summary>Still shown somewhere: a late sample for a replaced volume is dropped.</summary>
+    private bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);
+
+    private void AttachDiskCaches()
+    {
+        foreach (var disk in VirtualDisks)
+            disk.Cache = disk.IsCachedImage && disk.Record.VolumePath is { } path
+                ? diskVolumes.FirstOrDefault(v => v.Volume.VolumePath.Equals(path, StringComparison.OrdinalIgnoreCase))
+                : null;
+    }
 
     internal async Task SampleVolumeAsync(VolumeViewModel volume)
     {
@@ -145,15 +177,17 @@ public sealed partial class DashboardMonitor : ObservableObject
         try
         {
             var state = await Caches.ReadAsync(volume.Volume);
-            if (closed || !Volumes.Contains(volume))
+            if (closed || !Owns(volume))
                 return; // A replaced volume: its late sample must not reach the new one.
             var now = clock();
             var rates = volume.State is null ? null : CacheTelemetry.Between(volume.State, state, now > volume.Sampled ? now - volume.Sampled : TimeSpan.FromTicks(1));
             volume.Apply(state, rates, now);
+            VirtualDisks.FirstOrDefault(d => d.Cache == volume)?.CacheSampled();
+            _ = ApplyDeveloperSettingsAsync(volume, state);
         }
         catch (Exception ex)
         {
-            if (!closed && Volumes.Contains(volume))
+            if (!closed && Owns(volume))
                 volume.MarkUnavailable(ex);
         }
         finally
@@ -173,11 +207,15 @@ public sealed partial class DashboardMonitor : ObservableObject
             var records = await Disks.ListAsync();
             if (closed)
                 return;
+            var spaces = await Task.Run(() => records.ToDictionary(r => r.ResourceId,
+                r => r.VolumePath is { } path && r.Runtime?.State == ManagedDiskState.Ready ? volumeSpace(path) : null));
+            if (closed)
+                return;
             var oldVolumes = VirtualDisks.Select(d => d.Record.VolumePath).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
             var newVolumes = records.Select(r => r.VolumePath).OfType<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (!oldVolumes.SetEquals(newVolumes))
                 NextInventory = DateTimeOffset.MinValue; // A disk's volume came or went: rediscover volumes now.
-            var now = DateTimeOffset.Now;
+            var now = clock();
             var ids = records.Select(r => r.ResourceId).ToHashSet();
             var changed = false;
             foreach (var gone in VirtualDisks.Where(d => !ids.Contains(d.ResourceId)).ToArray())
@@ -190,12 +228,15 @@ public sealed partial class DashboardMonitor : ObservableObject
                 var existing = VirtualDisks.FirstOrDefault(d => d.ResourceId == record.ResourceId);
                 if (existing is null)
                 {
-                    VirtualDisks.Add(new(this, record));
+                    VirtualDisks.Add(new(this, record, now, spaces[record.ResourceId]));
                     changed = true;
                 }
                 else
-                    existing.Apply(record, now);
+                    existing.Apply(record, now, spaces[record.ResourceId]);
             }
+            AttachDiskCaches();
+            foreach (var disk in VirtualDisks)
+                _ = ApplyDiskTimingAsync(disk);
             VirtualDisksStatus = records.Count == 0 ? "No virtual disks yet. Create one to get a disk that lives in RAM." : null;
             if (changed)
                 Rebuilt?.Invoke(this, EventArgs.Empty);
@@ -211,6 +252,45 @@ public sealed partial class DashboardMonitor : ObservableObject
             samplingDisks = false;
         }
         UpdateSummary();
+    }
+
+    /// <summary>Brings one cache to the Advanced settings. A cache that refuses keeps its state
+    /// until it is recreated (a new instance) or the setting changes; it is not asked again each update.</summary>
+    private async Task ApplyDeveloperSettingsAsync(VolumeViewModel volume, WriteCacheState state)
+    {
+        if (state.BudgetBytes == 0 || volume.IsBusy || closed)
+            return;
+        // Caller path: the driver starts each cache with it on and does not report it.
+        if (volume.CallerPathBelief is not { } belief || belief.Instance != state.Instance)
+            volume.CallerPathBelief = belief = (state.Instance, true);
+        if (belief.Enabled != CallerPath)
+        {
+            volume.CallerPathBelief = (state.Instance, CallerPath);
+            try { await Caches.SetCallerPathAsync(volume.Volume, CallerPath); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { }
+        }
+        var timing = state.Performance is { } performance ? performance.TimingEnabled != 0 : (bool?)null;
+        if (timing is { } on && on != DriverTiming && volume.TimingAttempt != (state.Instance, DriverTiming))
+        {
+            volume.TimingAttempt = (state.Instance, DriverTiming);
+            try { await Caches.SetTimingAsync(volume.Volume, DriverTiming); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { }
+        }
+    }
+
+    private async Task ApplyDiskTimingAsync(VirtualDiskViewModel disk)
+    {
+        var record = disk.Record;
+        if (record.Native is not { } native || record.Statistics is null || record.Runtime is not { State: ManagedDiskState.Ready } runtime ||
+            disk.IsBusy || GlobalBusy || closed)
+            return;
+        var on = (native.Flags & RamDiskFlags.Timing) != 0;
+        var attempt = (native.BootEpoch, native.CreationGeneration, DriverTiming);
+        if (on == DriverTiming || disk.TimingAttempt == attempt)
+            return;
+        disk.TimingAttempt = attempt;
+        try { await Disks.ExecuteAsync(new(disk.ResourceId, ManagedDiskAction.SetTiming, ManagedDiskExpected.From(runtime), Timing: DriverTiming)); }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { }
     }
 
     private void Rebuild(IReadOnlyList<VolumeDescription> volumes)
@@ -277,6 +357,11 @@ public sealed partial class DashboardMonitor : ObservableObject
         if (details.Count == 0)
             details.Add($"{caches} {(caches == 1 ? "cache" : "caches")} · {VirtualDisks.Count} {(VirtualDisks.Count == 1 ? "virtual disk" : "virtual disks")}");
         HealthDetail = string.Join(" · ", details);
+        // Live throughput of everything, for the notification-area tooltip.
+        var latest = Volumes.Select(v => v.Activity.LastOrDefault()).Concat(VirtualDisks.Select(d => d.Activity.LastOrDefault())).ToArray();
+        var reading = latest.Sum(s => s.Read);
+        var writing = latest.Sum(s => s.Incoming);
+        ActivitySummary = reading < 0.05 && writing < 0.05 ? null : $"Reading {Format.Rate(reading)} · writing {Format.Rate(writing)}";
         HealthWord = OverallHealth switch { Health.Ok => "Healthy", Health.Attention => "Attention", Health.Error => "Error", _ => "Unknown" };
         Updated?.Invoke(this, EventArgs.Empty);
     }

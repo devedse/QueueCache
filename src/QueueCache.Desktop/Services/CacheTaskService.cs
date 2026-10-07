@@ -20,6 +20,10 @@ public interface ICacheTaskService
     Task RemoveAsync(VolumeDescription volume);
     /// <summary>Retries the disk writes of a faulted cache after the disk problem is fixed.</summary>
     Task RetryAsync(VolumeDescription volume) => throw new NotSupportedException("Retry is unavailable in this service.");
+    /// <summary>Detailed driver timing for this cache (runtime only; off after a restart).</summary>
+    Task SetTimingAsync(VolumeDescription volume, bool enabled) => throw new NotSupportedException("Driver timing is unavailable in this service.");
+    /// <summary>Serve cache hits on the calling thread (runtime only; on after a restart).</summary>
+    Task SetCallerPathAsync(VolumeDescription volume, bool enabled) => throw new NotSupportedException("The caller path is unavailable in this service.");
     Task<DiskEjectPreview> PreviewEjectAsync(string volume) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => throw new NotSupportedException("Disk eject is unavailable in this service.");
     Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token);
@@ -60,6 +64,10 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     public Task RemoveAsync(VolumeDescription volume) => CacheTasks.RemoveAsync(volume.Volume, expected: volume);
     public async Task RetryAsync(VolumeDescription volume) =>
         await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.Retry, expected: volume);
+    public async Task SetTimingAsync(VolumeDescription volume, bool enabled) =>
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.PerformanceTiming, value: enabled ? 1UL : 0UL, expected: volume);
+    public async Task SetCallerPathAsync(VolumeDescription volume, bool enabled) =>
+        await CacheTasks.ControlAsync(volume.Volume, WriteCacheAction.CallerPath, value: enabled ? 1UL : 0UL, expected: volume);
     public Task<DiskEjectPreview> PreviewEjectAsync(string volume) => DiskEjection.PreviewAsync(volume);
     public Task<DiskEjectResult> EjectAsync(string volume, IProgress<string> progress, DiskEjectPreview? expected = null) => DiskEjection.EjectAsync(volume, progress, expected: expected);
     public async Task<WorkloadReport> TestAsync(string volume, bool benchmark, IProgress<string> progress, CancellationToken token)

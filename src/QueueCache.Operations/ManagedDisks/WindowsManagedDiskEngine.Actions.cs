@@ -73,6 +73,11 @@ public sealed partial class WindowsManagedDiskEngine
                 case ManagedDiskAction.DeleteImage:
                     if (!request.AcceptErase || request.Path is null) throw new IOException("Image deletion requires a path and explicit erase acknowledgement.");
                     DeleteImageCore(entry, request.Path); message = "Unreferenced owned image deleted."; break;
+                case ManagedDiskAction.SetTiming:
+                    if (entry.Provider is null || record.Native is null || request.Timing is null)
+                        throw new IOException("Only a running RAM disk has RAM disk timing; a disk image's cache is timed as a cache.");
+                    Update(entry, entry.Record with { Native = entry.Provider.SetTiming(record.Native, request.Timing.Value) });
+                    message = request.Timing.Value ? "Driver timing is on until the disk stops." : "Driver timing is off."; break;
                 case ManagedDiskAction.Recover:
                     await ReconcileAsync(entry, token); message = "Managed disk ownership and journal reconciled; prior committed source retained unless its catalog already committed a verified candidate."; break;
                 default: throw new ArgumentOutOfRangeException(nameof(request));

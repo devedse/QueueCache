@@ -37,6 +37,9 @@ public sealed partial class VolumeViewModel : ObservableObject
     internal DateTimeOffset Sampled { get; private set; }
     internal bool Sampling { get; set; }
     internal bool IsStale { get; private set; }
+    // What the monitor last asked of this cache instance (Settings → Advanced).
+    internal (ulong Instance, bool Enabled)? CallerPathBelief { get; set; }
+    internal (ulong Instance, bool Enabled)? TimingAttempt { get; set; }
 
     [ObservableProperty] private Health health = Health.Unknown;
     [ObservableProperty] private string statusText = "Connecting";
@@ -79,6 +82,8 @@ public sealed partial class VolumeViewModel : ObservableObject
     [ObservableProperty] private double secondsPerSample = 1;
     [ObservableProperty] private string activityTitle = "Activity";
     [ObservableProperty] private string driverText = "";
+    [ObservableProperty] private bool timingOn;
+    [ObservableProperty] private string timingText = "";
 
     /// <summary>The one line the Overview shows for this volume, and what kind of item it is.</summary>
     [ObservableProperty] private string headline = "";
@@ -190,7 +195,9 @@ public sealed partial class VolumeViewModel : ObservableObject
         DrainingText = Format.Rate(rates?.DrainedMiBPerSecond ?? 0);
 
         var performance = state.Performance;
-        DriverText = performance is null ? "Driver timing is off for this volume." :
+        TimingOn = exists && performance is { TimingEnabled: not 0 };
+        TimingText = TimingOn ? Timing(performance!) : "";
+        DriverText = performance is null ? "Driver timing is unavailable with this driver." :
             $"Phase {performance.PhaseName} · {performance.QueueDepth} queued · current request {performance.Milliseconds(performance.ActiveAgeTicks):0} ms · reads that bypassed RAM {performance.BypassReads:N0}";
         SupportDetails = $"Volume {Volume.VolumePath}\nDisk {Volume.DiskNumber} ({Volume.DiskName}) · {Volume.Instance}\nCache instance {state.Instance} · generation {state.Generation} · flags 0x{state.Flags:X}";
         UpdateActions();
@@ -240,6 +247,18 @@ public sealed partial class VolumeViewModel : ObservableObject
         // An idle volume without a cache needs no status word: "No cache" already says it.
         ShowStatus = HasCache || Health != Health.Idle;
         HasMoreActions = exists || Group?.CanEject == true;
+    }
+
+    /// <summary>The timed parts of the cache driver, since timing was turned on or the cache started.</summary>
+    private static string Timing(CachePerformance p)
+    {
+        string Average(ulong ticks, ulong count) => count == 0 ? "none yet" : Format.Micro(1e6 * ticks / count / p.Frequency);
+        string Max(ulong ticks) => Format.Micro(1e6 * ticks / p.Frequency);
+        return $"Cache lock: wait {Average(p.LockWaitTicks, p.LockAcquires)} on average, at most {Max(p.MaxLockWaitTicks)} · " +
+               $"held {Average(p.LockHoldTicks, p.LockAcquires)}, at most {Max(p.MaxLockHoldTicks)} · {p.LockAcquires:N0} times\n" +
+               $"Waiting in the queue: {Average(p.QueueWaitTicks, p.QueuedRequests)} on average, at most {Max(p.MaxQueueWaitTicks)} · {p.QueuedRequests:N0} requests\n" +
+               $"Waiting for free RAM: {p.CapacityWaits:N0} times, {Format.Micro(1e6 * p.CapacityWaitTicks / p.Frequency)} in total\n" +
+               $"Writing to disk: {Average(p.LowerIoTicks, p.DrainBatches)} per batch · {p.DrainBatches:N0} batches, {Format.Bytes(p.DrainBytes)}";
     }
 
     private static (Health, string) Classify(WriteCacheState state) =>

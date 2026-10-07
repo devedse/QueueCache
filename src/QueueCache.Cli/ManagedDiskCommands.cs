@@ -99,7 +99,8 @@ internal static class ManagedDiskCommands
         foreach (var pair in new[] { ("start", ManagedDiskAction.Start), ("stop", ManagedDiskAction.Stop), ("flush", ManagedDiskAction.Flush),
             ("save", ManagedDiskAction.Save), ("export", ManagedDiskAction.Export), ("format", ManagedDiskAction.Format),
             ("cache", ManagedDiskAction.ChangeCache), ("startup", ManagedDiskAction.SetStartup), ("remove", ManagedDiskAction.RemoveDefinition),
-            ("delete-image", ManagedDiskAction.DeleteImage), ("recover", ManagedDiskAction.Recover), ("configure", ManagedDiskAction.ConfigureStopped) })
+            ("delete-image", ManagedDiskAction.DeleteImage), ("recover", ManagedDiskAction.Recover), ("configure", ManagedDiskAction.ConfigureStopped),
+            ("timing", ManagedDiskAction.SetTiming) })
         {
             var action = pair.Item2;
             var command = new Command(pair.Item1, Describe(action)); var resource = ResourceArgument(command); var outputJson = JsonOption(command);
@@ -123,6 +124,7 @@ internal static class ManagedDiskCommands
             if (action == ManagedDiskAction.Format) command.Options.Add(formatLabel);
             if (action == ManagedDiskAction.ConfigureStopped)
             { command.Options.Add(formatLabel); command.Options.Add(configuredLetter); command.Options.Add(configuredSize); command.Options.Add(configuredAccess); }
+            if (action == ManagedDiskAction.SetTiming) { enabled.Required = true; command.Options.Add(enabled); }
             if (action == ManagedDiskAction.SetStartup) { command.Options.Add(enabled); command.Options.Add(saveBefore); command.Options.Add(saveShutdown); }
             CacheBinding? cache = action == ManagedDiskAction.ChangeCache ? new(command) : null;
             command.SetAction(async (p, token) =>
@@ -159,7 +161,8 @@ internal static class ManagedDiskCommands
                     action is ManagedDiskAction.Format or ManagedDiskAction.ConfigureStopped ? p.GetValue(formatLabel) : null,
                     action == ManagedDiskAction.ConfigureStopped && p.GetValue(configuredLetter) is string newLetter ? char.ToUpperInvariant(newLetter[0]) : null,
                     action == ManagedDiskAction.ConfigureStopped && p.GetValue(configuredSize) is ulong newSize ? checked(newSize * ManagedDiskDefinition.MiB) : null,
-                    action == ManagedDiskAction.ConfigureStopped ? ParseAccess(p.GetValue(configuredAccess)) : null);
+                    action == ManagedDiskAction.ConfigureStopped ? ParseAccess(p.GetValue(configuredAccess)) : null,
+                    action == ManagedDiskAction.SetTiming ? p.GetValue(enabled) : null);
                 var result = await service.ExecuteAsync(request, new ConsoleProgress(), token);
                 if (p.GetValue(outputJson)) Console.WriteLine(JsonSerializer.Serialize(result, json));
                 else { Console.WriteLine(result.Message); Print(result.Record, false); }
@@ -199,6 +202,11 @@ internal static class ManagedDiskCommands
             if (runtime is not null) Console.WriteLine($"  boot={runtime.BootEpoch} creation={runtime.CreationGeneration} write={runtime.WriteGeneration} saved={runtime.SavedGeneration?.ToString() ?? "unavailable"}{(runtime.HasUnsavedChanges ? " | Unsaved RAM changes" : "")}");
             if (record.Definition.Mode != ManagedDiskMode.CachedVhdx)
                 Console.WriteLine($"  access {record.Definition.Access}" + (record.Direct is { } direct ? $": {direct.Describe()} (direct reads {direct.ReadRequests}, writes {direct.WriteRequests})" : ""));
+            if (record.Statistics is { } stats)
+                Console.WriteLine($"  requests read {stats.ReadRequests}, write {stats.WriteRequests} (standard path)" +
+                    ((record.Native!.Flags & RamDiskFlags.Timing) != 0
+                        ? $"; timing reads avg {stats.AverageReadMicroseconds:0.0} us max {stats.MaxReadMicroseconds:0.0} us ({stats.TimedReads}), writes avg {stats.AverageWriteMicroseconds:0.0} us max {stats.MaxWriteMicroseconds:0.0} us ({stats.TimedWrites})"
+                        : "; timing off"));
             if (record.CommittedImage is not null) Console.WriteLine($"  startup image: {record.CommittedImage.Identity.Path}; saved at {record.SavedAt?.ToString("O") ?? "not yet checkpointed"}");
             if (record.LastError is not null) Console.WriteLine("  " + record.LastError);
         }
@@ -215,6 +223,7 @@ internal static class ManagedDiskCommands
         ManagedDiskAction.DeleteImage => "Delete an unreferenced owned image with --path and --accept-erase. Imported/referenced/mounted images are refused.",
         ManagedDiskAction.Recover => "Reconcile exact native ownership and the durable journal. Keep surviving RAM and prior committed image; never reformat/reload live RAM.",
         ManagedDiskAction.ChangeCache => "Apply and remember a backed VHDX's independent cache using the shared cache policy transaction.",
+        ManagedDiskAction.SetTiming => "Time every read and write of a running RAM disk (--enabled true) or stop (--enabled false). Starts from zero; off again when the disk stops.",
         ManagedDiskAction.SetStartup => "Remember automatic startup and image-in-RAM stop/shutdown save policies. Boolean options require true or false.",
         _ => "Start a stopped remembered disk using its stored recipe and strict image identity."
     };

@@ -65,6 +65,21 @@ public sealed class WindowsRamDisk : IDisposable
     public RamDiskSnapshot Thaw(RamDiskSnapshot expected, Guid operation) => Send(RamDiskSnapshot.Request(RamDiskAction.Thaw, expected, freezeOwner: operation));
     public RamDiskSnapshot SetReadOnly(RamDiskSnapshot expected, bool readOnly) =>
         Send(RamDiskSnapshot.Request(RamDiskAction.SetReadOnly, expected, flags: readOnly ? RamDiskFlags.ReadOnly : RamDiskFlags.None));
+    /// <summary>Null when the installed provider predates statistics.</summary>
+    public RamDiskStatistics? Statistics(RamDiskSnapshot expected)
+    {
+        if (!(statisticsSupported ??= Capabilities().Flags.HasFlag(RamDiskFlags.StatisticsSupported)))
+            return null;
+        var wire = RamDiskSnapshot.Request(RamDiskAction.Statistics, expected);
+        Array.Resize(ref wire, RamDiskSnapshot.WireSize + RamDiskStatistics.WireSize);
+        var returned = Call(wire, RamDiskSnapshot.WireSize, wire.Length);
+        if (returned != wire.Length) throw new InvalidDataException("Incomplete RAM disk statistics reply.");
+        RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
+        return RamDiskStatistics.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
+    }
+    private bool? statisticsSupported;
+    public RamDiskSnapshot SetTiming(RamDiskSnapshot expected, bool enabled) =>
+        Send(RamDiskSnapshot.Request(RamDiskAction.SetTiming, expected, flags: enabled ? RamDiskFlags.Timing : RamDiskFlags.None));
     public void Remove(RamDiskSnapshot expected)
     {
         var request = RamDiskSnapshot.Request(RamDiskAction.Remove, expected);

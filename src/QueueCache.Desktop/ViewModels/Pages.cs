@@ -192,14 +192,29 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly IDesktopSettingsStore store;
     private bool loading;
 
-    internal SettingsViewModel(IDesktopSettingsStore store)
+    private readonly ISignInTask signIn;
+
+    internal SettingsViewModel(IDesktopSettingsStore store, ISignInTask? signIn = null)
     {
         this.store = store;
+        this.signIn = signIn ?? new MemorySignInTask(null);
         loading = true;
+        try
+        {
+            var state = this.signIn.IsEnabled();
+            startAtSignIn = state == true;
+            SignInAvailable = state is not null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Xml.XmlException or System.ComponentModel.Win32Exception)
+        {
+            SignInAvailable = false;
+        }
         Current = store.Load();
         theme = (int)Current.Theme;
         updateChoice = Math.Max(0, Array.IndexOf(DesktopSettings.UpdateChoices, Current.UpdateSeconds));
         keepRunningInTray = Current.KeepRunningInTray;
+        driverTiming = Current.DriverTiming;
+        callerPath = Current.CallerPath;
         loading = false;
         Version = typeof(SettingsViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
     }
@@ -214,7 +229,41 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int theme;
     [ObservableProperty] private int updateChoice;
     [ObservableProperty] private bool keepRunningInTray;
+    [ObservableProperty] private bool startAtSignIn;
+    [ObservableProperty] private string? signInError;
+    /// <summary>False when setup did not register the task (for example a copied build).</summary>
+    public bool SignInAvailable { get; }
+    public string SignInDescription => SignInAvailable
+        ? "QueueCache starts in the notification area when you sign in, so its status and quick actions are there from the start."
+        : "Unavailable: setup did not register the sign-in task. Reinstall QueueCache to add it.";
 
+    partial void OnStartAtSignInChanged(bool value)
+    {
+        if (loading)
+            return;
+        try
+        {
+            signIn.SetEnabled(value);
+            SignInError = null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            SignInError = ex.Message;
+        }
+    }
+    [ObservableProperty] private bool driverTiming;
+    [ObservableProperty] private bool callerPath;
+
+    /// <summary>What timing costs, measured on the lab VM (docs/DESKTOP_UI.md).</summary>
+    public string DriverTimingDescription { get; } = "Measures how long every read and write takes inside the cache and RAM disk drivers. " +
+        "The figures appear on each cache and virtual disk, and on the Diagnostics page. Applies while QueueCache runs. " +
+        "Measured cost while on: small random writes into a cache's RAM up to 12% slower, small random reads from a RAM disk up to 8% slower, " +
+        "large transfers barely affected (under 2% on RAM disks). Off, it costs nothing measurable.";
+    public string CallerPathDescription { get; } = "On (recommended): reads already in a cache's RAM and writes that fit are answered at once, on the " +
+        "program's own thread. Off: every request goes through the cache's worker thread, which is slower. Only for comparing performance.";
+
+    partial void OnDriverTimingChanged(bool value) => Save();
+    partial void OnCallerPathChanged(bool value) => Save();
     partial void OnThemeChanged(int value) => Save();
     partial void OnUpdateChoiceChanged(int value) => Save();
     partial void OnKeepRunningInTrayChanged(bool value) => Save();
@@ -223,7 +272,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (loading)
             return;
-        Current = new(DesktopSettings.UpdateChoices[Math.Clamp(UpdateChoice, 0, DesktopSettings.UpdateChoices.Length - 1)], (AppTheme)Theme, KeepRunningInTray);
+        Current = new(DesktopSettings.UpdateChoices[Math.Clamp(UpdateChoice, 0, DesktopSettings.UpdateChoices.Length - 1)], (AppTheme)Theme, KeepRunningInTray, DriverTiming, CallerPath);
         try
         {
             store.Save(Current);

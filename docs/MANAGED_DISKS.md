@@ -122,6 +122,7 @@ one-shot; startup and later Start operations never repeat it.
 | `disk remove <id>` | Forget a stopped definition; preserve images and recovery evidence |
 | `disk delete-image <id> --path <owned.vhdx> --accept-erase` | Delete an unreferenced owned image by exact file handle identity; refuse imported/referenced/mounted/in-flight files |
 | `disk recover <id>` | Reconcile journal and exact surviving native generation; no automatic live reload, format or discard |
+| `disk timing <id> --enabled true` | Time every read and write of a running RAM disk, on the standard path and Direct access, from zero; `false` stops. Off at every creation |
 
 `--json` is available on list/status/create and action commands. Progress goes to
 stderr; stdout JSON remains parseable. Cancellation before a save commit preserves
@@ -133,7 +134,12 @@ previous files are retained across failures.
 Status JSON includes actual native reservations/counters and `ImageIo`, whose
 observation epoch changes on broker restart. Read/write/flush attempts are counted
 before image I/O, including failed attempts; completed bytes are separate.
-Compare only snapshots in the same epoch. Legacy `ImageTransferAttempts` and
+Compare only snapshots in the same epoch. RAM-backed disks also report
+`Statistics` (requests on the provider's standard path; Direct requests are in
+`Direct`) and, while timing is on, timed reads and writes with total and longest
+ticks. Every counter starts at zero with each creation. An image in RAM records
+`LastSave`: duration, bytes copied and the disk's written total when frozen, so
+"written since the last save" is an upper bound (rewrites count each time). Legacy `ImageTransferAttempts` and
 `ImageTransferredBytes` describe completed full-image transactions, not lower
 attempts. A missing measurement is unavailable, never an implied zero.
 

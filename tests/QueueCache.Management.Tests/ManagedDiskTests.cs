@@ -298,6 +298,34 @@ internal static class ManagedDiskTests
         var unknownFlag = (byte[])wire.Clone(); unknownFlag[108] |= 0x40;
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(unknownFlag));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Freeze, expected));
+        // Statistics and timing: new actions of protocol version 1, offered by a capability flag.
+        Check((uint)RamDiskAction.Statistics == 13 && (uint)RamDiskAction.SetTiming == 14, "statistics actions follow StartupSession in the native enum");
+        var timing = RamDiskSnapshot.Request(RamDiskAction.SetTiming, expected, flags: RamDiskFlags.Timing);
+        Check(System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(timing.AsSpan(108)) == 32, "SetTiming carries the timing flag");
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.SetTiming, expected, flags: RamDiskFlags.ReadOnly));
+        Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Statistics));
+        var timed = (byte[])wire.Clone(); timed[108] |= 32;
+        Check(RamDiskSnapshot.Decode(timed).Flags.HasFlag(RamDiskFlags.Timing), "replies report timing");
+        var stats = new byte[RamDiskStatistics.WireSize];
+        ulong[] values = [7, 8, 10_000_000, 4, 2, 100, 60, 50, 40];
+        for (var i = 0; i < values.Length; i++) System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(stats.AsSpan(i * 8), values[i]);
+        var measured = RamDiskStatistics.Decode(stats);
+        Check(measured.ReadRequests == 7 && measured.WriteRequests == 8 && Math.Abs(measured.AverageReadMicroseconds - 2.5) < 1e-9 &&
+            Math.Abs(measured.AverageWriteMicroseconds - 3) < 1e-9 && Math.Abs(measured.MaxReadMicroseconds - 5) < 1e-9, "statistics decode in native field order");
+        Throws<InvalidDataException>(() => RamDiskStatistics.Decode(stats.AsSpan(0, 64)));
+        stats.AsSpan(16, 8).Clear();
+        Throws<InvalidDataException>(() => RamDiskStatistics.Decode(stats));
+        // The broker refuses unknown JSON members: computed figures must not travel, the new records must.
+        var definition = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam);
+        var record = new ManagedDiskRecord(definition, Statistics: measured,
+            LastSave: new(TimeSpan.FromSeconds(3), 16 * MiB, 5, Guid.NewGuid(), 2));
+        var json = System.Text.Json.JsonSerializer.Serialize(record, ManagedDiskBrokerProtocol.Json);
+        var back = System.Text.Json.JsonSerializer.Deserialize<ManagedDiskRecord>(json, ManagedDiskBrokerProtocol.Json)!;
+        Check(!json.Contains("AverageReadMicroseconds") && back.Statistics == measured && back.LastSave == record.LastSave,
+            "records with statistics and the last save cross the broker unchanged");
+        var request = new ManagedDiskRequest(definition.ResourceId, ManagedDiskAction.SetTiming, Timing: true);
+        Check(System.Text.Json.JsonSerializer.Deserialize<ManagedDiskRequest>(System.Text.Json.JsonSerializer.Serialize(request, ManagedDiskBrokerProtocol.Json),
+            ManagedDiskBrokerProtocol.Json)!.Timing == true, "a timing request crosses the broker");
         Check(RamDiskSnapshot.Request(RamDiskAction.Read, expected, transferBytes: 4096).Length == RamDiskSnapshot.WireSize + 4096,
             "bounded RAM transfers carry bytes, never user pointers");
         foreach (var boundary in new ulong[] { 1, 8, 16 })

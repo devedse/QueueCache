@@ -74,7 +74,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             try
             {
                 var native = entry.Provider.Query(record.Native); native.RequireSameCreation(record.Native);
-                record = record with { Native = native, Runtime = record.Runtime with { WriteGeneration = native.WriteGeneration } };
+                record = record with { Native = native, Statistics = entry.Provider.Statistics(native),
+                    Runtime = record.Runtime with { WriteGeneration = native.WriteGeneration } };
             }
             catch (Exception ex) when (ex is IOException or Win32Exception)
             { record = record with { Runtime = record.Runtime! with { State = ManagedDiskState.RecoveryRequired, LastError = ex.Message }, LastError = ex.Message }; }

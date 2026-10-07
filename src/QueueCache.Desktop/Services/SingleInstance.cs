@@ -24,15 +24,18 @@ internal sealed class SingleInstance : IDisposable
 
     /// <summary>The instance, or null after asking the running one to show itself.</summary>
     [SupportedOSPlatform("windows")]
-    public static SingleInstance? Acquire()
+    public static SingleInstance? Acquire(bool showExisting = true)
     {
         var show = new EventWaitHandle(false, EventResetMode.AutoReset, Name + ".Show");
         var mutex = new Mutex(true, Name, out var created);
         if (created)
             return new SingleInstance(mutex, show);
-        // The running instance may bring its window to the front.
-        AllowSetForegroundWindow(-1);
-        show.Set();
+        if (showExisting)
+        {
+            // The running instance may bring its window to the front.
+            AllowSetForegroundWindow(-1);
+            show.Set();
+        }
         show.Dispose();
         mutex.Dispose();
         return null;
