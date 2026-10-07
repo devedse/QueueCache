@@ -175,5 +175,14 @@ internal static class StatisticsTests
         var store = new MemorySettingsStore();
         var settings = new SettingsViewModel(store) { DriverTiming = true, CallerPath = false };
         Check(store.Load() is { DriverTiming: true, CallerPath: false } && settings.DriverTimingDescription.Length > 0, "the Advanced settings are saved");
+
+        var task = new MemorySignInTask(true);
+        var signIn = new SettingsViewModel(new MemorySettingsStore(), task);
+        Check(signIn.SignInAvailable && signIn.StartAtSignIn, "starting at sign-in shows as on when setup registered the task");
+        signIn.StartAtSignIn = false;
+        Check(task.Enabled == false && signIn.SignInError is null, "turning it off disables the sign-in task");
+        var missing = new SettingsViewModel(new MemorySettingsStore(), new MemorySignInTask(null));
+        Check(!missing.SignInAvailable && !missing.StartAtSignIn && missing.SignInDescription.StartsWith("Unavailable"),
+            "without the task the setting is unavailable and says to reinstall");
     }
 }

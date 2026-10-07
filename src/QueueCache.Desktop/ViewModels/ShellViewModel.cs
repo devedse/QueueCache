@@ -13,10 +13,10 @@ public sealed partial class ShellViewModel : ObservableObject
 
     public ShellViewModel(ICacheTaskService caches, IManagedDiskService disks, IDialogService dialogs, IDesktopSettingsStore settings,
         Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null,
-        Func<string, VolumeSpace?>? volumeSpace = null, Func<DateTimeOffset>? clock = null)
+        Func<string, VolumeSpace?>? volumeSpace = null, Func<DateTimeOffset>? clock = null, ISignInTask? signIn = null)
     {
         Monitor = new DashboardMonitor(caches, disks, dialogs, clock, availableRam, usedLetters, volumeSpace);
-        Settings = new SettingsViewModel(settings);
+        Settings = new SettingsViewModel(settings, signIn);
         Overview = new OverviewViewModel(this);
         Caches = new CachesViewModel(Monitor);
         VirtualDisks = new VirtualDisksViewModel(Monitor);
@@ -53,7 +53,7 @@ public sealed partial class ShellViewModel : ObservableObject
         _ => Overview
     };
 
-    /// <summary>Starts live updates and the first discovery (the window opened).</summary>
+    /// <summary>Starts live updates and the first discovery (at app start, with or without the window).</summary>
     public async Task StartAsync()
     {
         timer.Start();

@@ -33,6 +33,16 @@
         </ui:FASettingsExpander.Footer>
       </ui:FASettingsExpander>
 
+      <ui:FASettingsExpander Header="Start QueueCache when you sign in" Description="{Binding SignInDescription}">
+        <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconStart}" /></ui:FASettingsExpander.IconSource>
+        <ui:FASettingsExpander.Footer>
+          <ToggleSwitch Name="SignInToggle" IsChecked="{Binding StartAtSignIn}" IsEnabled="{Binding SignInAvailable}"
+                        AutomationProperties.Name="Start QueueCache when you sign in" />
+        </ui:FASettingsExpander.Footer>
+      </ui:FASettingsExpander>
+      <TextBlock Classes="error" Text="{Binding SignInError}" TextWrapping="Wrap"
+                 IsVisible="{Binding SignInError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
       <TextBlock Classes="section" Text="Advanced" Margin="0,16,0,4" />
       <ui:FASettingsExpander Name="AdvancedSettings" Header="Developer settings"
                              Description="Measurements and switches for comparing performance. You don't need these for normal use.">

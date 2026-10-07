@@ -21,12 +21,10 @@ public sealed partial class MainWindow : Window
             if (Shell is { } shell && e.SelectedItem is FANavigationViewItem { Tag: string tag } && Enum.TryParse<AppPage>(tag, out var page))
                 shell.Page = page;
         };
-        Opened += async (_, _) =>
+        Opened += (_, _) =>
         {
             this.FitToScreen();
             SelectNavigation();
-            if (Shell is { } shell)
-                await shell.StartAsync();
         };
         Closing += OnClosing;
     }

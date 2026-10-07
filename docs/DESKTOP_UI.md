@@ -26,7 +26,12 @@ Pages: **Overview** (health, RAM used, every item with its one figure that
 matters, attention first), **Caches** (volumes grouped by physical disk, the
 selected volume in detail), **Virtual disks**, and in the navigation footer
 **Diagnostics** and **Settings** (theme, update interval, keep running in the
-notification area, and an **Advanced** section with developer settings). Closing the window keeps QueueCache in the notification area
+notification area, and an **Advanced** section with developer settings). Setup registers the `QueueCache-SignIn` scheduled task, which
+starts QueueCache elevated and without its window (`--tray`) when an
+administrator signs in; Windows' Run key would silently skip an app that needs
+administrator rights. Settings → **Start QueueCache when you sign in** enables
+or disables the task, an update keeps that choice, and uninstall removes it.
+Closing the window keeps QueueCache in the notification area
 (unless turned off); starting it again shows the running instance, as there is
 one per Windows session. Windows fit the screen's working area, so title bars
 and dialog buttons stay reachable on small screens. Desktop settings are stored in

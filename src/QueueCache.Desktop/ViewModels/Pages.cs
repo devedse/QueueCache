@@ -192,10 +192,23 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly IDesktopSettingsStore store;
     private bool loading;
 
-    internal SettingsViewModel(IDesktopSettingsStore store)
+    private readonly ISignInTask signIn;
+
+    internal SettingsViewModel(IDesktopSettingsStore store, ISignInTask? signIn = null)
     {
         this.store = store;
+        this.signIn = signIn ?? new MemorySignInTask(null);
         loading = true;
+        try
+        {
+            var state = this.signIn.IsEnabled();
+            startAtSignIn = state == true;
+            SignInAvailable = state is not null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Xml.XmlException or System.ComponentModel.Win32Exception)
+        {
+            SignInAvailable = false;
+        }
         Current = store.Load();
         theme = (int)Current.Theme;
         updateChoice = Math.Max(0, Array.IndexOf(DesktopSettings.UpdateChoices, Current.UpdateSeconds));
@@ -216,6 +229,28 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int theme;
     [ObservableProperty] private int updateChoice;
     [ObservableProperty] private bool keepRunningInTray;
+    [ObservableProperty] private bool startAtSignIn;
+    [ObservableProperty] private string? signInError;
+    /// <summary>False when setup did not register the task (for example a copied build).</summary>
+    public bool SignInAvailable { get; }
+    public string SignInDescription => SignInAvailable
+        ? "QueueCache starts in the notification area when you sign in, so its status and quick actions are there from the start."
+        : "Unavailable: setup did not register the sign-in task. Reinstall QueueCache to add it.";
+
+    partial void OnStartAtSignInChanged(bool value)
+    {
+        if (loading)
+            return;
+        try
+        {
+            signIn.SetEnabled(value);
+            SignInError = null;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            SignInError = ex.Message;
+        }
+    }
     [ObservableProperty] private bool driverTiming;
     [ObservableProperty] private bool callerPath;
 

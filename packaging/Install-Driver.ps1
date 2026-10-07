@@ -16,6 +16,25 @@ function Native([string]$Program, [string[]]$Arguments)
         throw "$Program failed: $LASTEXITCODE"
     }
 }
+# The desktop app needs administrator rights, which Windows' Run key silently skips; a scheduled
+# task can start it elevated at sign-in. It starts in the notification area (--tray). Settings
+# turns the task on or off; an update keeps that choice.
+$signInTask = 'QueueCache-SignIn'
+function Register-SignInTask
+{
+    $existing = Get-ScheduledTask -TaskName $signInTask -ErrorAction SilentlyContinue
+    $enabled = -not $existing -or $existing.Settings.Enabled
+    $desktop = Join-Path $package 'desktop\QueueCache.Desktop.exe'
+    $action = New-ScheduledTaskAction -Execute $desktop -Argument '--tray'
+    $trigger = New-ScheduledTaskTrigger -AtLogOn
+    # Any administrator who signs in, elevated without a prompt (S-1-5-32-544 = Administrators).
+    $principal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-544' -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -Priority 4
+    $settings.Enabled = $enabled
+    Register-ScheduledTask -TaskName $signInTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings `
+        -Description 'Starts QueueCache in the notification area when you sign in. Turn off in QueueCache Settings.' -Force | Out-Null
+    Write-Output "Sign-in task registered ($(if ($enabled) { 'on' } else { 'off, as chosen before' }))."
+}
 function UpdatePath([bool]$Remove)
 {
     $entry = Join-Path $package 'controller'
@@ -121,6 +140,7 @@ try
         }
         UpdatePath $true
         Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $signInTask -Confirm:$false -ErrorAction SilentlyContinue
         Write-Output 'Filters removed. Reboot to unload; driver binaries/service retained for recovery.'
         exit 3010
     }
@@ -252,6 +272,7 @@ public static class QueueCacheCodeIntegrity {
     # One startup coordinator owns managed resources before regular saved profiles.
     # Start at the required reboot, after the intended native modules are loaded.
     Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
+    Register-SignInTask
     Write-Output "Driver staged at $destination. Reboot to load automatic volume coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 }
