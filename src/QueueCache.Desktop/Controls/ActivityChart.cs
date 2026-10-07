@@ -52,9 +52,16 @@ public sealed class ActivityChart : Control
     private const double Top = 18, Bottom = 4;
 
     /// <summary>The axis top: the largest value rounded up to 1, 2 or 5 times a power of ten (at least 1 MiB/s).</summary>
+    /// <summary>A round axis top in the unit the label uses: 1/2/5 × 10ⁿ MiB/s, or GiB/s above 1,000 MiB/s
+    /// (so the label reads "5 GiB/s", not "4.88 GiB/s").</summary>
     internal static double AxisTop(IEnumerable<RateSample> samples)
     {
         var max = samples.Select(s => Math.Max(s.Read, Math.Max(s.Incoming, s.Drained))).DefaultIfEmpty(0).Max();
+        return max > 1000 ? Round(max / 1024) * 1024 : Round(max);
+    }
+
+    private static double Round(double max)
+    {
         if (max <= 1)
             return 1;
         var power = Math.Pow(10, Math.Floor(Math.Log10(max)));
