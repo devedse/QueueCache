@@ -215,8 +215,17 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         ApplyFigures(record, now, ready ? space : null);
         if (ready && definition.Mode != ManagedDiskMode.CachedVhdx && !HasUnsavedChanges)
         {
-            if (Busy(history.LastOrDefault()))
-                Headline = $"Reading {ReadingText} · writing {WritingText}";
+            var latest = history.LastOrDefault();
+            if (Busy(latest))
+            {
+                // Only what is happening: "Reading 10 MiB/s", not "… · writing Idle".
+                var parts = new List<string>();
+                if (latest.Read >= 0.05)
+                    parts.Add("Reading " + ReadingText);
+                if (latest.Incoming >= 0.05)
+                    parts.Add((parts.Count == 0 ? "Writing " : "writing ") + WritingText);
+                Headline = string.Join(" · ", parts);
+            }
             else if (definition.Mode == ManagedDiskMode.EphemeralRam && HasSpace)
                 Headline = $"{UsedText} · erased when stopped";
         }

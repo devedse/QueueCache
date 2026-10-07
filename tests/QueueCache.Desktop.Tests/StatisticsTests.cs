@@ -16,6 +16,10 @@ internal static class StatisticsTests
         SaveFigures();
         DiskImageCache();
         AdvancedSettings();
+        Check(QueueCache.Desktop.Controls.ActivityChart.AxisTop([new(707, 0, 0)]) == 1000 &&
+              QueueCache.Desktop.Controls.ActivityChart.AxisTop([new(1010, 0, 0)]) == 1024 &&
+              QueueCache.Desktop.Controls.ActivityChart.AxisTop([new(2400, 1300, 0)]) == 5 * 1024,
+            "the chart's axis is round in the unit its label shows (1,000 MiB/s, 1 GiB/s, 5 GiB/s)");
         Console.WriteLine("Statistics contracts passed.");
     }
 

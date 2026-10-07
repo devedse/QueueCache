@@ -1,189 +1,128 @@
-# QueueCache
+<p align="center">
+  <img src="assets/branding/queuecache.png" width="128" alt="QueueCache logo">
+</p>
 
-QueueCache is an experimental Windows RAM cache for development on disposable
-test systems. The current repository has one driver implementation, one managed
-CLI/desktop stack and one installer. It is test-signed and is not suitable for
-production or valuable data.
+<h1 align="center">QueueCache</h1>
 
-> Fast mode can acknowledge writes and application flushes while data exists only
-> in volatile RAM. A crash, power loss, device failure or driver defect can lose
-> data or corrupt a filesystem. Development testing uses recoverable VMs.
-> C: is available through normal cache configuration; its focused application
-> and lifecycle checks follow the implementation plan. Synthetic delay/fault
-> experiments use the separate disposable non-OS disk.
+<p align="center">
+  <b>RAM caching and RAM disks for Windows.</b><br>
+  Make slow drives feel fast, or create disks that live entirely in memory.
+</p>
 
-Current execution status lives in the
-[private-alpha handover](docs/PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md) and
-[RAM-first tracker](docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md). Confirmed gaps are
-listed in [known issues](docs/KNOWN_ISSUES.md).
-Remaining work is ordered in the [next phase plan](docs/NEXT_PHASE_PLAN.md).
+<p align="center">
+  <a href="https://github.com/devedse/QueueCache/releases">Download</a> ·
+  <a href="#caching-a-drive">Caching</a> ·
+  <a href="#ram-disks">RAM disks</a> ·
+  <a href="#performance">Performance</a> ·
+  <a href="#before-you-use-it">Before you use it</a>
+</p>
 
-## Product model
+![QueueCache overview: caches and RAM disks with their status and the RAM they use](docs/images/overview.png)
 
-QueueCache caches volumes. Installation registers the filter once as the topmost
-volume filter (directly below the file system), which covers every volume after a
-restart, including volumes created later. It starts inactive: installation does not
-allocate RAM or enable caching. A task is explicitly created for one volume (NTFS, ReFS, FAT32 or exFAT; FAT32 and exFAT
-have no journal, so a crash with Fast-mode data in RAM can damage them), and
-each volume has its own cache, also when several volumes share a disk. Only a
-saved profile whose volume (GUID), disk and size still match is restored at
-startup. Commands that disk tools send to the physical disk (health/SMART queries,
-SCSI/ATA pass-through) never reach the cache. See [volume filtering](docs/VOLUME_FILTER.md).
+## What it does
 
-New tasks default to:
+QueueCache puts spare RAM to work in two ways:
 
-- Fast write behavior, requiring explicit volatility acknowledgement in the CLI;
-- Automatic RAM allocation with retained writes and read promotion;
-- Idle background draining with a 5,000 ms first-dirty trigger, 250 ms idle
-  trigger, 40/80 watermarks, 256 KiB batches and parallelism 2.
+- **Cache a drive.** Recently used files and new writes are kept in RAM in front
+  of any drive: a hard disk, an SSD or a network disk. Reads come from RAM, and
+  saving a file can finish at RAM speed while QueueCache writes it to the disk
+  in the background.
+- **Create disks in RAM.** A RAM disk for scratch files, a disk image loaded
+  completely into RAM, or a disk image file with a RAM cache in front.
 
-Strict remains available. Existing profiles retain their saved Fast/Strict and
-drain settings. Background age starts scheduling and is not a durability deadline.
-Explicit QueueCache flush, Pause, Remove and lifecycle boundaries still drain.
-Capacity exhaustion still applies backpressure.
+One app shows everything: what is in RAM, what is not yet on disk, and live
+activity. It sits in the notification area and starts when you sign in.
 
-See [cache policies](docs/CACHE_POLICIES.md) for the complete contract.
+## Caching a drive
 
-## Managed disks
+Choose a drive, how much RAM it may use, and how saving a file should behave:
 
-QueueCache can also create and manage disks of its own, through **New disk** on
-the desktop app's Virtual disks page or `qcache disk`:
+| Mode | When a program saves a file | Good for |
+|---|---|---|
+| **Fast** | The save finishes in RAM; QueueCache writes it to the disk moments later. | Games, build output, downloads: anything you can get back |
+| **Strict** | The save waits until the data is on the disk. Reads still come from RAM. | Documents and anything you cannot lose |
 
-- `ram`: a temporary RAM disk whose contents are discarded when it stops;
-- `cached-vhdx`: a VHDX file behind an ordinary QueueCache cache;
-- `image-in-ram`: a VHDX loaded completely into RAM and saved back as verified,
-  versioned checkpoints.
+Each drive letter gets its own cache (NTFS, ReFS, FAT32 and exFAT). With
+**Start with Windows**, the cache comes back after every restart.
 
-They share the cache's RAM budget. Image hosts must not have a Fast cache. See
-[managed disks](docs/MANAGED_DISKS.md).
+![A drive's cache: what is in RAM, how much is not yet on disk, and live activity](docs/images/cache.png)
 
-```powershell
-qcache disk create --mode ram --size-mib 4096 --letter R
-qcache disk list
-qcache disk stop <id> --discard
-```
+## RAM disks
 
-## Operator commands
+Create one from **Virtual disks → New disk**:
 
-Run these from an elevated terminal on the test machine:
+| Kind | What it is | When it stops |
+|---|---|---|
+| **RAM disk** | An empty disk in RAM. The fastest option. | Everything on it is erased. |
+| **Image in RAM** | A `.vhdx` disk image loaded completely into RAM. **Save** copies it back. | It saves first (you can choose to discard instead). |
+| **Disk image with RAM cache** | A `.vhdx` file that stays on disk, with a RAM cache in front. | Pending writes go to the file first; the data stays in the file. |
+
+Any of them can start with Windows. After a crash or power cut, a RAM disk is
+empty and an image in RAM is back at its last save.
+
+![A RAM disk: space used, totals since start and live activity](docs/images/ram-disk.png)
+
+## Performance
+
+[CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
+default test (1 GiB, 5 passes); with QueueCache, the best of two runs.
+
+| Test machine | |
+|---|---|
+| Host | AMD Ryzen 9 9955HX (16 cores), Proxmox VE 9.2 |
+| Virtual machine | Windows 11 Pro, 4 vCPUs, 16 GB RAM |
+| Drive Q: | 200 GB virtual SSD on Ceph network storage |
+
+<p align="center">
+  <img src="docs/images/cdm-cache.png" width="49%" alt="CrystalDiskMark on Q: with a 2 GiB Fast cache">
+  <img src="docs/images/cdm-ram-disk.png" width="49%" alt="CrystalDiskMark on a 4 GiB RAM disk">
+</p>
+
+| MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
+|---|---:|---:|---:|
+| Sequential read (SEQ1M Q8T1) | 262 | 23,441 | 25,544 |
+| Sequential write (SEQ1M Q8T1) | 116 | 18,193 | 16,342 |
+| Random 4K read (RND4K Q1T1) | 18.6 | 1,283 | 1,712 |
+| Random 4K write (RND4K Q1T1) | 4.9 | 1,031 | 1,337 |
+
+The test file fits in RAM, so this shows what QueueCache does for data that is
+in its cache. Work larger than the cache runs at the drive's own speed.
+
+## Getting started
+
+1. Download the installer from the [latest release](https://github.com/devedse/QueueCache/releases)
+   and run it.
+2. Restart Windows.
+3. QueueCache starts in the notification area. Open it, then:
+   - **Caches** → choose a drive → **Add cache**, or
+   - **Virtual disks** → **New disk**.
+
+<p align="center">
+  <img src="docs/images/cache-settings.png" width="48%" alt="Cache settings: RAM size, Fast or Strict, start with Windows">
+  <img src="docs/images/new-disk.png" width="48%" alt="New disk: RAM disk, image in RAM or disk image with RAM cache">
+</p>
+
+To update, stop any running virtual disks, then run **Update QueueCache** on the
+desktop. Everything in the app is
+also available from an administrator terminal:
 
 ```powershell
 qcache volume list
-qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --save
-qcache policy apply Q: --budget-mib 256 --preset Strict --save
-qcache policy status Q: --json
-qcache policy watch Q:
-qcache policy flush Q:
-qcache policy pause Q:
-qcache policy resume Q:
-qcache policy remove Q:
+qcache policy apply D: --budget-mib 4096 --accept-volatile-flush --save   # Fast cache, 4 GiB
+qcache disk create --mode ram --size-mib 8192 --letter R                  # 8 GiB RAM disk
 ```
 
-`qcache volume list` shows each lettered volume with its disk, whether the filter is
-loaded, and its cache task; it exits 1 if the filter registration is not the
-supported one. `--save` writes an administrator-only machine profile for that volume
-(named by the volume GUID, so it follows the volume, not the letter). Applying without `--save`
-removes the saved profile unless `--runtime-only` is used. Pause drains while
-preserving the task; Remove drains, releases RAM and removes its saved profile.
-Files are never deleted by task removal.
+## Before you use it
 
-The desktop uses the same management library and shows one card per volume,
-grouped under its disk. Selecting Fast in its task editor is
-the explicit volatility acknowledgement. Closing the desktop does not stop the
-driver or change a task.
+QueueCache is young and not battle-tested. It runs as a driver in Windows'
+storage stack, so a bug can crash Windows or damage data. In Fast mode and on
+RAM disks, data that is only in RAM is lost when Windows crashes or the power
+fails. Keep backups, start with data you can afford to lose, and use it at your
+own risk.
 
-## Verification
+## For developers
 
-The supported current-boot runner is `qcache developer verify`. Use an elevated
-terminal, stop competing storage workloads and select a volume on a clean non-OS
-physical disk. Do not substitute private scripts for maintained scenarios. The
-volume-filter suites (`volumes`, `trim-cache`) and the raw `write-tests` use the lab
-VHDX from `qcache developer lab-disk create` (see developer verification).
+Building, the command line in full, the verification runner and the design
+documents: see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-```powershell
-qcache developer verify Q: --suite quick --output C:\QueueCache-Results
-qcache developer verify Q: --suite policies --output C:\QueueCache-Results
-qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
-qcache developer verify V: --suite volumes --output C:\QueueCache-Results
-qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
-qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
-```
-
-Wait for `FINISHED.txt`, then inspect `status.json`, `SUMMARY.md`, `results.json`,
-`run.log`, interval telemetry and raw case evidence. A missing completion marker is
-not success. If restoration fails, stop and inspect the recorded identity, owned
-PIDs, control trace and recovery snapshot before using the guarded
-`verify-recover` command.
-
-The separate 72-case small-write matrix is:
-
-```powershell
-qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-```
-
-Microsoft DiskSpd and CrystalDiskMark's bundled `DiskSpd64.exe` are supported in
-XML mode. Keep the same executable and hash for comparisons. Full suite scope and
-safety rules are in [developer verification](docs/DEVELOPER_VERIFICATION.md).
-
-## Build
-
-Prerequisites are Windows x64, PowerShell 7, the .NET SDK selected by
-`global.json`, Visual Studio 2026 Desktop development with C++, and the Windows
-Driver Kit component. The driver project and build script have one current native
-path; `qcachelab.sys` remains the binary/service name only for installed-upgrade
-compatibility.
-
-```powershell
-./build/Build.ps1 -Configuration Release -Version 0.1.0.0
-./build/Build.ps1 -ManagedOnly
-dotnet build QueueCache.Managed.slnx -c Release
-dotnet run --project tests/QueueCache.Management.Tests -c Release
-dotnet run --project tests/QueueCache.Desktop.Tests -c Release
-```
-
-The full build runs host-safe tests, publishes the CLI and desktop, builds the
-current native driver, checks package layout and creates a fresh unsigned package.
-It never installs, registers, formats or enables anything. GitHub Actions supplies
-release version numbers; do not bump them manually.
-
-`build/Sign-Lab.ps1` test-signs an unsigned Release package and
-`build/Build-Installer.ps1` creates the installer. Their historical names and the
-`labWriteCache` manifest key are compatibility surfaces, not separate driver
-editions. The private signing key stays outside packages. Production signing and
-trust are out of scope.
-
-The installer stages an immutable version/hash-named driver and retains the
-`qcachelab` service identity across upgrades. A reboot loads a changed driver.
-Setup does not reboot automatically or silently configure a cache. Recovery and
-registration backups live under `%ProgramData%\QueueCache`; keep an external VM
-snapshot plus a copy of the selected backup and
-`setup\Recover-Registration.ps1` before boot/lifecycle testing. The recovery script
-does not require the driver or CLI and can target an offline SYSTEM hive; it never
-reboots automatically.
-
-## Repository layout
-
-| Path | Purpose |
-|---|---|
-| `driver/qcache` | Current native dispatch, cache, policy and ABI code |
-| `src/QueueCache.Management` | Versioned protocol and device access |
-| `src/QueueCache.Operations` | Configuration, persistence and file workloads |
-| `src/QueueCache.Cli` | Operator and developer command binding |
-| `src/QueueCache.Desktop` | Avalonia desktop app: AXAML views, view-models, live telemetry ([structure](docs/DESKTOP_UI.md)) |
-| `src/QueueCache.Developer` | Maintained verification workers and scenarios |
-| `tests` | Host-safe protocol, orchestration and UI contracts |
-| `build`, `packaging` | Reproducible packaging, signing and installer workflow |
-| `developer` | Distinct repository-only setup/recovery helpers |
-
-Open `QueueCache.Managed.slnx` for managed development or `QueueCache.sln` for the
-current native x64 driver. Protocol changes require matching native/C# size,
-version and bounds checks. A successful build or driver load is not a storage
-correctness result.
-
-## Licensing
-
-Current source is distributed under the [MIT License](LICENSE). The repository
-history contains removed Microsoft-sample-derived files that were distributed
-under MS-LPL in those revisions; see [third-party notices](THIRD_PARTY_NOTICES.md)
-and the [licensing review](docs/LICENSING_REVIEW.md).
+QueueCache is released under the [MIT License](LICENSE).

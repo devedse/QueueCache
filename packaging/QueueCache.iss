@@ -62,6 +62,14 @@ Type: files; Name: "{group}\Driver setup or resume after reboot.lnk"
 Type: files; Name: "{app}\setup\Install-Interactive.ps1"
 
 [Code]
+// The desktop app runs in the notification area from sign-in. It holds no cache or disk
+// state (the driver and the service do), so closing it is safe; it returns at the next sign-in.
+procedure CloseDesktopApp();
+var Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM QueueCache.Desktop.exe', '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var Code: Integer; Controller: String;
 begin
@@ -72,6 +80,8 @@ begin
   Controller := ExpandConstant('{tmp}\QueueCachePreflight\qcache.exe');
   if (not Exec(Controller, '--managed-update-preflight', '', SW_HIDE, ewWaitUntilTerminated, Code)) or (Code <> 0) then
     Result := 'QueueCache update preflight failed. Stop or recover every managed disk first, then retry. RAM, images and recovery tools have been retained.';
+  if Result = '' then
+    CloseDesktopApp();
 end;
 
 function RunDriverSetup(Uninstall: Boolean): Boolean;
@@ -97,6 +107,7 @@ end;
 
 function InitializeUninstall(): Boolean;
 begin
+  CloseDesktopApp();
   Result := RunDriverSetup(True);
   if not Result then MsgBox('Driver detach/drain failed. Application removal has been stopped to preserve recovery tools.', mbError, MB_OK);
 end;
