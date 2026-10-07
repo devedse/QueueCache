@@ -113,8 +113,8 @@ jobs:
             echo "name=QueueCache $VERSION — test-signed" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            # Same build counter as master. The branch suffix marks a pre-release: the
-            # Update QueueCache shortcut installs only tags without one (master builds).
+            # Same build counter as master; the branch suffix keeps tags unique. The Update
+            # QueueCache shortcut installs the highest version, release or pre-release.
             slug=$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')
             echo "tag=$VERSION-$slug" >> "$GITHUB_OUTPUT"
             echo "name=QueueCache $VERSION ($BRANCH) — test-signed pre-release" >> "$GITHUB_OUTPUT"
