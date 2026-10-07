@@ -221,7 +221,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>What timing costs, measured on the lab VM (docs/DESKTOP_UI.md).</summary>
     public string DriverTimingDescription { get; } = "Measures how long every read and write takes inside the cache and RAM disk drivers. " +
-        "The figures appear on each cache and virtual disk, and on the Diagnostics page. Applies while QueueCache runs.";
+        "The figures appear on each cache and virtual disk, and on the Diagnostics page. Applies while QueueCache runs. " +
+        "Measured cost while on: small random writes into a cache's RAM up to 12% slower, small random reads from a RAM disk up to 8% slower, " +
+        "large transfers barely affected (under 2% on RAM disks). Off, it costs nothing measurable.";
     public string CallerPathDescription { get; } = "On (recommended): reads already in a cache's RAM and writes that fit are answered at once, on the " +
         "program's own thread. Off: every request goes through the cache's worker thread, which is slower. Only for comparing performance.";
 

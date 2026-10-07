@@ -49,6 +49,19 @@ then starts over instead of showing a negative rate.
   and running RAM disk. The drivers start with it off; while QueueCache runs, the
   monitor switches each driver whose state differs from the setting, once per
   cache instance or disk creation. Figures appear on the item and on Diagnostics.
+  Measured cost (lab VM, CrystalDiskMark-style rows, best of 3 passes, medians
+  of 2–3 rounds; noise about ±2%):
+
+  | Workload | Timing on vs off |
+  |---|---|
+  | Cache, 4 KiB random writes into RAM, Q1 / Q32 | −7% to −8% / −10% to −12% |
+  | Cache, 1 MiB sequential writes, Q1 / Q8 | −1% / −4% to −7% |
+  | RAM disk (Direct or Standard), 4 KiB random reads | −5% to −8% |
+  | RAM disk, 4 KiB random writes | −2% to −4% |
+  | RAM disk, 1 MiB sequential reads and writes | −1.5% to +1% |
+
+  With timing off, the new RAM disk driver measured within noise of the previous
+  one (every row within −3.3% to +2.8%; the 4 KiB rows average about −1%).
 - **Answer cache hits on the calling thread** (`CallerPath`, default on). The
   driver does not report it, so the monitor assumes the default for a new cache
   instance and sends the setting only when it differs.
