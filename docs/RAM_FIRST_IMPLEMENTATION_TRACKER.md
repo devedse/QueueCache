@@ -2982,6 +2982,11 @@ Normal caching, eviction and UI clearing behavior are unchanged. Plan 93 adds
 `cache-layout-reset` with 36 ordered Q1/Q8 cases and occupied/parameter refusal,
 allocation/counter preservation and existing resident-score evidence checks.
 
-Verification: host-safe management contracts passed; CI/VM measurements pending.
-No recovery of throughput or production optimization is claimed yet. Method and evidence
+Verification: host-safe management contracts passed; CI 0.4.423.1 passed. On the
+VM (loaded driver hash checked, Verifier and timing off, `quick` passed first)
+plan 93 completed 36/36 with zero misses/lower writes/errors/reallocation in
+score windows. Medians Q1/Q8 GB/s: fresh 15.44/36.27, sequential reuse
+10.75/29.70, reset same allocation 15.24/36.26, random reuse 8.75/23.81, reset
+15.15/36.62, recreated 15.41/36.37. Free-slot order alone explains the gap. No
+production optimization is implemented yet. Method and evidence
 contract: [same-allocation reset](DEVELOPER_VERIFICATION.md#same-allocation-reset-comparison-plan-93).

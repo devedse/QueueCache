@@ -92,6 +92,32 @@ Changing allocator behavior needs integrity, ordering and capacity checks as
 well as throughput comparison. Reallocation is a diagnostic control, not an
 automatic production workaround.
 
+## Same-allocation reset confirms free-slot order (plan 93)
+
+Driver 0.4.423.1 (loaded SHA-256 `75A4F833365BC19FCE72DB1DE52A7EA29275A2709C57C210577743AB6BD09801`,
+Verifier and timing off, same CDM DiskSpd hash) added a diagnostic control that,
+only on a verified empty cache, rewrites the free-slot links to ascending order.
+It keeps every buffer, the allocation instance/generation and the counters.
+`cache-layout-reset` ran 36/36 cases (three repeats each) with no read misses,
+lower writes, errors or reallocation inside any score window; every reset case
+used the same allocation as the slow reuse case before it.
+
+| Median GB/s | Q1 | Q8 |
+|---|---:|---:|
+| Fresh allocation | 15.44 | 36.27 |
+| Sequential reuse after drop-clean | 10.75 | 29.70 |
+| Same allocation, free order reset | 15.24 | 36.26 |
+| Random reuse after drop-clean | 8.75 | 23.81 |
+| Same allocation, free order reset | 15.15 | 36.62 |
+| Recreated allocation | 15.41 | 36.37 |
+
+Rewriting only the free-list order recovers the full fresh-allocation speed, so
+free-slot order explains the whole gap; physical-page changes from recreation do
+not. The order comes from `RetireSlot` pushing onto the free-list head while
+eviction retires oldest first: a cleared sequential file is refilled in exactly
+reverse slot order, and random use leaves a random permutation. Hardware
+prefetch/TLB costs per order remain unmeasured.
+
 ## Optimization options (not implemented)
 
 **Clean**, **empty** and **freshly allocated** are different states. Clean only
@@ -116,7 +142,7 @@ allocation or to move existing data in the background.
 
 Proposed experiment order:
 
-1. **Isolate free-slot order without reallocating RAM.** At a verified completely
+1. **Done (plan 93, above): free-slot order confirmed.** At a verified completely
    empty boundary, rebuild the free-slot list in initial slot order while retaining
    the same buffers. Compare before/after against recreation using the maintained
    runner. This isolates the leading hypothesis from changes to physical pages

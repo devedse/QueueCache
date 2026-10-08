@@ -68,9 +68,10 @@ comparison, fresh Q8/Q1 medians were 36.850/15.462 GB/s, sequential reuse
 37.073/15.375. All score intervals had zero lower-I/O attempts, Verifier and timing
 were off, and restoration succeeded.
 
-Allocation history is a reproducible cause. Source review points to clean LRU
-eviction feeding a LIFO free-slot list and changing memory locality; hardware
-cache/TLB costs were not isolated. `drop-clean` and applying an unchanged budget
+The cause is the free-slot order: clean LRU eviction feeds a LIFO free list, so a
+cleared sequential file refills in reverse slot order and random use leaves a
+random order. Rewriting only that order on the same allocation (0.4.423.1, plan
+93) restored 15.2/36.3 GB/s Q1/Q8; hardware cache/TLB costs were not isolated. `drop-clean` and applying an unchanged budget
 do not recreate the allocation. No driver fix has been applied. Next: evaluate
 locality-preserving slot recycling against the maintained `cache-layout` suite
 and integrity checks. See [evidence and scope](CACHE_LAYOUT_INVESTIGATION_20261008.md).
