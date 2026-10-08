@@ -2965,3 +2965,11 @@ profile and timing were restored and the tray app restarted. No driver fix is
 claimed; writes, RAM disks and hardware cache/TLB causes were not measured here.
 Full [results and limitations](CACHE_LAYOUT_INVESTIGATION_20261008.md); repeatable
 [method](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
+
+Follow-up design, 2026-10-08: [UI preparation and reset semantics](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
+are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#optimization-options-not-implemented)
+prioritize isolating free-slot order with unchanged buffers, then improving
+ordinary placement before considering idle compaction. Implementation: none of
+these optimizations is implemented. Verification: the plan-92 results above are
+the baseline only; no same-buffer reset, allocator change, copy coalescing or
+compaction benefit has been measured. The existing runner contract is unchanged.

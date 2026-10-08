@@ -12,6 +12,9 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
   Balanced power plan.
 - **Cache:** the drive with a 2 GiB Fast cache:
   `qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`.
+  Decide whether this is a fresh-allocation peak or a reused-cache measurement;
+  record that choice. Applying this command to an unchanged cache does not reset
+  allocation history. See the UI preparation steps below.
 - **RAM disk:** `qcache disk create --mode ram --size-mib 4096 --letter T`
   (Direct access, the default). Remove it afterwards with
   `qcache disk stop <id> --discard` and `qcache disk remove <id>`.
@@ -104,3 +107,45 @@ records all medians/ranges and restores the old peak after each reuse group.
 Until allocator behavior changes, report fresh-allocation peaks separately from
 reused-cache results. The existing README screenshots remain real measurements
 of their documented preparation; they have not been replaced by DiskSpd scores.
+
+## UI preparation: clearing contents versus recreating the allocation
+
+These controls are on the selected **cached volume**, not a managed RAM disk.
+Here, **clean** means data is already on disk. A clean cache can still be full of
+useful data, and its memory layout can reflect earlier usage. **Empty** means no
+cached contents; **fresh allocation** also resets the allocator's bookkeeping.
+
+| UI action | What it does | Fresh allocation? |
+|---|---|---|
+| **Flush now** | Writes pending data to disk; keeps the reserved RAM. | No |
+| **⋯ → Clear read cache** | Drops clean read/retained-write data; keeps unwritten data and the existing allocation. Disabled when there is no clean data to drop. | No |
+| **Pause**, then **Resume** | Drains/stops caching, then resumes using the retained allocation. | No |
+| Save **Cache settings** with the same budget | Reuses the allocation; this is not a reset shortcut. | No |
+| **⋯ → Remove cache**, then **Add cache** | Drains and releases RAM, removes the saved cache task, then creates a new allocation using the settings entered. Disk files remain intact. | Yes |
+
+For a deliberately **fresh-allocation peak** on the test volume:
+
+1. Stop competing workloads and record the cache settings, including startup
+   persistence and any advanced options.
+2. Select the volume, choose **⋯ → Remove cache**, and wait for successful
+   completion. Removal itself writes pending data before freeing RAM; a separate
+   flush is optional. A failed removal is not a completed reset.
+3. Choose **Add cache** and restore the same settings (for these comparisons,
+   2 GiB Fast). Removal also removed the saved task, so restore startup settings
+   explicitly rather than relying on defaults.
+4. Allow the test's warmup/refill before judging resident performance. A fresh
+   allocation starts empty and initial reads can reach disk. For strict residency
+   and lower-I/O checks, use the maintained `cache-layout` suite.
+5. Apply the same preparation before each complete CrystalDiskMark run being
+   compared, and record the test order. Do not reset between individual rows
+   unless that is a separately documented experiment.
+
+For a **reused-cache measurement**, keep the allocation, record its preceding
+workload, and use the same flush/drop-clean/warmup procedure for each comparison.
+Our controlled run already flushed and dropped clean data: that combination did
+not restore fresh-allocation throughput. Both types of measurement matter; a
+fresh peak alone does not establish sustained performance after ordinary use.
+
+Recreation is the demonstrated current reset method, not a requirement that every
+future optimization must free/reallocate RAM. Proposed ways to avoid the slowdown
+are recorded in the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#optimization-options-not-implemented).

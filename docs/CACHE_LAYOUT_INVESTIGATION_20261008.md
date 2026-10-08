@@ -92,6 +92,72 @@ Changing allocator behavior needs integrity, ordering and capacity checks as
 well as throughput comparison. Reallocation is a diagnostic control, not an
 automatic production workaround.
 
+## Optimization options (not implemented)
+
+**Clean**, **empty** and **freshly allocated** are different states. Clean only
+describes whether cached bytes are already on disk. Both fast and slow scores
+above used clean, resident data. Clearing data marks slots reusable without
+resetting their order. The proposed optimization concerns slot order, rather than
+erasing old byte contents from free slots.
+See [benchmarking](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
+for the current UI controls and repeatable preparation.
+
+A simplified example: slots numbered 0, 1, 2, 3 are initially handed out in that
+order. Retiring them in order 0, 1, 2, 3 pushes each to the free-list head, leaving
+3, 2, 1, 0 for the next refill. Random retirement creates another permutation.
+Actual order also reflects concurrent requests and the driver's scan-resistant
+insertion policy. Slot numbers describe allocator order and nearby virtual
+buffers within slabs, not a promise that the whole cache is physically contiguous.
+
+Random hits change recency bookkeeping via `TouchClean`; they do not move the
+cached payload. The layout consequence appears when slots are subsequently
+retired and reused. This distinction matters when deciding whether to optimize
+allocation or to move existing data in the background.
+
+Proposed experiment order:
+
+1. **Isolate free-slot order without reallocating RAM.** At a verified completely
+   empty boundary, rebuild the free-slot list in initial slot order while retaining
+   the same buffers. Compare before/after against recreation using the maintained
+   runner. This isolates the leading hypothesis from changes to physical pages
+   and other state caused by recreation. Check active/pinned/filling ownership
+   under the appropriate synchronization; a clean-but-occupied cache is not this
+   boundary. Bound or measure time spent blocking requests during the rebuild.
+2. **Improve placement during ordinary reuse.** Explore tracking free slots per
+   existing 256 KiB slab and choosing nearby available slots for sequential fills
+   and newly allocated writes. Keep victim selection separate: choosing which
+   data to evict protects the hot set, while choosing among already-free slots
+   determines placement. Preserve retention, quotas, scan resistance and version
+   ownership. If only scattered slots are free, use them without waiting for
+   lower I/O just to obtain a prettier layout. A full cache may leave little
+   placement choice; do not silently evict extra hot data to improve a benchmark.
+3. **Evaluate copying adjacent runs together.** Where both source and destination
+   ranges are contiguous and valid, a larger copy may replace repeated 4 KiB
+   copies. Existing version pins and valid-sector checks remain essential. This
+   complements better placement but cannot make scattered buffers contiguous.
+4. **Consider bounded idle work only if still worthwhile.** Reordering free-slot
+   metadata need not move payload, but it cannot repair already-resident layout.
+   Moving resident blocks is compaction: it consumes memory bandwidth and must
+   coordinate with reads, writes, pins and draining. Any such work should have a
+   strict budget and yield to demand. Simply dropping useful clean data during
+   idle creates future misses and does not itself reset slot order.
+
+A FIFO free list is a cheap candidate comparison, not an assumed general fix:
+it can avoid reversing a sequential retirement order but preserves random
+retirement order, and may trade reuse locality of hot metadata for other gains.
+Likewise, an empty-cache reset alone would address the benchmark preparation case
+without proving a fix for continuous eviction while the cache stays populated.
+
+No optimization, benefit percentage or new workload contract has been accepted
+yet. Before implementation, extend/version the maintained verification plan for
+the relevant comparisons; keep implementation status and measured evidence
+separate in the tracker. In addition to the existing 24-case comparison, proposed
+verification needs repeated reuse and sustained eviction without explicit clears,
+read integrity, overlapping/pinned versions, partial writes, capacity and error
+semantics, plus the existing 72-case `write-performance --budget-mib 2048` suite
+with the same DiskSpd binary before/after. Check CPU cost and tail latency as well
+as throughput, and ensure fitting Fast writes gain no lower-I/O dependency.
+
 ## Scope and provenance
 
 This investigation covers resident **cache sequential reads**. It does not explain
