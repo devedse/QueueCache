@@ -47,17 +47,33 @@ by Task Scheduler with its default priority 7) reads cached data much slower. On
 16.4-17.7 GB/s at below-normal priority against 28.9-30.6 GB/s at normal priority,
 same file, same session (2026-10-08, 0.4.414.1). Data is unaffected.
 
-Why (likely): Windows gives such a program low I/O priority as well, and the cache's
-copy threads (normal priority) take the processors it needs to submit its next
-requests on a small machine. The driver does not look at request or thread priority
-itself. The same program without a cache is affected too: on the uncached Ceph
-disk, SEQ1M Q8 measured 262/116 MB/s at below-normal priority and 640/270 MB/s at
-normal priority, because Windows sends low-priority requests one at a time.
+The controlled change was Task Scheduler priority 7 versus 4, which changes CPU,
+I/O and memory priorities together. CPU contention with copy workers and lower-I/O
+scheduling are possible explanations, but their individual contributions were
+not measured. The driver does not inspect request/thread priority itself. The
+uncached Ceph disk also improved from 262/116 to 640/270 MB/s; those scores alone
+do not prove how many lower requests were outstanding.
 
 Proposed change: measure where the time goes (submitting thread waiting for a
 processor, or copy threads spinning) with the developer timing counters, then
 consider copying on the caller's thread when it is the only one waiting. Until then,
 benchmark at normal priority ([benchmarking](BENCHMARKING.md)).
+
+## Sequential reads slow down after cache allocation reuse (performance)
+
+On 0.4.414.1, a clean, fully resident cache can read sequentially more slowly after
+drop-clean/refill than after allocating the cache anew. In a controlled 24-case
+comparison, fresh Q8/Q1 medians were 36.850/15.462 GB/s, sequential reuse
+29.809/10.754, and random reuse 23.177/8.563. Recreating the allocation restored
+37.073/15.375. All score intervals had zero lower-I/O attempts, Verifier and timing
+were off, and restoration succeeded.
+
+Allocation history is a reproducible cause. Source review points to clean LRU
+eviction feeding a LIFO free-slot list and changing memory locality; hardware
+cache/TLB costs were not isolated. `drop-clean` and applying an unchanged budget
+do not recreate the allocation. No driver fix has been applied. Next: evaluate
+locality-preserving slot recycling against the maintained `cache-layout` suite
+and integrity checks. See [evidence and scope](CACHE_LAYOUT_INVESTIGATION_20261008.md).
 
 ## Raw disk reads and writes bypass the cache (by design)
 

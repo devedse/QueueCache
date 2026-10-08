@@ -628,6 +628,7 @@ Preserve prior raw results and their scope.
 | `performance` | 144 hot-reader cells at defaults: allocation × Eager/Idle × delay 0/25 ms × writer QD8/32/128 × alone/loaded × three repeats. Plus 60 sequential/random read/write and mixed scaling cells, cache off/on, QD1/32. |
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 | `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
+| `cache-layout` | Opt-in 1 GiB sequential reads Q1/Q8 with a 2048 MiB Fast/Idle cache: fresh allocation, sequential reuse after drop-clean, random-touch reuse after drop-clean, then reallocation. Twenty-four cases at three repeats, timing off, normal process priority required. Residency and zero lower-I/O checks surround each score. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -1209,3 +1210,54 @@ block-sized precomputed buffers for writes, as shown in its official
 The new comparison keeps the exact DiskSpd binary, resident proof and telemetry
 handshake unchanged. [Microsoft's buffer contract](https://github.com/microsoft/diskspd/wiki/command-line-and-parameters)
 explains why scores with and without `-Zr` cannot be treated as identical tests.
+
+## Cache allocation history comparison (plan 92)
+
+`cache-layout` investigates changes in resident sequential read throughput after
+cache reuse. It runs only the existing driver and owned files on a non-OS target;
+it does not install a driver, reboot, change saved profiles or set fault hooks.
+
+```powershell
+qcache developer verify Q: --suite cache-layout --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```
+
+Use normal process priority (Task Scheduler priority 4); the runner rejects other
+CPU priority classes. The launch environment must also provide normal I/O and
+memory priorities. Merely changing an already-running process's CPU priority is
+not equivalent to changing all three. Confirm Driver Verifier and timing are off,
+and preserve the exact loaded-driver and DiskSpd hashes with the run.
+
+Each repetition contains two ordered four-case groups, one at Q1 and one at Q8.
+Queue-depth order alternates between repetitions. Each group uses the same 1 GiB
+`resident.dat` file and performs these stages:
+
+1. **Fresh:** drain/disable, release and allocate the 2 GiB cache anew.
+2. **SequentialReuse:** retain that allocation, drop the clean data from the
+   preceding sequential reads, and refill it.
+3. **RandomReuse:** retain that allocation, run five seconds of resident 4 KiB
+   random reads at Q32/T1 with seed 42 to change clean-block recency, then
+   drop-clean and refill sequentially. This changes slot reuse order without
+   changing the file or deliberately issuing lower writes.
+4. **Recreated:** release and reallocate again as a control for elapsed time.
+
+The generation must stay unchanged for reuse stages and change for fresh stages.
+Every stage gets the existing ten-second full-file warm pass plus three-second
+strict residency proof before the five-second score (or `--duration-seconds`).
+The random-touch stage also requires a resident, lower-I/O-free interval.
+Snapshots surrounding each scored process must show no read misses, lower reads,
+lower writes, lower flushes, dirty or in-flight bytes, new errors, or changes in
+instance/generation. Missing attribution/copy-path counters fail the case.
+Counters span process startup/close and observations; throughput comes only from
+DiskSpd XML score bytes and seconds. Ready/coverage checks and independent
+restoration remain required. The final snapshots retain caller-path/offload counts.
+
+At default repeats there are **24 cases**. Case filters are refused because a
+partial group would invalidate the allocation-history comparison. Existing
+`sequential-resident`, `write-performance` and `full` matrices are unchanged.
+Use medians across completed repetitions; keep every raw score and report
+restoration separately. This tests one controlled reuse pattern, not every
+possible allocation or fragmentation history.
+
+The first completed 24-case [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md)
+reproduced the older sequential-read peaks through fresh allocation and their
+loss through reuse, with zero lower I/O during score intervals.

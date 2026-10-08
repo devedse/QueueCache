@@ -161,6 +161,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     public async Task<int> RunAsync(VerificationOptions selected, IProgress<string>? progress, CancellationToken token)
     {
         VerificationPlan.Validate(selected);
+        layoutGeneration = null;
+        if (selected.Suite == "cache-layout" && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+            throw new IOException("cache-layout requires a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
         {
@@ -193,7 +196,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-layout" ? VerificationPlan.Performance(options) : [];
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
@@ -217,6 +220,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         {
             SchemaVersion = 1,
             PlanVersion = VerificationPlan.Version,
+            ProcessPriority = Process.GetCurrentProcess().PriorityClass.ToString(),
             Options = options,
             ExpectedCases = expected,
             PerformanceCases = performance,
@@ -671,20 +675,55 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         return score;
     }
 
+    private ulong? layoutGeneration;
+    private async Task<CacheLayoutSnapshot> LayoutSnapshot(string name, CancellationToken token)
+    {
+        var path = await Worker(Job("snapshot") with { Reply = storage.PathFor(name) }, token);
+        return JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(path, token))
+            ?? throw new InvalidDataException("Missing cache layout snapshot.");
+    }
+
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
     {
         await Control(WriteCacheAction.LabDelay, token);
-        await Worker(Job("configure") with
+        var reuseLayout = scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse;
+        if (scenario.Layout is CacheLayoutStage.Fresh or CacheLayoutStage.Recreated)
         {
-            Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.Drain != "Off")
+            await Control(WriteCacheAction.Disable, token);
+            await Control(WriteCacheAction.Release, token);
+        }
+        if (!reuseLayout)
+        {
+            await Worker(Job("configure") with
             {
-                Options = new CacheOptions(Enum.Parse<CacheAllocation>(scenario.Allocation), 50,
-                Drain: scenario.Drain == "Off" ? DrainAlgorithm.Eager : Enum.Parse<DrainAlgorithm>(scenario.Drain))
-            }
-        }, token, 300);
+                Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.Drain != "Off")
+                {
+                    Options = new CacheOptions(Enum.Parse<CacheAllocation>(scenario.Allocation), 50,
+                    Drain: scenario.Drain == "Off" ? DrainAlgorithm.Eager : Enum.Parse<DrainAlgorithm>(scenario.Drain))
+                }
+            }, token, 300);
+        }
         await Control(WriteCacheAction.Flush, token);
-        await Control(WriteCacheAction.DropClean, token);
+        if (scenario.Layout == CacheLayoutStage.None)
+            await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
+        if (scenario.Layout != CacheLayoutStage.None)
+        {
+            var layout = await LayoutSnapshot(scenario.Id + "-layout-start.json", token);
+            CacheLayoutEvidence.ValidateTransition(layoutGeneration, layout, reuseLayout);
+            layoutGeneration = layout.State.Generation;
+            if (scenario.Layout == CacheLayoutStage.RandomReuse)
+            {
+                // Touch already-resident blocks in random order, changing the clean LRU.
+                // DropClean then returns slots in that order; refill uses the same allocation.
+                var random = await Disk(scenario.Id + "-random-touch", Path.Combine(workDirectory, "resident.dat"),
+                    ["-b4K", "-r4K", "-o32", "-t1", "-w0", "-d5", "-W0", "-z42"], token);
+                var touched = await LayoutSnapshot(scenario.Id + "-random-touched.json", token);
+                CacheLayoutEvidence.ValidateScore(layout, touched, random.Bytes);
+            }
+        }
+        if (scenario.Layout != CacheLayoutStage.None)
+            await Control(WriteCacheAction.DropClean, token);
         var hot = Path.Combine(workDirectory, "hot.dat");
         if (scenario.Workload == "interference")
         {
@@ -785,6 +824,10 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             {
                 Reply = storage.PathFor(scenario.Id + "-after.json")
             }, token);
+            if (scenario.Layout != CacheLayoutStage.None)
+                CacheLayoutEvidence.ValidateScore(
+                    JsonSerializer.Deserialize<CacheLayoutSnapshot>(File.ReadAllText(storage.PathFor(scenario.Id + "-before.json")))!,
+                    JsonSerializer.Deserialize<CacheLayoutSnapshot>(File.ReadAllText(storage.PathFor(scenario.Id + "-after.json")))!, score.Bytes);
             return score;
         }
         finally

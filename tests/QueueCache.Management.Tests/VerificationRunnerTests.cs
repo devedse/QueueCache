@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 91, "plan 91 runs RAM-backed product suites with Direct and Standard access and checks Direct coherence and fallbacks; score workloads unchanged");
+        Check(VerificationPlan.Version == 92, "plan 92 adds ordered cache-layout comparisons; existing score workloads unchanged");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1016,6 +1016,19 @@ internal static class VerificationRunnerTests
             writes.All(c => c.WriteBufferArgument == "-Zr"), "buffer comparison preserves existing write matrix payload generation");
         Check(VerificationPlan.Performance(options with { Suite = "sequential-resident", CaseFilter = "precomputed" }).Count == 3,
             "precomputed write selection is a complete three-case subset");
+        var layouts = VerificationPlan.Performance(options with { Suite = "cache-layout", BudgetMiB = 2048 });
+        Check(layouts.Count == 24 && layouts.Select(c => c.Id).Distinct().Count() == 24 &&
+            layouts.All(c => c.WarmResident && !c.Timing && c.Workload == "sequential-read"),
+            "cache layout comparison has unique resident read cases without timing");
+        foreach (var group in layouts.Chunk(4))
+            Check(group.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse,
+                CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated }) && group.Select(c => c.QueueDepth).Distinct().Count() == 1,
+                "layout group brackets reuse with fresh allocations at the same queue depth");
+        Check(layouts[0].QueueDepth == 1 && layouts[8].QueueDepth == 8 && layouts[16].QueueDepth == 1,
+            "layout comparison alternates queue-depth order across repetitions");
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 1024 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 2048, CaseFilter = "RandomReuse" }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 2048, DiskSpd = null }));
         var warmState = new QueueCache.Management.WriteCacheState(8161, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
             { Instance = 4, CleanReadBytes = 1UL << 30, ReadHitBytes = 10UL << 30 };
         var warmed = warmState with { ReadHitBytes = 12UL << 30 };
@@ -1028,6 +1041,26 @@ internal static class VerificationRunnerTests
         Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 4096 }, 2L << 30, 1UL << 30));
         Reject(() => WarmResidentEvidence.Validate(warmState, warmed with { CleanReadBytes = 0, DirtyBytes = 600UL << 20, InFlightBytes = 500UL << 20 }, 2L << 30, 1UL << 30));
         Reject(() => WarmResidentEvidence.Validate(warmState, warmed, 0, 1UL << 30));
+        var layoutPerformance = JsonSerializer.Deserialize<QueueCache.Management.CachePerformance>("{\"Frequency\":10000000}")!;
+        var layoutAttribution = JsonSerializer.Deserialize<QueueCache.Management.CacheAttribution>("{}")!;
+        var layoutDiagnostics = new QueueCache.Management.CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        { Attribution = layoutAttribution, CallerPath = new(0, 0, 0), CopyOffloadReads = 0 };
+        var layoutBefore = new CacheLayoutSnapshot(warmState, layoutPerformance, layoutDiagnostics);
+        var layoutAfter = layoutBefore with { State = warmed };
+        CacheLayoutEvidence.ValidateTransition(null, layoutBefore, false);
+        CacheLayoutEvidence.ValidateTransition(warmState.Generation, layoutBefore, true);
+        Reject(() => CacheLayoutEvidence.ValidateTransition(null, layoutBefore, true));
+        Reject(() => CacheLayoutEvidence.ValidateTransition(warmState.Generation + 1, layoutBefore, true));
+        Reject(() => CacheLayoutEvidence.ValidateTransition(warmState.Generation, layoutBefore, false));
+        CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter, 2L << 30);
+        Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter with { Performance = layoutPerformance with { TimingEnabled = 1 } }, 2L << 30));
+        Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter with { Diagnostics = layoutDiagnostics with { Attribution = null } }, 2L << 30));
+        foreach (var attribution in new[] { layoutAttribution with { LowerReadAttempts = 1 },
+                     layoutAttribution with { LowerWriteAttempts = 1 }, layoutAttribution with { LowerFlushAttempts = 1 } })
+            Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore,
+                layoutAfter with { Diagnostics = layoutDiagnostics with { Attribution = attribution } }, 2L << 30));
+        Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter with { State = warmed with { DirtyBytes = 4096 } }, 2L << 30));
+        Check(true, "layout evidence rejects reallocation during reuse, missing counters, timing and lower I/O");
         var selection = options with { Suite = "write-performance", CaseFilter = "random-write-q1-Idle-timingFalse" };
         var selectedWrites = VerificationPlan.Performance(selection);
         Check(selectedWrites.Count == 3 && selectedWrites.SequenceEqual(writes.Where(test => test.Id.Contains(selection.CaseFilter))),

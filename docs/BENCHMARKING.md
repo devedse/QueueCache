@@ -29,17 +29,20 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 
 | Pitfall | What it did | Avoid it by |
 |---|---|---|
-| **Below-normal priority.** Task Scheduler starts programs at priority 7 (below normal, with low I/O priority) unless told otherwise, and DiskSpd inherits CrystalDiskMark's priority. | Cached SEQ1M Q8 read 16.4-17.7 instead of 28.9-30.6 GB/s; RAM disk SEQ1M Q8 write 16.3 instead of 24.7 GB/s; the uncached disk got one request at a time (262/116 instead of 640/270 MB/s). | Start CrystalDiskMark normally. When starting it from a scheduled task, use `New-ScheduledTaskSettingsSet -Priority 4` and check `Get-Process DiskMark64` shows `PriorityClass Normal`. |
-| **Leftovers in the cache.** The 2 GiB cache still held earlier test files. | Part of the new 1 GiB test file was pushed out and read from the disk: 5-20 GB/s instead of 26-30 GB/s. | `qcache policy drop-clean Q:` before each run (drops read data only, never unwritten data). |
+| **Below-normal priority.** Task Scheduler starts programs at priority 7 (below normal, with low I/O and memory priorities) unless told otherwise, and DiskSpd inherits CrystalDiskMark's priority. | Cached SEQ1M Q8 read 16.4-17.7 instead of 28.9-30.6 GB/s; RAM disk SEQ1M Q8 write 16.3 instead of 24.7 GB/s; the uncached disk also improved from 262/116 to 640/270 MB/s. The experiment changed CPU, I/O and memory priorities together; it did not isolate their individual contributions. | Start CrystalDiskMark normally. When starting it from a scheduled task, use `New-ScheduledTaskSettingsSet -Priority 4` and check `Get-Process DiskMark64` shows `PriorityClass Normal`. |
+| **Leftovers in the cache.** The 2 GiB cache still held earlier test files. | Part of the new 1 GiB test file was pushed out and read from the disk: 5-20 GB/s instead of 26-30 GB/s. | `qcache policy drop-clean Q:` before each run (drops clean read/retained-write data, never unwritten data). |
+| **Allocation history.** Drop-clean empties data but preserves a free-slot order affected by earlier use. | Fully resident sequential reuse measured 29.8/10.8 GB/s (Q8/Q1), versus 36.9/15.5 with a fresh allocation; random reuse was slower still. | Keep and report allocation preparation consistently. Use the maintained `cache-layout` comparison below to distinguish reuse from fresh-allocation peaks. |
 | **Right after a restart.** Windows' startup work (Defender, indexing) still running. | Lower and noisier results. | Wait at least 15 minutes after a restart; check the processor is idle. |
 | **Other programs.** A second benchmark, a game launcher updating, a VM host busy. | Lower results. | Close them; on a VM, check the host's load. |
 | **A notification over the window** (AutoPlay when a RAM disk appears). | Covers part of the screenshot. | Dismiss it before capturing. |
 
-Not avoidable, so compare runs on the same machine only: CrystalDiskMark's first
+Keep preparation and machine conditions consistent: CrystalDiskMark's first
 pass reads while the freshly written test file is still being written to the
 disk (it reports the best of 5 passes), and one-request-at-a-time results (Q1)
 depend on how fast one processor core copies memory. On the test VM, SEQ1M Q1
-read varied from 10 to 15 GB/s between sessions with nothing else changed.
+read varied from 10 to 15 GB/s between sessions. The controlled allocation-history
+comparison below now reproduces that gap without a reboot or priority change;
+the older session comparison alone did not establish a CPU-clock cause.
 
 ## Checking a surprising result
 
@@ -81,3 +84,23 @@ session, not in an SSH session:
   then cropped to the window).
 
 These helpers are lab tooling and are not part of the repository.
+
+Microsoft documents Task Scheduler's combined CPU, I/O and memory settings in
+the [priority table](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-priority-settingstype-element).
+Use priority **4** specifically; 5 and 6 also have normal CPU priority but lower
+memory priority.
+
+## Investigating allocation history
+
+`drop-clean` does not restore a newly allocated cache: clean slots return to its
+free list in eviction order. Reapplying the same budget also keeps the allocation.
+To compare fresh allocation with reuse, use the maintained
+[`cache-layout` suite](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
+It verifies allocation generations, complete residency and zero lower I/O around
+scores, and brackets sequential/random reuse with fresh allocations. Do not infer
+that a fast or slow score alone proves a clock, priority, or disk-miss cause.
+The completed 24-case [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md)
+records all medians/ranges and restores the old peak after each reuse group.
+Until allocator behavior changes, report fresh-allocation peaks separately from
+reused-cache results. The existing README screenshots remain real measurements
+of their documented preparation; they have not been replaced by DiskSpd scores.

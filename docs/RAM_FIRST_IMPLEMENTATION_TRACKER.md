@@ -2944,3 +2944,24 @@ No bugcheck since the one below. Earlier results:
   26.7/24.4). A CPU profile of SEQ1M Q8T1 showed the workers spending 21% of busy samples
   spinning between copies against 28% copying; the handoff and spin cost more than the
   overlap gained. The inline design (dad0505) stays.
+
+
+### Resident sequential performance investigation, 2026-10-08
+
+Implementation: plan 92 adds the opt-in `cache-layout` comparison to the maintained
+verification runner. It brackets sequential/random reuse plus drop-clean with
+fresh allocations at Q1/Q8, preserves the file and allocation generation across
+reuse, and rejects score intervals with lower I/O or missing evidence. Contract
+tests cover ordered cases, generation transitions, timing and lower-I/O rejection.
+There are no native driver or production policy changes.
+
+Verification: host-safe management contracts passed. On the unchanged CI driver
+0.4.414.1, Verifier off, all 24 VM cases completed with verified residency, zero
+lower-I/O attempts during score intervals, timing off and complete telemetry.
+Fresh/reused/recreated median GB/s: Q1 15.462/10.754/15.375; Q8
+36.850/29.809/37.073. Random reuse was slower still. Allocation generations
+changed only as intended. Independent restoration succeeded; the original Fast
+profile and timing were restored and the tray app restarted. No driver fix is
+claimed; writes, RAM disks and hardware cache/TLB causes were not measured here.
+Full [results and limitations](CACHE_LAYOUT_INVESTIGATION_20261008.md); repeatable
+[method](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
