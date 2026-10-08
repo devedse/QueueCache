@@ -159,11 +159,19 @@ the test machine with the installed release:
 
 1. Cache: the drive with a 2 GiB Fast cache (`qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`).
    RAM disk: `qcache disk create --mode ram --size-mib 4096 --letter T`.
-2. CrystalDiskMark 9.0.3 with its defaults: 5 passes, 1 GiB, MB/s.
-   **Theme → Dark** and **Theme → Zoom → 150%**.
+2. CrystalDiskMark 9.0.3 with its defaults: 5 passes, 1 GiB, MB/s, the
+   Default (green) theme, and **Theme → Zoom → 150%**.
 3. Type a one-line comment in the box at the bottom, e.g.
    `QueueCache RAM cache on Q: (Fast mode, 2 GiB)` or `QueueCache RAM disk T: (4 GiB)`.
-4. Close other benchmarks and stop other heavy work, then run **All** twice. Keep the faster run.
+4. Close other benchmarks and stop other heavy work, and wait at least 15 minutes
+   after a restart (Windows' startup work lowers the numbers). Before each run,
+   empty the cache's read data with `qcache policy drop-clean Q:` (it never drops
+   unwritten data): leftovers from earlier runs push part of CrystalDiskMark's
+   1 GiB test file out of a 2 GiB cache, and those parts then come from the disk
+   (measured: 5-20 GB/s instead of 26-35 GB/s sequential read). Start
+   CrystalDiskMark normally: at below-normal priority (for example from Task
+   Scheduler with its default priority) cached reads measured about half
+   ([known issues](KNOWN_ISSUES.md)). Run **All** twice and keep the faster run.
 5. Capture just the CrystalDiskMark window (Alt+Print Screen, or Snipping Tool in
    window mode) and save it over the image in `docs/images`.
 6. For the "without cache" column, pause the cache (`qcache policy pause Q:`),

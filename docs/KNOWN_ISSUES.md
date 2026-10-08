@@ -39,6 +39,26 @@ Proposed change: treat a request from the same file-system operation that overla
 in-progress caller-path request as a candidate for the fast path instead of opening
 the 256-request worker window, then re-measure on ReFS.
 
+## Low-priority programs read cached data at about half speed (performance)
+
+What you see: a program running below normal priority (for example anything started
+by Task Scheduler with its default priority 7) reads cached data much slower. On the
+4-vCPU test VM, 1 MiB sequential Q8 reads from a 2 GiB Fast cache measured
+16.4-17.7 GB/s at below-normal priority against 28.9-30.6 GB/s at normal priority,
+same file, same session (2026-10-08, 0.4.414.1). Data is unaffected.
+
+Why (likely): Windows gives such a program low I/O priority as well, and the cache's
+copy threads (normal priority) take the processors it needs to submit its next
+requests on a small machine. The driver does not look at request or thread priority
+itself. The same program without a cache is affected too: on the uncached Ceph
+disk, SEQ1M Q8 measured 262/116 MB/s at below-normal priority and 640/270 MB/s at
+normal priority, because Windows sends low-priority requests one at a time.
+
+Proposed change: measure where the time goes (submitting thread waiting for a
+processor, or copy threads spinning) with the developer timing counters, then
+consider copying on the caller's thread when it is the only one waiting. Until then,
+benchmark at normal priority.
+
 ## Raw disk reads and writes bypass the cache (by design)
 
 What it means: the cache sits on the volume. A program that reads the physical disk
