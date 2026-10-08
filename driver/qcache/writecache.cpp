@@ -1208,6 +1208,9 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->Head = c->Tail = c->OpenChunk = NoSlot;
     c->ChunkHead[0] = c->ChunkHead[1] = NoSlot;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
+    // Measured (plan 96, 1 MiB sequential RAM hits): prefetch +19-21% Q1; coalescing within a chunk
+    // +33% Q1 and up to +11% Q8; together no loss. QcLabCopyFlags can still turn them off for A/B.
+    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;

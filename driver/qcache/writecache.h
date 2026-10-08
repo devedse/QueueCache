@@ -254,8 +254,8 @@ enum : ULONG
     // Diagnostic only: count block/memory adjacency into the V18 diagnostics. No
     // parameters; holds the cache lock for one pass over the slots.
     QcLabMeasureLayout,
-    // Lab only: Value = QcCopyPrefetch | QcCopyCoalesce for RAM-hit copies. Changes only
-    // how hits are copied, never what is cached; read live, runtime only.
+    // Lab: Value = QcCopyPrefetch | QcCopyCoalesce for RAM-hit copies (both on by default).
+    // Changes only how hits are copied, never what is cached; read live, runtime only.
     QcLabCopyFlags
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
