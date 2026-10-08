@@ -3,7 +3,7 @@ using QueueCache.Management;
 namespace QueueCache.Developer.Verification;
 
 public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated, ResetAfterSequential, ResetAfterRandom,
-    ResetAscending, ResetChunksShuffled, ResetReversedInChunks, ResetScattered, Churned }
+    ResetAscending, ResetChunksShuffled, ResetReversedInChunks, ResetScattered, Churned, ChurnedFull }
 public sealed record CacheLayoutSnapshot(WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics);
 
 /// <summary>Allocation history must change only where intended; scored reads must stay in RAM.</summary>

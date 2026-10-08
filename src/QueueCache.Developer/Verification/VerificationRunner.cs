@@ -689,7 +689,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         await Control(WriteCacheAction.LabDelay, token);
         var resetOrder = CacheLayoutEvidence.ResetOrder(scenario.Layout);
         var resetLayout = resetOrder is not null;
-        var reuseLayout = resetLayout || scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse or CacheLayoutStage.Churned;
+        var reuseLayout = resetLayout || scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse or CacheLayoutStage.Churned or CacheLayoutStage.ChurnedFull;
         if (scenario.Layout is CacheLayoutStage.Fresh or CacheLayoutStage.Recreated)
         {
             await Control(WriteCacheAction.Disable, token);
@@ -729,10 +729,19 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 // nothing is cleared, like a cache in long use. Misses here are intended.
                 await Disk(scenario.Id + "-churn", Path.Combine(workDirectory, "writer.dat"),
                     ["-b4K", "-r4K", "-o32", "-t1", "-w0", "-d60", "-W0", "-z7"], token);
+            if (scenario.Layout == CacheLayoutStage.ChurnedFull)
+            {
+                // Fill every slot (the 4 GiB file is twice the cache), then randomize recency with
+                // 16K random reads: hits re-order the LRU, misses evict. The cache stays full.
+                var churn = Path.Combine(workDirectory, "writer.dat");
+                await Disk(scenario.Id + "-fill", churn, ["-b1M", "-o8", "-t1", "-w0", "-d10", "-W0"], token);
+                await Disk(scenario.Id + "-churn", churn, ["-b16K", "-r16K", "-o32", "-t1", "-w0", "-d120", "-W0", "-z7"], token);
+                await LayoutSnapshot(scenario.Id + "-churned.json", token);
+            }
         }
         if (resetLayout)
             await Worker(Job("cache-layout-reset") with { Reply = storage.PathFor(scenario.Id + "-reset-probe.json"), Value = resetOrder!.Value }, token);
-        else if (scenario.Layout is not (CacheLayoutStage.None or CacheLayoutStage.Churned))
+        else if (scenario.Layout is not (CacheLayoutStage.None or CacheLayoutStage.Churned or CacheLayoutStage.ChurnedFull))
             await Control(WriteCacheAction.DropClean, token);
         var hot = Path.Combine(workDirectory, "hot.dat");
         if (scenario.Workload == "interference")
@@ -759,7 +768,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 (ulong)options.BudgetMiB / 2 << 20);
         }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
-        var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-patterns" or "cache-layout-steady";
+        var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-patterns" or "cache-layout-steady" or "cache-layout-full";
         if (measureLayout)
             await Control(WriteCacheAction.LabMeasureLayout, token);
         var beforePath = await Worker(Job("snapshot") with

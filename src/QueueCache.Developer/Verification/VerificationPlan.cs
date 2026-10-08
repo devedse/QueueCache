@@ -31,9 +31,9 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 94;
+    public const int Version = 95;
     public static bool IsLayoutSuite(string suite) =>
-        suite is "cache-layout" or "cache-layout-reset" or "cache-layout-patterns" or "cache-layout-steady";
+        suite is "cache-layout" or "cache-layout-reset" or "cache-layout-patterns" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
@@ -74,6 +74,7 @@ public static class VerificationPlan
         "cache-layout-reset",
         "cache-layout-patterns",
         "cache-layout-steady",
+        "cache-layout-full",
         "flush-interference",
         "performance",
         "full"
@@ -166,6 +167,8 @@ public static class VerificationPlan
                     CacheLayoutStage.ResetReversedInChunks, CacheLayoutStage.ResetAscending },
                 // Never cleared: random-read churn over a file twice the cache, then the same file is re-read.
                 "cache-layout-steady" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending },
+                // Full cache: sequential fill past capacity, random 16K recency churn, then the file is re-read.
+                "cache-layout-full" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.ChurnedFull, CacheLayoutStage.ResetAscending },
                 _ => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated }
             };
             for (var repeat = 1; repeat <= options.Repeats; repeat++)

@@ -632,6 +632,7 @@ Preserve prior raw results and their scope.
 | `cache-layout-reset` | Adds free-slot-order reset on the same allocated RAM after sequential/random reuse. Thirty-six ordered cases. Requires the diagnostic reset driver, normal priority and DiskSpd. |
 | `cache-layout-patterns` | Same allocation, four free-slot orders (scattered, chunks shuffled, reversed inside chunks, ascending) after each fresh allocation, with a layout measurement before every score. Thirty cases. Requires the plan-94 driver, normal priority and DiskSpd. |
 | `cache-layout-steady` | Never-cleared cache: fresh allocation, then 60 s of random 4K reads over a file twice the cache before re-reading the resident file, then an ascending reset control; layout measured before every score. Eighteen cases. Plan-94 driver, normal priority, DiskSpd. |
+| `cache-layout-full` | Full cache: fresh allocation, then a 10 s sequential fill of the 4 GiB file (twice the cache) and 120 s of random 16K Q32 reads before re-reading the resident file, then an ascending reset control; layout measured before every score. Eighteen cases. Plan-94 driver or newer, normal priority, DiskSpd. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -1345,3 +1346,17 @@ allocation and data, runs 60 s of random 4K Q32 reads (seed 7) over the 4 GiB
 `writer.dat`, then re-reads and verifies the 1 GiB resident file. Churn misses are
 intended and outside the score window; the score window keeps the strict checks.
 The churn is read-only, so it models read-cache turnover, not retained writes.
+
+### Full-cache churn (plan 95)
+
+`cache-layout-full` models a cache in long use, which is normally full. Stage
+ChurnedFull keeps the allocation, reads `writer.dat` (4 GiB, twice the cache)
+sequentially for 10 s so every slot is used, then runs 120 s of random 16K Q32
+reads (seed 7) over it: hits reorder recency and misses evict. A
+`*-churned.json` snapshot records the state before the resident file is re-read
+and verified. Only controls present since plan 94 are used, so the same runner
+measures older and newer allocators.
+
+```powershell
+qcache developer verify Q: --suite cache-layout-full --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```

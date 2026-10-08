@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 94, "plan 94 adds free-slot order patterns and never-cleared churn with layout measurement; existing score workloads unchanged");
+        Check(VerificationPlan.Version == 95, "plan 95 adds the full-cache churn layout comparison; existing score workloads unchanged");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1054,8 +1054,12 @@ internal static class VerificationRunnerTests
         Check(steady.Count == 18 && steady.Select(c => c.Id).Distinct().Count() == 18 &&
             steady.Chunk(3).All(g => g.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending })),
             "steady comparison: fresh, never-cleared churn, then ascending reset control");
+        var full = VerificationPlan.Performance(options with { Suite = "cache-layout-full", BudgetMiB = 2048 });
+        Check(full.Count == 18 && full.Select(c => c.Id).Distinct().Count() == 18 &&
+            full.Chunk(3).All(g => g.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.ChurnedFull, CacheLayoutStage.ResetAscending })),
+            "full comparison: fresh, full-cache churn, then ascending reset control");
         var tool = Environment.ProcessPath!; // Any existing file passes the DiskSpd path check.
-        foreach (var suite in new[] { "cache-layout-patterns", "cache-layout-steady" })
+        foreach (var suite in new[] { "cache-layout-patterns", "cache-layout-steady", "cache-layout-full" })
         {
             VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, DiskSpd = tool });
             Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 1024, DiskSpd = tool }));
