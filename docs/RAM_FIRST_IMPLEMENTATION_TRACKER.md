@@ -3008,3 +3008,12 @@ scattered 8.48/22.64. Never cleared: 60 s random-read churn left 92% contiguous
 and 13.86/30.66 while about 1,500 whole chunks stayed free. Only order inside a
 256 KiB chunk matters. No production allocator change yet; design proposal in
 [the investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented).
+
+### Chunk allocator and copy experiments (plan 96), 2026-10-08
+
+Implementation: per-chunk free bitmaps replace the LIFO free list (open chunk filled
+upwards; wholly free chunks first, then the partial chunk that changed state last;
+O(1) list maintenance). Lab copy flags (prefetch next block, coalesce memory-neighbour
+runs) for A/B within one boot, reported in diagnostics V19. `cache-layout-patterns`
+retired. Verification: pending (baseline write-performance and cache-layout-full on
+0.4.426.1 first).

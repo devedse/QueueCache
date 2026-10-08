@@ -77,8 +77,6 @@ internal static class VerificationCommands
                                  Normal priority, DiskSpd, --budget-mib 2048; 24 cases at defaults.
               cache-layout-reset Adds same-allocation free-slot resets after sequential/random reuse.
                                  36 ordered cases; requires the matching diagnostic driver and DiskSpd.
-              cache-layout-patterns Same allocation, free-slot orders scattered / chunks shuffled /
-                                 reversed inside chunks / ascending, with layout measurements. 30 cases.
               cache-layout-steady Never-cleared cache: 60 s random-read churn over a file twice the
                                  cache, re-read, then ascending reset control. 18 cases; measures layout.
               cache-layout-full  Full cache: sequential fill past capacity, 120 s random 16K reads,

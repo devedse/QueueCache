@@ -503,6 +503,14 @@ for (var i = 0; i < 6; i++)
 var layoutDiagnostics = CacheDiagnostics.Decode(layoutBytes);
 Check(layoutDiagnostics.Layout == new CacheLayout(41, 42, 43, 44, 45, 46) && layoutDiagnostics.ReadFillsSkippedRepeatedPages == 32,
     "V18 layout measurement and V17 prefix");
+Check(layoutDiagnostics.CopyFlags is null, "V18 has no copy flags, not zero ones");
+var copyFlagBytes = new byte[CacheDiagnostics.CopyFlagsWireSize];
+layoutBytes.CopyTo(copyFlagBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(copyFlagBytes, 19);
+BinaryPrimitives.WriteUInt32LittleEndian(copyFlagBytes.AsSpan(4), CacheDiagnostics.CopyFlagsWireSize);
+BinaryPrimitives.WriteUInt64LittleEndian(copyFlagBytes.AsSpan(CacheDiagnostics.LayoutWireSize), 3);
+var copyFlagDiagnostics = CacheDiagnostics.Decode(copyFlagBytes);
+Check(copyFlagDiagnostics.CopyFlags == 3 && copyFlagDiagnostics.Layout == layoutDiagnostics.Layout, "V19 copy flags and V18 prefix");
 var between = new byte[CacheDiagnostics.ReadFillWireSize + 8];
 fillBytes.CopyTo(between, 0);
 BinaryPrimitives.WriteUInt32LittleEndian(between.AsSpan(4), (uint)between.Length);

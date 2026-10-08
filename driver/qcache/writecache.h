@@ -127,6 +127,8 @@ struct QC_DIAGNOSTICS
     // indexed blocks, Neighbors also have the next disk block cached; Contiguous/Reversed
     // hold it in the next/previous 4 KiB of memory. FreeChunks: 256 KiB slabs with every slot free.
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
+    // V19: QcLabCopyFlags in effect (QcCopyPrefetch | QcCopyCoalesce), so evidence records the copy mode.
+    ULONGLONG CopyFlags;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -145,7 +147,9 @@ static constexpr ULONG QcDiagnosticsV14Size = 864;
 static constexpr ULONG QcDiagnosticsV15Size = 872;
 static constexpr ULONG QcDiagnosticsV16Size = 880;
 static constexpr ULONG QcDiagnosticsV17Size = 896;
-static_assert(sizeof(QC_DIAGNOSTICS) == 944);
+static constexpr ULONG QcDiagnosticsV18Size = 944;
+static_assert(sizeof(QC_DIAGNOSTICS) == 952);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyFlags) == QcDiagnosticsV18Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LayoutMeasurements) == QcDiagnosticsV17Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadsRepeatedPages) == QcDiagnosticsV16Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadWrites) == QcDiagnosticsV15Size);
@@ -241,20 +245,27 @@ enum : ULONG
     // other request is queued or active, RAM hits and fitting writes are served on
     // the calling thread (see QcCacheTryCallerPath). Runtime only; not persisted.
     QcCallerPath,
-    // Diagnostic only: rebuild free-slot links on an empty cache, keeping buffers
-    // and generation unchanged. Value = order: 0 ascending, 1 slabs shuffled (ascending
-    // inside), 2 slabs ascending (descending inside), 3 every slot scattered.
-    // Limited to 2 GiB, no usage paths.
+    // Diagnostic only: on an empty cache, mark every chunk wholly free and close the open
+    // chunk, keeping buffers and generation unchanged. No parameters; limited to 2 GiB,
+    // no usage paths.
     QcLabResetFreeOrder,
     // Diagnostic only: count block/memory adjacency into the V18 diagnostics. No
     // parameters; holds the cache lock for one pass over the slots.
-    QcLabMeasureLayout
+    QcLabMeasureLayout,
+    // Lab only: Value = QcCopyPrefetch | QcCopyCoalesce for RAM-hit copies. Changes only
+    // how hits are copied, never what is cached; read live, runtime only.
+    QcLabCopyFlags
 }; // Toggle optional detailed timing; never resets counters.
+enum : ULONG
+{
+    QcCopyPrefetch = 1, // Prefetch the next block's buffer while copying the current one.
+    QcCopyCoalesce = 2  // Copy whole valid blocks that are memory neighbours with one copy.
+};
 struct QC_SLOT
 {
     PUCHAR Buffer;
     LARGE_INTEGER Offset;
-    ULONG Length, HashNext, HashPrevious, QueueNext, QueuePrevious, FreeNext;
+    ULONG Length, HashNext, HashPrevious, QueueNext, QueuePrevious;
     BOOLEAN InFlight;
     BOOLEAN Dirty, ReadClass;
     ULONG Pins;
@@ -263,6 +274,13 @@ struct QC_SLOT
     ULONGLONG DirtySince;
 };
 struct QC_CACHE;
+// Free slots of one 256 KiB slab (64 slots, bit set = free). A chunk with any free slot
+// is in one of two lists (partially / wholly free), linked by chunk index.
+struct QC_CHUNK
+{
+    ULONGLONG Free;
+    ULONG Next, Previous;
+};
 // A paging read that needs lower I/O is executed by one dedicated thread per
 // disk, never by the sole request worker. The table records ranges only: once
 // forwarded, the IRP's Tail/DriverContext belong to the lower stack.
@@ -341,7 +359,10 @@ struct QC_CACHE
     PMDL* SlabMdls;
     ULONG* Buckets;
     PUCHAR DrainBuffer;
-    ULONG Capacity, Head, Tail, FreeHead, Count, SectorBytes, DrainCapacity;
+    ULONG Capacity, Head, Tail, Count, SectorBytes, DrainCapacity;
+    // Mutex: chunk allocator (cacheblocks.inl). ChunkHead[0] partially free, [1] wholly free.
+    QC_CHUNK* Chunks;
+    ULONG ChunkHead[2], OpenChunk, OpenNext;
     BOOLEAN Enabled, Barrier, Suspended, Stop, ResumeEnabled;
     // Request worker owns these fields. QUERY_REMOVE drains and disables the
     // cache; CANCEL_REMOVE (or a lower veto) restores only the prior enablement.
@@ -373,6 +394,7 @@ struct QC_CACHE
     volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
     ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
+    volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;

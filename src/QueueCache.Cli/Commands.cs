@@ -191,7 +191,7 @@ internal static class Commands
             Add(name, ["device"], ["--json"]);
         foreach (var name in new[] { "watch", "diagnostics", "enable", "flush", "disable", "retry", "drop-clean" })
             Add(name, ["device"], []);
-        foreach (var name in new[] { "configure", "start", "lab-delay", "lab-fault" })
+        foreach (var name in new[] { "configure", "start", "lab-delay", "lab-fault", "lab-copy-flags" })
             Add(name, ["device", "value"], []);
         foreach (var name in new[] { "enable", "disable", "flush", "retry", "watch", "diagnostics", "drop-clean" })
             Add(name, ["device"], [], policy);

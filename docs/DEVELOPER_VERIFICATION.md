@@ -630,7 +630,7 @@ Preserve prior raw results and their scope.
 | `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
 | `cache-layout` | Opt-in 1 GiB sequential reads Q1/Q8 with a 2048 MiB Fast/Idle cache: fresh allocation, sequential reuse after drop-clean, random-touch reuse after drop-clean, then reallocation. Twenty-four cases at three repeats, timing off, normal process priority required. Residency and zero lower-I/O checks surround each score. |
 | `cache-layout-reset` | Adds free-slot-order reset on the same allocated RAM after sequential/random reuse. Thirty-six ordered cases. Requires the diagnostic reset driver, normal priority and DiskSpd. |
-| `cache-layout-patterns` | Same allocation, four free-slot orders (scattered, chunks shuffled, reversed inside chunks, ascending) after each fresh allocation, with a layout measurement before every score. Thirty cases. Requires the plan-94 driver, normal priority and DiskSpd. |
+| `cache-layout-patterns` | Retired in plan 96 with the free list it reordered; ran on 0.4.426.1. Same allocation, four free-slot orders (scattered, chunks shuffled, reversed inside chunks, ascending) after each fresh allocation, with a layout measurement before every score. Thirty cases. Requires the plan-94 driver, normal priority and DiskSpd. |
 | `cache-layout-steady` | Never-cleared cache: fresh allocation, then 60 s of random 4K reads over a file twice the cache before re-reading the resident file, then an ascending reset control; layout measured before every score. Eighteen cases. Plan-94 driver, normal priority, DiskSpd. |
 | `cache-layout-full` | Full cache: fresh allocation, then a 10 s sequential fill of the 4 GiB file (twice the cache) and 120 s of random 16K Q32 reads before re-reading the resident file, then an ascending reset control; layout measured before every score. Eighteen cases. Plan-94 driver or newer, normal priority, DiskSpd. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
@@ -1360,3 +1360,18 @@ measures older and newer allocators.
 ```powershell
 qcache developer verify Q: --suite cache-layout-full --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
 ```
+
+### Chunk allocator and copy flags (plan 96)
+
+The per-slot free list is replaced by a chunk allocator: each 256 KiB chunk has a
+64-bit free map, allocation fills one open chunk upwards, then opens a wholly free
+chunk, else the partial chunk that changed state last. `LabResetFreeOrder` again
+takes no value: on an empty cache it marks every chunk free and closes the open
+chunk. The plan-94 order patterns and `cache-layout-patterns` are retired; their
+results stay in the investigation record.
+
+`qcache developer driver copy-flags <device> <0..3>` sets `LabCopyFlags` (17):
+1 prefetches the next block while a RAM hit is copied, 2 copies runs of whole,
+valid blocks that are memory neighbours with one copy. The flags change only how
+pinned hits are copied, apply live and are reported in diagnostics V19
+(`CopyFlags`), so every snapshot records the copy mode. They are runtime only.

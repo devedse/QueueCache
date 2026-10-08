@@ -29,6 +29,7 @@ internal static class LegacyCommands
           qcache start <device> <budget MiB>  (configure and enable; e.g. 4096 = 4 GiB)
           qcache enable|flush|disable|retry <device>
           qcache lab-delay <device> <0..2000 ms>
+          qcache lab-copy-flags <device> <0..3: 1 prefetch next block | 2 copy memory-neighbour runs at once>
           qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted|10=direct paging write error|11=paging write map failure>
         Write-cache controls require the explicit lab write-cache build and elevation.
         Configure only while disabled and clean. Abrupt failure loses volatile dirty data.
@@ -83,17 +84,18 @@ internal static class LegacyCommands
                 Console.WriteLine(RenderCache(state));
                 return 0;
             }
-            if (args.Length == 3 && args[0] is "configure" or "start" or "lab-delay" or "lab-fault")
+            if (args.Length == 3 && args[0] is "configure" or "start" or "lab-delay" or "lab-fault" or "lab-copy-flags")
             {
                 var configure = args[0] is "configure" or "start";
                 if (!ulong.TryParse(args[2], NumberStyles.None, CultureInfo.InvariantCulture, out var amount))
                     throw new ArgumentException("Expected a non-negative integer.");
                 if (configure && (amount < 1 || amount > 131072))
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
-                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11)
+                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11 || args[0] == "lab-copy-flags" && amount > 3)
                     throw new ArgumentException("Lab hook value is outside its range.");
                 var state = await CacheTasks.ControlAsync(args[1],
-                    configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay : WriteCacheAction.LabFault,
+                    configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay :
+                    args[0] == "lab-copy-flags" ? WriteCacheAction.LabCopyFlags : WriteCacheAction.LabFault,
                     configure ? amount * 1048576 : 0, configure ? 0 : amount, enableAfter: args[0] == "start", token: stop.Token);
                 Console.WriteLine(RenderCache(state));
                 return 0;

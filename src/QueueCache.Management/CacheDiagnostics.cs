@@ -67,6 +67,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int WriteOffloadWireSize = 880;
     public const int RepeatedPageWireSize = 896;
     public const int LayoutWireSize = 944;
+    public const int CopyFlagsWireSize = 952;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -97,6 +98,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public ulong? ReadFillsSkippedRepeatedPages { get; init; }
     /// <summary>V18: the last explicit layout measurement; null on older drivers.</summary>
     public CacheLayout? Layout { get; init; }
+    /// <summary>V19: lab copy flags in effect (1 prefetch, 2 coalesced runs); null on older drivers.</summary>
+    public ulong? CopyFlags { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -119,6 +122,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             WriteOffloadWireSize => 16u,
             RepeatedPageWireSize => 17u,
             LayoutWireSize => 18u,
+            CopyFlagsWireSize => 19u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -258,6 +262,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 v[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RepeatedPageWireSize + i * 8)..]);
             layout = new(v[0], v[1], v[2], v[3], v[4], v[5]);
         }
+        ulong? copyFlags = bytes.Length >= CopyFlagsWireSize ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[LayoutWireSize..]) : null;
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -279,7 +284,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CopyOffloadWrites = copyOffloadWrites,
             PagingReadsRepeatedPages = pagingRepeated,
             ReadFillsSkippedRepeatedPages = fillsSkippedRepeated,
-            Layout = layout
+            Layout = layout,
+            CopyFlags = copyFlags
         };
     }
 }

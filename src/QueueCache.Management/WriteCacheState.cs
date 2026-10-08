@@ -176,10 +176,11 @@ public enum WriteCacheAction : uint
     LabGate,
     /// <summary>Value 1: serve RAM hits and fitting writes on the caller's thread when the disk is otherwise idle; 0: always use the request worker.</summary>
     CallerPath,
-    /// <summary>Diagnostic only: reset free-slot order on an empty cache up to 2 GiB; value = order
-    /// (0 ascending, 1 chunks shuffled, 2 reversed inside chunks, 3 scattered), no payload
-    /// allocation/movement and no generation change.</summary>
+    /// <summary>Diagnostic only: on an empty cache up to 2 GiB, mark every chunk free and close the open
+    /// chunk; no parameters, no payload allocation/movement and no generation change.</summary>
     LabResetFreeOrder,
     /// <summary>Diagnostic only: measure block/memory adjacency into <see cref="CacheDiagnostics.Layout"/>.</summary>
-    LabMeasureLayout
+    LabMeasureLayout,
+    /// <summary>Lab only: value = 1 prefetch next block | 2 copy memory-neighbour runs at once, for RAM-hit copies.</summary>
+    LabCopyFlags
 }

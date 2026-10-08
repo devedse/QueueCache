@@ -74,11 +74,92 @@ static void Link(QC_CACHE* c, ULONG i)
         s->DirtySince = NowMs();
     }
 }
+// Free slots are tracked per 256 KiB chunk (64 slots, one bit each). Allocation fills one
+// open chunk upwards and then opens a wholly free chunk, else the partial chunk whose state
+// changed last. Measured: only the order inside a chunk matters, and descending or scattered
+// order inside one costs up to 45% (CACHE_LAYOUT_INVESTIGATION_20261008.md). The lists change
+// only when a chunk changes state, so every operation is O(1).
+static ULONG ChunkState(const QC_CHUNK* chunk) // 0 none free, 1 partially, 2 wholly free
+{
+    return !chunk->Free ? 0 : chunk->Free == ~0ULL ? 2 : 1;
+}
+static void UnlinkChunk(QC_CACHE* c, ULONG j, ULONG state)
+{
+    if (!state)
+        return;
+    const auto chunk = &c->Chunks[j];
+    if (chunk->Previous == NoSlot)
+        c->ChunkHead[state - 1] = chunk->Next;
+    else
+        c->Chunks[chunk->Previous].Next = chunk->Next;
+    if (chunk->Next != NoSlot)
+        c->Chunks[chunk->Next].Previous = chunk->Previous;
+}
+static void LinkChunk(QC_CACHE* c, ULONG j)
+{
+    const auto chunk = &c->Chunks[j];
+    const auto state = ChunkState(chunk);
+    if (!state)
+        return;
+    chunk->Previous = NoSlot;
+    chunk->Next = c->ChunkHead[state - 1];
+    if (chunk->Next != NoSlot)
+        c->Chunks[chunk->Next].Previous = j;
+    c->ChunkHead[state - 1] = j;
+}
+static void SetSlotFree(QC_CACHE* c, ULONG i, bool free)
+{
+    const auto j = i / SlotsPerSlab;
+    const auto chunk = &c->Chunks[j];
+    const auto before = ChunkState(chunk);
+    const auto bit = 1ULL << (i % SlotsPerSlab);
+    NT_ASSERT(((chunk->Free & bit) != 0) != free);
+    chunk->Free = free ? chunk->Free | bit : chunk->Free & ~bit;
+    if (ChunkState(chunk) != before)
+    {
+        UnlinkChunk(c, j, before);
+        LinkChunk(c, j);
+    }
+}
+// Every slot free, chunks listed in ascending order, no open chunk. Capacity is whole chunks.
+static void ResetChunks(QC_CACHE* c)
+{
+    c->ChunkHead[0] = c->ChunkHead[1] = NoSlot;
+    for (auto j = c->Capacity / SlotsPerSlab; j-- > 0;)
+    {
+        c->Chunks[j].Free = ~0ULL;
+        LinkChunk(c, j);
+    }
+    c->OpenChunk = NoSlot;
+    c->OpenNext = 0;
+}
+static ULONG TakeSlot(QC_CACHE* c)
+{
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
+        if (c->OpenChunk != NoSlot && c->OpenNext < SlotsPerSlab)
+        {
+            const auto bits = c->Chunks[c->OpenChunk].Free & (~0ULL << c->OpenNext);
+            if (bits)
+            {
+                ULONG bit;
+                _BitScanForward64(&bit, bits);
+                c->OpenNext = bit + 1;
+                const auto i = c->OpenChunk * SlotsPerSlab + bit;
+                SetSlotFree(c, i, false);
+                return i;
+            }
+        }
+        c->OpenChunk = c->ChunkHead[1] != NoSlot ? c->ChunkHead[1] : c->ChunkHead[0];
+        c->OpenNext = 0;
+    }
+    NT_ASSERT(FALSE); // Callers make room first (Count < Capacity), as with the old free list.
+    return NoSlot;
+}
 static ULONG AllocateSlot(QC_CACHE* c, bool dirty = true, bool read = false)
 {
-    auto i = c->FreeHead;
+    const auto i = TakeSlot(c);
     auto s = &c->Slots[i];
-    c->FreeHead = s->FreeNext;
     s->Dirty = dirty;
     s->ReadClass = read;
     s->InFlight = FALSE;
@@ -98,8 +179,7 @@ static void RetireSlot(QC_CACHE* c, ULONG i)
     Unlink(c, i);
     s->Length = 0;
     s->InFlight = FALSE;
-    s->FreeNext = c->FreeHead;
-    c->FreeHead = i;
+    SetSlotFree(c, i, true);
     --c->Count;
 }
 static bool Evict(QC_CACHE* c, ULONG pool)
@@ -131,7 +211,7 @@ static void ClearClean(QC_CACHE* c)
 // Explicit diagnostic control only. Caller holds the cache mutex. Validate the
 // whole empty boundary before changing any links; never move/free/zero payload,
 // drain data, change eviction policy, or reset counters/generation.
-static NTSTATUS ResetFreeOrder(QC_CACHE* c, ULONG order)
+static NTSTATUS ResetFreeOrder(QC_CACHE* c)
 {
     if (!c->Capacity || !c->Slots || c->Gone || c->Suspended || c->OwnedRamDevice ||
         c->State.BudgetBytes > (2ULL << 30) || QcCachePagingPathCount(c) > 0)
@@ -143,18 +223,7 @@ static NTSTATUS ResetFreeOrder(QC_CACHE* c, ULONG order)
     for (ULONG i = 0; i < c->Capacity; ++i)
         if (c->Slots[i].Length || c->Slots[i].Pins || c->Slots[i].InFlight || c->Slots[i].Filling)
             return STATUS_DEVICE_BUSY;
-    const ULONG chunkStep = QcScatterStep(c->Capacity / SlotsPerSlab), slotStep = QcScatterStep(c->Capacity);
-    auto previous = NoSlot;
-    for (ULONG k = 0; k < c->Capacity; ++k)
-    {
-        const auto i = static_cast<ULONG>(QcSlotOrder(k, c->Capacity, SlotsPerSlab, order, chunkStep, slotStep));
-        if (previous == NoSlot)
-            c->FreeHead = i;
-        else
-            c->Slots[previous].FreeNext = i;
-        previous = i;
-    }
-    c->Slots[previous].FreeNext = NoSlot;
+    ResetChunks(c);
     return STATUS_SUCCESS;
 }
 // Explicit diagnostic control only. Caller holds the cache mutex. Read-only pass:
@@ -163,16 +232,9 @@ static NTSTATUS MeasureLayout(QC_CACHE* c)
 {
     if (!c->Capacity || !c->Slots || c->Gone || QcCachePagingPathCount(c) > 0)
         return STATUS_INVALID_DEVICE_STATE;
-    const ULONG chunks = (c->Capacity + SlotsPerSlab - 1) / SlotsPerSlab;
-    auto freeInChunk = static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, chunks, Tag));
-    if (!freeInChunk)
-        return STATUS_INSUFFICIENT_RESOURCES;
-    for (auto i = c->FreeHead; i != NoSlot; i = c->Slots[i].FreeNext)
-        ++freeInChunk[i / SlotsPerSlab]; // At most 64 per chunk.
     ULONGLONG freeChunks = 0, blocks = 0, neighbors = 0, contiguous = 0, reversed = 0;
-    for (ULONG j = 0; j < chunks; ++j)
-        freeChunks += freeInChunk[j] == min(SlotsPerSlab, c->Capacity - j * SlotsPerSlab);
-    ExFreePoolWithTag(freeInChunk, Tag);
+    for (ULONG j = 0; j < c->Capacity / SlotsPerSlab; ++j)
+        freeChunks += c->Chunks[j].Free == ~0ULL;
     for (ULONG i = 0; i < c->Capacity; ++i)
     {
         // Only the newest indexed version of a block counts; free slots keep stale offsets.

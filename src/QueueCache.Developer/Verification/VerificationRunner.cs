@@ -687,8 +687,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
     {
         await Control(WriteCacheAction.LabDelay, token);
-        var resetOrder = CacheLayoutEvidence.ResetOrder(scenario.Layout);
-        var resetLayout = resetOrder is not null;
+        var resetLayout = CacheLayoutEvidence.Resets(scenario.Layout);
         var reuseLayout = resetLayout || scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse or CacheLayoutStage.Churned or CacheLayoutStage.ChurnedFull;
         if (scenario.Layout is CacheLayoutStage.Fresh or CacheLayoutStage.Recreated)
         {
@@ -740,7 +739,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             }
         }
         if (resetLayout)
-            await Worker(Job("cache-layout-reset") with { Reply = storage.PathFor(scenario.Id + "-reset-probe.json"), Value = resetOrder!.Value }, token);
+            await Worker(Job("cache-layout-reset") with { Reply = storage.PathFor(scenario.Id + "-reset-probe.json") }, token);
         else if (scenario.Layout is not (CacheLayoutStage.None or CacheLayoutStage.Churned or CacheLayoutStage.ChurnedFull))
             await Control(WriteCacheAction.DropClean, token);
         var hot = Path.Combine(workDirectory, "hot.dat");
@@ -768,7 +767,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 (ulong)options.BudgetMiB / 2 << 20);
         }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
-        var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-patterns" or "cache-layout-steady" or "cache-layout-full";
+        var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-steady" or "cache-layout-full";
         if (measureLayout)
             await Control(WriteCacheAction.LabMeasureLayout, token);
         var beforePath = await Worker(Job("snapshot") with

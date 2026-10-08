@@ -31,9 +31,9 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 95;
+    public const int Version = 96;
     public static bool IsLayoutSuite(string suite) =>
-        suite is "cache-layout" or "cache-layout-reset" or "cache-layout-patterns" or "cache-layout-steady" or "cache-layout-full";
+        suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
@@ -72,7 +72,6 @@ public static class VerificationPlan
         "sequential-resident",
         "cache-layout",
         "cache-layout-reset",
-        "cache-layout-patterns",
         "cache-layout-steady",
         "cache-layout-full",
         "flush-interference",
@@ -162,9 +161,6 @@ public static class VerificationPlan
             {
                 "cache-layout-reset" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.ResetAfterSequential,
                     CacheLayoutStage.RandomReuse, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.Recreated },
-                // Same allocation, four free-slot orders; ascending last as the same-allocation control.
-                "cache-layout-patterns" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.ResetScattered, CacheLayoutStage.ResetChunksShuffled,
-                    CacheLayoutStage.ResetReversedInChunks, CacheLayoutStage.ResetAscending },
                 // Never cleared: random-read churn over a file twice the cache, then the same file is re-read.
                 "cache-layout-steady" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending },
                 // Full cache: sequential fill past capacity, random 16K recency churn, then the file is re-read.

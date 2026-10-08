@@ -56,8 +56,6 @@
     <ClCompile Include="abi-check.cpp" />
     <ResourceCompile Include="qcache.rc" />
     <ClInclude Include="qcstats.h" />
-    <ClInclude Include="slotorder.h" />
-    <ClInclude Include="slotorder-check.h" />
     <ClInclude Include="..\shared\lockedpages.h" />
     <ClInclude Include="..\shared\memorybudget.h" />
     <ClInclude Include="..\shared\memorybudget-check.h" />

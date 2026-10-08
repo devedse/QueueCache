@@ -8,7 +8,6 @@
 #include "sectorcoverage.h"
 #include "../shared/lockedpages.h"
 #include "../shared/memorybudget.h"
-#include "slotorder.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
@@ -175,6 +174,7 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LayoutContiguous = c->LayoutContiguous;
     output->LayoutReversed = c->LayoutReversed;
     output->LayoutFreeChunks = c->LayoutFreeChunks;
+    output->CopyFlags = static_cast<ULONG>(InterlockedCompareExchange(&c->CopyFlags, 0, 0));
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1166,7 +1166,8 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->Self = self;
     // Failing attach on the boot disk would stop Windows; forward inline instead.
     c->LowerCallItem = IoAllocateWorkItem(self);
-    c->Head = c->Tail = c->FreeHead = NoSlot;
+    c->Head = c->Tail = c->OpenChunk = NoSlot;
+    c->ChunkHead[0] = c->ChunkHead[1] = NoSlot;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
@@ -1249,7 +1250,11 @@ static void FreeSlots(QC_CACHE* c)
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     c->Slots = nullptr;
     c->Capacity = 0;
-    c->Head = c->Tail = c->FreeHead = NoSlot;
+    if (c->Chunks)
+        ExFreePoolWithTag(c->Chunks, Tag);
+    c->Chunks = nullptr;
+    c->Head = c->Tail = c->OpenChunk = NoSlot;
+    c->ChunkHead[0] = c->ChunkHead[1] = NoSlot;
     if (c->Buckets)
         ExFreePoolWithTag(c->Buckets, Tag);
     c->Buckets = nullptr;
@@ -1406,9 +1411,10 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
-    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + sizeof(ULONG)) +
+    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + sizeof(ULONG)) + sizeof(QC_CHUNK) +
         QcLockedPageMetadataBytes(SlabBytes, 1);
-    auto n = static_cast<ULONG>((budget - 2 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
+    // Three page-rounded tables (descriptors, index, chunks) each round up by less than a page.
+    auto n = static_cast<ULONG>((budget - 3 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =
@@ -1441,6 +1447,16 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     RtlFillMemory(c->Buckets, indexBytes, 0xFF);
+    const auto chunkBytes =
+        (static_cast<SIZE_T>(n / SlotsPerSlab) * sizeof(QC_CHUNK) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
+    c->Chunks = static_cast<QC_CHUNK*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, chunkBytes, Tag));
+    if (!c->Chunks)
+    {
+        FreeSlots(c);
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
     c->DrainBuffer = static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, stagingBytes, Tag));
     if (!c->DrainBuffer)
     {
@@ -1461,11 +1477,10 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
             ReleaseCache(c);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        c->Slots[i].FreeNext = i + 1 < n ? i + 1 : NoSlot;
     }
-    c->FreeHead = 0;
+    ResetChunks(c);
     c->State.BudgetBytes = budget;
-    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + static_cast<ULONGLONG>(n) * Chunk +
+    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + chunkBytes + static_cast<ULONGLONG>(n) * Chunk +
         QcLockedPageMetadataBytes(static_cast<ULONGLONG>(n) * Chunk, n / SlotsPerSlab);
     NT_ASSERT(c->State.ReservedBytes <= budget);
     c->State.PayloadCapacity = static_cast<ULONGLONG>(n) * Chunk;
@@ -1583,11 +1598,16 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             ClearClean(c);
         break;
     case QcLabResetFreeOrder:
-        status = command.Value > 3 || command.BudgetBytes ? STATUS_INVALID_PARAMETER
-                                                         : ResetFreeOrder(c, static_cast<ULONG>(command.Value));
+        status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : ResetFreeOrder(c);
         break;
     case QcLabMeasureLayout:
         status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
+        break;
+    case QcLabCopyFlags:
+        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce) || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
         break;
     case QcLabDelay:
         if (command.Value > 2000)
@@ -2291,6 +2311,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         // mask are stable: copy the whole range with one Mutex release instead of
         // one per 64 blocks, which convoyed parallel offloaded reads on Mutex.
         ULONGLONG hitBytes = 0, missBytes = 0;
+        const auto copyFlags = InterlockedCompareExchange(&c->CopyFlags, 0, 0);
         ReleaseCache(c);
         for (auto block = firstBlock; block < end; block += Chunk)
         {
@@ -2303,14 +2324,36 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 missBytes += bytes;
                 continue;
             }
-            const auto buffer = c->Slots[index].Buffer;
+            auto buffer = c->Slots[index].Buffer;
             const auto valid = c->Slots[index].ValidSectors;
             const auto hits = valid == 255 ? bytes :
                 QcValidBytes(valid & QcSectorMask(static_cast<ULONG>(from - block), bytes));
             hitBytes += hits;
             missBytes += bytes - hits;
             if (valid == 255)
-                RtlCopyMemory(target + (from - start), buffer + (from - block), static_cast<SIZE_T>(bytes));
+            {
+                const auto source = buffer + (from - block);
+                SIZE_T run = bytes;
+                // QcCopyCoalesce: extend over following whole, valid blocks that are memory neighbours.
+                // Pinned versions are immutable, so their buffers and masks are stable here.
+                while ((copyFlags & QcCopyCoalesce) && from + static_cast<LONGLONG>(run) == block + Chunk && block + Chunk < end)
+                {
+                    const auto next = pinned[(block + Chunk - firstBlock) / Chunk];
+                    if (next == NoSlot || c->Slots[next].ValidSectors != 255 || c->Slots[next].Buffer != buffer + Chunk)
+                        break;
+                    block += Chunk;
+                    buffer += Chunk;
+                    const auto more = static_cast<ULONG>(min(end, block + Chunk) - block);
+                    run += more;
+                    hitBytes += more;
+                }
+                // QcCopyPrefetch: start loading the next block while this one is copied.
+                if ((copyFlags & QcCopyPrefetch) && block + Chunk < end)
+                    if (const auto next = pinned[(block + Chunk - firstBlock) / Chunk]; next != NoSlot)
+                        for (ULONG line = 0; line < Chunk; line += 64)
+                            PreFetchCacheLine(PF_TEMPORAL_LEVEL_1, c->Slots[next].Buffer + line);
+                RtlCopyMemory(target + (from - start), source, run);
+            }
             else
                 for (auto sector = from; sector < to; sector += 512)
                     if (valid & (1UL << ((sector - block) / 512)))

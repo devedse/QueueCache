@@ -3,21 +3,15 @@ using QueueCache.Management;
 namespace QueueCache.Developer.Verification;
 
 public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated, ResetAfterSequential, ResetAfterRandom,
-    ResetAscending, ResetChunksShuffled, ResetReversedInChunks, ResetScattered, Churned, ChurnedFull }
+    ResetAscending, Churned, ChurnedFull }
 public sealed record CacheLayoutSnapshot(WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics);
 
 /// <summary>Allocation history must change only where intended; scored reads must stay in RAM.</summary>
 public static class CacheLayoutEvidence
 {
-    /// <summary>Free-slot order for a reset stage (QcLabResetFreeOrder value), or null when the stage does not reset.</summary>
-    public static ulong? ResetOrder(CacheLayoutStage stage) => stage switch
-    {
-        CacheLayoutStage.ResetAfterSequential or CacheLayoutStage.ResetAfterRandom or CacheLayoutStage.ResetAscending => 0,
-        CacheLayoutStage.ResetChunksShuffled => 1,
-        CacheLayoutStage.ResetReversedInChunks => 2,
-        CacheLayoutStage.ResetScattered => 3,
-        _ => null
-    };
+    /// <summary>Stages that reset the allocator (QcLabResetFreeOrder) on the same allocation.</summary>
+    public static bool Resets(CacheLayoutStage stage) =>
+        stage is CacheLayoutStage.ResetAfterSequential or CacheLayoutStage.ResetAfterRandom or CacheLayoutStage.ResetAscending;
 
     /// <summary>The measurement taken just before scoring must exist and cover the resident file.</summary>
     public static void ValidateLayout(CacheLayoutSnapshot measured, ulong? previousMeasurements)
