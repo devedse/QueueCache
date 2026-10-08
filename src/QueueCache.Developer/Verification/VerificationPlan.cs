@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 92;
+    public const int Version = 93;
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
@@ -69,6 +69,7 @@ public static class VerificationPlan
         "write-performance",
         "sequential-resident",
         "cache-layout",
+        "cache-layout-reset",
         "flush-interference",
         "performance",
         "full"
@@ -150,16 +151,19 @@ public static class VerificationPlan
     {
         var cases = new List<PerformanceCase>();
 
-        if (options.Suite == "cache-layout")
+        if (options.Suite is "cache-layout" or "cache-layout-reset")
         {
+            var stages = options.Suite == "cache-layout-reset"
+                ? new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.ResetAfterSequential,
+                    CacheLayoutStage.RandomReuse, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.Recreated }
+                : new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated };
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var depth in repeat % 2 == 1 ? new[] { 1, 8 } : new[] { 8, 1 })
-            foreach (var stage in new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse,
-                         CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated })
+            foreach (var stage in stages)
                 cases.Add(new($"{NextNumber(cases)}-r{repeat}-sequential-read-q{depth}-{stage}",
                     "Automatic", "Idle", 0, depth, false, repeat, Workload: "sequential-read",
                     Resident: true, Timing: false, WarmResident: true, Layout: stage));
-            return cases; // Each four-case group is ordered; partial groups are not supported.
+            return cases; // Each group is ordered; partial groups are not supported.
         }
 
         if (options.Suite == "sequential-resident")
@@ -364,8 +368,8 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if (options.Suite is "sequential-resident" or "cache-layout" && options.BudgetMiB != 2048)
-            throw new ArgumentException("sequential-resident and cache-layout require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
+        if (options.Suite is "sequential-resident" or "cache-layout" or "cache-layout-reset" && options.BudgetMiB != 2048)
+            throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
@@ -398,7 +402,7 @@ public static class VerificationPlan
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-layout" or "drain-decision"))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-layout" or "cache-layout-reset" or "drain-decision"))
         {
             return;
         }

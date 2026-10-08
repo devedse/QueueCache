@@ -2973,3 +2973,15 @@ ordinary placement before considering idle compaction. Implementation: none of
 these optimizations is implemented. Verification: the plan-92 results above are
 the baseline only; no same-buffer reset, allocator change, copy coalescing or
 compaction benefit has been measured. The existing runner contract is unchanged.
+
+### Same-allocation free-order experiment, 2026-10-08
+
+Implementation: an explicit diagnostic action rebuilds free-slot links only at a
+validated empty boundary, retaining all payload allocations and generation.
+Normal caching, eviction and UI clearing behavior are unchanged. Plan 93 adds
+`cache-layout-reset` with 36 ordered Q1/Q8 cases and occupied/parameter refusal,
+allocation/counter preservation and existing resident-score evidence checks.
+
+Verification: host-safe management contracts passed; CI/VM measurements pending.
+No recovery of throughput or production optimization is claimed yet. Method and evidence
+contract: [same-allocation reset](DEVELOPER_VERIFICATION.md#same-allocation-reset-comparison-plan-93).

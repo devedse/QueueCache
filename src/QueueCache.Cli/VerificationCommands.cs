@@ -75,6 +75,8 @@ internal static class VerificationCommands
               cache-layout       Fitting sequential reads Q1/Q8: fresh allocation, sequential reuse,
                                  random reuse + drop-clean, then reallocated control. Timing off.
                                  Normal priority, DiskSpd, --budget-mib 2048; 24 cases at defaults.
+              cache-layout-reset Adds same-allocation free-slot resets after sequential/random reuse.
+                                 36 ordered cases; requires the matching diagnostic driver and DiskSpd.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.

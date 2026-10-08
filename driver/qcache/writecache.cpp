@@ -1575,6 +1575,9 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         else
             ClearClean(c);
         break;
+    case QcLabResetFreeOrder:
+        status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : ResetFreeOrder(c);
+        break;
     case QcLabDelay:
         if (command.Value > 2000)
             status = STATUS_INVALID_PARAMETER;

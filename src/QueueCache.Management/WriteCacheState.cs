@@ -175,5 +175,8 @@ public enum WriteCacheAction : uint
     /// The driver refuses it on disks hosting paging/hibernation/dump paths.</summary>
     LabGate,
     /// <summary>Value 1: serve RAM hits and fitting writes on the caller's thread when the disk is otherwise idle; 0: always use the request worker.</summary>
-    CallerPath
+    CallerPath,
+    /// <summary>Diagnostic only: reset free-slot order on an empty cache up to 2 GiB;
+    /// no parameters, no payload allocation/movement and no generation change.</summary>
+    LabResetFreeOrder
 }

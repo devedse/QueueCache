@@ -128,6 +128,26 @@ static void ClearClean(QC_CACHE* c)
         {
         }
 }
+// Explicit diagnostic control only. Caller holds the cache mutex. Validate the
+// whole empty boundary before changing any links; never move/free/zero payload,
+// drain data, change eviction policy, or reset counters/generation.
+static NTSTATUS ResetFreeOrder(QC_CACHE* c)
+{
+    if (!c->Capacity || !c->Slots || c->Gone || c->Suspended || c->OwnedRamDevice ||
+        c->State.BudgetBytes > (2ULL << 30) || QcCachePagingPathCount(c) > 0)
+        return STATUS_INVALID_DEVICE_STATE;
+    if (!NT_SUCCESS(c->State.LastError))
+        return c->State.LastError;
+    if (c->Count || c->State.DirtyBytes || c->State.InFlightBytes)
+        return STATUS_DEVICE_BUSY;
+    for (ULONG i = 0; i < c->Capacity; ++i)
+        if (c->Slots[i].Length || c->Slots[i].Pins || c->Slots[i].InFlight || c->Slots[i].Filling)
+            return STATUS_DEVICE_BUSY;
+    for (ULONG i = 0; i < c->Capacity; ++i)
+        c->Slots[i].FreeNext = i + 1 < c->Capacity ? i + 1 : NoSlot;
+    c->FreeHead = 0;
+    return STATUS_SUCCESS;
+}
 // Called after overlapping dirty/in-flight versions have drained (or when none
 // existed), before forwarding an uncached write. Caller owns range ordering.
 // Only intersecting blocks become stale; unrelated clean payload must survive.

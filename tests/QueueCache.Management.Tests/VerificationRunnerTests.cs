@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 92, "plan 92 adds ordered cache-layout comparisons; existing score workloads unchanged");
+        Check(VerificationPlan.Version == 93, "plan 93 adds same-allocation reset comparisons; existing score workloads unchanged");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1029,6 +1029,20 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 1024 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 2048, CaseFilter = "RandomReuse" }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout", BudgetMiB = 2048, DiskSpd = null }));
+        var resetLayouts = VerificationPlan.Performance(options with { Suite = "cache-layout-reset", BudgetMiB = 2048 });
+        Check(resetLayouts.Count == 36 && resetLayouts.Select(c => c.Id).Distinct().Count() == 36 &&
+            resetLayouts.All(c => c.WarmResident && !c.Timing && c.Workload == "sequential-read"), "reset comparison has 36 unique resident reads");
+        foreach (var group in resetLayouts.Chunk(6))
+            Check(group.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse,
+                CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.RandomReuse, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.Recreated }) &&
+                group.Select(c => c.QueueDepth).Distinct().Count() == 1, "same-buffer resets follow both controlled reuse histories");
+        Check(resetLayouts[0].QueueDepth == 1 && resetLayouts[12].QueueDepth == 8 && resetLayouts[24].QueueDepth == 1,
+            "reset comparison alternates depth order");
+        Check((uint)QueueCache.Management.WriteCacheAction.CallerPath == 14 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15, "diagnostic action extends the existing ABI");
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 1024 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, CaseFilter = "ResetAfterRandom" }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, DiskSpd = null }));
         var warmState = new QueueCache.Management.WriteCacheState(8161, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
             { Instance = 4, CleanReadBytes = 1UL << 30, ReadHitBytes = 10UL << 30 };
         var warmed = warmState with { ReadHitBytes = 12UL << 30 };
@@ -1061,6 +1075,23 @@ internal static class VerificationRunnerTests
                 layoutAfter with { Diagnostics = layoutDiagnostics with { Attribution = attribution } }, 2L << 30));
         Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter with { State = warmed with { DirtyBytes = 4096 } }, 2L << 30));
         Check(true, "layout evidence rejects reallocation during reuse, missing counters, timing and lower I/O");
+        var emptyLayout = layoutBefore with { State = warmState with { CleanReadBytes = 0 } };
+        CacheLayoutEvidence.ValidateReset(emptyLayout, emptyLayout);
+        foreach (var changed in new[] { emptyLayout.State with { Generation = 2 }, emptyLayout.State with { Instance = 9 },
+                     emptyLayout.State with { ReservedBytes = 1 }, emptyLayout.State with { PayloadCapacity = 4096 },
+                     emptyLayout.State with { OccupiedSlots = 1 }, emptyLayout.State with { CleanReadBytes = 4096 },
+                     emptyLayout.State with { CleanWriteBytes = 4096 }, emptyLayout.State with { DirtyBytes = 4096 },
+                     emptyLayout.State with { InFlightBytes = 4096 }, emptyLayout.State with { Errors = 1 },
+                     emptyLayout.State with { AcceptedBytes = 1 }, emptyLayout.State with { ReadHitBytes = 1 },
+                     emptyLayout.State with { ReadMissBytes = 1 }, emptyLayout.State with { Evictions = 1 } })
+            Reject(() => CacheLayoutEvidence.ValidateReset(emptyLayout, emptyLayout with { State = changed }));
+        Reject(() => CacheLayoutEvidence.ValidateReset(layoutBefore, emptyLayout));
+        Reject(() => CacheLayoutEvidence.ValidateReset(emptyLayout, emptyLayout with { Diagnostics = layoutDiagnostics with { Attribution = null } }));
+        foreach (var attribution in new[] { layoutAttribution with { LowerReadAttempts = 1 },
+                     layoutAttribution with { LowerWriteAttempts = 1 }, layoutAttribution with { LowerFlushAttempts = 1 } })
+            Reject(() => CacheLayoutEvidence.ValidateReset(emptyLayout,
+                emptyLayout with { Diagnostics = layoutDiagnostics with { Attribution = attribution } }));
+        Check(true, "same-allocation reset requires empty stable memory, unchanged counters and zero lower I/O");
         var selection = options with { Suite = "write-performance", CaseFilter = "random-write-q1-Idle-timingFalse" };
         var selectedWrites = VerificationPlan.Performance(selection);
         Check(selectedWrites.Count == 3 && selectedWrites.SequenceEqual(writes.Where(test => test.Id.Contains(selection.CaseFilter))),

@@ -234,7 +234,10 @@ enum : ULONG
     // Value 0: every read/write goes through the request worker. Value 1: when no
     // other request is queued or active, RAM hits and fitting writes are served on
     // the calling thread (see QcCacheTryCallerPath). Runtime only; not persisted.
-    QcCallerPath
+    QcCallerPath,
+    // Diagnostic only: rebuild free-slot links on an empty cache, keeping buffers
+    // and generation unchanged. No parameters; limited to 2 GiB, no usage paths.
+    QcLabResetFreeOrder
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {

@@ -629,6 +629,7 @@ Preserve prior raw results and their scope.
 | `full` | `quick` + `policies` + `performance` + focused flush matrix (218 top-level cases at defaults). |
 | `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
 | `cache-layout` | Opt-in 1 GiB sequential reads Q1/Q8 with a 2048 MiB Fast/Idle cache: fresh allocation, sequential reuse after drop-clean, random-touch reuse after drop-clean, then reallocation. Twenty-four cases at three repeats, timing off, normal process priority required. Residency and zero lower-I/O checks surround each score. |
+| `cache-layout-reset` | Adds free-slot-order reset on the same allocated RAM after sequential/random reuse. Thirty-six ordered cases. Requires the diagnostic reset driver, normal priority and DiskSpd. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -1261,3 +1262,48 @@ possible allocation or fragmentation history.
 The first completed 24-case [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md)
 reproduced the older sequential-read peaks through fresh allocation and their
 loss through reuse, with zero lower I/O during score intervals.
+
+## Same-allocation reset comparison (plan 93)
+
+`cache-layout-reset` isolates free-slot ordering from reallocation. It uses the
+same normal-priority, non-OS target, 2048 MiB Fast/Idle cache, 1 GiB resident file,
+DiskSpd binary, warmup, timing-off and telemetry contracts as `cache-layout`.
+The original 24-case suite remains unchanged and works with older drivers.
+
+```powershell
+qcache developer verify Q: --suite cache-layout-reset --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```
+
+Each Q1/Q8 group has six stages: **Fresh**, **SequentialReuse**,
+**ResetAfterSequential**, **RandomReuse**, **ResetAfterRandom**, **Recreated**.
+There are 36 cases at three repeats; queue-depth order alternates. Each random
+stage starts from the preceding reset/refill, so do not combine it with the
+original suite's differently prepared random stage. Filters are refused.
+
+The new diagnostic action `LabResetFreeOrder` (15) only rebuilds `FreeNext` and
+`FreeHead` in ascending slot order. It neither allocates nor frees/moves payload,
+and does not change generation, counters or normal eviction behavior. Parameters
+must be zero. It refuses a populated cache, faults, removed/suspended devices,
+RAM-provider devices, paging/hibernation/dump usage paths and budgets above 2 GiB.
+Under the cache mutex, all slot ownership is checked before any link changes.
+There is no persistent toggle and normal Clear read cache does not invoke it.
+
+For each reset stage, the maintained worker first proves that the action refuses
+the populated clean cache with ERROR_BUSY and leaves its state unchanged. It then
+drops clean data, verifies an empty boundary, checks both invalid parameters are
+refused with ERROR_INVALID_PARAMETER, and invokes the reset. Snapshots must prove
+unchanged instance, generation, flags, configuration, budget, reserved bytes,
+payload capacity, read/write/eviction counters and zero lower-I/O attempts. Missing
+evidence fails the run. A driver without the hook fails rather than silently
+falling back to recreation. The normal prewarm and strict score checks follow.
+
+`*-reset-probe.json` records guard errors and **control-call wall time**, including
+dispatch/locking; this is not isolated kernel CPU time. Its `.populated.json`,
+`.refused.json`, `.empty.json` and `.reset.json` files preserve the boundaries.
+The bounded slot scan holds the cache mutex, so any measured reset time is a
+diagnostic cost, not evidence that an automatic foreground reset is acceptable.
+Restoration has the existing independent deadline and restores saved runtime state.
+
+This experiment changes no production allocator policy and makes no sustained
+eviction, write-performance or idle-compaction claim. Results must distinguish
+the diagnostic reset from ordinary UI clearing and from full recreation.

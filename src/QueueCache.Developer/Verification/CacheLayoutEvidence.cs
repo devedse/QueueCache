@@ -2,12 +2,34 @@ using QueueCache.Management;
 
 namespace QueueCache.Developer.Verification;
 
-public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated }
+public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated, ResetAfterSequential, ResetAfterRandom }
 public sealed record CacheLayoutSnapshot(WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics);
 
 /// <summary>Allocation history must change only where intended; scored reads must stay in RAM.</summary>
 public static class CacheLayoutEvidence
 {
+    public static void ValidateReset(CacheLayoutSnapshot before, CacheLayoutSnapshot after)
+    {
+        ValidateTransition(before.State.Generation, after, true);
+        var a = before.Diagnostics.Attribution;
+        var b = after.Diagnostics.Attribution;
+        if (!before.State.Operational || before.State.Instance == 0 || before.State.Instance != after.State.Instance ||
+            before.State.OccupiedSlots != 0 || after.State.OccupiedSlots != 0 ||
+            before.State.DirtyBytes != 0 || before.State.InFlightBytes != 0 ||
+            before.State.CleanReadBytes != 0 || after.State.CleanReadBytes != 0 ||
+            before.State.CleanWriteBytes != 0 || after.State.CleanWriteBytes != 0 ||
+            before.State.BudgetBytes != after.State.BudgetBytes || before.State.ReservedBytes != after.State.ReservedBytes ||
+            before.State.PayloadCapacity != after.State.PayloadCapacity || before.State.Options != after.State.Options ||
+            before.State.Flags != after.State.Flags || before.State.Errors != after.State.Errors ||
+            before.State.LastError != 0 || after.State.LastError != 0 || before.Performance.TimingEnabled != 0 ||
+            before.State.AcceptedBytes != after.State.AcceptedBytes || before.State.DrainedBytes != after.State.DrainedBytes ||
+            before.State.ReadHitBytes != after.State.ReadHitBytes || before.State.ReadMissBytes != after.State.ReadMissBytes ||
+            before.State.Evictions != after.State.Evictions || a is null || b is null ||
+            a.LowerReadAttempts != b.LowerReadAttempts || a.LowerWriteAttempts != b.LowerWriteAttempts ||
+            a.LowerFlushAttempts != b.LowerFlushAttempts)
+            throw new InvalidDataException("Free-order reset changed allocation, contents, counters or lower I/O; comparison is invalid.");
+    }
+
     public static void ValidateTransition(ulong? previousGeneration, CacheLayoutSnapshot current, bool reuse)
     {
         if (!current.State.Operational || current.State.BudgetBytes != 2UL << 30 ||
