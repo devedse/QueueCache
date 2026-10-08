@@ -1779,7 +1779,7 @@ unexpected unplug is explicitly not promised.
   operation explicitly disables/drains each affected cache before asking Windows
   for removal; a Windows veto attempts identity-checked rollback.
 - Verification: host management and desktop fixtures pass. A disposable 8 GiB
-  `drive-scsi2` NTFS disk was attached to VM 109 and formatted as W: after exact
+  `drive-scsi2` NTFS disk was attached to the test VM and formatted as W: after exact
   identity checks. No orderly eject or physical hot-unplug has yet passed. Native
   CI build and loaded-driver verification are separate gates; do not infer either
   from host success. External Windows-eject routing, error-log collection, veto,
@@ -2217,7 +2217,7 @@ fixed in source. These fixes still require the next Windows CI/VM checks.
 Windows blocker: signed 0.4.269.1 from commit `980e5c83`/CI 37114226898 was
 staged and installer PID 7452 started. SSH disconnected during provider installation
 and TCP 22 subsequently timed out. The owner's screenshot and a direct Proxmox
-console capture confirm VM 109 is in Windows Recovery with automatic repair
+console capture confirm the test VM is in Windows Recovery with automatic repair
 failed; it reports `D:\WINDOWS\System32\Logfiles\Srt\SrtTrail.txt`.
 Installation success, loaded provider identity and the underlying crash/boot
 failure cause remain unproven. Console access using the previously supplied API
@@ -2286,7 +2286,7 @@ evidence has not been collected while Windows remains in Recovery;
 prototype isolation, read-only/4Kn, failures,
 installer and complete performance qualification still need actual Windows runs.
 
-### VM 109 recovery investigation and boot identity correction, 2026-10-04
+### Test VM recovery investigation and boot identity correction, 2026-10-04
 
 Verification evidence: direct Proxmox API console access was recovered from the
 owner's previously supplied private credentials. Windows Recovery permits reading

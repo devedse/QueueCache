@@ -127,7 +127,7 @@ Start NTFS with one and then two volumes. Follow with focused FAT32 and ReFS ord
 
 ## 8. VM execution boundaries
 
-Use VM 109 and a dedicated disposable hot-pluggable test device. Do not remove C:, Q:, their backing disks, a shared controller or the VM's existing SATA test disk just because its number is convenient. Disk numbers changed when SATA was added previously.
+Use the test VM and a dedicated disposable hot-pluggable test device. Do not remove C:, Q:, their backing disks, a shared controller or the VM's existing SATA test disk just because its number is convenient. Disk numbers changed when SATA was added previously.
 
 First inspect available bus capabilities and select a mechanism that actually produces surprise removal without guest preparation. If unavailable with the existing Proxmox permissions, report the precise missing capability; do not substitute shutdown/start or graceful detach. Do not broaden token scope. Preserve backing storage on unplug; deletion is not part of the test.
 

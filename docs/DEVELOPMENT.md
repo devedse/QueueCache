@@ -139,46 +139,6 @@ dotnet run --project tests/QueueCache.Desktop.Tests -c Release -- --readme docs/
 
 The last command regenerates the README's app screenshots; see below.
 
-## README screenshots
-
-**App screenshots** (`overview`, `cache`, `ram-disk`, `cache-settings`,
-`new-disk` in `docs/images`) are rendered headlessly from the real views with an
-invented example setup (drives, disks, sizes and a minute of activity), defined
-in `tests/QueueCache.Desktop.Tests/ReadmeImages.cs`. After a UI change, run:
-
-```powershell
-dotnet run --project tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images
-```
-
-It works on any OS with the .NET SDK, in dark mode, at 1280×860 (the RAM disk
-page 1280×960). Change the example in that file, not by editing images.
-
-**CrystalDiskMark screenshots** (`cdm-cache.png`, `cdm-ram-disk.png`) are real
-runs and the README's performance table copies their numbers. To redo them on
-the test machine with the installed release:
-
-1. Cache: the drive with a 2 GiB Fast cache (`qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`).
-   RAM disk: `qcache disk create --mode ram --size-mib 4096 --letter T`.
-2. CrystalDiskMark 9.0.3 with its defaults: 5 passes, 1 GiB, MB/s, the
-   Default (green) theme, and **Theme → Zoom → 150%**.
-3. Type a one-line comment in the box at the bottom, e.g.
-   `QueueCache RAM cache on Q: (Fast mode, 2 GiB)` or `QueueCache RAM disk T: (4 GiB)`.
-4. Close other benchmarks and stop other heavy work, and wait at least 15 minutes
-   after a restart (Windows' startup work lowers the numbers). Before each run,
-   empty the cache's read data with `qcache policy drop-clean Q:` (it never drops
-   unwritten data): leftovers from earlier runs push part of CrystalDiskMark's
-   1 GiB test file out of a 2 GiB cache, and those parts then come from the disk
-   (measured: 5-20 GB/s instead of 26-35 GB/s sequential read). Start
-   CrystalDiskMark normally: at below-normal priority (for example from Task
-   Scheduler with its default priority) cached reads measured about half
-   ([known issues](KNOWN_ISSUES.md)). Run **All** twice and keep the faster run.
-5. Capture just the CrystalDiskMark window (Alt+Print Screen, or Snipping Tool in
-   window mode) and save it over the image in `docs/images`.
-6. For the "without cache" column, pause the cache (`qcache policy pause Q:`),
-   run once, then `qcache policy resume Q:`.
-7. Update the README's test-machine table and numbers, then remove the RAM disk
-   (`qcache disk stop <id> --discard`, `qcache disk remove <id>`).
-
 The full build runs host-safe tests, publishes the CLI and desktop, builds the
 current native driver, checks package layout and creates a fresh unsigned package.
 It never installs, registers, formats or enables anything. GitHub Actions supplies
@@ -198,6 +158,25 @@ snapshot plus a copy of the selected backup and
 `setup\Recover-Registration.ps1` before boot/lifecycle testing. The recovery script
 does not require the driver or CLI and can target an offline SYSTEM hive; it never
 reboots automatically.
+
+## README screenshots
+
+**App screenshots** (`overview`, `cache`, `ram-disk`, `cache-settings`,
+`new-disk` in `docs/images`) are rendered headlessly from the real views with an
+invented example setup (drives, disks, sizes and a minute of activity), defined
+in `tests/QueueCache.Desktop.Tests/ReadmeImages.cs`. After a UI change, run:
+
+```powershell
+dotnet run --project tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images
+```
+
+It works on any OS with the .NET SDK, in dark mode, at 1280×860 (the RAM disk
+page 1280×960). Change the example in that file, not by editing images.
+
+**CrystalDiskMark screenshots** (`cdm-cache.png`, `cdm-ram-disk.png`) are real
+runs, and the README's performance table copies their numbers. How to redo them,
+and the pitfalls that lowered earlier runs (priority, cache leftovers), are in
+[benchmarking](BENCHMARKING.md).
 
 ## Repository layout
 

@@ -83,6 +83,14 @@
   Run `tests/QueueCache.Desktop.Tests` for frontend changes. Local success is not VM
   driver verification. Record gaps honestly, including unexercised ordering paths.
 
+## README benchmarks and screenshots
+
+- CrystalDiskMark numbers and screenshots: follow `docs/BENCHMARKING.md`. Above
+  all, run CrystalDiskMark at normal priority (a scheduled task defaults to below
+  normal and halved cached reads) and run `qcache policy drop-clean` before each run.
+- App screenshots are generated, never edited: `dotnet run --project
+  tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images`.
+
 ## Repository hygiene
 
 - For failures reported in this ongoing verification work, the user authorizes

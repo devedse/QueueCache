@@ -58,7 +58,7 @@ The supported runner was used with the same SHA-256-verified CDM DiskSpd binary
 `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`:
 
 ```powershell
-qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Users\davyd\Desktop\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --case-filter random-write-q1-Idle-timingFalse --repeats 3 --duration-seconds 5 --output C:\QueueCache-Results
+qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --case-filter random-write-q1-Idle-timingFalse --repeats 3 --duration-seconds 5 --output C:\QueueCache-Results
 ```
 
 Exact run: `QueueCache-Verify-20260930-184356-d3b405509bc34e79aca0c0a643827b0b`.

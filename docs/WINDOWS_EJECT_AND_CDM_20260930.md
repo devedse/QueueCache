@@ -2,7 +2,7 @@
 
 ## Environment
 
-Windows 11 Pro 26H1 build 28000, Proxmox VM 109. Loaded CI driver
+Windows 11 Pro 26H1 build 28000, Proxmox VM. Loaded CI driver
 0.4.249.1 (`1752b13`), Verifier 0x209bb, module load 1/unload 0:
 `QueueCache-0.4.249.1-A31F6D68C608.sys`, SHA-256
 `A31F6D68C608A94B09B0A45AD8F1BD08D1494783E4E2895AFBF3595401755F91`.

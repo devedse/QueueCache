@@ -87,6 +87,7 @@ default test (1 GiB, 5 passes); with QueueCache, the best of two runs.
 
 The test file fits in RAM, so this shows what QueueCache does for data that is
 in its cache. Work larger than the cache runs at the drive's own speed.
+[How these were measured](docs/BENCHMARKING.md).
 
 ## Getting started
 

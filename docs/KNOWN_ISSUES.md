@@ -57,7 +57,7 @@ normal priority, because Windows sends low-priority requests one at a time.
 Proposed change: measure where the time goes (submitting thread waiting for a
 processor, or copy threads spinning) with the developer timing counters, then
 consider copying on the caller's thread when it is the only one waiting. Until then,
-benchmark at normal priority.
+benchmark at normal priority ([benchmarking](BENCHMARKING.md)).
 
 ## Raw disk reads and writes bypass the cache (by design)
 
