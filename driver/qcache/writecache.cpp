@@ -2363,7 +2363,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 missBytes += bytes;
                 continue;
             }
-            auto buffer = c->Slots[index].Buffer;
+            const auto buffer = c->Slots[index].Buffer;
             const auto valid = c->Slots[index].ValidSectors;
             const auto hits = valid == 255 ? bytes :
                 QcValidBytes(valid & QcSectorMask(static_cast<ULONG>(from - block), bytes));
@@ -2373,15 +2373,18 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             {
                 const auto source = buffer + (from - block);
                 SIZE_T run = bytes;
-                // QcCopyCoalesce: extend over following whole, valid blocks that are memory neighbours.
-                // Pinned versions are immutable, so their buffers and masks are stable here.
-                while ((copyFlags & QcCopyCoalesce) && from + static_cast<LONGLONG>(run) == block + Chunk && block + Chunk < end)
+                // QcCopyCoalesce: extend over following whole, valid blocks in the next slot of the same
+                // 256 KiB chunk (always the next 4 KiB of memory). Runs never cross a chunk: uncapped
+                // runs measured 22 instead of 36 GB/s at Q8 on a fresh cache (plan 96).
+                // Pinned versions are immutable, so their slots and masks are stable here.
+                for (auto current = index; (copyFlags & QcCopyCoalesce) && from + static_cast<LONGLONG>(run) == block + Chunk &&
+                                           block + Chunk < end;)
                 {
                     const auto next = pinned[(block + Chunk - firstBlock) / Chunk];
-                    if (next == NoSlot || c->Slots[next].ValidSectors != 255 || c->Slots[next].Buffer != buffer + Chunk)
+                    if (next != current + 1 || next % SlotsPerSlab == 0 || c->Slots[next].ValidSectors != 255)
                         break;
+                    current = next;
                     block += Chunk;
-                    buffer += Chunk;
                     const auto more = static_cast<ULONG>(min(end, block + Chunk) - block);
                     run += more;
                     hitBytes += more;

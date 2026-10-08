@@ -161,7 +161,7 @@ reboots automatically.
 
 ## README screenshots
 
-**App screenshots** (`overview`, `cache`, `ram-disk`, `cache-settings`,
+**App screenshots** (`overview`, `cache`, `cache-map`, `ram-disk`, `ram-disk-physical`, `cache-settings`,
 `new-disk` in `docs/images`) are rendered headlessly from the real views with an
 invented example setup (drives, disks, sizes and a minute of activity), defined
 in `tests/QueueCache.Desktop.Tests/ReadmeImages.cs`. After a UI change, run:

@@ -47,6 +47,12 @@ Each drive letter gets its own cache (NTFS, ReFS, FAT32 and exFAT). With
 
 ![A drive's cache: what is in RAM, how much is not yet on disk, and live activity](docs/images/cache.png)
 
+The **memory map** shows how the cache's RAM is used, like a disk defragmenter:
+one square per 256 KiB, coloured by what it holds, with a mark where data is out of
+disk order. QueueCache places new data in disk order so it reads back fastest.
+
+![Memory map: each square is 256 KiB of the cache's RAM](docs/images/cache-map.png)
+
 ## RAM disks
 
 Create one from **Virtual disks → New disk**:
@@ -61,6 +67,9 @@ Any of them can start with Windows. After a crash or power cut, a RAM disk is
 empty and an image in RAM is back at its last save.
 
 ![A RAM disk: space used, totals since start and live activity](docs/images/ram-disk.png)
+
+A running RAM disk or image in RAM also shows where its memory sits in the
+machine's physical RAM.
 
 ## Performance
 
