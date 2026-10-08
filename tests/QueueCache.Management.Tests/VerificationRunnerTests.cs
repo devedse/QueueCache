@@ -1054,14 +1054,16 @@ internal static class VerificationRunnerTests
         Check(steady.Count == 18 && steady.Select(c => c.Id).Distinct().Count() == 18 &&
             steady.Chunk(3).All(g => g.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending })),
             "steady comparison: fresh, never-cleared churn, then ascending reset control");
+        var tool = Environment.ProcessPath!; // Any existing file passes the DiskSpd path check.
         foreach (var suite in new[] { "cache-layout-patterns", "cache-layout-steady" })
         {
-            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 1024 }));
-            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, CaseFilter = "Fresh" }));
+            VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, DiskSpd = tool });
+            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 1024, DiskSpd = tool }));
+            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, DiskSpd = tool, CaseFilter = "Fresh" }));
             Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, DiskSpd = null }));
         }
-        VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 2048 });
-        Reject(() => VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 1024 }));
+        VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 2048, DiskSpd = tool });
+        Reject(() => VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 1024, DiskSpd = tool }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 1024 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, CaseFilter = "ResetAfterRandom" }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, DiskSpd = null }));
