@@ -118,71 +118,96 @@ eviction retires oldest first: a cleared sequential file is refilled in exactly
 reverse slot order, and random use leaves a random permutation. Hardware
 prefetch/TLB costs per order remain unmeasured.
 
-## Optimization options (not implemented)
+## What layout is fast enough, and how a used cache drifts (plan 94)
 
-**Clean**, **empty** and **freshly allocated** are different states. Clean only
-describes whether cached bytes are already on disk. Both fast and slow scores
-above used clean, resident data. Clearing data marks slots reusable without
-resetting their order. The proposed optimization concerns slot order, rather than
-erasing old byte contents from free slots.
-See [benchmarking](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
-for the current UI controls and repeatable preparation.
+Same driver build 0.4.426.1 (loaded SHA-256
+`C9497328A9C85EA46C02E969DFB1226D2EF7FC49CE2B45BFA185E0F32F0B6B3E`), Verifier and
+timing off, same CDM DiskSpd hash, `quick` passed first. Both suites completed
+(30/30 and 18/18) with no misses, lower I/O, errors or reallocation in any score
+window; every non-fresh case used the preceding allocation. "Contiguous" is the
+share of cached disk neighbours that are also the next 4 KiB in memory, measured
+just before each score (`LabMeasureLayout`).
 
-A simplified example: slots numbered 0, 1, 2, 3 are initially handed out in that
-order. Retiring them in order 0, 1, 2, 3 pushes each to the free-list head, leaving
-3, 2, 1, 0 for the next refill. Random retirement creates another permutation.
-Actual order also reflects concurrent requests and the driver's scan-resistant
-insertion policy. Slot numbers describe allocator order and nearby virtual
-buffers within slabs, not a promise that the whole cache is physically contiguous.
+| Free-slot order on the same allocation | Q1 GB/s | Q8 GB/s | Contiguous | Reversed |
+|---|---:|---:|---:|---:|
+| Fresh allocation | 15.39 | 36.65 | 100% | 0% |
+| Every slot scattered | 8.48 | 22.64 | 0% | 0% |
+| 256 KiB chunks shuffled, ascending inside | 14.77 | 35.28 | 98.4% | 0% |
+| Chunks in order, descending inside | 10.71 | 29.54 | 0% | 98.4% |
+| Ascending (same-allocation control) | 15.49 | 36.29 | 100% | 0% |
 
-Random hits change recency bookkeeping via `TouchClean`; they do not move the
-cached payload. The layout consequence appears when slots are subsequently
-retired and reused. This distinction matters when deciding whether to optimize
-allocation or to move existing data in the background.
+| Never-cleared cache | Q1 GB/s | Q8 GB/s | Contiguous | Whole free chunks |
+|---|---:|---:|---:|---:|
+| Fresh allocation | 15.24 | 36.22 | 100% | 3,929 |
+| After 60 s random-read churn, file re-read | 13.86 | 30.66 | 92% | ~1,500 |
+| Ascending reset control | 15.24 | 36.39 | 100% | 3,929 |
 
-Proposed experiment order:
+Findings:
 
-1. **Done (plan 93, above): free-slot order confirmed.** At a verified completely
-   empty boundary, rebuild the free-slot list in initial slot order while retaining
-   the same buffers. Compare before/after against recreation using the maintained
-   runner. This isolates the leading hypothesis from changes to physical pages
-   and other state caused by recreation. Check active/pinned/filling ownership
-   under the appropriate synchronization; a clean-but-occupied cache is not this
-   boundary. Bound or measure time spent blocking requests during the rebuild.
-2. **Improve placement during ordinary reuse.** Explore tracking free slots per
-   existing 256 KiB slab and choosing nearby available slots for sequential fills
-   and newly allocated writes. Keep victim selection separate: choosing which
-   data to evict protects the hot set, while choosing among already-free slots
-   determines placement. Preserve retention, quotas, scan resistance and version
-   ownership. If only scattered slots are free, use them without waiting for
-   lower I/O just to obtain a prettier layout. A full cache may leave little
-   placement choice; do not silently evict extra hot data to improve a benchmark.
-3. **Evaluate copying adjacent runs together.** Where both source and destination
-   ranges are contiguous and valid, a larger copy may replace repeated 4 KiB
-   copies. Existing version pins and valid-sector checks remain essential. This
-   complements better placement but cannot make scattered buffers contiguous.
-4. **Consider bounded idle work only if still worthwhile.** Reordering free-slot
-   metadata need not move payload, but it cannot repair already-resident layout.
-   Moving resident blocks is compaction: it consumes memory bandwidth and must
-   coordinate with reads, writes, pins and draining. Any such work should have a
-   strict budget and yield to demand. Simply dropping useful clean data during
-   idle creates future misses and does not itself reset slot order.
+- **Only order inside each 256 KiB chunk matters.** Shuffled chunks with
+  ascending slots run within 4% of fresh; chunk order is irrelevant. Descending
+  inside a chunk costs as much as the old sequential reuse; scattering is worst.
+- **A cache in use drifts without ever being cleared.** 60 s of 4K random reads
+  over a file twice the cache (about 600 MiB of churn at the lower disk's miss
+  rate) displaced 8% of the file's neighbours and cost 9% (Q1) and 16% (Q8).
+- **Whole free chunks were available but unused.** About 1,500 chunks were
+  entirely free, yet re-read blocks went into just-evicted scattered slots
+  because the free list hands back the most recently freed slot first.
 
-A FIFO free list is a cheap candidate comparison, not an assumed general fix:
-it can avoid reversing a sequential retirement order but preserves random
-retirement order, and may trade reuse locality of hot metadata for other gains.
-Likewise, an empty-cache reset alone would address the benchmark preparation case
-without proving a fix for continuous eviction while the cache stays populated.
+Limits: churn was read-only and short; the cache was never completely full;
+writes, retained-write turnover and longer use are not measured. The hardware
+reason (prefetch, TLB or DRAM locality) for the direction effect is unmeasured.
 
-No optimization, benefit percentage or new workload contract has been accepted
-yet. Before implementation, extend/version the maintained verification plan for
-the relevant comparisons; keep implementation status and measured evidence
-separate in the tracker. In addition to the existing 24-case comparison, proposed
-verification needs repeated reuse and sustained eviction without explicit clears,
-read integrity, overlapping/pinned versions, partial writes, capacity and error
-semantics, plus the existing 72-case `write-performance --budget-mib 2048` suite
-with the same DiskSpd binary before/after. Check CPU cost and tail latency as well
-as throughput, and ensure fitting Fast writes gain no lower-I/O dependency.
+## Proposed design (not implemented)
+
+The measurements make the target simple: **new data should fill a 256 KiB chunk
+upwards.** No global sort is needed, and RAM disks (fixed linear layout) are not
+affected; the disk image with RAM cache uses this cache and benefits.
+
+1. **Chunk allocator instead of the LIFO free list.** Each chunk has exactly 64
+   slots, so its free map is one 64-bit word; the lowest free slot is one bit
+   scan. Allocation fills an open chunk upwards, opens whole free chunks first,
+   then the emptiest partial chunk (still upwards). Freeing sets a bit. This
+   never reverses order and would have used the free chunks in the churn test.
+   Moving no data, it changes only placement, not what is cached.
+2. **One open chunk per sequential stream.** A request continuing the previous
+   block range keeps its chunk; random small writes and fills share a separate
+   chunk, so parallel streams do not interleave inside a chunk.
+3. **Chunk-aware eviction.** Among the oldest clean blocks (for example the
+   oldest few hundred), prefer evicting those that complete a chunk, so whole
+   chunks free up naturally with little hit-rate cost.
+4. **Idle cleaner for a full cache.** Keep a small reserve of whole free
+   chunks (for example 8-32, at most about 1% of the cache) by moving the few live
+   blocks out of the emptiest chunks during idle time, in disk-offset order.
+   A move is a 4 KiB copy plus swapping the two slots' buffer pointers, so the
+   index and LRU stay unchanged. Skip pinned, in-flight, filling and (initially)
+   dirty blocks; small batches; stop on demand; never evict hot data for layout.
+
+RAM-specific ideas beyond what an SSD can do (copies are cheap, nothing wears
+out, metadata is fast to scan):
+
+5. **Defragment on read.** Data read sequentially is the data whose layout
+   matters. When a sequential read hits scattered blocks, queue just that run
+   for re-placement into a fresh chunk at idle (it was just copied, so it is
+   already hot). Effort follows real access instead of scanning everything.
+6. **Software prefetch while copying scattered blocks.** The next block's buffer
+   address is known before the current copy starts; prefetching it may recover
+   part of the scattered penalty without moving any data. Cheap experiment.
+7. **Coalesced copies.** Once runs are contiguous, validate the run's blocks
+   (pins, valid sectors) and copy it with one memcpy of up to 256 KiB instead of
+   64 small copies; this may raise the peak above today's fresh numbers.
+8. **Large pages for chunk memory.** 2 MiB pages could cut TLB misses for both
+   good and scattered layouts; allocation can fail on fragmented RAM, so fall
+   back to normal pages. Experiment before relying on it.
+9. **Fragmentation in diagnostics and the UI.** The measured contiguous share is
+   a natural "fragmentation %" and can trigger the cleaner.
+
+Suggested order: implement 1-2 and re-run `cache-layout-steady` plus the
+72-case `write-performance` suite; run experiments 6-8 independently (they may
+raise the peak regardless); add 3-4 only if a longer, write-including, truly full
+steady test still drifts. Every change needs byte-for-byte integrity checks with
+concurrent reads, writes and draining, overlapping/pinned versions, partial
+writes, capacity and error semantics, plus CPU cost and tail latency.
 
 ## Scope and provenance
 

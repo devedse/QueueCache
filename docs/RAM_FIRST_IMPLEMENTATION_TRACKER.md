@@ -2967,7 +2967,7 @@ Full [results and limitations](CACHE_LAYOUT_INVESTIGATION_20261008.md); repeatab
 [method](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
 
 Follow-up design, 2026-10-08: [UI preparation and reset semantics](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
-are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#optimization-options-not-implemented)
+are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented)
 prioritize isolating free-slot order with unchanged buffers, then improving
 ordinary placement before considering idle compaction. Implementation: none of
 these optimizations is implemented. Verification: the plan-92 results above are
@@ -3000,4 +3000,11 @@ diagnostics V18. Plan 94 adds `cache-layout-patterns` (30 cases) and
 `cache-layout-steady` (18 cases: fresh, 60 s random-read churn without clearing,
 ascending reset control). Normal caching, eviction and clearing are unchanged.
 Purpose: decide whether a chunk-based allocator suffices and how far a cache in
-long use drifts from the fast layout. Verification: pending.
+long use drifts from the fast layout. Verification: CI 0.4.426.1 passed; on the
+VM (loaded hash checked, Verifier/timing off, `quick` first) patterns 30/30 and
+steady 18/18 completed with clean score windows. Medians Q1/Q8 GB/s: fresh
+15.39/36.65, chunks shuffled 14.77/35.28, reversed inside chunks 10.71/29.54,
+scattered 8.48/22.64. Never cleared: 60 s random-read churn left 92% contiguous
+and 13.86/30.66 while about 1,500 whole chunks stayed free. Only order inside a
+256 KiB chunk matters. No production allocator change yet; design proposal in
+[the investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented).

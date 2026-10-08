@@ -71,7 +71,10 @@ were off, and restoration succeeded.
 The cause is the free-slot order: clean LRU eviction feeds a LIFO free list, so a
 cleared sequential file refills in reverse slot order and random use leaves a
 random order. Rewriting only that order on the same allocation (0.4.423.1, plan
-93) restored 15.2/36.3 GB/s Q1/Q8; hardware cache/TLB costs were not isolated. `drop-clean` and applying an unchanged budget
+93) restored 15.2/36.3 GB/s Q1/Q8; hardware cache/TLB costs were not isolated.
+It also happens without clearing: 60 s of random-read churn (plan 94) scattered 8%
+of a resident file and cost 9%/16% (Q1/Q8). Only order inside each 256 KiB chunk
+matters; a chunk allocator is proposed, not implemented. `drop-clean` and applying an unchanged budget
 do not recreate the allocation. No driver fix has been applied. Next: evaluate
 locality-preserving slot recycling against the maintained `cache-layout` suite
 and integrity checks. See [evidence and scope](CACHE_LAYOUT_INVESTIGATION_20261008.md).

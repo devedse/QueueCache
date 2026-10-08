@@ -148,4 +148,4 @@ fresh peak alone does not establish sustained performance after ordinary use.
 
 Recreation is the demonstrated current reset method, not a requirement that every
 future optimization must free/reallocate RAM. Proposed ways to avoid the slowdown
-are recorded in the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#optimization-options-not-implemented).
+are recorded in the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented).
