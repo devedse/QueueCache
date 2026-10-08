@@ -2,12 +2,31 @@ using QueueCache.Management;
 
 namespace QueueCache.Developer.Verification;
 
-public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated, ResetAfterSequential, ResetAfterRandom }
+public enum CacheLayoutStage { None, Fresh, SequentialReuse, RandomReuse, Recreated, ResetAfterSequential, ResetAfterRandom,
+    ResetAscending, ResetChunksShuffled, ResetReversedInChunks, ResetScattered, Churned }
 public sealed record CacheLayoutSnapshot(WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics);
 
 /// <summary>Allocation history must change only where intended; scored reads must stay in RAM.</summary>
 public static class CacheLayoutEvidence
 {
+    /// <summary>Free-slot order for a reset stage (QcLabResetFreeOrder value), or null when the stage does not reset.</summary>
+    public static ulong? ResetOrder(CacheLayoutStage stage) => stage switch
+    {
+        CacheLayoutStage.ResetAfterSequential or CacheLayoutStage.ResetAfterRandom or CacheLayoutStage.ResetAscending => 0,
+        CacheLayoutStage.ResetChunksShuffled => 1,
+        CacheLayoutStage.ResetReversedInChunks => 2,
+        CacheLayoutStage.ResetScattered => 3,
+        _ => null
+    };
+
+    /// <summary>The measurement taken just before scoring must exist and cover the resident file.</summary>
+    public static void ValidateLayout(CacheLayoutSnapshot measured, ulong? previousMeasurements)
+    {
+        if (measured.Diagnostics.Layout is not { } layout || layout.Measurements == 0 || layout.Measurements == previousMeasurements ||
+            layout.Blocks < (1UL << 30) / 4096 || layout.Contiguous + layout.Reversed > layout.Neighbors || layout.Neighbors > layout.Blocks)
+            throw new InvalidDataException("Layout measurement is missing, stale or inconsistent; the driver must support QcLabMeasureLayout.");
+    }
+
     public static void ValidateReset(CacheLayoutSnapshot before, CacheLayoutSnapshot after)
     {
         ValidateTransition(before.State.Generation, after, true);

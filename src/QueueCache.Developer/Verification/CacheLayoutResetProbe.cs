@@ -9,7 +9,7 @@ namespace QueueCache.Developer.Verification;
 [SupportedOSPlatform("windows")]
 public static class CacheLayoutResetProbe
 {
-    public static object Run(CacheDevice device, Action<string, object> record)
+    public static object Run(CacheDevice device, Action<string, object> record, ulong order = 0)
     {
         CacheLayoutSnapshot Snapshot() => new(device.GetWriteCacheState(), device.GetPerformance(), device.GetDiagnostics());
         static int Refused(Action action, int expected)
@@ -35,14 +35,14 @@ public static class CacheLayoutResetProbe
         record("empty", empty);
         CacheLayoutEvidence.ValidateReset(empty, empty);
         var budgetError = Refused(() => device.Control(WriteCacheAction.LabResetFreeOrder, budgetBytes: 1), 87);
-        var valueError = Refused(() => device.Control(WriteCacheAction.LabResetFreeOrder, value: 1), 87);
+        var valueError = Refused(() => device.Control(WriteCacheAction.LabResetFreeOrder, value: 4), 87);
         var start = Stopwatch.GetTimestamp();
-        device.Control(WriteCacheAction.LabResetFreeOrder);
+        device.Control(WriteCacheAction.LabResetFreeOrder, value: order);
         var controlMilliseconds = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         var reset = Snapshot();
         record("reset", reset);
         CacheLayoutEvidence.ValidateReset(empty, reset);
         // This is control-call wall time, including dispatch/locking, not isolated kernel CPU time.
-        return new { BusyError = busyError, BudgetError = budgetError, ValueError = valueError, ControlMilliseconds = controlMilliseconds };
+        return new { Order = order, BusyError = busyError, BudgetError = budgetError, ValueError = valueError, ControlMilliseconds = controlMilliseconds };
     }
 }

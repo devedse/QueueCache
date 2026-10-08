@@ -162,7 +162,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     {
         VerificationPlan.Validate(selected);
         layoutGeneration = null;
-        if (selected.Suite is "cache-layout" or "cache-layout-reset" && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        layoutMeasurements = null;
+        if (VerificationPlan.IsLayoutSuite(selected.Suite) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Cache layout suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -196,7 +197,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-layout" or "cache-layout-reset" ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
@@ -675,7 +676,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         return score;
     }
 
-    private ulong? layoutGeneration;
+    private ulong? layoutGeneration, layoutMeasurements;
     private async Task<CacheLayoutSnapshot> LayoutSnapshot(string name, CancellationToken token)
     {
         var path = await Worker(Job("snapshot") with { Reply = storage.PathFor(name) }, token);
@@ -686,8 +687,9 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
     {
         await Control(WriteCacheAction.LabDelay, token);
-        var resetLayout = scenario.Layout is CacheLayoutStage.ResetAfterSequential or CacheLayoutStage.ResetAfterRandom;
-        var reuseLayout = resetLayout || scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse;
+        var resetOrder = CacheLayoutEvidence.ResetOrder(scenario.Layout);
+        var resetLayout = resetOrder is not null;
+        var reuseLayout = resetLayout || scenario.Layout is CacheLayoutStage.SequentialReuse or CacheLayoutStage.RandomReuse or CacheLayoutStage.Churned;
         if (scenario.Layout is CacheLayoutStage.Fresh or CacheLayoutStage.Recreated)
         {
             await Control(WriteCacheAction.Disable, token);
@@ -722,10 +724,15 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 var touched = await LayoutSnapshot(scenario.Id + "-random-touched.json", token);
                 CacheLayoutEvidence.ValidateScore(layout, touched, random.Bytes);
             }
+            if (scenario.Layout == CacheLayoutStage.Churned)
+                // Random 4K reads over a file twice the cache: misses evict in random LRU order and
+                // nothing is cleared, like a cache in long use. Misses here are intended.
+                await Disk(scenario.Id + "-churn", Path.Combine(workDirectory, "writer.dat"),
+                    ["-b4K", "-r4K", "-o32", "-t1", "-w0", "-d60", "-W0", "-z7"], token);
         }
         if (resetLayout)
-            await Worker(Job("cache-layout-reset") with { Reply = storage.PathFor(scenario.Id + "-reset-probe.json") }, token);
-        else if (scenario.Layout != CacheLayoutStage.None)
+            await Worker(Job("cache-layout-reset") with { Reply = storage.PathFor(scenario.Id + "-reset-probe.json"), Value = resetOrder!.Value }, token);
+        else if (scenario.Layout is not (CacheLayoutStage.None or CacheLayoutStage.Churned))
             await Control(WriteCacheAction.DropClean, token);
         var hot = Path.Combine(workDirectory, "hot.dat");
         if (scenario.Workload == "interference")
@@ -752,10 +759,19 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 (ulong)options.BudgetMiB / 2 << 20);
         }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
-        await Worker(Job("snapshot") with
+        var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-patterns" or "cache-layout-steady";
+        if (measureLayout)
+            await Control(WriteCacheAction.LabMeasureLayout, token);
+        var beforePath = await Worker(Job("snapshot") with
         {
             Reply = storage.PathFor(scenario.Id + "-before.json")
         }, token);
+        if (measureLayout)
+        {
+            var measured = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))!;
+            CacheLayoutEvidence.ValidateLayout(measured, layoutMeasurements);
+            layoutMeasurements = measured.Diagnostics.Layout!.Measurements;
+        }
         var stop = storage.PathFor(scenario.Id + ".stop");
         var ready = storage.PathFor(scenario.Id + ".ready.json");
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);

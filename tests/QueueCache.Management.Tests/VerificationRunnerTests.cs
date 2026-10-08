@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 93, "plan 93 adds same-allocation reset comparisons; existing score workloads unchanged");
+        Check(VerificationPlan.Version == 94, "plan 94 adds free-slot order patterns and never-cleared churn with layout measurement; existing score workloads unchanged");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1039,7 +1039,29 @@ internal static class VerificationRunnerTests
         Check(resetLayouts[0].QueueDepth == 1 && resetLayouts[12].QueueDepth == 8 && resetLayouts[24].QueueDepth == 1,
             "reset comparison alternates depth order");
         Check((uint)QueueCache.Management.WriteCacheAction.CallerPath == 14 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15, "diagnostic action extends the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabMeasureLayout == 16, "diagnostic actions extend the existing ABI");
+        var patterns = VerificationPlan.Performance(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048 });
+        Check(patterns.Count == 30 && patterns.Select(c => c.Id).Distinct().Count() == 30 &&
+            patterns.All(c => c.WarmResident && !c.Timing && c.Workload == "sequential-read"), "pattern comparison has 30 unique resident reads");
+        foreach (var group in patterns.Chunk(5))
+            Check(group.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.ResetScattered,
+                CacheLayoutStage.ResetChunksShuffled, CacheLayoutStage.ResetReversedInChunks, CacheLayoutStage.ResetAscending }) &&
+                group.Select(c => c.QueueDepth).Distinct().Count() == 1, "each order follows a fresh allocation; ascending is the same-allocation control");
+        Check(patterns.Select(c => CacheLayoutEvidence.ResetOrder(c.Layout)).Take(5).SequenceEqual(new ulong?[] { null, 3, 1, 2, 0 }),
+            "stages map to driver free-slot orders");
+        var steady = VerificationPlan.Performance(options with { Suite = "cache-layout-steady", BudgetMiB = 2048 });
+        Check(steady.Count == 18 && steady.Select(c => c.Id).Distinct().Count() == 18 &&
+            steady.Chunk(3).All(g => g.Select(c => c.Layout).SequenceEqual(new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending })),
+            "steady comparison: fresh, never-cleared churn, then ascending reset control");
+        foreach (var suite in new[] { "cache-layout-patterns", "cache-layout-steady" })
+        {
+            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 1024 }));
+            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, CaseFilter = "Fresh" }));
+            Reject(() => VerificationPlan.Validate(options with { Suite = suite, BudgetMiB = 2048, DiskSpd = null }));
+        }
+        VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 2048 });
+        Reject(() => VerificationPlan.Validate(options with { Suite = "sequential-resident", BudgetMiB = 1024 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 1024 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, CaseFilter = "ResetAfterRandom" }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-reset", BudgetMiB = 2048, DiskSpd = null }));
@@ -1075,6 +1097,15 @@ internal static class VerificationRunnerTests
                 layoutAfter with { Diagnostics = layoutDiagnostics with { Attribution = attribution } }, 2L << 30));
         Reject(() => CacheLayoutEvidence.ValidateScore(layoutBefore, layoutAfter with { State = warmed with { DirtyBytes = 4096 } }, 2L << 30));
         Check(true, "layout evidence rejects reallocation during reuse, missing counters, timing and lower I/O");
+        var measuredLayout = layoutBefore with { Diagnostics = layoutDiagnostics with { Layout = new(3, 300_000, 290_000, 280_000, 1_000, 0) } };
+        CacheLayoutEvidence.ValidateLayout(measuredLayout, 2);
+        CacheLayoutEvidence.ValidateLayout(measuredLayout, null);
+        Reject(() => CacheLayoutEvidence.ValidateLayout(layoutBefore, null));
+        Reject(() => CacheLayoutEvidence.ValidateLayout(measuredLayout, 3));
+        foreach (var bad in new QueueCache.Management.CacheLayout[] { new(0, 300_000, 0, 0, 0, 0), new(3, 1_000, 0, 0, 0, 0),
+                     new(3, 300_000, 290_000, 290_000, 1, 0), new(3, 300_000, 300_001, 0, 0, 0) })
+            Reject(() => CacheLayoutEvidence.ValidateLayout(measuredLayout with { Diagnostics = layoutDiagnostics with { Layout = bad } }, null));
+        Check(true, "layout measurement must exist, be fresh, cover the resident file and be internally consistent");
         var emptyLayout = layoutBefore with { State = warmState with { CleanReadBytes = 0 } };
         CacheLayoutEvidence.ValidateReset(emptyLayout, emptyLayout);
         foreach (var changed in new[] { emptyLayout.State with { Generation = 2 }, emptyLayout.State with { Instance = 9 },

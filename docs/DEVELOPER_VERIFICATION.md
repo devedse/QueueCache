@@ -630,6 +630,8 @@ Preserve prior raw results and their scope.
 | `sequential-resident` | Opt-in fitting 1 GiB sequential Q8/T1 RAM-cache peaks, 2048 MiB budget, Fast/Idle and timing off. Full cold pass plus strictly verified miss-free RAM pass before scoring; reads, fresh per-I/O random writes and precomputed-buffer writes (nine cases at three repeats). Requires DiskSpd; excluded from `full`. |
 | `cache-layout` | Opt-in 1 GiB sequential reads Q1/Q8 with a 2048 MiB Fast/Idle cache: fresh allocation, sequential reuse after drop-clean, random-touch reuse after drop-clean, then reallocation. Twenty-four cases at three repeats, timing off, normal process priority required. Residency and zero lower-I/O checks surround each score. |
 | `cache-layout-reset` | Adds free-slot-order reset on the same allocated RAM after sequential/random reuse. Thirty-six ordered cases. Requires the diagnostic reset driver, normal priority and DiskSpd. |
+| `cache-layout-patterns` | Same allocation, four free-slot orders (scattered, chunks shuffled, reversed inside chunks, ascending) after each fresh allocation, with a layout measurement before every score. Thirty cases. Requires the plan-94 driver, normal priority and DiskSpd. |
+| `cache-layout-steady` | Never-cleared cache: fresh allocation, then 60 s of random 4K reads over a file twice the cache before re-reading the resident file, then an ascending reset control; layout measured before every score. Eighteen cases. Plan-94 driver, normal priority, DiskSpd. |
 | `write-performance` | Separate focused matrix: random 4 KiB Q1/32 and sequential 1 MiB Q1/8, one thread, Automatic allocation, cache Off/Eager/Idle, detailed driver timing off/on, three repeats (72 cases). Not implicitly included in `full`. |
 
 For the guarded system phases, use an elevated, restorable test VM; obtain the
@@ -1307,3 +1309,39 @@ Restoration has the existing independent deadline and restores saved runtime sta
 This experiment changes no production allocator policy and makes no sustained
 eviction, write-performance or idle-compaction claim. Results must distinguish
 the diagnostic reset from ordinary UI clearing and from full recreation.
+
+## Free-slot order patterns and never-cleared churn (plan 94)
+
+Two suites answer whether a chunk-based allocator would be enough and how far a
+cache in long use drifts from the fast layout. Both use the `cache-layout`
+target, budget, file, warmup, score and restoration contracts.
+
+```powershell
+qcache developer verify Q: --suite cache-layout-patterns --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+qcache developer verify Q: --suite cache-layout-steady --budget-mib 2048 --repeats 3 --duration-seconds 5 --diskspd C:\Tools\CDM\CdmResource\DiskSpd\DiskSpd64.exe --output C:\QueueCache-Results
+```
+
+`LabResetFreeOrder` now takes an order value (values above 3 are refused):
+0 ascending, 1 whole 64-slot (256 KiB) chunks in scattered order with slots
+ascending inside, 2 chunks ascending with slots descending inside, 3 every
+consecutive position in a different chunk. Each order is a bijection of the slot
+indexes (compile-time checked in `driver/qcache/slotorder-check.h`); all other
+reset guards and evidence are unchanged. `cache-layout-patterns` runs Fresh, then
+on the same allocation ResetScattered, ResetChunksShuffled, ResetReversedInChunks
+and ResetAscending (the same-allocation control).
+
+`LabMeasureLayout` (16) counts, under the cache mutex and without changing state,
+the newest indexed blocks, how many have the next disk block cached (neighbours),
+how many of those sit in the next 4 KiB of memory (contiguous) or the previous
+(reversed), and the chunks with every slot free. Results appear in diagnostics V18
+(`Layout`); `Measurements` 0 means never measured. It refuses caches with
+paging/hibernation/dump usage paths. The runner measures just before the score
+snapshot and requires a fresh, consistent measurement covering the 1 GiB file.
+In a fresh layout about 98.4% of neighbours are contiguous (1 in 64 crosses a
+separately allocated chunk).
+
+`cache-layout-steady` runs Fresh, Churned, ResetAscending. Churned keeps the
+allocation and data, runs 60 s of random 4K Q32 reads (seed 7) over the 4 GiB
+`writer.dat`, then re-reads and verifies the 1 GiB resident file. Churn misses are
+intended and outside the score window; the score window keeps the strict checks.
+The churn is read-only, so it models read-cache turnover, not retained writes.

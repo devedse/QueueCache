@@ -8,6 +8,7 @@
 #include "sectorcoverage.h"
 #include "../shared/lockedpages.h"
 #include "../shared/memorybudget.h"
+#include "slotorder.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
 static constexpr ULONG MaxBatchBytes = 1024 * 1024;
@@ -168,6 +169,12 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->CopyOffloadWrites = InterlockedCompareExchange64(&c->CopyOffloadWrites, 0, 0);
     output->PagingReadsRepeatedPages = InterlockedCompareExchange64(&c->PagingReadsRepeatedPages, 0, 0);
     output->ReadFillsSkippedRepeatedPages = InterlockedCompareExchange64(&c->ReadFillsSkippedRepeatedPages, 0, 0);
+    output->LayoutMeasurements = c->LayoutMeasurements;
+    output->LayoutBlocks = c->LayoutBlocks;
+    output->LayoutNeighbors = c->LayoutNeighbors;
+    output->LayoutContiguous = c->LayoutContiguous;
+    output->LayoutReversed = c->LayoutReversed;
+    output->LayoutFreeChunks = c->LayoutFreeChunks;
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1576,7 +1583,11 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             ClearClean(c);
         break;
     case QcLabResetFreeOrder:
-        status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : ResetFreeOrder(c);
+        status = command.Value > 3 || command.BudgetBytes ? STATUS_INVALID_PARAMETER
+                                                         : ResetFreeOrder(c, static_cast<ULONG>(command.Value));
+        break;
+    case QcLabMeasureLayout:
+        status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
         break;
     case QcLabDelay:
         if (command.Value > 2000)

@@ -2990,3 +2990,14 @@ score windows. Medians Q1/Q8 GB/s: fresh 15.44/36.27, sequential reuse
 15.15/36.62, recreated 15.41/36.37. Free-slot order alone explains the gap. No
 production optimization is implemented yet. Method and evidence
 contract: [same-allocation reset](DEVELOPER_VERIFICATION.md#same-allocation-reset-comparison-plan-93).
+
+### Free-slot order patterns and never-cleared churn, 2026-10-08
+
+Implementation: `LabResetFreeOrder` takes an order (ascending, chunks shuffled,
+reversed inside chunks, scattered; bijections checked at compile time) and
+`LabMeasureLayout` reports block/memory adjacency and whole free chunks in
+diagnostics V18. Plan 94 adds `cache-layout-patterns` (30 cases) and
+`cache-layout-steady` (18 cases: fresh, 60 s random-read churn without clearing,
+ascending reset control). Normal caching, eviction and clearing are unchanged.
+Purpose: decide whether a chunk-based allocator suffices and how far a cache in
+long use drifts from the fast layout. Verification: pending.

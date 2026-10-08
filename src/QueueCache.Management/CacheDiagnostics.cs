@@ -66,6 +66,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int CopyOffloadWireSize = 872;
     public const int WriteOffloadWireSize = 880;
     public const int RepeatedPageWireSize = 896;
+    public const int LayoutWireSize = 944;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -94,6 +95,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V17: ordinary read misses not kept: since plan 62 because no driver-owned copy could be made
     /// (allocation failure or over 16 MiB); before, because their buffer repeated a physical page.</summary>
     public ulong? ReadFillsSkippedRepeatedPages { get; init; }
+    /// <summary>V18: the last explicit layout measurement; null on older drivers.</summary>
+    public CacheLayout? Layout { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -115,6 +118,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CopyOffloadWireSize => 15u,
             WriteOffloadWireSize => 16u,
             RepeatedPageWireSize => 17u,
+            LayoutWireSize => 18u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -246,6 +250,14 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             pagingRepeated = BinaryPrimitives.ReadUInt64LittleEndian(bytes[WriteOffloadWireSize..]);
             fillsSkippedRepeated = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(WriteOffloadWireSize + 8)..]);
         }
+        CacheLayout? layout = null;
+        if (bytes.Length >= LayoutWireSize)
+        {
+            var v = new ulong[6];
+            for (var i = 0; i < v.Length; i++)
+                v[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RepeatedPageWireSize + i * 8)..]);
+            layout = new(v[0], v[1], v[2], v[3], v[4], v[5]);
+        }
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -266,9 +278,17 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CopyOffloadReads = copyOffloadReads,
             CopyOffloadWrites = copyOffloadWrites,
             PagingReadsRepeatedPages = pagingRepeated,
-            ReadFillsSkippedRepeatedPages = fillsSkippedRepeated
+            ReadFillsSkippedRepeatedPages = fillsSkippedRepeated,
+            Layout = layout
         };
     }
+}
+/// <summary>Last explicit layout measurement (Measurements 0: never measured). Of the cached blocks,
+/// Neighbors also have the next disk block cached; Contiguous/Reversed hold it in the next/previous
+/// 4 KiB of memory. FreeChunks: 256 KiB chunks with every slot free.</summary>
+public sealed record CacheLayout(ulong Measurements, ulong Blocks, ulong Neighbors, ulong Contiguous, ulong Reversed, ulong FreeChunks)
+{
+    public double? ContiguousShare => Neighbors == 0 ? null : (double)Contiguous / Neighbors;
 }
 /// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
 public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);

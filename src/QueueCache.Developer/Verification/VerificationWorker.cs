@@ -729,7 +729,7 @@ public static class VerificationWorker
                 result = device.GetWriteCacheState();
                 break;
             case "cache-layout-reset":
-                result = CacheLayoutResetProbe.Run(device, (name, evidence) => RunStorage.AtomicJson(job.Reply + "." + name + ".json", evidence));
+                result = CacheLayoutResetProbe.Run(device, (name, evidence) => RunStorage.AtomicJson(job.Reply + "." + name + ".json", evidence), job.Value);
                 break;
             case "snapshot":
                 result = new

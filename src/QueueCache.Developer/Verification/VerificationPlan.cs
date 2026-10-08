@@ -31,7 +31,9 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 93;
+    public const int Version = 94;
+    public static bool IsLayoutSuite(string suite) =>
+        suite is "cache-layout" or "cache-layout-reset" or "cache-layout-patterns" or "cache-layout-steady";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
     public const string DiskSpdDownload = "https://github.com/microsoft/diskspd/releases";
 
@@ -70,6 +72,8 @@ public static class VerificationPlan
         "sequential-resident",
         "cache-layout",
         "cache-layout-reset",
+        "cache-layout-patterns",
+        "cache-layout-steady",
         "flush-interference",
         "performance",
         "full"
@@ -151,12 +155,19 @@ public static class VerificationPlan
     {
         var cases = new List<PerformanceCase>();
 
-        if (options.Suite is "cache-layout" or "cache-layout-reset")
+        if (IsLayoutSuite(options.Suite))
         {
-            var stages = options.Suite == "cache-layout-reset"
-                ? new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.ResetAfterSequential,
-                    CacheLayoutStage.RandomReuse, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.Recreated }
-                : new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated };
+            var stages = options.Suite switch
+            {
+                "cache-layout-reset" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.ResetAfterSequential,
+                    CacheLayoutStage.RandomReuse, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.Recreated },
+                // Same allocation, four free-slot orders; ascending last as the same-allocation control.
+                "cache-layout-patterns" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.ResetScattered, CacheLayoutStage.ResetChunksShuffled,
+                    CacheLayoutStage.ResetReversedInChunks, CacheLayoutStage.ResetAscending },
+                // Never cleared: random-read churn over a file twice the cache, then the same file is re-read.
+                "cache-layout-steady" => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ResetAscending },
+                _ => new[] { CacheLayoutStage.Fresh, CacheLayoutStage.SequentialReuse, CacheLayoutStage.RandomReuse, CacheLayoutStage.Recreated }
+            };
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var depth in repeat % 2 == 1 ? new[] { 1, 8 } : new[] { 8, 1 })
             foreach (var stage in stages)
@@ -368,7 +379,7 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if (options.Suite is "sequential-resident" or "cache-layout" or "cache-layout-reset" && options.BudgetMiB != 2048)
+        if ((options.Suite is "sequential-resident" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
@@ -402,7 +413,7 @@ public static class VerificationPlan
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-layout" or "cache-layout-reset" or "drain-decision"))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite))
         {
             return;
         }

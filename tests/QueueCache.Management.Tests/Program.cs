@@ -493,6 +493,16 @@ BinaryPrimitives.WriteUInt64LittleEndian(repeatedBytes.AsSpan(CacheDiagnostics.W
 var repeated = CacheDiagnostics.Decode(repeatedBytes);
 Check(repeated.PagingReadsRepeatedPages == 31 && repeated.ReadFillsSkippedRepeatedPages == 32 && repeated.CopyOffloadWrites == 22,
     "V17 repeated-page counters and V16 prefix");
+Check(repeated.Layout is null, "V17 has no layout measurement, not a zero one");
+var layoutBytes = new byte[CacheDiagnostics.LayoutWireSize];
+repeatedBytes.CopyTo(layoutBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(layoutBytes, 18);
+BinaryPrimitives.WriteUInt32LittleEndian(layoutBytes.AsSpan(4), CacheDiagnostics.LayoutWireSize);
+for (var i = 0; i < 6; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(layoutBytes.AsSpan(CacheDiagnostics.RepeatedPageWireSize + i * 8), (ulong)(41 + i));
+var layoutDiagnostics = CacheDiagnostics.Decode(layoutBytes);
+Check(layoutDiagnostics.Layout == new CacheLayout(41, 42, 43, 44, 45, 46) && layoutDiagnostics.ReadFillsSkippedRepeatedPages == 32,
+    "V18 layout measurement and V17 prefix");
 var between = new byte[CacheDiagnostics.ReadFillWireSize + 8];
 fillBytes.CopyTo(between, 0);
 BinaryPrimitives.WriteUInt32LittleEndian(between.AsSpan(4), (uint)between.Length);

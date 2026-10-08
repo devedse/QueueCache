@@ -131,7 +131,7 @@ static void ClearClean(QC_CACHE* c)
 // Explicit diagnostic control only. Caller holds the cache mutex. Validate the
 // whole empty boundary before changing any links; never move/free/zero payload,
 // drain data, change eviction policy, or reset counters/generation.
-static NTSTATUS ResetFreeOrder(QC_CACHE* c)
+static NTSTATUS ResetFreeOrder(QC_CACHE* c, ULONG order)
 {
     if (!c->Capacity || !c->Slots || c->Gone || c->Suspended || c->OwnedRamDevice ||
         c->State.BudgetBytes > (2ULL << 30) || QcCachePagingPathCount(c) > 0)
@@ -143,9 +143,56 @@ static NTSTATUS ResetFreeOrder(QC_CACHE* c)
     for (ULONG i = 0; i < c->Capacity; ++i)
         if (c->Slots[i].Length || c->Slots[i].Pins || c->Slots[i].InFlight || c->Slots[i].Filling)
             return STATUS_DEVICE_BUSY;
+    const ULONG chunkStep = QcScatterStep(c->Capacity / SlotsPerSlab), slotStep = QcScatterStep(c->Capacity);
+    auto previous = NoSlot;
+    for (ULONG k = 0; k < c->Capacity; ++k)
+    {
+        const auto i = static_cast<ULONG>(QcSlotOrder(k, c->Capacity, SlotsPerSlab, order, chunkStep, slotStep));
+        if (previous == NoSlot)
+            c->FreeHead = i;
+        else
+            c->Slots[previous].FreeNext = i;
+        previous = i;
+    }
+    c->Slots[previous].FreeNext = NoSlot;
+    return STATUS_SUCCESS;
+}
+// Explicit diagnostic control only. Caller holds the cache mutex. Read-only pass:
+// how many cached disk neighbours are also memory neighbours (V18 diagnostics).
+static NTSTATUS MeasureLayout(QC_CACHE* c)
+{
+    if (!c->Capacity || !c->Slots || c->Gone || QcCachePagingPathCount(c) > 0)
+        return STATUS_INVALID_DEVICE_STATE;
+    const ULONG chunks = (c->Capacity + SlotsPerSlab - 1) / SlotsPerSlab;
+    auto freeInChunk = static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, chunks, Tag));
+    if (!freeInChunk)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    for (auto i = c->FreeHead; i != NoSlot; i = c->Slots[i].FreeNext)
+        ++freeInChunk[i / SlotsPerSlab]; // At most 64 per chunk.
+    ULONGLONG freeChunks = 0, blocks = 0, neighbors = 0, contiguous = 0, reversed = 0;
+    for (ULONG j = 0; j < chunks; ++j)
+        freeChunks += freeInChunk[j] == min(SlotsPerSlab, c->Capacity - j * SlotsPerSlab);
+    ExFreePoolWithTag(freeInChunk, Tag);
     for (ULONG i = 0; i < c->Capacity; ++i)
-        c->Slots[i].FreeNext = i + 1 < c->Capacity ? i + 1 : NoSlot;
-    c->FreeHead = 0;
+    {
+        // Only the newest indexed version of a block counts; free slots keep stale offsets.
+        const auto slot = &c->Slots[i];
+        if (FindSlot(c, slot->Offset.QuadPart) != i)
+            continue;
+        ++blocks;
+        const auto next = FindSlot(c, slot->Offset.QuadPart + Chunk);
+        if (next == NoSlot)
+            continue;
+        ++neighbors;
+        contiguous += c->Slots[next].Buffer == slot->Buffer + Chunk;
+        reversed += c->Slots[next].Buffer + Chunk == slot->Buffer;
+    }
+    c->LayoutBlocks = blocks;
+    c->LayoutNeighbors = neighbors;
+    c->LayoutContiguous = contiguous;
+    c->LayoutReversed = reversed;
+    c->LayoutFreeChunks = freeChunks;
+    ++c->LayoutMeasurements;
     return STATUS_SUCCESS;
 }
 // Called after overlapping dirty/in-flight versions have drained (or when none

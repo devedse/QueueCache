@@ -123,6 +123,10 @@ struct QC_DIAGNOSTICS
     // manager's dummy page; never kept), and ordinary misses not kept because no
     // staging copy could be made (before plan 62: because their buffer repeated a page).
     ULONGLONG PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
+    // V18: last QcLabMeasureLayout result (Measurements = 0: never measured). Of the
+    // indexed blocks, Neighbors also have the next disk block cached; Contiguous/Reversed
+    // hold it in the next/previous 4 KiB of memory. FreeChunks: 256 KiB slabs with every slot free.
+    ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -140,7 +144,9 @@ static constexpr ULONG QcDiagnosticsV13Size = 840;
 static constexpr ULONG QcDiagnosticsV14Size = 864;
 static constexpr ULONG QcDiagnosticsV15Size = 872;
 static constexpr ULONG QcDiagnosticsV16Size = 880;
-static_assert(sizeof(QC_DIAGNOSTICS) == 896);
+static constexpr ULONG QcDiagnosticsV17Size = 896;
+static_assert(sizeof(QC_DIAGNOSTICS) == 944);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LayoutMeasurements) == QcDiagnosticsV17Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadsRepeatedPages) == QcDiagnosticsV16Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadWrites) == QcDiagnosticsV15Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyOffloadReads) == QcDiagnosticsV14Size);
@@ -236,8 +242,13 @@ enum : ULONG
     // the calling thread (see QcCacheTryCallerPath). Runtime only; not persisted.
     QcCallerPath,
     // Diagnostic only: rebuild free-slot links on an empty cache, keeping buffers
-    // and generation unchanged. No parameters; limited to 2 GiB, no usage paths.
-    QcLabResetFreeOrder
+    // and generation unchanged. Value = order: 0 ascending, 1 slabs shuffled (ascending
+    // inside), 2 slabs ascending (descending inside), 3 every slot scattered.
+    // Limited to 2 GiB, no usage paths.
+    QcLabResetFreeOrder,
+    // Diagnostic only: count block/memory adjacency into the V18 diagnostics. No
+    // parameters; holds the cache lock for one pass over the slots.
+    QcLabMeasureLayout
 }; // Toggle optional detailed timing; never resets counters.
 struct QC_SLOT
 {
@@ -365,6 +376,8 @@ struct QC_CACHE
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
+    // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
+    ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
     // PagingStop. Only the request worker inserts; only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
