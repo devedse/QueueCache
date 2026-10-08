@@ -10,9 +10,32 @@ internal static class StatisticsTests
 {
     private const ulong MiB = 1UL << 20;
 
+    private static void PhysicalFigures()
+    {
+        var map = DemoPhysical(8UL << 30);
+        var shares = QueueCache.Desktop.Controls.PhysicalStrip.Shares(map);
+        Check(map.Pages == (8UL << 30) / 4096 && shares.Length == RamPhysicalMap.Bins && shares.Max() == 1 && shares.Take(300).All(s => s == 0),
+              "physical strip: full slices are fully coloured, unused RAM stays empty");
+    }
+
+    private static void CacheMapFigures()
+    {
+        // Chunk 0 free; 1 full and in order (read); 2 pending; 3 scattered, written; 4 two used slots.
+        var map = new CacheLayoutMap(256 * 1024, 1, 5, [0, 64, 64, 40, 2], [0, 0, 64, 0, 0], [0, 64, 0, 0, 2], [0, 63, 63, 3, 1]);
+        var cells = QueueCache.Desktop.Controls.CacheMap.Cells(map);
+        Check(cells.Select(c => c.Kind.ToString()).SequenceEqual(["Free", "Read", "Pending", "Written", "Read"]) &&
+              cells[1].Fill == 1 && !cells[1].OutOfOrder && cells[3].OutOfOrder && !cells[4].OutOfOrder,
+              "map squares: free, read, pending first, written; scattered marked only with enough data");
+        Check(map.FreeChunks == 1 && Math.Abs(map.InOrder!.Value - 130.0 / 166) < 1e-9, "in-order share counts neighbouring pairs");
+        Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(32768)).Length == QueueCache.Desktop.Controls.CacheMap.MaxCells,
+              "large caches group chunks into at most 2,048 squares");
+    }
+
     public static void Run()
     {
         RamDiskFigures();
+        CacheMapFigures();
+        PhysicalFigures();
         SaveFigures();
         DiskImageCache();
         AdvancedSettings();

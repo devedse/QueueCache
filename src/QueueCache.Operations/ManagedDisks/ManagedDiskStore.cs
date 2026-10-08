@@ -15,7 +15,7 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
     string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
     Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0,
     ManagedImageIoSnapshot? ImageIo = null, RamDirectState? Direct = null, RamDiskStatistics? Statistics = null,
-    ManagedSaveStatistics? LastSave = null)
+    ManagedSaveStatistics? LastSave = null, RamPhysicalMap? Physical = null)
 {
     /// <summary>Everything written to the RAM disk since it started, through either access path.</summary>
     [System.Text.Json.Serialization.JsonIgnore]

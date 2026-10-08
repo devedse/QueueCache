@@ -54,6 +54,15 @@ public sealed partial class VolumeViewModel : ObservableObject
     [ObservableProperty] private NoticeSeverity noticeSeverity;
     [ObservableProperty] private string supportDetails = "";
 
+    // Memory map, read only while this cache is selected (DashboardMonitor, every 2 s at most).
+    internal bool MapRequested { get; set; }
+    internal DateTimeOffset MapSampled { get; set; }
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasLayoutMap), nameof(LayoutOrderText), nameof(LayoutFreeText))]
+    private CacheLayoutMap? layoutMap;
+    public bool HasLayoutMap => LayoutMap is { Chunks: > 0 };
+    public string LayoutOrderText => LayoutMap?.InOrder is { } order ? $"{order * 100:0}% in disk order" : "Nothing cached yet";
+    public string LayoutFreeText => LayoutMap is { } map ? $"{map.FreeChunks:N0} of {map.TotalChunks:N0} free" : "";
+
     // Settings summary
     [ObservableProperty] private string budgetText = "";
     [ObservableProperty] private string presetText = "";

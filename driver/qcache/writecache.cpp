@@ -333,6 +333,45 @@ bool QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
     InterlockedExchange64(&c->PagingLastProcessId, reinterpret_cast<LONGLONG>(PsGetCurrentProcessId()));
     return pagingFile;
 }
+void QcCacheLayoutMap(QC_CACHE* c, QC_LAYOUT_MAP* header, QC_LAYOUT_CHUNK* chunks, ULONG maxChunks)
+{
+    AcquireCache(c);
+    const auto generation = c->Generation;
+    const auto total = c->Slots && c->Chunks ? c->Capacity / SlotsPerSlab : 0;
+    header->Version = 1;
+    header->Chunks = total;
+    header->ChunkBytes = SlabBytes;
+    header->Generation = generation;
+    ULONG j = 0;
+    for (; j < min(total, maxChunks); ++j)
+    {
+        // Short lock holds: one batch of 256 chunks (16,384 slots) at a time.
+        if (j && j % 256 == 0)
+        {
+            ReleaseCache(c);
+            AcquireCache(c);
+            if (c->Generation != generation || !c->Slots || !c->Chunks)
+                break;
+        }
+        ULONG used = 0, dirty = 0, read = 0, ordered = 0;
+        const auto free = c->Chunks[j].Free;
+        for (ULONG k = 0; k < SlotsPerSlab; ++k)
+        {
+            if (free & (1ULL << k))
+                continue;
+            const auto slot = &c->Slots[j * SlotsPerSlab + k];
+            ++used;
+            dirty += slot->Dirty ? 1 : 0;
+            read += !slot->Dirty && slot->ReadClass ? 1 : 0;
+            ordered += k + 1 < SlotsPerSlab && !(free & (1ULL << (k + 1))) &&
+                slot[1].Offset.QuadPart == slot->Offset.QuadPart + Chunk ? 1 : 0;
+        }
+        chunks[j] = { static_cast<UCHAR>(used), static_cast<UCHAR>(dirty), static_cast<UCHAR>(read), static_cast<UCHAR>(ordered) };
+    }
+    ReleaseCache(c);
+    header->Returned = j;
+    header->Size = static_cast<ULONG>(sizeof(*header) + j * sizeof(QC_LAYOUT_CHUNK));
+}
 void QcCachePerformance(QC_CACHE* c, QC_PERFORMANCE* output)
 {
     KIRQL irql;

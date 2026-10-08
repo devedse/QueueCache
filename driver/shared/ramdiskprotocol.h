@@ -14,6 +14,9 @@ enum QC_RAM_ACTION : ULONG
     QcRamStatistics,
     // Flags: QcRamTiming on or off. Turning it on starts the timing counters from zero.
     QcRamSetTiming,
+    // Reply is QC_RAM_REQUEST followed by QC_RAM_PHYSICAL_MAP. Offset: the caller's estimate of the physical
+    // page span (the map covers at least every page of the disk). Offered with QcRamPhysicalMapSupported.
+    QcRamPhysicalMap,
     // Request-local test: Offset is the physical slab count after which this NEW creation fails.
     // No hook survives the request; no existing disk is targeted. Same administrator authorization as Create.
     QcRamDeveloperCreateAllocationFailure = 0x100
@@ -25,6 +28,7 @@ enum QC_RAM_FLAGS : ULONG
     QcRamDirectRegistered = 16, // Reply: the volume filter accepted the store.
     QcRamTiming = 32,           // Time every transfer (SCSI and Direct). Off at creation.
     QcRamStatisticsSupported = 64, // Capabilities reply: Statistics and SetTiming are available.
+    QcRamPhysicalMapSupported = 128, // Capabilities reply: PhysicalMap is available.
 };
 struct QC_RAM_REQUEST
 {
@@ -44,5 +48,15 @@ struct QC_RAM_STATISTICS
     ULONGLONG TimedReads, TimedWrites, ReadTicks, WriteTicks, MaxReadTicks, MaxWriteTicks;
 };
 static_assert(sizeof(QC_RAM_STATISTICS) == 72, "Managed/native RAM statistics ABI size");
+// Where the disk's pages sit in physical memory: Counts[i] pages fall in bin i of [0, SpanPages),
+// and Runs is the number of physically contiguous runs in disk order. Pages are locked; they never move.
+constexpr ULONG QcRamPhysicalBins = 1024;
+struct QC_RAM_PHYSICAL_MAP
+{
+    ULONGLONG SpanPages, Pages, Runs;
+    ULONG Bins, Reserved;
+    ULONG Counts[QcRamPhysicalBins];
+};
+static_assert(sizeof(QC_RAM_PHYSICAL_MAP) == 32 + 4 * QcRamPhysicalBins, "Managed/native RAM physical map ABI size");
 // Capabilities also reports request-local fault proof: Resource = last injected resource,
 // Generation = injection count, Transfers = its allocated slabs. StartupSession retains its own generation semantics.

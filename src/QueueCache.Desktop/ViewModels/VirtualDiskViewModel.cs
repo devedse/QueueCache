@@ -93,6 +93,12 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
     [ObservableProperty] private string writtenSinceSaveText = "";
     [ObservableProperty] private string lastSaveText = "";
     [ObservableProperty] private bool timingOn;
+    /// <summary>Where a running RAM disk's pages sit in physical memory; null for other modes or older providers.</summary>
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasPhysicalMap), nameof(PhysicalText))] private RamPhysicalMap? physicalMap;
+    public bool HasPhysicalMap => PhysicalMap is { Pages: > 0 };
+    public string PhysicalText => PhysicalMap is { Pages: > 0 } map
+        ? $"{Formatting.Format.Bytes(map.Pages * 4096)} in {map.Runs:N0} contiguous {(map.Runs == 1 ? "piece" : "pieces")} · {Formatting.Format.Bytes(map.SpanPages * 4096)} of RAM shown"
+        : "";
     [ObservableProperty] private string timingText = "";
     /// <summary>The cache of a disk image with a RAM cache (its volume), sampled like any cache.</summary>
     [ObservableProperty] private VolumeViewModel? cache;
@@ -253,6 +259,7 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         var native = record.Native;
         var direct = record.Direct;
         HasActivity = native is not null && record.Runtime?.State == ManagedDiskState.Ready;
+        PhysicalMap = HasActivity ? record.Physical : null;
         if (!HasActivity || native is null)
         {
             last = null;

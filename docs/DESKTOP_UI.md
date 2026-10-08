@@ -47,6 +47,22 @@ written since. A disk image with a RAM cache shows its cache exactly as the
 Caches page does. Counters start again when a disk is started again; the chart
 then starts over instead of showing a negative rate.
 
+## Memory views
+
+- **Memory map (Caches).** For the selected cache only, the monitor reads the driver's
+  layout map (`IOCTL_QCACHE_LAYOUT_MAP_V1`) at most every 2 s. One square per 256 KiB
+  chunk (grouped to at most 2,048 squares): colour = read cache / on disk, kept /
+  not yet on disk / free, strength = how full, diagonal = out of disk order (at least 8
+  used slots, under half of the neighbouring pairs in order). The header shows the
+  in-disk-order share and free chunks. The driver releases the cache lock every 256
+  chunks. Older drivers: no card.
+- **Place in physical memory (RAM disk, image in RAM).** The provider's `PhysicalMap`
+  action counts the disk's locked pages in 1,024 slices of physical memory (span:
+  installed RAM, widened to the highest page). The service asks once per disk creation,
+  since locked pages never move, and leaves it out if the provider is older or the
+  query fails. The strip shows lowest to highest address; stronger colour = more of
+  that slice is the disk's.
+
 ## Advanced settings
 
 - **Detailed driver timing** turns on the timing of the cache driver

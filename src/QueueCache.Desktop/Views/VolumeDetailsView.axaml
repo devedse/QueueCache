@@ -83,6 +83,46 @@
 
       <views:CacheContentsView IsVisible="{Binding HasCache}" />
 
+      <!-- A defragmenter-style view of the cache's RAM; only for the selected cache, from newer drivers. -->
+      <Border Classes="card" Name="MapCard" IsVisible="{Binding HasLayoutMap}">
+        <StackPanel Spacing="10">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Classes="strong" Text="Memory map" />
+            <TextBlock Grid.Column="1" Classes="secondary">
+              <Run Text="{Binding LayoutOrderText}" /><Run Text=" · " /><Run Text="{Binding LayoutFreeText}" />
+            </TextBlock>
+          </Grid>
+          <ctl:CacheMap Name="CacheMapControl" Map="{Binding LayoutMap}" ReadBrush="{DynamicResource QcReadBrush}"
+                        WrittenBrush="{DynamicResource QcOnDiskBrush}" PendingBrush="{DynamicResource QcPendingBrush}"
+                        FreeBrush="{DynamicResource QcFreeBrush}" MarkBrush="{DynamicResource TextFillColorPrimaryBrush}"
+                        AutomationProperties.Name="{Binding LayoutOrderText}" />
+          <WrapPanel>
+            <StackPanel Classes="legend" Margin="0,0,16,4">
+              <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
+              <TextBlock Classes="caption secondary" Text="Read cache" />
+            </StackPanel>
+            <StackPanel Classes="legend" Margin="0,0,16,4">
+              <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
+              <TextBlock Classes="caption secondary" Text="On disk, kept for reads" />
+            </StackPanel>
+            <StackPanel Classes="legend" Margin="0,0,16,4">
+              <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+              <TextBlock Classes="caption secondary" Text="Not yet on disk" />
+            </StackPanel>
+            <StackPanel Classes="legend" Margin="0,0,16,4">
+              <Border Classes="swatch" Background="{DynamicResource QcFreeBrush}" />
+              <TextBlock Classes="caption secondary" Text="Free" />
+            </StackPanel>
+            <StackPanel Classes="legend" Margin="0,0,16,4">
+              <TextBlock Text="╱" FontWeight="Bold" />
+              <TextBlock Classes="caption secondary" Text="Out of disk order" />
+            </StackPanel>
+          </WrapPanel>
+          <TextBlock Classes="caption secondary" TextWrapping="Wrap"
+                     Text="Each square is 256 KiB of the cache's RAM; fainter squares are partly used. Data kept in disk order reads fastest, and QueueCache places new data in order." />
+        </StackPanel>
+      </Border>
+
       <Border Classes="card" Name="TimingCard" IsVisible="{Binding TimingOn}">
         <StackPanel Spacing="6">
           <TextBlock Classes="strong" Text="Driver timing" />

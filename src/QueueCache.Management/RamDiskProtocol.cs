@@ -7,6 +7,8 @@ public enum RamDiskAction : uint
     Capabilities = 1, Enumerate, Create, Query, Read, Write, Publish, Freeze, Thaw, Remove, SetReadOnly, StartupSession,
     /// <summary>Reply followed by <see cref="RamDiskStatistics"/>; offered when Capabilities reports StatisticsSupported.</summary>
     Statistics, SetTiming,
+    /// <summary>Reply followed by <see cref="RamPhysicalMap"/>; offset = estimated physical page span. Offered with PhysicalMapSupported.</summary>
+    PhysicalMap,
     DeveloperCreateAllocationFailure = 0x100
 }
 [Flags]
@@ -20,7 +22,31 @@ public enum RamDiskFlags : uint
     /// <summary>Every transfer is timed (SetTiming). Off when a disk is created.</summary>
     Timing = 32,
     /// <summary>Capabilities reply: the provider offers Statistics and SetTiming.</summary>
-    StatisticsSupported = 64
+    StatisticsSupported = 64,
+    /// <summary>Capabilities reply: the provider offers PhysicalMap.</summary>
+    PhysicalMapSupported = 128
+}
+
+/// <summary>Where a RAM disk's pages sit in physical memory (native QC_RAM_PHYSICAL_MAP): Counts[i] pages fall in
+/// bin i of [0, SpanPages) pages; Runs counts physically contiguous runs in disk order. The pages are locked.</summary>
+public sealed record RamPhysicalMap(ulong SpanPages, ulong Pages, ulong Runs, uint[] Counts)
+{
+    public const int Bins = 1024;
+    public const int WireSize = 32 + 4 * Bins;
+    public static RamPhysicalMap Decode(ReadOnlySpan<byte> data)
+    {
+        if (data.Length < WireSize || BinaryPrimitives.ReadUInt32LittleEndian(data[24..]) != Bins)
+            throw new InvalidDataException("Invalid RAM disk physical map.");
+        var counts = new uint[Bins];
+        ulong total = 0;
+        for (var i = 0; i < Bins; i++)
+            total += counts[i] = BinaryPrimitives.ReadUInt32LittleEndian(data[(32 + 4 * i)..]);
+        var map = new RamPhysicalMap(BinaryPrimitives.ReadUInt64LittleEndian(data), BinaryPrimitives.ReadUInt64LittleEndian(data[8..]),
+            BinaryPrimitives.ReadUInt64LittleEndian(data[16..]), counts);
+        if (map.SpanPages == 0 || total != map.Pages || map.Runs > map.Pages || map.Pages > 0 && map.Runs == 0)
+            throw new InvalidDataException("Inconsistent RAM disk physical map.");
+        return map;
+    }
 }
 
 /// <summary>Request counts of the provider's SCSI path, and transfer timing of the SCSI and Direct

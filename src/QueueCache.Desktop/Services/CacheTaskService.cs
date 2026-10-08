@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 using QueueCache.Operations;
@@ -12,6 +13,8 @@ public interface ICacheTaskService
     Task<IReadOnlyList<VolumeDescription>> ListAsync();
     Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>([]);
     Task<WriteCacheState> ReadAsync(VolumeDescription volume);
+    /// <summary>How the cache's RAM is used, per 256 KiB chunk; null when the driver cannot report it.</summary>
+    Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.FromResult<CacheLayoutMap?>(null);
     bool IsPersistent(VolumeDescription volume);
     Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
     Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent);
@@ -45,6 +48,16 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
         } : state;
         ValidateVolume(volume);
         return sampled;
+    });
+    public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.Run<CacheLayoutMap?>(() =>
+    {
+        ValidateVolume(volume);
+        using var device = new CacheDevice(volume.Volume);
+        var capacity = device.GetWriteCacheState().PayloadCapacity;
+        if (capacity == 0)
+            return null;
+        try { return device.GetLayoutMap((int)(capacity / (256 * 1024))); }
+        catch (Win32Exception) { return null; } // Older driver without the map.
     });
     private static void ValidateVolume(VolumeDescription volume)
     {

@@ -78,6 +78,36 @@ static NTSTATUS Change(ADAPTER* adapter, DISK* disk, const QC_RAM_REQUEST& comma
         *returned = sizeof(*reply) + sizeof(QC_RAM_STATISTICS);
         return STATUS_SUCCESS;
     }
+    case QcRamPhysicalMap:
+    {
+        if (output < sizeof(*reply) + sizeof(QC_RAM_PHYSICAL_MAP) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
+        auto map = reinterpret_cast<QC_RAM_PHYSICAL_MAP*>(reply + 1);
+        RtlZeroMemory(map, sizeof(*map));
+        // Two passes over the locked pages' frame numbers: the highest page first, so the span covers them all.
+        ULONGLONG highest = 0;
+        for (ULONG s = 0; s < store.SlabCount; ++s)
+        {
+            const auto pfns = MmGetMdlPfnArray(store.Slabs[s].Mdl);
+            for (ULONG p = 0; p < BYTES_TO_PAGES(MmGetMdlByteCount(store.Slabs[s].Mdl)); ++p)
+                highest = max(highest, static_cast<ULONGLONG>(pfns[p]));
+        }
+        map->SpanPages = max(command.Offset, highest + 1);
+        map->Bins = QcRamPhysicalBins;
+        ULONGLONG previous = 0;
+        for (ULONG s = 0; s < store.SlabCount; ++s)
+        {
+            const auto pfns = MmGetMdlPfnArray(store.Slabs[s].Mdl);
+            for (ULONG p = 0; p < BYTES_TO_PAGES(MmGetMdlByteCount(store.Slabs[s].Mdl)); ++p)
+            {
+                const auto pfn = static_cast<ULONGLONG>(pfns[p]);
+                ++map->Counts[pfn * QcRamPhysicalBins / map->SpanPages];
+                map->Runs += map->Pages++ == 0 || pfn != previous + 1 ? 1 : 0;
+                previous = pfn;
+            }
+        }
+        *returned = sizeof(*reply) + sizeof(QC_RAM_PHYSICAL_MAP);
+        return STATUS_SUCCESS;
+    }
     case QcRamSetTiming:
         if (command.Flags & ~QcRamTiming) return STATUS_INVALID_PARAMETER;
         if ((command.Flags & QcRamTiming) && !(flags & QcRamTiming))
@@ -108,7 +138,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     if (!Authorized(irp)) status = STATUS_ACCESS_DENIED;
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
-        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamSetTiming) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
+        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamPhysicalMap) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
         input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;
@@ -125,7 +155,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
             {
                 reply->Resource = adapter->LastAllocationFailureResource;
                 reply->Generation = adapter->InjectedAllocationFailures; reply->Transfers = adapter->LastAllocationFailureSlabs;
-                reply->Flags = QcRamStatisticsSupported;
+                reply->Flags = QcRamStatisticsSupported | QcRamPhysicalMapSupported;
             }
             if (command.Action == QcRamStartupSession) status = StartupSession(&reply->Epoch, &reply->Generation);
         }

@@ -182,6 +182,12 @@ public sealed partial class DashboardMonitor : ObservableObject
             var now = clock();
             var rates = volume.State is null ? null : CacheTelemetry.Between(volume.State, state, now > volume.Sampled ? now - volume.Sampled : TimeSpan.FromTicks(1));
             volume.Apply(state, rates, now);
+            if (volume.MapRequested && now - volume.MapSampled >= TimeSpan.FromSeconds(2))
+            {
+                volume.MapSampled = now;
+                try { volume.LayoutMap = await Caches.ReadLayoutMapAsync(volume.Volume); }
+                catch (Exception) { volume.LayoutMap = null; } // The map is optional; never fail the sample.
+            }
             VirtualDisks.FirstOrDefault(d => d.Cache == volume)?.CacheSampled();
             _ = ApplyDeveloperSettingsAsync(volume, state);
         }

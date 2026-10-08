@@ -22,6 +22,8 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
     {
         public volatile ManagedDiskRecord Record = record;
         public WindowsRamDisk? Provider;
+        // Locked pages never move: one physical map per disk creation.
+        public (ulong Creation, RamPhysicalMap? Map)? Physical;
         public WindowsVirtualDisk? Image;
         public WindowsDiskStorage? Disk;
         public IDisposable? Paths;
@@ -74,7 +76,9 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
             try
             {
                 var native = entry.Provider.Query(record.Native); native.RequireSameCreation(record.Native);
-                record = record with { Native = native, Statistics = entry.Provider.Statistics(native),
+                if (entry.Physical?.Creation != native.CreationGeneration)
+                    entry.Physical = (native.CreationGeneration, PhysicalMap(entry.Provider, native));
+                record = record with { Native = native, Statistics = entry.Provider.Statistics(native), Physical = entry.Physical.Value.Map,
                     Runtime = record.Runtime with { WriteGeneration = native.WriteGeneration } };
             }
             catch (Exception ex) when (ex is IOException or Win32Exception)
@@ -82,6 +86,12 @@ public sealed partial class WindowsManagedDiskEngine : IManagedDiskService, IMan
         }
         return record with { ImageIo = entry.ImageIo.Snapshot(),
             Direct = record.Runtime?.State == ManagedDiskState.Ready ? RamDirectBinding.Query(record.Definition, record.VolumePath) : null };
+    }
+    // Optional view data: a failure leaves the map out and never changes the disk's state.
+    private static RamPhysicalMap? PhysicalMap(WindowsRamDisk provider, RamDiskSnapshot native)
+    {
+        try { return provider.PhysicalMap(native, WindowsRamDisk.InstalledMemoryPages()); }
+        catch (Exception ex) when (ex is IOException or Win32Exception or InvalidDataException) { return null; }
     }
     public async Task<ManagedDiskRuntime> CreateAsync(ManagedDiskDefinition definition, IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default)
     {

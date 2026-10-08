@@ -71,10 +71,16 @@ public sealed partial class CachesViewModel : ObservableObject
 
     [ObservableProperty] private VolumeViewModel? selected;
 
-    partial void OnSelectedChanged(VolumeViewModel? value)
+    partial void OnSelectedChanged(VolumeViewModel? oldValue, VolumeViewModel? newValue)
     {
-        if (value is not null)
-            selectedId = value.Volume.VolumeId;
+        if (oldValue is not null)
+            oldValue.MapRequested = false;
+        if (newValue is not null)
+        {
+            selectedId = newValue.Volume.VolumeId;
+            newValue.MapRequested = true;
+            newValue.MapSampled = default; // Read its map at the next sample.
+        }
     }
 
     [RelayCommand] private Task Refresh() => Monitor.RefreshAsync();

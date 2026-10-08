@@ -215,6 +215,24 @@
             <SelectableTextBlock Name="TimingText" Classes="number" Text="{Binding TimingText}" TextWrapping="Wrap" />
           </StackPanel>
         </Border>
+
+        <!-- Where the disk's RAM sits in the machine's physical memory; fixed while the disk runs. -->
+        <Border Classes="card" Name="PhysicalCard" IsVisible="{Binding HasPhysicalMap}">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Classes="strong" Text="Place in physical memory" />
+              <TextBlock Grid.Column="1" Classes="secondary" Text="{Binding PhysicalText}" />
+            </Grid>
+            <ctl:PhysicalStrip Name="PhysicalStripControl" Map="{Binding PhysicalMap}" UsedBrush="{DynamicResource QcDisksBrush}"
+                               TrackBrush="{DynamicResource QcFreeBrush}" AutomationProperties.Name="{Binding PhysicalText}" />
+            <Grid ColumnDefinitions="*,*">
+              <TextBlock Classes="caption secondary" Text="Lowest address" />
+              <TextBlock Grid.Column="1" Classes="caption secondary" Text="Highest address" HorizontalAlignment="Right" />
+            </Grid>
+            <TextBlock Classes="caption secondary" TextWrapping="Wrap"
+                       Text="The coloured parts of the strip are the RAM this disk uses; stronger colour means more of that stretch. The disk keeps its memory locked in place until it stops." />
+          </StackPanel>
+        </Border>
       </StackPanel>
 
       <Border Classes="card" Name="FactsCard">

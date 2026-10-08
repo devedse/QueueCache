@@ -46,9 +46,20 @@ internal static class ReadmeImages
         Save(window, output, "overview");
 
         Show(window, shell, AppPage.Caches);
-        shell.Caches.Select(shell.Monitor.Volumes.Single(v => v.Volume.Volume == "D:"));
+        var gamesCache = shell.Monitor.Volumes.Single(v => v.Volume.Volume == "D:");
+        shell.Caches.Select(gamesCache);
+        now += TimeSpan.FromSeconds(1);
+        caches.Advance(85);
+        disks.Advance(85);
+        Settle(shell.Monitor.SampleAsync()); // The selected cache reads its memory map.
         Dispatcher.UIThread.RunJobs();
+        Check(gamesCache.HasLayoutMap && gamesCache.LayoutOrderText.EndsWith("in disk order"), "readme: the selected cache shows its memory map");
         Save(window, output, "cache");
+        // The memory map card, scrolled into view.
+        window.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "MapCard").BringIntoView();
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+        Save(window, output, "cache-map");
 
         // Taller, so the RAM disk's details fit without scrolling.
         window.Height = 960;
@@ -57,6 +68,12 @@ internal static class ReadmeImages
         Dispatcher.UIThread.RunJobs();
         window.UpdateLayout();
         Save(window, output, "ram-disk");
+        var ramDisk = shell.Monitor.VirtualDisks.Single(d => d.IsRamDisk);
+        Check(ramDisk.HasPhysicalMap && ramDisk.PhysicalText.StartsWith("8 GiB in "), "readme: the RAM disk shows its place in physical memory");
+        window.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "PhysicalCard").BringIntoView();
+        Dispatcher.UIThread.RunJobs();
+        window.UpdateLayout();
+        Save(window, output, "ram-disk-physical");
         shell.Stop();
         window.Close();
 
@@ -159,6 +176,8 @@ internal static class ReadmeImages
 
         public Task<IReadOnlyList<VolumeDescription>> ListAsync() => Task.FromResult<IReadOnlyList<VolumeDescription>>(Volumes);
         public Task<WriteCacheState> ReadAsync(VolumeDescription volume) => Task.FromResult(State(volume));
+        public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) =>
+            Task.FromResult(State(volume).PayloadCapacity is > 0 and var bytes ? DemoMap((int)(bytes / (256 * 1024))) : (CacheLayoutMap?)null);
         public bool IsPersistent(VolumeDescription volume) => true;
         public Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress) => Task.CompletedTask;
         public Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent) => Task.CompletedTask;
@@ -233,7 +252,8 @@ internal static class ReadmeImages
                 Native = native with { ReadBytes = native.ReadBytes + r / 20, WriteBytes = native.WriteBytes + w / 20 },
                 Direct = direct with { ReadBytes = direct.ReadBytes + r - r / 20, WriteBytes = direct.WriteBytes + w - w / 20,
                     ReadRequests = direct.ReadRequests + r / 32768, WriteRequests = direct.WriteRequests + w / 32768 },
-                Statistics = stats with { ReadRequests = stats.ReadRequests + r / 20 / 65536, WriteRequests = stats.WriteRequests + w / 20 / 65536 }
+                Statistics = stats with { ReadRequests = stats.ReadRequests + r / 20 / 65536, WriteRequests = stats.WriteRequests + w / 20 / 65536 },
+                Physical = record.Physical ?? DemoPhysical(native.CapacityBytes)
             };
         }
 

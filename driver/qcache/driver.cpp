@@ -1104,6 +1104,21 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
             return Complete(irp, STATUS_SUCCESS, returned);
         }
+        if (code == IOCTL_QCACHE_LAYOUT_MAP_V1)
+        {
+            const auto outputLength = stack->Parameters.DeviceIoControl.OutputBufferLength;
+            if (outputLength < sizeof(QC_LAYOUT_MAP))
+            {
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_BUFFER_TOO_SMALL);
+            }
+            auto header = static_cast<QC_LAYOUT_MAP*>(irp->AssociatedIrp.SystemBuffer);
+            QcCacheLayoutMap(&ext->Cache, header, reinterpret_cast<QC_LAYOUT_CHUNK*>(header + 1),
+                             static_cast<ULONG>((outputLength - sizeof(QC_LAYOUT_MAP)) / sizeof(QC_LAYOUT_CHUNK)));
+            const auto returned = header->Size;
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            return Complete(irp, STATUS_SUCCESS, returned);
+        }
         if (code == IOCTL_QCACHE_PERFORMANCE_V1)
         {
             auto outputLength = stack->Parameters.DeviceIoControl.OutputBufferLength;

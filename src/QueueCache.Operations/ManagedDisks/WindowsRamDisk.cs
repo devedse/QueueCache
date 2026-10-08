@@ -78,6 +78,19 @@ public sealed class WindowsRamDisk : IDisposable
         return RamDiskStatistics.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
     }
     private bool? statisticsSupported;
+    /// <summary>Null when the installed provider predates the physical map.</summary>
+    public RamPhysicalMap? PhysicalMap(RamDiskSnapshot expected, ulong spanPages)
+    {
+        if (!(physicalMapSupported ??= Capabilities().Flags.HasFlag(RamDiskFlags.PhysicalMapSupported)))
+            return null;
+        var wire = RamDiskSnapshot.Request(RamDiskAction.PhysicalMap, expected, offset: spanPages);
+        Array.Resize(ref wire, RamDiskSnapshot.WireSize + RamPhysicalMap.WireSize);
+        var returned = Call(wire, RamDiskSnapshot.WireSize, wire.Length);
+        if (returned != wire.Length) throw new InvalidDataException("Incomplete RAM disk physical map reply.");
+        RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
+        return RamPhysicalMap.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
+    }
+    private bool? physicalMapSupported;
     public RamDiskSnapshot SetTiming(RamDiskSnapshot expected, bool enabled) =>
         Send(RamDiskSnapshot.Request(RamDiskAction.SetTiming, expected, flags: enabled ? RamDiskFlags.Timing : RamDiskFlags.None));
     public void Remove(RamDiskSnapshot expected)
@@ -144,6 +157,12 @@ public sealed class WindowsRamDisk : IDisposable
             return ValueTask.CompletedTask;
         }
     }
+    /// <summary>Installed RAM in 4 KiB pages: the span a physical map is drawn over (address holes can push
+    /// the highest page above it; the provider then widens the span).</summary>
+    public static ulong InstalledMemoryPages() => GetPhysicallyInstalledSystemMemory(out var kib) ? kib / 4 : 0;
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetPhysicallyInstalledSystemMemory(out ulong totalMemoryInKilobytes);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]

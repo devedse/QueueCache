@@ -7,6 +7,47 @@ using QueueCache.Operations.ManagedDisks;
 
 internal static class Test
 {
+    /// <summary>A RAM disk's pages over a machine's physical memory: mostly a few long stretches with gaps.</summary>
+    public static RamPhysicalMap DemoPhysical(ulong diskBytes, ulong ramBytes = 24UL << 30, int seed = 3)
+    {
+        var random = new Random(seed);
+        ulong span = ramBytes / 4096, pages = diskBytes / 4096, perBin = span / RamPhysicalMap.Bins, left = pages, runs = 0;
+        var counts = new uint[RamPhysicalMap.Bins];
+        for (var bin = (int)(RamPhysicalMap.Bins * 0.3); left > 0 && bin < RamPhysicalMap.Bins; bin++)
+        {
+            if (random.Next(10) == 0)
+                continue; // Memory Windows already uses.
+            var take = Math.Min(left, random.Next(4) == 0 ? perBin / 2 : perBin);
+            counts[bin] = (uint)take;
+            left -= take;
+            runs += take == perBin ? 1UL : 3UL;
+        }
+        return new(span, pages - left, runs, counts);
+    }
+
+    /// <summary>A plausible cache in use: in-order read cache, written data kept for reads, a little
+    /// not yet on disk, a band of scattered partly used chunks, and free space at the end.</summary>
+    public static CacheLayoutMap DemoMap(int chunks, int seed = 7)
+    {
+        var random = new Random(seed);
+        byte[] used = new byte[chunks], dirty = new byte[chunks], read = new byte[chunks], ordered = new byte[chunks];
+        for (var i = 0; i < chunks; i++)
+        {
+            var at = (double)i / chunks;
+            byte u = at < 0.83 ? (byte)64 : at < 0.91 ? (byte)random.Next(12, 50) : random.Next(12) == 0 ? (byte)random.Next(1, 30) : (byte)0;
+            used[i] = u;
+            if (u == 0)
+                continue;
+            var scattered = at >= 0.83 && at < 0.91;
+            ordered[i] = (byte)(scattered ? random.Next(0, u / 4) : u - 1);
+            if (at >= 0.75 && at < 0.83)
+                dirty[i] = u;
+            else if (at < 0.60 || scattered || at >= 0.91)
+                read[i] = u;
+        }
+        return new(256 * 1024, 1, chunks, used, dirty, read, ordered);
+    }
+
     public static void Check(bool result, string description)
     {
         if (!result)

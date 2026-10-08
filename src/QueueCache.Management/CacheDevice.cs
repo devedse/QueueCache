@@ -19,6 +19,7 @@ public sealed class CacheDevice : IDisposable
     public const uint OptionsIoctl = (0x8844u << 16) | (3u << 14) | (0xD15u << 2);
     public const uint PerformanceIoctl = (0x8844u << 16) | (0xD16u << 2);
     public const uint SpecialRangesIoctl = (0x8844u << 16) | (3u << 14) | (0xD17u << 2);
+    public const uint LayoutMapIoctl = (0x8844u << 16) | (0xD1Au << 2);
     private readonly SafeFileHandle handle;
     private readonly bool ownsHandle = true;
 
@@ -68,6 +69,15 @@ public sealed class CacheDevice : IDisposable
         if (returned > data.Length)
             throw new InvalidDataException("Invalid performance snapshot length.");
         return CachePerformance.Decode(data.AsSpan(0, (int)returned));
+    }
+
+    /// <summary>Per-chunk usage map; chunks = payload capacity / 256 KiB. Requires a driver with layout map V1.</summary>
+    public CacheLayoutMap GetLayoutMap(int chunks)
+    {
+        var data = new byte[CacheLayoutMap.HeaderSize + 4 * chunks];
+        if (!Native.DeviceIoControl(handle, LayoutMapIoctl, IntPtr.Zero, 0, data, (uint)data.Length, out var returned, IntPtr.Zero))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cache layout map unavailable (requires a newer driver).");
+        return CacheLayoutMap.Decode(data.AsSpan(0, (int)returned));
     }
 
     public CacheDiagnostics GetDiagnostics()

@@ -10,6 +10,8 @@
 #define IOCTL_QCACHE_STATE_V3 CTL_CODE(0x8844UL, 0xD14UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_OPTIONS_V1 CTL_CODE(0x8844UL, 0xD15UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 #define IOCTL_QCACHE_PERFORMANCE_V1 CTL_CODE(0x8844UL, 0xD16UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
+// Read-only usage map: QC_LAYOUT_MAP followed by one QC_LAYOUT_CHUNK per 256 KiB chunk, as many as fit.
+#define IOCTL_QCACHE_LAYOUT_MAP_V1 CTL_CODE(0x8844UL, 0xD1AUL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 // T085 disk byte range sets. Input: QC_SPECIAL_RANGES_HEADER + Count entries.
 // Paging-file traffic is recognised per request (FsRtlIsPagingFile on the
 // request's file object), not by these ranges. Flags selects exactly one set:
@@ -462,6 +464,19 @@ void QcCacheRecordUsageCompletion(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYP
 bool QcCacheRecordPagingIo(QC_CACHE* cache, PIRP irp);
 LONG QcCachePagingPathCount(QC_CACHE* cache);
 void QcCachePerformance(QC_CACHE* cache, QC_PERFORMANCE* output);
+// Per-chunk usage (Used/Dirty/Read slots; Ordered: slots whose next slot holds the next disk block).
+struct QC_LAYOUT_CHUNK
+{
+    UCHAR Used, Dirty, Read, Ordered;
+};
+struct QC_LAYOUT_MAP
+{
+    ULONG Version, Size, Chunks, Returned;
+    ULONGLONG ChunkBytes, Generation;
+};
+static_assert(sizeof(QC_LAYOUT_CHUNK) == 4 && sizeof(QC_LAYOUT_MAP) == 32);
+// Fills up to maxChunks entries; the lock is released between batches, so a reallocation ends the map early.
+void QcCacheLayoutMap(QC_CACHE* cache, QC_LAYOUT_MAP* header, QC_LAYOUT_CHUNK* chunks, ULONG maxChunks);
 bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 // Dispatch only, at PASSIVE_LEVEL, while no other foreground request can run (the
 // request worker waits for DirectIdle before processing). True: *status is final
