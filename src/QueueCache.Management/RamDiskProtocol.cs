@@ -139,7 +139,7 @@ public sealed record RamDiskSnapshot(Guid ResourceId, Guid BootEpoch, ulong Crea
             BinaryPrimitives.ReadUInt32LittleEndian(data[116..]), Read64(data, 120), Read64(data, 128),
             Read64(data, 136), Read64(data, 144), Read64(data, 152), Read64(data, 160));
         if (result.BootEpoch == Guid.Empty || result.CapacityBytes == 0 || result.CapacityBytes > long.MaxValue ||
-            (result.Flags & ~(capabilities ? RamDiskFlags.StatisticsSupported :
+            (result.Flags & ~(capabilities ? RamDiskFlags.StatisticsSupported | RamDiskFlags.PhysicalMapSupported :
                 RamDiskFlags.Published | RamDiskFlags.ReadOnly | RamDiskFlags.Frozen | RamDiskFlags.DirectRegistered | RamDiskFlags.Timing)) != 0 ||
             (!capabilities && (result.ResourceId == Guid.Empty || result.CreationGeneration == 0 || result.Slot >= MaximumDisks ||
                 result.SectorBytes is not (512 or 4096) || result.CapacityBytes % result.SectorBytes != 0 ||

@@ -283,6 +283,18 @@ internal static class ManagedDiskTests
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(badFrozen));
         var insufficient = (byte[])wire.Clone(); insufficient.AsSpan(80, 8).Clear();
         Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(insufficient));
+        // A capabilities reply as the provider sends it, with every capability flag it offers. A flag missing
+        // from the decoder stopped the disk service at boot (0.4.430.1 on the VM), so keep this exact.
+        var capabilities = RamDiskSnapshot.Request(RamDiskAction.Capabilities);
+        Guid.NewGuid().TryWriteBytes(capabilities.AsSpan(32, 16));
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(capabilities.AsSpan(56), 128UL << 30);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(capabilities.AsSpan(108), (uint)(RamDiskFlags.StatisticsSupported | RamDiskFlags.PhysicalMapSupported));
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(capabilities.AsSpan(112), (uint)RamDiskSnapshot.MaximumTransferBytes);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(capabilities.AsSpan(116), (uint)RamDiskSnapshot.MaximumDisks);
+        Check(RamDiskSnapshot.Decode(capabilities, capabilities: true).Flags.HasFlag(RamDiskFlags.PhysicalMapSupported),
+            "the capabilities reply accepts every flag the provider offers");
+        capabilities[109] |= 1; // 256: not offered by any provider.
+        Throws<InvalidDataException>(() => RamDiskSnapshot.Decode(capabilities, capabilities: true));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Write, expected, transferBytes: RamDiskSnapshot.MaximumTransferBytes + 1));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Create, resource: Guid.NewGuid(), capacity: 16 * MiB + 512));
         Throws<ArgumentException>(() => RamDiskSnapshot.Request(RamDiskAction.Remove));
