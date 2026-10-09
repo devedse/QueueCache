@@ -3093,3 +3093,7 @@ Oracle failure handling now cancels other streams and propagates a mismatch
 before the workload finishes. The coordinator cancels and awaits the owned score
 process before restoration. Host contracts exercise both early failure and early
 successful oracle completion.
+The neighboring-sector oracle now checks NTFS, 512-byte logical sectors and
+4K-aligned clusters before creating files, and records the cluster size. This
+ensures the two sectors share a cache block. Host target-boundary checks pass;
+the final VM check remains pending.

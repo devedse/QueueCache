@@ -21,6 +21,13 @@ internal static class CacheExerciseTests
         Check(!finishing.IsCompleted, "An early successful oracle still waits for the workload.");
         pending.SetResult(7);
         Check(finishing.GetAwaiter().GetResult() == 7, "Successful score and oracle both complete before recording.");
+        ConcurrentSectorOracle.ValidateTarget("ntfs", 512, 8);
+        foreach (var (fileSystem, sector, cluster) in new[] { ("NTFS", 4096u, 1u), ("NTFS", 512u, 4u), ("FAT32", 512u, 8u) })
+        {
+            try { ConcurrentSectorOracle.ValidateTarget(fileSystem, sector, cluster); }
+            catch (NotSupportedException) { continue; }
+            throw new Exception("Sector oracle accepted an unsupported or unaligned shared-block target.");
+        }
         var options = new VerificationOptions("Q:", "cache-concurrency", DiskSpd: Environment.ProcessPath, BudgetMiB: 2048);
         VerificationPlan.Validate(options);
         var concurrency = CacheExercisePlan.Cases(options);

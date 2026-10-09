@@ -13,15 +13,21 @@ namespace QueueCache.Developer.Verification;
 [SupportedOSPlatform("windows")]
 public static class ConcurrentSectorOracle
 {
+    public static void ValidateTarget(string fileSystem, uint sector, uint sectorsPerCluster)
+    {
+        if (!fileSystem.Equals("NTFS", StringComparison.OrdinalIgnoreCase) || sector != 512 ||
+            sectorsPerCluster == 0 || (ulong)sector * sectorsPerCluster % 4096 != 0)
+            throw new NotSupportedException("Concurrent shared-block sector oracle requires NTFS, 512-byte logical sectors and clusters aligned to 4K.");
+    }
+
     public static async Task<CheckResult[]> Run(DiskTarget target, CacheDevice device, string directory)
     {
         directory = Path.GetFullPath(directory + "-sector-oracle");
         if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
             throw new IOException("Sector oracle requires a new owned directory on the selected volume.");
-        if (!GetDiskFreeSpaceW(target.Root, out _, out var sector, out _, out _))
+        if (!GetDiskFreeSpaceW(target.Root, out var sectorsPerCluster, out var sector, out _, out _))
             throw new Win32Exception(Marshal.GetLastWin32Error());
-        if (sector != 512)
-            throw new NotSupportedException("Concurrent sub-block sector oracle requires 512-byte logical sectors.");
+        ValidateTarget(new DriveInfo(target.Root).DriveFormat, sector, sectorsPerCluster);
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "neighbors.dat");
         var expected = ConcurrentCacheOracle.Pattern(198, 0, 4096);
@@ -69,6 +75,7 @@ public static class ConcurrentSectorOracle
         return [new("concurrent-neighbor-sectors", "PASS",
             $"128 concurrent pairs of 512-byte writes to one 4K block matched active and drained bytes, including 3072 untouched guard bytes. " +
             $"SHA256={Convert.ToHexString(SHA256.HashData(expected))}. Owned file: {path}. " +
+            $"NTFS, logical sector {sector} bytes, cluster {(ulong)sector * sectorsPerCluster} bytes. " +
             "Concurrent submission does not force an in-flight ordering or prove zero lower I/O.")];
     }
 

@@ -1422,7 +1422,9 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   `--case-filter` can select a focused subset, which is never a full-matrix pass.
   Plan 99 first verifies 128 concurrent pairs of 512-byte writes to neighboring
   sectors in one 4K block, including unchanged guard bytes, while cached and after
-  drain. This requires 512-byte logical sectors; unsupported targets fail clearly.
+  drain. This requires NTFS, 512-byte logical sectors and clusters aligned to 4K
+  so the file's neighboring sectors share one cache block. Unsupported targets
+  fail clearly before creating the oracle file.
   Submission is concurrent but kernel overlap/order is not forced. This byte case
   does not claim zero lower I/O and is separate from the scored RAM-only controls.
 - `cache-map-cost`: fitting random 4K reads with polling off, at the app's two-second
