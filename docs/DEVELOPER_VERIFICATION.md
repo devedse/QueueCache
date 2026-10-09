@@ -1376,7 +1376,14 @@ valid blocks that are memory neighbours with one copy. The flags change only how
 pinned hits are copied, apply live and are reported in diagnostics V19
 (`CopyFlags`), so every snapshot records the copy mode. Both are on by default
 since 0.4.434.1 (value 3); a coalesced run never crosses a 256 KiB chunk. Set 0 to
-compare against per-block copies; the setting lasts until the next restart.
+compare against per-block copies; the setting lasts until the next restart. Two more bits
+are experiments, off by default: 4 copies large (512 KiB+) non-paging Direct reads on a
+RAM disk volume on system worker threads while another one is queued there (every 16th
+one probes), so one caller's queued reads run in parallel; 8 copies writes into following
+slots of one chunk with one copy, like bit 2 for reads. Set them per volume, for example
+`copy-flags T: 7` on a RAM disk or `copy-flags Q: 11` on a cache.
+`qcache developer driver layout-map <drive>` reads the memory map once, as the app does,
+and prints a summary with the time the read took.
 
 ### Quiet wait before layout windows (plan 97)
 

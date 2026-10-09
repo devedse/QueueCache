@@ -114,8 +114,60 @@ static bool SignatureIntact(const QC_RAM_BINDING* binding, const QC_RAM_STORE* s
     QcRamStoreCopy(store, binding->Offset + 3, now, sizeof(now), false);
     return RtlEqualMemory(now, binding->Signature, sizeof(now));
 }
+bool QcRamDirectPrepareRead(QC_RAM_BINDING* binding, PIRP irp, QC_RAM_DIRECT_READ* read)
+{
+    if (!ReadNoFence(&binding->Access))
+        return false;
+    const auto stack = IoGetCurrentIrpStackLocation(irp);
+    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
+    const ULONG length = stack->Parameters.Read.Length;
+    const auto mdl = irp->MdlAddress;
+    if (!length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length ||
+        offset < 0 || static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset))
+        return Decline(binding);
+    if (!ExAcquireRundownProtection(&binding->Rundown))
+        return Decline(binding);
+    auto store = binding->Store;
+    const auto at = binding->Offset + static_cast<ULONGLONG>(offset);
+    if (!SignatureIntact(binding, store))
+    {
+        InterlockedExchange(&binding->Access, 0); // Ended for good; the next bind or removal finishes it.
+        Note(binding, QcRamDirectBitLocker);
+    }
+    else if (QcRamStoreBounds(store, at, length))
+    {
+        const auto priority = static_cast<ULONG>((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute;
+        if (auto buffer = static_cast<PUCHAR>(MmGetSystemAddressForMdlSafe(mdl, priority)))
+        {
+            *read = { buffer, at, length };
+            return true; // The store stays held until QcRamDirectFinishRead.
+        }
+    }
+    ExReleaseRundownProtection(&binding->Rundown);
+    return Decline(binding); // Unmappable or replaced: the standard path answers.
+}
+void QcRamDirectFinishRead(QC_RAM_BINDING* binding, PIRP irp, const QC_RAM_DIRECT_READ& read)
+{
+    const auto store = binding->Store;
+    const auto started = QcRamTimingStart(store);
+    Copy(binding, store, read.At, read.Buffer, read.Length, false);
+    QcRamTimingEnd(store, false, started);
+    ExReleaseRundownProtection(&binding->Rundown);
+    InterlockedIncrement64(&binding->ReadRequests);
+    InterlockedAdd64(&binding->ReadBytes, read.Length);
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    irp->IoStatus.Information = read.Length;
+}
 bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
 {
+    if (IoGetCurrentIrpStackLocation(irp)->MajorFunction == IRP_MJ_READ)
+    {
+        QC_RAM_DIRECT_READ read;
+        if (!QcRamDirectPrepareRead(binding, irp, &read))
+            return false;
+        QcRamDirectFinishRead(binding, irp, read);
+        return true;
+    }
     const auto access = ReadNoFence(&binding->Access);
     if (!access)
         return false;
@@ -145,23 +197,16 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
         const auto priority = static_cast<ULONG>((irp->Flags & IRP_PAGING_IO) ? HighPagePriority : NormalPagePriority) | MdlMappingNoExecute;
         if (auto buffer = static_cast<PUCHAR>(MmGetSystemAddressForMdlSafe(mdl, priority)))
         {
-            if (!write)
+            // Reads were served above; only writes reach here.
+            InterlockedIncrement(&binding->Writing); // Before re-checking Access: see EndWrites.
+            if ((InterlockedOr(&binding->Access, 0) & QcRamDirectWrites) && QcRamStoreBeginWrite(store) == QcRamAdmission::Admitted)
             {
-                Copy(binding, store, at, buffer, length, false);
+                QcRamStoreChanged(store);
+                Copy(binding, store, at, buffer, length, true);
+                QcRamStoreEndWrite(store);
                 served = true;
             }
-            else
-            {
-                InterlockedIncrement(&binding->Writing); // Before re-checking Access: see EndWrites.
-                if ((InterlockedOr(&binding->Access, 0) & QcRamDirectWrites) && QcRamStoreBeginWrite(store) == QcRamAdmission::Admitted)
-                {
-                    QcRamStoreChanged(store);
-                    Copy(binding, store, at, buffer, length, true);
-                    QcRamStoreEndWrite(store);
-                    served = true;
-                }
-                InterlockedDecrement(&binding->Writing);
-            }
+            InterlockedDecrement(&binding->Writing);
         }
     }
     if (served)
@@ -169,16 +214,8 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
     ExReleaseRundownProtection(&binding->Rundown);
     if (!served)
         return Decline(binding); // Read-only, frozen or unmappable: the standard path answers.
-    if (write)
-    {
-        InterlockedIncrement64(&binding->WriteRequests);
-        InterlockedAdd64(&binding->WriteBytes, length);
-    }
-    else
-    {
-        InterlockedIncrement64(&binding->ReadRequests);
-        InterlockedAdd64(&binding->ReadBytes, length);
-    }
+    InterlockedIncrement64(&binding->WriteRequests);
+    InterlockedAdd64(&binding->WriteBytes, length);
     irp->IoStatus.Status = STATUS_SUCCESS;
     irp->IoStatus.Information = length;
     return true;

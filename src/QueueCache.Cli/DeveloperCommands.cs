@@ -148,6 +148,21 @@ internal static class DeveloperCommands
             return problems.Count == 0 ? 0 : 1;
         });
         driver.Subcommands.Add(registration);
+        var layoutMap = new Command("layout-map", "Read the cache's memory map once (as the app does) and print a summary and how long the read took; changes nothing.");
+        var mapVolume = new Argument<string>("volume");
+        layoutMap.Arguments.Add(mapVolume);
+        layoutMap.SetAction(p =>
+        {
+            using var device = new CacheDevice(p.GetValue(mapVolume)!);
+            var chunks = (int)(device.GetWriteCacheState().PayloadCapacity / (256 * 1024));
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var map = device.GetLayoutMap(chunks);
+            var milliseconds = watch.Elapsed.TotalMilliseconds;
+            Console.WriteLine(JsonSerializer.Serialize(new { map.TotalChunks, map.Chunks, map.FreeChunks, map.InOrder,
+                UsedSlots = map.Used.Sum(u => (long)u), Milliseconds = milliseconds }));
+            return 0;
+        });
+        driver.Subcommands.Add(layoutMap);
         var loaded = new Command("loaded", "Observe loaded QueueCache module paths and current file hashes as JSON; changes no driver configuration.");
         loaded.SetAction(_ =>
         {
