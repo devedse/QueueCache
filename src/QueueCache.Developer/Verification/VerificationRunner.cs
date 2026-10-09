@@ -229,7 +229,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
             CacheExerciseCases = exercises,
-            CacheExerciseTargets = exercises.Count > 0 ? CacheExercisePlan.AllTargets(options.BudgetMiB) : [],
+            CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
+                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : CacheExercisePlan.AllTargets(options.BudgetMiB),
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });
@@ -477,7 +478,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     WorkDirectory = workDirectory,
                     BudgetMiB = options.BudgetMiB,
-                    Value = exercises.Count > 0 ? 1UL : 0UL
+                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : 1UL
                 }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
@@ -487,7 +488,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 foreach (var scenario in exercises)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
-                    await Case(scenario.Id, () => MeasureExercise(scenario, deadline.Token));
+                    await Case(scenario.Id, () => options.Suite == "cache-recall"
+                        ? MeasureRecall(scenario, deadline.Token) : MeasureExercise(scenario, deadline.Token));
                 }
                 foreach (var scenario in drainDecision)
                 {

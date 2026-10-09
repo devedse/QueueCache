@@ -131,6 +131,9 @@ struct QC_DIAGNOSTICS
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // V19: QcLabCopyFlags in effect (QcCopyPrefetch | QcCopyCoalesce), so evidence records the copy mode.
     ULONGLONG CopyFlags;
+    // V20: QcLabReadRecall in effect (readrecall.h), read misses kept as recent because their
+    // block was used more recently than the oldest used block, and history matches not kept.
+    ULONGLONG ReadRecall, RecalledFills, RecallDenied;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -150,7 +153,9 @@ static constexpr ULONG QcDiagnosticsV15Size = 872;
 static constexpr ULONG QcDiagnosticsV16Size = 880;
 static constexpr ULONG QcDiagnosticsV17Size = 896;
 static constexpr ULONG QcDiagnosticsV18Size = 944;
-static_assert(sizeof(QC_DIAGNOSTICS) == 952);
+static constexpr ULONG QcDiagnosticsV19Size = 952;
+static_assert(sizeof(QC_DIAGNOSTICS) == 976);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadRecall) == QcDiagnosticsV19Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyFlags) == QcDiagnosticsV18Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LayoutMeasurements) == QcDiagnosticsV17Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingReadsRepeatedPages) == QcDiagnosticsV16Size);
@@ -256,7 +261,10 @@ enum : ULONG
     QcLabMeasureLayout,
     // Lab: Value = QcCopyPrefetch | QcCopyCoalesce for RAM-hit copies (both on by default).
     // Changes only how hits are copied, never what is cached; read live, runtime only.
-    QcLabCopyFlags
+    QcLabCopyFlags,
+    // Lab: Value 1 (default) = read recall (readrecall.h), 0 = the earlier bimodal insertion.
+    // Changes only where a read miss enters the clean list; clears the history. Runtime only.
+    QcLabReadRecall
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -394,7 +402,12 @@ struct QC_CACHE
     volatile LONG64 PagingOffloadWriteWaits, PagingOffloadIdleWaits, PagingOffloadMaxQueued;
     volatile LONG64 LowerGeneratedWrites, LowerForwardedWrites, LowerPagingForwardedWrites;
     volatile LONG64 LowerAllocationRetries, PagingFileBypasses, ReadFills, PagingReadFills;
-    ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter.
+    ULONG ReadFillsSinceRecent; // Mutex: bimodal read-fill insertion counter (QcLabReadRecall 0).
+    // Mutex: read-recall history, one entry per slot in RecallSets 4-way sets (readrecall.h).
+    ULONG* Recall;
+    ULONG RecallSets;
+    volatile LONG ReadRecall; // QcLabReadRecall mode.
+    volatile LONG64 RecalledFills, RecallDenied;
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;

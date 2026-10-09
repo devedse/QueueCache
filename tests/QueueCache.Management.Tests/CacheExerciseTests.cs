@@ -58,6 +58,22 @@ internal static class CacheExerciseTests
         Reject(() => VerificationPlan.Validate(options with { SoakSeconds = 1800 }));
         Reject(() => VerificationPlan.Validate(options with { CaseFilter = "missing" }));
         Reject(() => VerificationPlan.Validate(options with { DiskSpd = null }));
+        var recall = options with { Suite = "cache-recall" };
+        VerificationPlan.Validate(recall);
+        var recallCases = CacheExercisePlan.Cases(recall);
+        Check(recallCases.Count == 12 && recallCases.Select(c => c.Id).Distinct().Count() == 12 &&
+              recallCases.All(c => c.Recall is 0 or 1 && c.Workload is "reread" or "scan"), "Recall plan has unique repetitions of both workloads and modes.");
+        Check(recallCases.GroupBy(c => (c.Workload, c.Recall)).All(g => g.Count() == 3), "Each workload/mode pair repeats three times.");
+        Check(recallCases.Take(4).Select(c => (c.Workload, c.Recall)).SequenceEqual([("reread", 0), ("reread", 1), ("scan", 0), ("scan", 1)]) &&
+              recallCases.Skip(4).Take(4).Select(c => (c.Workload, c.Recall)).SequenceEqual([("scan", 1), ("scan", 0), ("reread", 1), ("reread", 0)]),
+            "Recall repetitions reverse both workload and mode order.");
+        Check(CacheExercisePlan.Cases(options).All(c => c.Recall == -1), "Other exercises never change the recall mode.");
+        var recallFiles = CacheExercisePlan.RecallTargets(2048);
+        Check(recallFiles.Single(f => f.Name == "recall-stale.dat").MiB > 2048 && recallFiles.Single(f => f.Name == "recall-scan.dat").MiB > 2048 &&
+              recallFiles.Single(f => f.Name == "recall-file.dat").MiB == 1024 && recallFiles.Single(f => f.Name == "recall-hot.dat").MiB == 512,
+            "Stale data and the scan exceed the cache; the reread file and hot set fit.");
+        Check(CacheExercisePlan.Cases(recall with { CaseFilter = "scan-recall1" }).Count == 3, "Recall cases can be selected by ID.");
+        Reject(() => VerificationPlan.Validate(recall with { BudgetMiB = 512 }));
         Check(CacheExercisePlan.Cases(options with { Suite = "quick" }).Count == 0, "New exercises are opt-in.");
 
         var state = new WriteCacheState(1 | 32 | 256 | 512, 0, 200UL << 30, 2UL << 30, 2UL << 30, 0, 0, 1UL << 30, 1, 0, 0, 0, 0, 0, 0, 0)
@@ -78,6 +94,16 @@ internal static class CacheExerciseTests
         var after = before with { State = state with { AcceptedBytes = 4096, ReadHitBytes = 4096 } };
         CacheExerciseEvidence.Validate(before, after, 4096, "write", false);
         CacheExerciseEvidence.Validate(before, after, 4096, "read", false);
+        var recallState = state;
+        CacheLayoutSnapshot Recall(ulong mode, ulong hits, ulong misses, ulong evictions = 0) => new(recallState with { ReadHitBytes = hits, ReadMissBytes = misses, Evictions = evictions },
+            JsonSerializer.Deserialize<CachePerformance>("{}")!, new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { ReadRecall = new(mode, 0, 0) });
+        var pass = CacheRecallEvidence.Pass("p", "file", Recall(1, 0, 0), Recall(1, 3 << 20, 1 << 20, 5), new(4 << 20, 4, 0.5), 1);
+        Check(pass.HitPercent == 75 && pass.Evictions == 5 && Math.Abs(pass.MiBPerSecond - 8) < 1e-9, "Recall pass records hits, misses, evictions and speed.");
+        Check(CacheRecallEvidence.Pass("p", "file", Recall(1, 0, 0), Recall(1, 4 << 20, 1 << 20), new(4 << 20, 4, 1), 1).HitBytes == 4 << 20,
+            "Other readers may add bytes to a pass.");
+        Reject(() => CacheRecallEvidence.Pass("p", "file", Recall(1, 0, 0), Recall(1, 1 << 20, 1 << 20), new(4 << 20, 4, 1), 1));
+        Reject(() => CacheRecallEvidence.Pass("p", "file", Recall(0, 0, 0), Recall(0, 4 << 20, 0), new(4 << 20, 4, 1), 1));
+        Reject(() => CacheRecallEvidence.Pass("p", "file", Recall(1, 0, 0), Recall(1, 4 << 20, 0) with { State = recallState with { ReadHitBytes = 4 << 20, Generation = recallState.Generation + 1 } }, new(4 << 20, 4, 1), 1));
         Reject(() => CacheExerciseEvidence.Validate(before, after with { State = after.State with { Generation = 4 } }, 4096, "mixed", true));
         Reject(() => CacheExerciseEvidence.Validate(before, after with { State = after.State with { AcceptedBytes = 0 } }, 4096, "write", false));
         var io = after with { Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerWriteAttempts = 1 } } };

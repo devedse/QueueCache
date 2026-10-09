@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 103;
+    public const int Version = 104;
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -71,6 +71,7 @@ public static class VerificationPlan
         "cache-concurrency",
         "cache-sustained",
         "cache-map-cost",
+        "cache-recall",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -386,6 +387,8 @@ public static class VerificationPlan
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
+        if (options.Suite == "cache-recall" && options.BudgetMiB < 1024)
+            throw new ArgumentException("cache-recall requires --budget-mib of at least 1024 so its whole-file passes are not dominated by request overhead.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
@@ -396,8 +399,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency or cache-map-cost and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost or cache-recall and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.

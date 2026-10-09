@@ -26,7 +26,8 @@ public sealed partial class VerificationRunner
         for (var attempt = 1; attempt <= 5; attempt++)
         {
             var prefix = $"{id}-warm{attempt}";
-            var first = await DiskTargets(prefix + "-fill", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d10", "-W0"], token);
+            // One exact pass: a timed window missed part of a 2 GiB file read from disk (plan 103, 4 GiB map cost).
+            var first = await ReadPass(prefix + "-fill", targets, token);
             WarmResidentEvidence.ValidateFirstPass(first.Bytes, fileBytes);
             var before = await LayoutSnapshot(prefix + "-before.json", token);
             var warm = await DiskTargets(prefix + "-proof", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d3", "-W0"], token);

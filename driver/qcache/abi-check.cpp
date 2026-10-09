@@ -4,6 +4,7 @@
 #include "qcstats.h"
 #include "cachepolicy-check.h"
 #include "readselection-check.h"
+#include "readrecall-check.h"
 #include "usagepath-check.h"
 #include "../shared/memorybudget-check.h"
 #include "../shared/startupepoch-check.h"

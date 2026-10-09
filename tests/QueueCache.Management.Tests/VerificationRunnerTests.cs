@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 103, "plan 103 prepares complete fitting stream files without cold tails");
+        Check(VerificationPlan.Version == 104, "plan 104 adds cache-recall and exact whole-file warm passes");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1041,7 +1041,8 @@ internal static class VerificationRunnerTests
         Check((uint)QueueCache.Management.WriteCacheAction.CallerPath == 14 &&
             (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15 &&
             (uint)QueueCache.Management.WriteCacheAction.LabMeasureLayout == 16 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),

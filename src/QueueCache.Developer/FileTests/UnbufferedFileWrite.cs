@@ -30,6 +30,41 @@ internal static class UnbufferedFileWrite
         }
         finally { VirtualFree(memory, 0, 0x8000); }
     }
+    /// <summary>One complete sequential pass over whole files with unbuffered 1 MiB reads, one at a time.
+    /// Unlike a timed DiskSpd window, every byte is read exactly once however slow the disk is.</summary>
+    public static (long Bytes, long Requests, double Seconds) ReadPass(IReadOnlyList<string> paths)
+    {
+        const int block = 1 << 20;
+        var memory = VirtualAlloc(IntPtr.Zero, block, 0x3000, 4);
+        if (memory == IntPtr.Zero)
+            throw new Win32Exception();
+        try
+        {
+            long bytes = 0, requests = 0;
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var path in paths)
+            {
+                // FILE_FLAG_NO_BUFFERING | FILE_FLAG_SEQUENTIAL_SCAN: every read reaches the volume.
+                using var file = CreateFileW(path, 0x80000000, 3, IntPtr.Zero, 3, 0x20000000 | 0x08000000, IntPtr.Zero);
+                if (file.IsInvalid)
+                    throw new Win32Exception();
+                var length = new FileInfo(path).Length;
+                if (length <= 0 || length % block != 0)
+                    throw new IOException("Read passes require whole-MiB files: " + path);
+                for (long offset = 0; offset < length; offset += block)
+                {
+                    if (!ReadFile(file, memory, block, out var read, IntPtr.Zero))
+                        throw new Win32Exception();
+                    if (read != block)
+                        throw new IOException("Short read in a whole-file pass: " + path);
+                    bytes += read;
+                    requests++;
+                }
+            }
+            return (bytes, requests, timer.Elapsed.TotalSeconds);
+        }
+        finally { VirtualFree(memory, 0, 0x8000); }
+    }
     public static void WritePrefix(string path, byte[] bytes, bool writeThrough = false, bool flush = false)
     {
         if (bytes.Length == 0 || bytes.Length % 4096 != 0)

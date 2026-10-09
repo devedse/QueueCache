@@ -129,7 +129,7 @@ internal static class DeveloperCommands
         });
         root.Subcommands.Add(files);
         var driver = new Command("driver", "Low-level diagnostics and synthetic hooks; not normal cache configuration.");
-        foreach (var name in new[] { "delay", "fault", "copy-flags" })
+        foreach (var name in new[] { "delay", "fault", "copy-flags", "read-recall" })
         {
             var command = new Command(name, "Set synthetic hook value; 0 clears it. Requires an instrumented driver.");
             var device = new Argument<string>("device");

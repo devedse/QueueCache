@@ -182,13 +182,22 @@ static void RetireSlot(QC_CACHE* c, ULONG i)
     SetSlotFree(c, i, true);
     --c->Count;
 }
-static bool Evict(QC_CACHE* c, ULONG pool)
+// remember: record the block in the read-recall history (readrecall.h). Clean lists hold a
+// just-read block with DirtySince 0 (see DemoteReadFill); its fill was its last use.
+static bool Evict(QC_CACHE* c, ULONG pool, bool remember = true)
 {
     auto i = c->CleanHead[pool];
     while (i != NoSlot && c->Slots[i].Pins)
         i = c->Slots[i].QueueNext;
     if (i == NoSlot)
         return false;
+    if (remember && c->RecallSets && ReadNoFence(&c->ReadRecall))
+    {
+        const auto now = NowMs();
+        const auto slot = &c->Slots[i];
+        QcRecallRecord(c->Recall, c->RecallSets, static_cast<ULONGLONG>(slot->Offset.QuadPart) / Chunk,
+                       slot->DirtySince ? slot->DirtySince : now, now);
+    }
     RetireSlot(c, i);
     ++c->Evictions;
     return true;
@@ -201,12 +210,19 @@ static void UnpinSlot(QC_CACHE* c, ULONG i)
     if (!slot->Pins && slot->RetireWhenUnpinned)
         RetireSlot(c, i);
 }
+// Dropping all clean data also forgets the read-recall history, so the cache starts afresh.
+static void ClearRecall(QC_CACHE* c)
+{
+    if (c->RecallSets)
+        RtlZeroMemory(c->Recall, static_cast<SIZE_T>(c->RecallSets) * QcRecallWays * sizeof(ULONG));
+}
 static void ClearClean(QC_CACHE* c)
 {
     for (ULONG pool = 0; pool < 2; ++pool)
-        while (Evict(c, pool))
+        while (Evict(c, pool, false))
         {
         }
+    ClearRecall(c);
 }
 // Explicit diagnostic control only. Caller holds the cache mutex. Validate the
 // whole empty boundary before changing any links; never move/free/zero payload,
@@ -309,13 +325,10 @@ static bool ReadRoom(QC_CACHE* c)
         return false;
     return true;
 }
-// Scan resistance (bimodal insertion): a block read once goes to the eviction end of
-// its clean list, so a one-off large read evicts itself first; a later hit (TouchClean)
-// makes it recent. One fill in 16 stays recent so a large working set still settles.
+// Scan resistance: a block read once goes to the eviction end of its clean list, so a
+// one-off large read evicts itself first; a later hit (TouchClean) makes it recent.
 static void DemoteReadFill(QC_CACHE* c, ULONG i)
 {
-    if (++c->ReadFillsSinceRecent % 16 == 0)
-        return;
     auto s = &c->Slots[i];
     const ULONG pool = s->ReadClass ? 1 : 0;
     Unlink(c, i);
@@ -329,6 +342,51 @@ static void DemoteReadFill(QC_CACHE* c, ULONG i)
     ++c->CleanCount[pool];
     c->CleanValidBytes[pool] += QcValidBytes(s->ValidSectors);
     s->DirtySince = 0; // Oldest, so the cross-pool eviction choice prefers it too.
+}
+// Last use (ms) of the oldest used block a read fill would displace, skipping up to
+// QcRecallProbationScan just-read blocks at the eviction end. 0: none, because the cache has
+// room or only just-read blocks would be displaced (both fine to give up for a recalled block).
+static ULONGLONG RecallVictimSince(QC_CACHE* c)
+{
+    const bool fixed = c->Options.Allocation == QcFixed;
+    if (c->Count < c->Capacity && !(fixed && c->CleanCount[1] >= ReadLimit(c)))
+        return 0;
+    ULONGLONG oldest = 0;
+    for (ULONG pool = fixed ? 1 : 0; pool < 2; ++pool)
+    {
+        auto i = c->CleanHead[pool];
+        for (ULONG k = 0; i != NoSlot && !c->Slots[i].DirtySince; ++k)
+        {
+            if (k + 1 == QcRecallProbationScan)
+                return 0;
+            i = c->Slots[i].QueueNext;
+        }
+        if (i != NoSlot && (!oldest || c->Slots[i].DirtySince < oldest))
+            oldest = c->Slots[i].DirtySince;
+    }
+    return oldest;
+}
+// Before making room for a read miss: true keeps it as recent (readrecall.h). Consumes the
+// block's history entry. Always false with QcLabReadRecall 0.
+static bool RecallReadFill(QC_CACHE* c, LONGLONG block)
+{
+    if (!c->RecallSets || !ReadNoFence(&c->ReadRecall))
+        return false;
+    const auto now = NowMs();
+    const auto age = QcRecallTake(c->Recall, c->RecallSets, static_cast<ULONGLONG>(block) / Chunk, now);
+    if (age < 0)
+        return false;
+    const bool keep = QcRecallKeeps(age, RecallVictimSince(c), now);
+    InterlockedIncrement64(keep ? &c->RecalledFills : &c->RecallDenied);
+    return keep;
+}
+// A new read fill was linked as recent. QcLabReadRecall 1: it stays there only if recalled.
+// QcLabReadRecall 0 (bimodal insertion): one fill in 16 stays recent so a large working set
+// still settles; read recall replaces that (modelled: it displaced data in use).
+static void PlaceReadFill(QC_CACHE* c, ULONG i, bool recalled)
+{
+    if (ReadNoFence(&c->ReadRecall) ? !recalled : ++c->ReadFillsSinceRecent % 16 != 0)
+        DemoteReadFill(c, i);
 }
 static void TouchClean(QC_CACHE* c, ULONG i)
 {

@@ -6,6 +6,7 @@
 #include <ntddscsi.h>
 #include "observation.h"
 #include "sectorcoverage.h"
+#include "readrecall.h"
 #include "../shared/lockedpages.h"
 #include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
@@ -175,6 +176,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LayoutReversed = c->LayoutReversed;
     output->LayoutFreeChunks = c->LayoutFreeChunks;
     output->CopyFlags = static_cast<ULONG>(InterlockedCompareExchange(&c->CopyFlags, 0, 0));
+    output->ReadRecall = static_cast<ULONG>(InterlockedCompareExchange(&c->ReadRecall, 0, 0));
+    output->RecalledFills = InterlockedCompareExchange64(&c->RecalledFills, 0, 0);
+    output->RecallDenied = InterlockedCompareExchange64(&c->RecallDenied, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1211,6 +1215,8 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     // Measured (plan 96, 1 MiB sequential RAM hits): prefetch +19-21% Q1; coalescing within a chunk
     // +33% Q1 and up to +11% Q8; together no loss. QcLabCopyFlags can still turn them off for A/B.
     c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce;
+    // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
+    c->ReadRecall = 1;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;
@@ -1300,6 +1306,10 @@ static void FreeSlots(QC_CACHE* c)
     if (c->Buckets)
         ExFreePoolWithTag(c->Buckets, Tag);
     c->Buckets = nullptr;
+    if (c->Recall)
+        ExFreePoolWithTag(c->Recall, Tag);
+    c->Recall = nullptr;
+    c->RecallSets = 0;
     if (c->DrainBuffer)
         ExFreePoolWithTag(c->DrainBuffer, Tag);
     c->DrainBuffer = nullptr;
@@ -1453,10 +1463,11 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
-    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + sizeof(ULONG)) + sizeof(QC_CHUNK) +
+    // Per slot: descriptor, hash bucket and read-recall entry (readrecall.h).
+    const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + 2 * sizeof(ULONG)) + sizeof(QC_CHUNK) +
         QcLockedPageMetadataBytes(SlabBytes, 1);
-    // Three page-rounded tables (descriptors, index, chunks) each round up by less than a page.
-    auto n = static_cast<ULONG>((budget - 3 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
+    // Four page-rounded tables (descriptors, index, chunks, recall) each round up by less than a page.
+    auto n = static_cast<ULONG>((budget - 4 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =
@@ -1499,6 +1510,17 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
         ReleaseCache(c);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
+    // Capacity is whole 64-slot chunks, so the history divides into 4-way sets exactly.
+    const auto recallBytes = (static_cast<SIZE_T>(n) * sizeof(ULONG) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
+    c->Recall = static_cast<ULONG*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, recallBytes, Tag)); // Zeroed: empty.
+    if (!c->Recall)
+    {
+        FreeSlots(c);
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    c->RecallSets = n / QcRecallWays;
     c->DrainBuffer = static_cast<PUCHAR>(ExAllocatePool2(POOL_FLAG_NON_PAGED, stagingBytes, Tag));
     if (!c->DrainBuffer)
     {
@@ -1522,7 +1544,8 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     ResetChunks(c);
     c->State.BudgetBytes = budget;
-    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + chunkBytes + static_cast<ULONGLONG>(n) * Chunk +
+    c->State.ReservedBytes = stagingBytes + descriptors + slabTableBytes + indexBytes + chunkBytes + recallBytes +
+        static_cast<ULONGLONG>(n) * Chunk +
         QcLockedPageMetadataBytes(static_cast<ULONGLONG>(n) * Chunk, n / SlotsPerSlab);
     NT_ASSERT(c->State.ReservedBytes <= budget);
     c->State.PayloadCapacity = static_cast<ULONGLONG>(n) * Chunk;
@@ -1650,6 +1673,16 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
+        break;
+    case QcLabReadRecall:
+        if (command.Value > 1 || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+        {
+            // Under the cache mutex, like every history access: each mode starts with no history.
+            InterlockedExchange(&c->ReadRecall, static_cast<LONG>(command.Value));
+            ClearRecall(c);
+        }
         break;
     case QcLabDelay:
         if (command.Value > 2000)
@@ -2472,7 +2505,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 TouchClean(c, index);
                 continue;
             }
-            if (fillable && block >= start && block + Chunk <= end && ReadRoom(c))
+            if (!fillable || block < start || block + Chunk > end)
+                continue;
+            const bool recalled = RecallReadFill(c, block); // Before ReadRoom evicts its victim.
+            if (ReadRoom(c))
             {
                 index = AllocateSlot(c, false, true);
                 auto fill = &c->Slots[index];
@@ -2482,7 +2518,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 c->CleanValidBytes[1] += Chunk; // AllocateSlot linked it with an empty mask.
                 RtlCopyMemory(fill->Buffer, staging + (block - start), Chunk);
                 IndexSlot(c, index);
-                DemoteReadFill(c, index);
+                PlaceReadFill(c, index, recalled);
                 InterlockedIncrement64(&c->ReadFills);
             }
         }
