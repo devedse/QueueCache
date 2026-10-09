@@ -1479,25 +1479,48 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
-            foreach (var mode in new[] { "concurrent-empty-checks", "concurrent-failed-checks" })
+            using var hostProcess = System.Diagnostics.Process.GetCurrentProcess();
+            var originalPriority = hostProcess.PriorityClass;
+            try
             {
-                var parent = store.PathFor(mode);
-                var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
-                var exit = await runner.RunAsync(new("Q:", Suite: "cache-concurrency", Output: parent,
-                    DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), new InlineProgress(_ => { }), CancellationToken.None);
-                var directory = Directory.GetDirectories(parent).Single();
-                using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
-                using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "manifest.json")));
-                Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
-                    state.RootElement.GetProperty("Expected").GetInt32() == 13 && state.RootElement.GetProperty("Collected").GetInt32() == 1,
-                    "concurrency never scores after empty/failing byte checks: " + mode);
-                Check(manifest.RootElement.GetProperty("CacheExerciseCases").GetArrayLength() == 12 &&
-                    manifest.RootElement.GetProperty("ExpectedCases")[0].GetString() == "concurrent-neighbor-sectors",
-                    "concurrency manifest separates its byte oracle from complete immutable performance cases");
-                Check(!Directory.GetFiles(directory, "*-prepare.job.json").Any() && File.Exists(Path.Combine(directory, "restored.json")) &&
-                    File.Exists(Path.Combine(directory, "FINISHED.txt")), "concurrency failure stops preparation and restores ownership");
-                OwnedProcess.EnsureStopped(directory);
+                hostProcess.PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+                var rejectedParent = store.PathFor("concurrent-bad-priority");
+                var guarded = new VerificationRunner(executable, [.. prefix, "--fake-verification", "success"], store.PathFor("leases"));
+                try
+                {
+                    await guarded.RunAsync(new("Q:", Suite: "cache-concurrency", Output: rejectedParent,
+                        DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), null, CancellationToken.None);
+                    throw new Exception("Below-normal cache exercise accepted.");
+                }
+                catch (IOException ex)
+                {
+                    Check(ex.Message.Contains("normal-priority") && !Directory.Exists(rejectedParent),
+                        "priority gate rejects exercises before target access or output creation");
+                }
+                // CI's build task runs at below-normal priority. These fixture cases
+                // explicitly satisfy the real runner gate; no driver or DiskSpd runs.
+                hostProcess.PriorityClass = System.Diagnostics.ProcessPriorityClass.Normal;
+                foreach (var mode in new[] { "concurrent-empty-checks", "concurrent-failed-checks" })
+                {
+                    var parent = store.PathFor(mode);
+                    var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                    var exit = await runner.RunAsync(new("Q:", Suite: "cache-concurrency", Output: parent,
+                        DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), new InlineProgress(_ => { }), CancellationToken.None);
+                    var directory = Directory.GetDirectories(parent).Single();
+                    using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                    using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "manifest.json")));
+                    Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
+                        state.RootElement.GetProperty("Expected").GetInt32() == 13 && state.RootElement.GetProperty("Collected").GetInt32() == 1,
+                        "concurrency never scores after empty/failing byte checks: " + mode);
+                    Check(manifest.RootElement.GetProperty("CacheExerciseCases").GetArrayLength() == 12 &&
+                        manifest.RootElement.GetProperty("ExpectedCases")[0].GetString() == "concurrent-neighbor-sectors",
+                        "concurrency manifest separates its byte oracle from complete immutable performance cases");
+                    Check(!Directory.GetFiles(directory, "*-prepare.job.json").Any() && File.Exists(Path.Combine(directory, "restored.json")) &&
+                        File.Exists(Path.Combine(directory, "FINISHED.txt")), "concurrency failure stops preparation and restores ownership");
+                    OwnedProcess.EnsureStopped(directory);
+                }
             }
+            finally { hostProcess.PriorityClass = originalPriority; }
             foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
             {
                 var parent = store.PathFor(mode);

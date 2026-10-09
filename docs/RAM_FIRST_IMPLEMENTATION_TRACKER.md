@@ -3084,3 +3084,8 @@ soak measures recovery rather than forcing it. Map-cost preparation establishes
 its hot reference before filling spare space and re-proves it afterward. Strict
 RAM-only controls are unchanged. Implementation/host checks complete; new VM
 smoke, full soak and remaining matrices pending.
+Windows CI at `8c37c13` rejected the new fake concurrency cases because the CI
+build launches its test process below normal priority. The production gate was
+correct. Fixture tests now explicitly switch to Normal and restore the original
+priority, and separately prove below-normal execution is rejected before target
+access. Local compilation/host checks pass; corrected Windows CI remains pending.

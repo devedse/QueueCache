@@ -120,7 +120,7 @@
             </StackPanel>
           </WrapPanel>
           <TextBlock Classes="caption secondary" TextWrapping="Wrap"
-                     Text="Each square is 256 KiB of the cache's RAM; fainter squares are partly used. Data kept in disk order reads fastest, and QueueCache places new data in order." />
+                     Text="Squares show 256 KiB chunks, grouped for larger caches. Fainter squares are partly used; marks show scattered disk blocks within a chunk." />
         </StackPanel>
       </Border>
 

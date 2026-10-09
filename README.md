@@ -47,11 +47,12 @@ Each drive letter gets its own cache (NTFS, ReFS, FAT32 and exFAT). With
 
 ![A drive's cache: what is in RAM, how much is not yet on disk, and live activity](docs/images/cache.png)
 
-The **memory map** shows how the cache's RAM is used, like a disk defragmenter:
-one square per 256 KiB, coloured by what it holds, with a mark where data is out of
-disk order. QueueCache places new data in disk order so it reads back fastest.
+The **memory map** shows how the cache's RAM is used, like a disk defragmenter.
+Squares show 256 KiB chunks, grouped for larger caches, coloured by what they
+hold. Marks show scattered disk blocks within a chunk. Sequential data fills new
+chunks in ascending order for faster RAM reads.
 
-![Memory map: each square is 256 KiB of the cache's RAM](docs/images/cache-map.png)
+![Memory map: usage and block placement across the cache's RAM](docs/images/cache-map.png)
 
 ## RAM disks
 
