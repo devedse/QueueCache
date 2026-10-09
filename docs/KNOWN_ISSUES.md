@@ -70,13 +70,81 @@ a chunk allocator fills each 256 KiB chunk upwards: reuse measures 14.6/35.7 and
 copies raise reads to about 19-21 GB/s Q1 and 37-39 GB/s Q8. See the
 [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md).
 
-Still open: partial eviction leaves holes that no allocator joins (about 2-8% of
-neighbours out of order after churn; see idle defragmentation in the
-investigation), and sequential 1 MiB Q8 writes with write-back running measured
-3-14% lower with the chunk allocator (Q1 writes +28-33%, random writes unchanged).
-Lock and queue waits went down, and one copy per run did not help, so the cost is
-most likely concurrent writers filling neighbouring memory; next test: one open
-chunk per concurrent request.
+Partial eviction leaves holes that no allocator joins (about 2-8% of neighbours
+out of order after churn). Not pursued: moving data could gain at most 5-7% at Q1
+and 10-15% at Q8, only for a partly evicted file read sequentially, and a mistake
+would corrupt cached data ([idle defragmentation](CACHE_LAYOUT_INVESTIGATION_20261008.md#idle-defragmentation-evaluated-not-built)).
+
+Sequential 1 MiB Q8 writes with write-back running once measured 3-14% lower with
+the chunk allocator. This is not demonstrated: that comparison spanned two days
+in which the uncached disk itself went from 255 to 115 MiB/s, and write-back
+writes to that disk during the window. Within one build, Deferred and Eager Q8
+writes differ by 0.5%, and four concurrent writers are at most 2.8% below one
+([sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md#speed-up-implementation-plan)).
+The old allocator's build can no longer be installed over the current one (see
+Installer and compatibility debt), so the 72-case `write-performance` matrix on
+the current build is the reference from now on. It completed 72/72 on 0.4.476.1:
+Q8 medians are 5–14% below 0.4.426.1, with overlapping ranges and a much slower
+uncached disk; cached Q1/random writes are higher. No allocator cause is proved
+([complete matrix](WRITE_PERFORMANCE_20261010.md)).
+
+## A program resuming random I/O right after another file was re-read starts with fewer hits (performance, since 0.4.469.1)
+
+What you see: a random read/write workload that runs again right after a different
+file was read again from the same cache has about 7 percentage points fewer RAM
+hits for roughly a minute, then about 4 points more than before 0.4.469.1 (2 GiB
+Fast cache, 64 KiB random I/O over a file twice the cache, 2026-10-09).
+
+Why: read recall gives cache space back to whatever was read most recently. The
+re-read file returns to RAM speed (10-230 times faster in the same tests), and that
+space comes from the random workload's least recently used data.
+
+Proposed change: none for now; this is the least-recently-used trade-off read
+recall was built for. If real use shows it, an adaptive split between recently and
+frequently used data (as in ARC) could limit how much one re-read file takes.
+`qcache developer driver read-recall <volume> 0` restores the earlier rule for
+comparison ([measurements](SUSTAINED_CACHE_VALIDATION_20261009.md#read-recall-plan-104-044691)).
+
+## A request that is only partly in RAM is read entirely from disk (performance)
+
+What you see: a file that is mostly but not completely cached can still read at
+close to disk speed. With the earlier insertion rule, a re-read file with 1-4% of
+its blocks missing read at 1.6-2.5 GB/s instead of about 30 GB/s (2 GiB Fast cache,
+1 MiB requests, 2026-10-09). Read recall usually fills those gaps on the next pass.
+
+Why: when any 4 KiB block of a request is missing, the whole request (up to 16 MiB)
+is read from the disk, then the cached blocks are copied over it.
+
+Proposed change: first count how often this still happens with read recall
+(requests sent to disk that were partly cached, and the bytes re-read that RAM
+already held). Only if that shows real waste, read just the missing runs from disk
+and copy the rest from RAM, keeping today's ordering and error handling. Planned
+after this work is merged.
+
+## One program reading a RAM disk tops out at about 26 GB/s (performance)
+
+What you see: on the 4-vCPU test VM, one DiskSpd thread reads a RAM disk with 1 MiB
+requests at about 26 GB/s whether it keeps 1 or 8 requests outstanding (Q1 or Q8);
+four threads together reach 40-42 GB/s. CrystalDiskMark's SEQ1M Q8T1 row is that
+single-thread case. A cached volume reaches about 39 GB/s from one thread at Q8.
+
+Why: with Direct access the RAM disk copies each read when the request arrives,
+splitting one large copy over its worker threads, so one program's queued requests
+are copied one after another. Four programs (or threads) give four copies at once.
+The cache instead hands queued hits to its own copy threads, so they overlap.
+
+The provider already has dedicated copy workers. A follow-up should profile the
+handoff, wake-up and copying costs before choosing another way to overlap whole
+requests. Earlier system-worker designs gave no gain (25 vs 26 GB/s) or fell to
+13-17 GB/s. Queued Direct copies using the provider's per-processor workers were
+also tried and removed (`3fb9d39`, `e8e31c8`): large reads reached 20.8-22.3 GB/s,
+with 21% of busy CPU samples spinning versus 28% copying. Adding worker threads
+alone therefore is not a demonstrated fix.
+
+The possible gain is for one-thread, deep-queue readers. Four readers' aggregate
+40-42 GB/s shows available bandwidth, but does not prove that one reader can reach
+it. Retain a scheduling change only after a controlled Q8 gain, with Q1,
+small-read and multi-threaded controls and byte/lifecycle checks.
 
 ## Raw disk reads and writes bypass the cache (by design)
 
@@ -196,9 +264,14 @@ re-enabling the cache; requests keep flowing to the disk.
 ## Application caching scope (T085)
 
 Paging-marked writes are admitted when their originating file object is not a
-paging file. Since plan 56 application paging read misses are kept as clean entries too. Remaining limit: NTFS metadata/zero-fill
-write-back is admitted like any other write, so the cache shares drain intervals
-with it.
+paging file. Paging read misses are not kept (plan 56 kept application ones; since
+plan 62 none are, because a clustered page-in's buffer can repeat the memory
+manager's shared dummy page, see `DistinctPages`). Paging reads of cached data are
+still served from RAM. So data that applications read through Windows' file cache
+(buffered reads) enters QueueCache's read cache only when it was written or read
+unbuffered; Windows' own file cache holds it otherwise. Remaining limit: NTFS
+metadata/zero-fill write-back is admitted like any other write, so the cache
+shares drain intervals with it.
 
 ## Fixed: bugcheck 0x7E after cache release (0.4.99.1-0.4.104.1)
 
@@ -429,7 +502,11 @@ CrystalDiskMark-shaped runs on 0.4.162.1 and 0.4.166.1 are in
 Multi-threaded rows (T4) are not yet measured. SEQ1M Q1 is one request at a time
 and stays near one core's copy speed (about 14.5 GB/s on the VM).
 Focused Q1/Q32 and drain-attribution runs exist, but they are not a complete
-performance verdict. Full 72-case small-write and broader mixed-workload matrices
+performance verdict. Since 2026-10-09 the opt-in `cache-concurrency`,
+`cache-sustained`, `cache-map-cost` and `cache-recall` suites cover concurrent
+streams, sustained mixed use, memory-map polling and re-read recovery; the last
+complete 72-case `write-performance` matrix ran on 0.4.426.1 (before the chunk
+allocator) and is to be repeated on the current build. Full 72-case small-write and broader mixed-workload matrices
 must use the same DiskSpd binary/hash, budget and repetitions. `MEASURED` means a
 sample was collected, not that it passed a performance requirement. Lifetime
 counters must not be presented as score-window counters.
@@ -446,7 +523,14 @@ does not stop caching.
 The `qcachelab` service/binary identity, `LabAllowedDriverKey` registry value and
 `labWriteCache` package metadata are retained for upgrade compatibility. They do
 not denote a second driver edition. A coordinated identity/schema migration belongs
-to installer acceptance work. Uninstall retains kernel service/binaries when they
+to installer acceptance work.
+
+An older build cannot be installed over a newer one once their RAM-disk protocols
+differ: 0.4.426.1's installer refuses over 0.4.441.1 and later because its update
+check cannot read the newer RAM-disk driver's state ("Invalid native RAM disk
+identity, geometry or lifetime state."). That matches the no-migration policy; for
+old/new comparisons, add a switch for the old behaviour to the current build
+(as `developer driver read-recall` and `copy-flags` do) instead of downgrading. Uninstall retains kernel service/binaries when they
 may still be needed for post-reboot recovery.
 
 For task order, exact evidence and acceptance boundaries, use the

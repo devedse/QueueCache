@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 97, "plan 97 waits for a quiet cache before layout windows; workloads and checks unchanged");
+        Check(VerificationPlan.Version == 104, "plan 104 adds cache-recall and exact whole-file warm passes");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1041,7 +1041,8 @@ internal static class VerificationRunnerTests
         Check((uint)QueueCache.Management.WriteCacheAction.CallerPath == 14 &&
             (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15 &&
             (uint)QueueCache.Management.WriteCacheAction.LabMeasureLayout == 16 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),
@@ -1479,6 +1480,48 @@ internal static class VerificationRunnerTests
                 else if (mode.EndsWith("failure"))
                     Check(log.Contains("fixture failure detail") && messages.Any(m => m.Contains("fixture failure detail")), "actual child error visible " + mode);
             }
+            using var hostProcess = System.Diagnostics.Process.GetCurrentProcess();
+            var originalPriority = hostProcess.PriorityClass;
+            try
+            {
+                hostProcess.PriorityClass = System.Diagnostics.ProcessPriorityClass.BelowNormal;
+                var rejectedParent = store.PathFor("concurrent-bad-priority");
+                var guarded = new VerificationRunner(executable, [.. prefix, "--fake-verification", "success"], store.PathFor("leases"));
+                try
+                {
+                    await guarded.RunAsync(new("Q:", Suite: "cache-concurrency", Output: rejectedParent,
+                        DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), null, CancellationToken.None);
+                    throw new Exception("Below-normal cache exercise accepted.");
+                }
+                catch (IOException ex)
+                {
+                    Check(ex.Message.Contains("normal-priority") && !Directory.Exists(rejectedParent),
+                        "priority gate rejects exercises before target access or output creation");
+                }
+                // CI's build task runs at below-normal priority. These fixture cases
+                // explicitly satisfy the real runner gate; no driver or DiskSpd runs.
+                hostProcess.PriorityClass = System.Diagnostics.ProcessPriorityClass.Normal;
+                foreach (var mode in new[] { "concurrent-empty-checks", "concurrent-failed-checks" })
+                {
+                    var parent = store.PathFor(mode);
+                    var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                    var exit = await runner.RunAsync(new("Q:", Suite: "cache-concurrency", Output: parent,
+                        DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), new InlineProgress(_ => { }), CancellationToken.None);
+                    var directory = Directory.GetDirectories(parent).Single();
+                    using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                    using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "manifest.json")));
+                    Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
+                        state.RootElement.GetProperty("Expected").GetInt32() == 13 && state.RootElement.GetProperty("Collected").GetInt32() == 1,
+                        "concurrency never scores after empty/failing byte checks: " + mode);
+                    Check(manifest.RootElement.GetProperty("CacheExerciseCases").GetArrayLength() == 12 &&
+                        manifest.RootElement.GetProperty("ExpectedCases")[0].GetString() == "concurrent-neighbor-sectors",
+                        "concurrency manifest separates its byte oracle from complete immutable performance cases");
+                    Check(!Directory.GetFiles(directory, "*-prepare.job.json").Any() && File.Exists(Path.Combine(directory, "restored.json")) &&
+                        File.Exists(Path.Combine(directory, "FINISHED.txt")), "concurrency failure stops preparation and restores ownership");
+                    OwnedProcess.EnsureStopped(directory);
+                }
+            }
+            finally { hostProcess.PriorityClass = originalPriority; }
             foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
             {
                 var parent = store.PathFor(mode);
@@ -1569,6 +1612,9 @@ internal static class VerificationRunnerTests
         {
             Fake = true
         };
+        if (job.Operation == "concurrent-sectors")
+            reply = mode == "concurrent-empty-checks" ? Array.Empty<QueueCache.Operations.CheckResult>() :
+                new QueueCache.Operations.CheckResult[] { new("fixture-neighbors", "FAIL", "fixture byte mismatch") };
         if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
             reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
                 mode == "removal-veto" ? 23u : 0, mode == "removal-veto" ? 8u : 0, mode == "removal-veto" ? "fixture-device" : "",

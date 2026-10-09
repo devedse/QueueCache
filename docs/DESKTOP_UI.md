@@ -49,19 +49,37 @@ then starts over instead of showing a negative rate.
 
 ## Memory views
 
-- **Memory map (Caches).** For the selected cache only, the monitor reads the driver's
-  layout map (`IOCTL_QCACHE_LAYOUT_MAP_V1`) at most every 2 s. One square per 256 KiB
+- **Memory map (Caches).** The monitor reads the driver's layout map
+  (`IOCTL_QCACHE_LAYOUT_MAP_V1`) while its details or pop-out are visible. The normal
+  cadence is every 2 s; the 0.5 s and 0.1 s preferences also apply to visible maps. One square per 256 KiB
   chunk (grouped to at most 2,048 squares): colour = read cache / on disk, kept /
   not yet on disk / free, strength = how full, diagonal = out of disk order (at least 8
   used slots, under half of the neighbouring pairs in order). The header shows the
   in-disk-order share and free chunks. The driver releases the cache lock every 256
-  chunks. Older drivers: no card.
+  chunks. Older drivers: no card. The shared legend says **Darker: fuller** and
+  **Lighter: partly used**; strength measures all occupied space, rather than only
+  the amount still waiting for disk.
+- **Pop out.** Opens a separate live cache map, initially maximized, with **Full
+  screen** / F11 and **Close** controls. Escape exits full screen. Squares fit the
+  window; up to 32,768 squares show more individual chunks than the embedded map.
+  The window keeps updating across page changes. Closing or minimizing it stops
+  its map requests; volume replacement closes it. It shares samples with the
+  details pane, so opening both never doubles polling.
 - **Place in physical memory (RAM disk, image in RAM).** The provider's `PhysicalMap`
   action counts the disk's locked pages in 1,024 slices of physical memory (span:
   installed RAM, widened to the highest page). The service asks once per disk creation,
   since locked pages never move, and leaves it out if the provider is older or the
   query fails. The strip shows lowest to highest address; stronger colour = more of
   that slice is the disk's.
+
+## Update interval
+
+Settings → Live values offers 0.1, 0.5, 1, 2, 5 and 10 seconds, saved per user.
+The 0.1-second option updates cache and disk values, charts, and visible cache maps
+up to ten times per second. Discovery remains on its separate two-minute cadence;
+physical RAM-disk placement is fixed while the disk runs and read once per creation.
+Slow samples never overlap for one volume. State becomes unavailable after three
+intervals, with a minimum of three seconds.
 
 ## Advanced settings
 
@@ -119,3 +137,22 @@ the view-model contracts against fixtures (no volume or disk is opened), then
 renders every page and dialog headlessly in light and dark and writes
 screenshots to the output folder (default `artifacts/ui-tests`). Review the
 screenshots when changing a view.
+
+Memory-map lifecycle (plans 98–99): while the Caches page and window are visible,
+the selected volume gets maps at the cadence above. Other pages and hiding
+the main window stop its map requests; a visible pop-out keeps its volume requested.
+Returning gets a fresh map. A response is published only while the same volume is still requested
+and its cache generation remains current. Partial replies (for example a resize
+during collection) are hidden. Stale/unavailable state, removal and allocation
+changes clear the prior map. The map tooltip describes within-chunk consecutive
+block placement, rather than filesystem fragmentation. Headless tests cover late
+selection replies, changed generations, partial maps, resize and stale state.
+RAM disk physical maps also disappear when the disk's state is unavailable or
+stopped, and return with a fresh running snapshot.
+Headless map grouping checks cover 8 GiB and 32 GiB fixtures. This verifies the
+rendering contract, not the driver's polling cost with a 32 GiB allocation.
+
+Pop-out and 100 ms refresh tests cover page changes, duplicate opens, minimization,
+closing during a pending sample, volume replacement, full-screen/F11/Escape controls,
+shared shade legends and light/dark rendering. These are host-safe UI checks;
+the earlier two-second map-cost measurements do not establish 100 ms polling cost.

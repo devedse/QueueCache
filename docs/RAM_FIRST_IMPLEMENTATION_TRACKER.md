@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-28. This is the authoritative execution tracker. Detailed
+Last updated: 2026-10-09. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -3034,3 +3034,202 @@ pressure passed with write runs on; RAM disk round trips identical with offload 
 memory map polling at 8x the app rate only moved p99.99. Open: Q8 sequential write gap
 (3-14%), RAM disk Q8 reads (needs a different design). Details:
 [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401).
+
+### Concurrent and sustained cache validation (plan 98), 2026-10-09
+
+Implementation: new opt-in `cache-concurrency`, `cache-sustained` and
+`cache-map-cost` suites in the maintained runner. They compare fixed total Q8
+across 1/2/4 separate targets, retain strict lower-I/O checks for fitting Deferred
+writes/read hits, and distinguish intentional background/mixed disk I/O. The
+sustained run adds concurrent deterministic byte oracles, idle boundaries,
+sequential rereads and post-drain disk verification. Quiet waits now fail when
+all five attempts are exhausted and reject identity/error/flush changes.
+Memory views reject late, partial and changed-generation maps, clear maps when
+state goes stale or a cache is removed/resized, and explain their metric.
+
+Verification: host contracts and headless desktop tests passed. VM performance,
+long-run byte evidence, comparison to the old allocator, and CI are pending;
+no speed-up or resolved write regression is claimed at this point.
+
+Plan 99 adds a separate neighboring-sector concurrent byte oracle and a bounded
+warm-up for scan-resistant insertion without clearing the cache. The plan-98 smoke
+run `QueueCache-Verify-20261009-121724-e294932cf71f46baa28681a5fa0e98ce`
+stopped before scoring: a second half-budget file competed with the previously
+warmed file and still missed 37,789,696 bytes on its proof pass. No driver errors;
+restoration completed. This is INCOMPLETE, not a sustained-use pass. The corrected
+plan-99 short smoke run `QueueCache-Verify-20261009-122536-2130df0b40f142e5abc883d8ab1c0508`
+completed 6/6 with clean restoration: 1,682 exact write/read checks, all 24 final
+oracle files verified from disk. Reread warm-up took 1/4/1/1/1/1 attempts. This is
+120 seconds of mixed I/O, not a 30-minute acceptance run. The full run is pending.
+The RAM disk physical map
+now clears when its state is unavailable; frontend tests cover unavailable,
+fresh and stopped snapshots. Sector writers rendezvous before each pair so both
+workers are ready before submission; this still does not force kernel overlap.
+Implementation also stops cache-map polling on other pages or while the window
+is hidden in the notification area. Frontend verification counts no requests in
+those states, with fresh-map requests on return; 8/32 GiB grouping fixtures pass.
+Added Windows runner contracts for rejecting empty/failing concurrent-sector
+checks before workload preparation, retaining a complete immutable plan and
+restoring ownership; their CI run is pending.
+
+Plan-99 long attempt `QueueCache-Verify-20261009-123638-526002062ef94655aad8118e88279f01`
+is INCOMPLETE, 1/6, clean restoration. After its five-minute mixed episode the
+five proof passes still missed 676/533/430/350/279 MB; throughput stayed near
+239 MiB/s and the last proof read less than the complete 1 GiB prefix. This is
+slow scan-resistant residency recovery, not a reported byte mismatch or driver
+fault. It remains an open performance finding.
+Plan 100 separates the strict fresh RAM reference from natural post-churn
+rereads with hit/miss accounting and their own telemetry coverage, so the full
+soak measures recovery rather than forcing it. Map-cost preparation establishes
+its hot reference before filling spare space and re-proves it afterward. Strict
+RAM-only controls are unchanged. Implementation/host checks complete; new VM
+smoke, full soak and remaining matrices pending.
+Windows CI at `8c37c13` rejected the new fake concurrency cases because the CI
+build launches its test process below normal priority. The production gate was
+correct. Fixture tests now explicitly switch to Normal and restore the original
+priority, and separately prove below-normal execution is rejected before target
+access. Local compilation/host checks pass; corrected Windows CI remains pending.
+Oracle failure handling now cancels other streams and propagates a mismatch
+before the workload finishes. The coordinator cancels and awaits the owned score
+process before restoration. Host contracts exercise both early failure and early
+successful oracle completion.
+The neighboring-sector oracle now checks NTFS, 512-byte logical sectors and
+4K-aligned clusters before creating files, and records the cluster size. This
+ensures the two sectors share a cache block. Host target-boundary checks pass;
+the final VM check remains pending.
+
+Plan-100 full soak `QueueCache-Verify-20261009-130343-20af98641401425ab5705572c3d07e1c`
+completed 6/6 with clean restoration: 30 minutes of mixed I/O, 24,414 exact
+write/read checks and all 24 post-drain files verified. Natural rereads remain
+disk-bound with substantial misses; this is complete collection and the stated
+byte/lifecycle checks, not a residency-speed acceptance verdict.
+Windows Debug/Release CI passes through `59859a0`.
+The following concurrency attempt
+`QueueCache-Verify-20261009-134053-c604aa926e8d4582804bbbeffcd8bdac`
+is INCOMPLETE, 1/37: the oracle wrongly rejected Disable's intentional generation
+advance before comparing disk bytes. Restoration completed. Plan 101 corrects
+that lifecycle check and separates state evidence from byte evidence. Implementation
+complete; host regression passes and the corrected VM sector oracle passes its
+128 active/post-drain byte pairs. Its focused RAM-read control and new VM matrices
+are in progress. Windows CI at `54339c7` exposed an outdated plan-100 fixture
+assertion; that assertion is updated to the documented plan-101 contract.
+Consolidated results
+and remaining decisions: [sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md).
+Plan-101 full concurrency stopped at 10/37 on two lower paging-read attempts in
+the two-stream Deferred-write score; zero data-miss bytes, no drain writes/errors,
+clean restoration. The failed run is preserved. Plan 102 primes the exact write
+targets/shape outside scoring, retains those snapshots/XML and then uses the
+existing drain/quiet boundary. Strict zero-lower-attempt score checks and the
+72-case write-performance suite are unchanged. Implementation complete; focused
+VM regression pending. Windows Debug/Release CI passes at `a25d93c`.
+Plan-102 focused regression also failed on the same two paging reads, clean
+restoration; its write-prime pass did not help and is removed. The captured PID
+identifies Defender, and NTFS extents map the last read to the final 64 KiB of a
+1 GiB file beyond the 512 MiB hot prefix. Plan 103 uses distinct whole-file fixtures
+per shape, totaling half the budget; manifest/worker output records sizes and
+pre-warm checks enforce them. Defender stays enabled, no exclusions are used and
+strict score checks are unchanged. Implementation complete; host contracts and
+new VM regression pending. Windows Debug/Release CI passes at `7ebd503`.
+Plan-103 focused VM regression completed 2/2 with clean restoration: 128 sector
+pairs and post-drain guards matched; the two-stream Deferred-write control measured
+20,347 MiB/s with exactly zero lower read/write/flush attempts, drain bytes or
+data misses. Defender remained enabled. This verifies the focused fixture fix,
+not a full matrix or native speed-up. Windows Debug/Release CI passes at `3360135`;
+complete concurrency and 2/4 GiB polling matrices are running with that runner.
+Plan-103 full concurrency completed 37/37 with clean restoration. Three complete
+repetitions retained zero lower attempts for read/Deferred controls and copy flags
+3. Q8 read medians: one/two/four streams 34,704/34,154/31,999 MiB/s; write Deferred
+20,603/20,332/20,028 and Eager 20,491/20,009/19,909 MiB/s (`-Z1M`, not comparable
+with the separate `-Zr` matrix). In-chunk order is 99.6–100%; no placement cause
+or per-stream allocator improvement is proved. Polling matrices and the old/current
+Q8 write recheck remain in progress.
+Plan-103 2 GiB map-cost completed 9/9, clean restoration and zero lower attempts
+in every score; complete full-allocation maps (8,024 chunks, 513,536 used slots)
+and interval coverage. Median MiB/s Off/2 s/250 ms: 1,389.55/1,383.92/1,399.04,
+overlapping ranges; no throughput gain claimed. Normal steady map median 1.622 ms;
+recorded polling-window CPU median 46.875 ms over roughly 12 s. This excludes UI
+rendering. Existing two-second cadence retained; 4 GiB and old/current Q8 checks
+remain in progress.
+Plan 104 / read recall. Implementation: `5e17604` (driver 0.4.469.1) replaces
+bimodal read-fill insertion with a 4-way history of evicted blocks and their last
+use (`readrecall.h`, 4 bytes per slot in the fixed budget). A miss used more
+recently than the oldest used block still cached enters as recent; others stay at
+the eviction end. `QcLabReadRecall`/`developer driver read-recall` (action 18)
+restores bimodal insertion for A/B; diagnostics V20 report mode and decisions;
+`drop-clean` and mode changes clear the history. Modelled against the earlier
+rule before implementation (report). Compile-time table checks, host contracts,
+desktop tests and Windows Debug/Release CI pass. `10dc815` fixes the managed
+diagnostics request size (0.4.469.1's controller asked for V19). The runner adds
+`cache-recall` and exact whole-file warm passes. The old/current Q8 write recheck
+is blocked: 0.4.426.1's installer preflight cannot read the newer RAM provider's
+state and refuses to downgrade; the cross-day comparison is confounded by a
+255 vs 115 MiB/s disk-only change. Verification: quick, policies and pressure
+pass on 0.4.469.1 (recall on). `cache-recall` run
+`QueueCache-Verify-20261009-161142-fbaac21da41a4410b05e44dcbf28ef01` completed
+12/12 with clean restoration and the CI filter loaded: a fitting file re-read after
+stale data is 100% hits from its third pass with zero lower reads (19,052/18,988
+MiB/s Q1; 36,943 MiB/s Q8), against 12.1/17.6% and 158 MiB/s Q8 with bimodal
+insertion. The hot set stays 100% after a one-off and a repeated 1.5× scan in both
+modes; the loop is 48.6% in both. The 30-minute `cache-sustained` soak on the same
+driver completed 6/6 with clean restoration, 22,123 oracle checks and 24 post-drain
+files verified: the churned Q8 reread reached 15,620–19,877 MiB/s at 99.6–99.8% hits
+in every episode (plan 100, bimodal: 130–237 MiB/s, 8.8–17.5%), and the mixed
+windows kept a 53.6–55.1% RAM hit rate (43.3–58.2% before). The 4 GiB map-cost
+rerun with exact warm passes completed 9/9 (clean restoration, zero lower attempts,
+complete 16,050-chunk maps): Off/2 s/250 ms medians 1,353.10/1,358.05/1,304.80
+MiB/s; two-second polling retained. Same-build switch off/on/off six-minute soaks
+(all 6/6, clean restoration) measured the trade-off: Q8 rereads 1,601–2,527 /
+27,554–30,216 / 2,674–26,622 MiB/s, while the 60-second mixed windows that follow
+a reread had 50.1 / 46.1 / 52.2% median RAM hits. Splitting the 30-minute soaks'
+windows: with read recall the first minute after a reread is ~7 points lower
+(42.5% vs 49.4%), minutes 2–5 ~4 points higher (58.6% vs 54.7%). The RAM-path
+regression check (`cache-concurrency --case-filter s1-q8`, 10/10) matches the
+plan-103 results within 0.6% for writes and is higher for reads. Kept on by default.
+Housekeeping on the same branch: `7373135` fixes `qcache disk stop`/`remove`
+printing a null-reference message after succeeding (a stopped disk keeps statistics
+but has no native state), verified on the VM. `063fbde` makes a completed run
+remove its own workload folders from the tested volume (failed runs and system,
+managed-lifecycle and disk-removal suites keep them; `--keep-workloads`), verified
+on the VM; 63 older folders (174 GiB in total with the day's runs) were removed by
+hand. README CrystalDiskMark numbers and screenshots redone on 0.4.476.1 the same
+evening (cache column re-shot after that cleanup). Known issues now list the
+read-recall trade-off, partly cached requests, the RAM disk's single-reader limit
+and the blocked downgrade; the old Q8 write-gap note is closed as not demonstrated.
+The 72-case `write-performance` matrix is now complete (final entry below).
+Partial-hit counters remain planned after the merge.
+
+2026-10-10 UI additions on PR #8. Implementation: a live cache-map pop-out with
+maximized/full-screen modes (F11/Escape), a shared darker/lighter occupancy legend,
+and a persisted 0.1-second application refresh option. Visible maps follow the
+fast preference; per-volume sample ownership prevents overlap, and minimizing or
+closing the pop-out releases its map request. Expanded maps fit the viewport and
+show up to 32,768 cells. Driver behavior is unchanged. Verification: desktop
+contracts pass, light/dark pop-out screenshots inspected, and README app maps
+regenerated. VM UI check pending; 72-case write-performance matrix
+now authorized, to follow the UI commit. Merge and follow-up performance branch
+are authorized after verification.
+Pop-out follow-up: inventory refresh reuses unchanged volume models, so adding an
+unrelated volume keeps a live map open. Changed volume identities still close the
+pop-out and reject late samples. Desktop regression passes this case. The matrix
+is running on signed CI 0.4.476.1, filter SHA-256 `88880997C11D27A7…`, with native
+sources identical to the current PR head; same CDM DiskSpd hash, 2 GiB and three
+repetitions as the 0.4.426.1 reference. UI stays closed during scoring.
+
+Final write-matrix verification, 2026-10-10: plan 104 on signed CI 0.4.476.1
+completed 72/72, run
+`QueueCache-Verify-20261009-220533-0439cff369ce45c8b577e23951b77317`.
+All raw XML outputs/exits, readiness handshakes, interval coverage, loaded module
+hashes and restoration were checked. Original enabled 2 GiB policy/timing restored,
+zero dirty/in-flight bytes and no driver error. No driver implementation changed
+for this run. Cached random medians are 1–7% higher and sequential Q1 29–32% higher;
+sequential Q8 is 5–14% lower than the historical 0.4.426.1 reference, with overlapping
+ranges and much slower disk-only results. This is a current baseline, not a
+controlled causal comparison. Full table and limits:
+[write-performance reference](WRITE_PERFORMANCE_20261010.md).
+
+VM UI verification: the published current-source desktop preview on Windows
+opened the 8,017-chunk map through Pop out, rendered full-screen with F11, returned to maximized with Escape, and
+persisted `UpdateSeconds: 0.1`. The shared fuller/partly-used legend is visible.
+Headless tests cover page changes, minimization, closure, pending samples and
+unrelated inventory changes. The preview does not establish a 100 ms performance
+acceptance result. Temporary owner settings are restored after this check.

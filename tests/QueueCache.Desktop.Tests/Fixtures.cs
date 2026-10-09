@@ -108,6 +108,9 @@ internal sealed class VolumeFixture : ICacheTaskService
     public TaskCompletionSource<IReadOnlyList<VolumeDescription>>? PendingInventory;
     public TaskCompletionSource<WriteCacheState>? PendingSystem;
     public TaskCompletionSource? PendingFlush;
+    public TaskCompletionSource<CacheLayoutMap?>? PendingMap;
+    public int MapReads;
+    public CacheLayoutMap? Map;
     public CacheConfiguration? Saved;
 
     public Task<IReadOnlyList<VolumeDescription>> ListAsync()
@@ -117,6 +120,11 @@ internal sealed class VolumeFixture : ICacheTaskService
     }
     public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>(
         [new SavedConfiguration(2, "T:", "fixture-removed", 8L << 30, new CacheConfiguration(256, CachePreset.Strict), false, "{00000000-0000-0000-0000-000000000005}")]);
+    public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume)
+    {
+        MapReads++;
+        return PendingMap?.Task ?? Task.FromResult(Map);
+    }
     public Task<WriteCacheState> ReadAsync(VolumeDescription volume)
     {
         if (volume.Volume == "C:" && PendingSystem is not null)

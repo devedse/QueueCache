@@ -5,8 +5,57 @@ using static Test;
 /// <summary>Volume caches as the monitor and the Caches page see them. No real volume is opened.</summary>
 internal static class CacheTests
 {
+    private static void MapLifecycle()
+    {
+        var volumes = new VolumeFixture();
+        var now = DateTimeOffset.UtcNow;
+        var monitor = new DashboardMonitor(volumes, new DiskFixture(), new FakeDialogs(), clock: () => now,
+            availableRam: () => 8UL << 30, usedLetters: () => new HashSet<char>());
+        Settle(monitor.RefreshAsync());
+        var page = new CachesViewModel(monitor);
+        var q = monitor.Volumes.Single(v => v.Volume.Volume == "Q:");
+        var s = monitor.Volumes.Single(v => v.Volume.Volume == "S:");
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        page.Select(q);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(q.HasLayoutMap && volumes.MapReads == 1, "the selected cache gets a complete map from its current allocation");
+        now += TimeSpan.FromMilliseconds(500);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1, "map polling is limited to one request every two seconds");
+        now += TimeSpan.FromSeconds(2);
+        volumes.PendingMap = new();
+        var pending = monitor.SampleVolumeAsync(q);
+        page.Select(s);
+        volumes.PendingMap.SetResult(volumes.Map);
+        Settle(pending);
+        Check(!q.HasLayoutMap, "a map arriving after selection changed cannot republish the old cache");
+        volumes.PendingMap = null;
+        page.Select(q);
+        volumes.Map = volumes.Map! with { Generation = volumes.State.Generation + 1 };
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(!q.HasLayoutMap, "a map from another cache generation is rejected");
+        now += TimeSpan.FromSeconds(2);
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation, TotalChunks = 5 };
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(!q.HasLayoutMap, "a truncated map does not advertise totals for the complete cache");
+        now += TimeSpan.FromSeconds(2);
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        Settle(monitor.SampleVolumeAsync(q));
+        q.Apply(volumes.State with { Generation = volumes.State.Generation + 1 }, null, now);
+        Check(!q.HasLayoutMap, "a cache resize clears the prior allocation map immediately");
+        q.Apply(volumes.State, null, now);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(q.HasLayoutMap, "a fresh map returns after a cache allocation changes");
+        q.MarkStale();
+        Check(!q.HasLayoutMap, "stale cache state hides its memory map");
+        q.Apply(volumes.NoCache, null, now);
+        Check(!q.HasLayoutMap, "removing a cache clears the memory map");
+    }
+
     public static void Run()
     {
+        MapLifecycle();
+        MapVisibility();
         var volumes = new VolumeFixture();
         var dialogs = new FakeDialogs();
         var now = DateTimeOffset.UtcNow;
@@ -157,11 +206,77 @@ internal static class CacheTests
         Check(shell.Page == AppPage.Caches && shell.Caches.Selected == stick && shell.CurrentPage == shell.Caches, "Add cache in the overview opens that volume on the Caches page");
         Check(shell.Caches.Rows.Count == 6 && shell.Caches.Rows[0] is DiskGroupViewModel && shell.Caches.Rows[2] is DiskGroupViewModel,
             "the Caches list shows each disk followed by its volumes");
-        shell.Settings.UpdateChoice = 3;
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 5d);
         Check(shell.Monitor.Interval == TimeSpan.FromSeconds(5) && store.Load().UpdateSeconds == 5, "the update interval setting applies at once and is saved");
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 0.1);
+        Check(shell.Monitor.Interval == TimeSpan.FromMilliseconds(100) && shell.Monitor.MapInterval == TimeSpan.FromMilliseconds(100) &&
+              store.Load().UpdateSeconds == 0.1 && shell.Settings.UpdateChoices[shell.Settings.UpdateChoice] == "Every 0.1 seconds",
+            "the 0.1-second preference updates live values and visible maps and is saved with its own label");
         shell.Settings.Theme = (int)AppTheme.Dark;
         Check(store.Load().Theme == AppTheme.Dark, "the theme setting is saved");
         shell.Stop();
         Console.WriteLine("Cache contracts passed.");
+    }
+
+    private static void MapVisibility()
+    {
+        var volumes = new VolumeFixture();
+        var now = DateTimeOffset.UtcNow;
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        var shell = new ShellViewModel(volumes, new DiskFixture(), new FakeDialogs(), new MemorySettingsStore(),
+            () => 8UL << 30, () => new HashSet<char>(), clock: () => now);
+        var window = new QueueCache.Desktop.Views.MainWindow { DataContext = shell };
+        window.Show();
+        Settle(shell.Monitor.RefreshAsync());
+        Check(volumes.MapReads == 0, "Overview does not request a hidden cache map");
+        var q = shell.Monitor.Volumes.Single(v => v.Volume.Volume == "Q:");
+        shell.Caches.Select(q);
+        shell.Page = AppPage.Caches;
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1 && q.HasLayoutMap, "a visible Caches page requests its selected map");
+        shell.Page = AppPage.Settings;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1 && !q.HasLayoutMap, "another page stops map polling and clears the hidden map");
+        shell.Page = AppPage.Caches;
+        window.Hide();
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1, "a window hidden in the notification area does not poll cache maps");
+        window.Show();
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 2 && q.HasLayoutMap, "showing the window resumes with a fresh map");
+        var popout = QueueCache.Desktop.Views.CacheMapWindow.Open(window, q);
+        Check(ReferenceEquals(popout, QueueCache.Desktop.Views.CacheMapWindow.Open(window, q)), "reopening a cache map activates the existing window");
+        shell.Page = AppPage.Settings;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 3 && q.HasLayoutMap && q.MapRequested, "a visible pop-out keeps its map live on another page");
+        popout.WindowState = Avalonia.Controls.WindowState.Minimized;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 3 && !q.MapRequested && !q.HasLayoutMap, "minimizing the only visible map stops requests and clears its snapshot");
+        popout.WindowState = Avalonia.Controls.WindowState.Maximized;
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 0.1);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        now += TimeSpan.FromMilliseconds(100);
+        volumes.PendingMap = new();
+        var fastSample = shell.Monitor.SampleVolumeAsync(q);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 5 && !fastSample.IsCompleted, "100 ms sampling keeps one outstanding map request per volume");
+        popout.Close();
+        volumes.PendingMap.SetResult(volumes.Map);
+        Settle(fastSample);
+        volumes.PendingMap = null;
+        Check(!q.MapRequested && !q.HasLayoutMap, "a map arriving after its pop-out closes cannot republish a hidden snapshot");
+        popout = QueueCache.Desktop.Views.CacheMapWindow.Open(window, q);
+        volumes.Volumes = [.. volumes.Volumes, volumes.Volumes[0] with { Volume = "Z:", VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000099}\", Instance = "unrelated-disk" }];
+        Settle(shell.Monitor.RefreshAsync());
+        Check(popout.IsVisible && ReferenceEquals(q, shell.Monitor.Volumes.Single(v => v.Volume.Volume == "Q:")),
+            "an unrelated volume arriving preserves the open cache map and its sample owner");
+        volumes.Volumes = volumes.Volumes.Where(v => v.Volume != "Q:").ToArray();
+        Settle(shell.Monitor.RefreshAsync());
+        Check(!popout.IsVisible && !q.MapRequested, "replacing or removing the volume closes its pop-out and releases map polling");
+        window.Close();
     }
 }

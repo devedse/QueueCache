@@ -32,9 +32,22 @@ each run's provenance; file hashes are not hashes of kernel memory.
 
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
-files must live on the selected disk; their distinct retained directory is recorded
-in `workloads.json` or the integrity worker's report/log. Reports should live on a
-different disk so telemetry writes do not contaminate the workload.
+files must live on the selected disk, in a folder of the same name at its root
+(plus `<name>-sector-oracle` for the sector oracle), recorded in `workloads.json`
+or the integrity worker's report/log. Reports should live on a different disk so
+telemetry writes do not contaminate the workload.
+
+Since plan 104 a run that completes (including clean restoration) removes those two
+folders and records what it removed in `workloads.json` (`Retained: false`,
+`Removed`, `RemovedUtc`); a run that fails or stops keeps them for inspection, and
+`--keep-workloads` keeps them always. System and managed-lifecycle suites keep
+theirs (a later phase reads them), and so do the disk-removal suites. A removal
+error is logged and recorded but never changes the run's result. Workload
+preparation needs free space on the tested volume of about three times the cache
+budget plus 1 GiB, five times for the stream exercises and four times for
+`cache-recall`; it refuses with "Insufficient free space" otherwise. Older runs
+left their folders behind: check the volume root for `QueueCache-Verify-*` folders
+of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
@@ -1392,3 +1405,141 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 `*-score-quietNa/b.json`. It only waits: the score checks are unchanged, and a
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
+
+## Concurrent, sustained and memory-map exercises (plans 98–103)
+
+These opt-in suites extend `qcache developer verify`; they never run as part of
+`full` or change the existing 72-case write-performance matrix. Use the same
+DiskSpd executable/hash and a normal-priority elevated process, with NTFS
+last-access timestamps disabled as described in [benchmark setup](BENCHMARKING.md#setup).
+Each run records immutable case IDs, the complete exercise plan, loaded-module
+provenance, raw XML, before/after snapshots and telemetry covering process startup
+through completion. Restoration uses the existing independent deadline.
+An oracle failure stops its other streams; the coordinator reports that failure,
+cancels its owned workload and waits for it to exit before restoration. Host-safe
+contracts exercise failure while the score is still pending and early successful
+oracle completion while the score continues.
+
+```powershell
+qcache developer verify Q: --suite cache-concurrency --budget-mib 2048 --repeats 5 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --suite cache-map-cost --budget-mib 4096 --repeats 5 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1 --soak-seconds 1800 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+- `cache-concurrency`: four separate stream files, with the combined accessed
+  prefix always half the cache budget. Shapes are one stream at Q1, one at Q8,
+  two at Q4 each and four at Q2 each. DiskSpd uses one thread per target. Read
+  controls and fitting Deferred writes must prove zero lower read/write/flush
+  attempts, unchanged allocation and accounting for all scored bytes. Eager
+  writes intentionally allow lower I/O. Shape and drain order reverse each repeat.
+  Plan 103 gives each shape distinct files whose entire sizes sum to half the
+  cache budget (budget must be divisible by eight). File sizes and names are in
+  the manifest/preparation reply and checked before warming. Previous shapes
+  used larger files with cold unaccessed tails: Defender's paging reads of those
+  tails contaminated multi-target write windows. Plan 102's attempted write-prime
+  pass did not remove them and is retired. Defender remains enabled; no exclusion
+  is used. Strict score checks still require exactly zero lower attempts. The
+  separate 72-case `write-performance` suite is unchanged.
+  Concurrent writes use the precomputed `-Z1M` payload. The separate
+  `write-performance` matrix uses `-Zr`; do not directly compare these scores.
+  `--case-filter` can select a focused subset, which is never a full-matrix pass.
+  Plan 99 first verifies 128 concurrent pairs of 512-byte writes to neighboring
+  sectors in one 4K block, including unchanged guard bytes, while cached and after
+  drain. This requires NTFS, 512-byte logical sectors and clusters aligned to 4K
+  so the file's neighboring sectors share one cache block. Unsupported targets
+  fail clearly before creating the oracle file.
+  Submission is concurrent but kernel overlap/order is not forced. This byte case
+  does not claim zero lower I/O and is separate from the scored RAM-only controls.
+  Plan 101 checks the deliberate one-generation advance on Disable, alongside
+  unchanged instance/reservation/capacity and empty, error-free state. It records
+  before/active/disabled snapshots and separate expected/disk byte files. An
+  invalid lifecycle transition and a byte mismatch have distinct failure messages.
+- `cache-map-cost`: fitting random 4K reads with polling off, at the app's two-second
+  interval, and every 250 ms. A separate owned worker records map duration, CPU
+  time, allocation identity and complete-map counts. Its first sample must be ready
+  before the workload, and its samples must cover completion. Polling samples may
+  be at most the selected interval plus two seconds apart; normal driver telemetry
+  retains its stricter two-second bound. These reads also require zero lower I/O.
+  Plan 100 warms the reference before a cold scan fills spare cache space, then
+  independently re-proves residency. Every map spans the entire allocation;
+  occupancy is recorded rather than assumed to be full.
+- `cache-sustained`: six mixed 64K random read/write episodes over a file twice the
+  cache budget (30% writes). Their combined duration defaults to 30 minutes. Four
+  independent 1 MiB files are concurrently overwritten with deterministic bytes
+  and verified after every write. This oracle covers those four files, not DiskSpd's
+  random write payload. Every episode includes 20 seconds of natural idle time,
+  recorded before explicit flushing, and a sequential reread at Q1 then Q8.
+  No clear/reallocation occurs between episodes. After the sixth episode the cache
+  is disabled/drained and all 24 oracle files are independently reread from disk.
+  `--soak-seconds` accepts 120..3600, divisible by six; shorter than 1800 is a smoke
+  test, not sustained-use acceptance. `--repeats 1` is required; partial episodes
+  cannot be selected. Mixed-window disk I/O is intentional.
+  Plan 100 keeps a fresh, strictly proven RAM-only Q1/Q8 reference before churn;
+  each later ten-second reread records actual RAM hits and disk misses without
+  forced warming. Q8 follows Q1's natural reads, so these are recovery stages,
+  not an independent queue-depth comparison. Reread telemetry has its own ready
+  handshake and complete interval coverage. All rereads require stable lifecycle,
+  identity, error state and accounting for every scored byte. Churned rereads
+  explicitly allow lower I/O and must never be presented as pure RAM-copy scores.
+
+Plan 99 records up to five warm-up attempts for scan-resistant cache insertion:
+each reads the complete accessed prefix, then requires a separate stable,
+zero-miss second pass. Only observed read misses in an otherwise stable,
+error-free allocation allow another attempt. Every attempt has unique raw output;
+exhaustion fails. This never clears a churned cache, relaxes score checks or retries
+driver faults. The first sustained episode warms only its fresh reference; unused
+stream files do not compete with that reference during preparation.
+
+Why plan 100 changed the sustained contract: the plan-99 long run stopped after
+its first five-minute mixed episode because the full scan-resistant cache still
+had misses after five warm-up attempts. A fitting file is not guaranteed to be
+resident after churn. Requiring that proof before continuing hid the recovery
+behavior this suite should measure. The old run remains INCOMPLETE; its failed
+residency check is not converted to a pass. RAM-only concurrency, map-cost and
+fresh-reference checks remain strict. Completion of the new soak establishes
+byte/lifecycle checks and complete measurements, not a reread speed target.
+
+The map percentage counts possible links among used slots inside a chunk that
+join consecutive disk blocks. It is not a file-specific fragmentation measure or
+proof that the underlying physical RAM pages are adjacent. Compare occupancy,
+hit/miss counters and scored throughput as well as this percentage. Preparation
+and explicit flushes remain outside the scored DiskSpd span; enclosing snapshots
+and telemetry also include startup/teardown and are deliberately conservative.
+
+## Read recall and exact warm passes (plan 104)
+
+The driver keeps a short history of evicted blocks and when each was last used
+(`driver/qcache/readrecall.h`). A read miss whose block was used more recently
+than the oldest used block still cached is kept as recent; every other miss stays
+at the eviction end, as before. This replaces the earlier bimodal insertion (one
+miss in 16 kept as recent). `qcache developer driver read-recall <device> <0|1>`
+(`LabReadRecall`, action 18) switches between the two for A/B in one build; 1 is
+the default, changing it clears the history, and so does `drop-clean`. It changes
+only which clean data stays cached, never what a read returns. Diagnostics V20
+record the mode, misses kept as recent (`Recalled`) and history matches that were
+not (`Denied`). The runner captures the mode and restores it with the cache.
+
+```powershell
+qcache developer verify Q: --suite cache-recall --budget-mib 2048 --repeats 3 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+- `cache-recall`: four files sized from the budget: stale data (1.25 times the
+  cache), a fitting file (half), a hot set (a quarter) and a scan (1.5 times).
+  Every case configures a Fast Deferred cache, selects its mode, then drops clean
+  data. `reread` reads the stale file twice (so part of it was in use), waits
+  for a quiet cache, then reads the fitting file four times. `scan` reads the hot
+  set twice, then scan, hot set, scan, hot set, scan: a one-off scan larger than
+  the cache, then the same scan repeated as a loop. Each pass is one complete
+  unbuffered 1 MiB Q1 read of the whole file (`read-pass` worker), with before and
+  after snapshots: hits, misses, fills, recalled/denied decisions, evictions and
+  lower reads per pass in `<case>-passes.json`. A final three-second DiskSpd Q8
+  read of the reread file or hot set is the case score. Disk misses are intended
+  here; this is not a RAM-only score. Each pass must keep identity, allocation,
+  health and the selected mode, and account for all its bytes as hits or misses
+  (other readers such as Defender may add bytes). Workload and mode order reverse
+  each repetition. Requires `--budget-mib` of at least 1024.
+- Every exercise warm-up now fills with one exact whole-file read pass instead of
+  a ten-second DiskSpd window. A timed window read only part of a 2 GiB file from
+  disk on the plan-103 4 GiB `cache-map-cost` run, which correctly stopped with
+  "the first sequential warm pass did not read the entire fitting file". The
+  separate three-second zero-miss residency proof is unchanged.

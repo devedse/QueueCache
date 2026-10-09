@@ -17,9 +17,11 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
     string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
-    string? ProductExecutable = null, string[]? ProductPrefix = null);
+    string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null);
+/// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
-    bool Timing, string Profiles, DateTimeOffset Captured, string Machine);
+    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null);
+public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
 [SupportedOSPlatform("windows")]
@@ -631,7 +633,7 @@ public static class VerificationWorker
                 if (state.DirtyBytes != 0)
                     throw new IOException("Start with a clean cache; drain your workload first.");
                 result = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
-                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName);
+                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode);
                 break;
             case "restore":
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
@@ -640,6 +642,8 @@ public static class VerificationWorker
                 // This suite never sets fault injection. Clear only its delay and range-gate hooks;
                 // do not hide device faults. Older drivers without V9 have no gate to disarm.
                 device.Control(WriteCacheAction.LabDelay, value: 0);
+                if (original.ReadRecall is { } recallMode)
+                    device.Control(WriteCacheAction.LabReadRecall, value: recallMode);
                 if (device.GetDiagnostics().LabGate is not null)
                     device.Control(WriteCacheAction.LabGate, value: 0);
                 if (device.GetDiagnostics().PagingAdmission is not null)
@@ -724,6 +728,14 @@ public static class VerificationWorker
             case "configure":
                 result = ConfigurationManager.Apply(target, job.Configuration!, true);
                 break;
+            case "read-pass":
+                var passRoot = Path.GetFullPath(job.WorkDirectory!) + Path.DirectorySeparatorChar;
+                if (job.Files is not { Length: > 0 } passFiles ||
+                    passFiles.Any(file => !Path.GetFullPath(file).StartsWith(passRoot, StringComparison.OrdinalIgnoreCase) || !File.Exists(file)))
+                    throw new IOException("A read pass covers existing files of this run's workload directory only.");
+                var (passBytes, passRequests, passSeconds) = FileTests.UnbufferedFileWrite.ReadPass(passFiles);
+                result = new ReadPassResult(passBytes, passRequests, passSeconds);
+                break;
             case "control":
                 device.Control(job.Action, value: job.Value);
                 result = device.GetWriteCacheState();
@@ -731,6 +743,46 @@ public static class VerificationWorker
             case "cache-layout-reset":
                 result = CacheLayoutResetProbe.Run(device, (name, evidence) => RunStorage.AtomicJson(job.Reply + "." + name + ".json", evidence));
                 break;
+            case "concurrent-oracle":
+                result = await ConcurrentCacheOracle.Run(job.WorkDirectory!, checked((int)job.Value), job.Seconds,
+                    (stream, progress) => RunStorage.AtomicJson(job.Reply + $".stream{stream}.json", progress));
+                break;
+            case "verify-concurrent-oracle":
+                result = ConcurrentCacheOracle.Verify(job.WorkDirectory!, job.OraclePath!);
+                break;
+            case "layout-map":
+                var mapTimer = Stopwatch.StartNew();
+                var mapState = device.GetWriteCacheState();
+                var map = device.GetLayoutMap(checked((int)(mapState.PayloadCapacity / (256 * 1024))));
+                result = new { Map = map, mapState.Instance, Milliseconds = mapTimer.Elapsed.TotalMilliseconds };
+                break;
+            case "map-poll":
+                using (var pollWriter = new StreamWriter(job.Reply, append: false))
+                {
+                    var pollTimer = Stopwatch.StartNew();
+                    using var pollProcess = Process.GetCurrentProcess();
+                    var pollCpuStart = pollProcess.TotalProcessorTime;
+                    while (pollTimer.Elapsed.TotalSeconds < job.Seconds)
+                    {
+                        var started = Stopwatch.GetTimestamp();
+                        var pollState = device.GetWriteCacheState();
+                        var polled = device.GetLayoutMap(checked((int)(pollState.PayloadCapacity / (256 * 1024))));
+                        await pollWriter.WriteLineAsync(JsonSerializer.Serialize(new
+                        {
+                            Utc = DateTimeOffset.UtcNow, polled.Generation, polled.TotalChunks, polled.Chunks,
+                            pollState.Instance, pollState.Errors, pollState.LastError,
+                            CpuMilliseconds = (pollProcess.TotalProcessorTime - pollCpuStart).TotalMilliseconds,
+                            polled.InOrder, polled.FreeChunks, UsedSlots = polled.Used.Sum(x => (long)x),
+                            Milliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds
+                        }));
+                        await pollWriter.FlushAsync();
+                        if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
+                            RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
+                        if (File.Exists(job.StopFile)) break;
+                        await Task.Delay(checked((int)job.Value));
+                    }
+                }
+                return 0;
             case "snapshot":
                 result = new
                 {
@@ -757,6 +809,10 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, pagingChecks);
                 ReportFailures(pagingChecks, Console.Error);
                 return pagingChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "concurrent-sectors":
+                var sectorChecks = await ConcurrentSectorOracle.Run(target, device, job.WorkDirectory!, job.Reply + ".evidence");
+                RunStorage.AtomicJson(job.Reply, sectorChecks);
+                return sectorChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);
@@ -804,12 +860,18 @@ public static class VerificationWorker
                 var directory = Path.GetFullPath(job.WorkDirectory!);
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
                     throw new IOException("Workload directory must be a new directory on the selected volume.");
-                if (new DriveInfo(target.Root).AvailableFreeSpace < ((long)job.BudgetMiB * 3 + 1024) * 1024 * 1024)
+                // Value 1 adds the stream files; value 2 prepares only the cache-recall files.
+                if (new DriveInfo(target.Root).AvailableFreeSpace < ((long)job.BudgetMiB * (job.Value is 1 ? 5 : job.Value is 2 ? 4 : 3) + 1024) * 1024 * 1024)
                     throw new IOException("Insufficient free space for unique workloads and headroom.");
                 Directory.CreateDirectory(directory);
                 var block = new byte[1 << 20];
                 Random.Shared.NextBytes(block);
-                foreach (var (name, length) in new[] { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) })
+                var workloadFiles = job.Value == 2
+                    ? CacheExercisePlan.RecallTargets(job.BudgetMiB).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
+                    : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
+                if (job.Value == 1)
+                    workloadFiles.AddRange(CacheExercisePlan.AllTargets(job.BudgetMiB).Select(file => (file.Name, file.MiB)));
+                foreach (var (name, length) in workloadFiles)
                 {
                     using var file = new FileStream(Path.Combine(directory, name), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
                     for (var i = 0; i < length; i++)
@@ -818,7 +880,8 @@ public static class VerificationWorker
                 }
                 result = new
                 {
-                    Directory = directory
+                    Directory = directory,
+                    Files = workloadFiles.Select(file => new { file.Name, MiB = file.Length }).ToArray()
                 };
                 break;
             case "application-flush":

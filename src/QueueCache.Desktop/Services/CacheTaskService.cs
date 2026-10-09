@@ -56,7 +56,15 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
         var capacity = device.GetWriteCacheState().PayloadCapacity;
         if (capacity == 0)
             return null;
-        try { return device.GetLayoutMap((int)(capacity / (256 * 1024))); }
+        try
+        {
+            var before = device.GetWriteCacheState();
+            var map = device.GetLayoutMap((int)(capacity / (256 * 1024)));
+            var after = device.GetWriteCacheState();
+            ValidateVolume(volume);
+            return map.IsComplete && before.Instance == after.Instance && before.Generation == after.Generation &&
+                map.Generation == after.Generation && after.PayloadCapacity == capacity ? map : null;
+        }
         catch (Win32Exception) { return null; } // Older driver without the map.
     });
     private static void ValidateVolume(VolumeDescription volume)

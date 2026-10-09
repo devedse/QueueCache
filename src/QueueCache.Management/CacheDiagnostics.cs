@@ -68,6 +68,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int RepeatedPageWireSize = 896;
     public const int LayoutWireSize = 944;
     public const int CopyFlagsWireSize = 952;
+    public const int ReadRecallWireSize = 976;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int CurrentWireSize = ReadRecallWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -100,6 +103,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheLayout? Layout { get; init; }
     /// <summary>V19: lab copy flags in effect (1 prefetch, 2 coalesced runs); null on older drivers.</summary>
     public ulong? CopyFlags { get; init; }
+    /// <summary>V20: read-recall mode and how often a read miss was kept as recent or not; null on older drivers.</summary>
+    public CacheReadRecall? ReadRecall { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -123,6 +128,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             RepeatedPageWireSize => 17u,
             LayoutWireSize => 18u,
             CopyFlagsWireSize => 19u,
+            ReadRecallWireSize => 20u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -263,6 +269,11 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             layout = new(v[0], v[1], v[2], v[3], v[4], v[5]);
         }
         ulong? copyFlags = bytes.Length >= CopyFlagsWireSize ? BinaryPrimitives.ReadUInt64LittleEndian(bytes[LayoutWireSize..]) : null;
+        var readRecall = bytes.Length >= ReadRecallWireSize
+            ? new CacheReadRecall(BinaryPrimitives.ReadUInt64LittleEndian(bytes[CopyFlagsWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CopyFlagsWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CopyFlagsWireSize + 16)..]))
+            : null;
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -285,7 +296,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             PagingReadsRepeatedPages = pagingRepeated,
             ReadFillsSkippedRepeatedPages = fillsSkippedRepeated,
             Layout = layout,
-            CopyFlags = copyFlags
+            CopyFlags = copyFlags,
+            ReadRecall = readRecall
         };
     }
 }
@@ -296,5 +308,9 @@ public sealed record CacheLayout(ulong Measurements, ulong Blocks, ulong Neighbo
 {
     public double? ContiguousShare => Neighbors == 0 ? null : (double)Contiguous / Neighbors;
 }
+/// <summary>Read recall (driver readrecall.h). Mode 1: a read miss whose block was used more recently than
+/// the oldest used block still cached is kept as recent (Recalled); history matches that were not are Denied.
+/// Mode 0: the earlier bimodal insertion (one miss in 16 kept as recent); both counters then stay unchanged.</summary>
+public sealed record CacheReadRecall(ulong Mode, ulong Recalled, ulong Denied);
 /// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
 public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);

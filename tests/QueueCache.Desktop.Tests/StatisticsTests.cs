@@ -16,10 +16,24 @@ internal static class StatisticsTests
         var shares = QueueCache.Desktop.Controls.PhysicalStrip.Shares(map);
         Check(map.Pages == (8UL << 30) / 4096 && shares.Length == RamPhysicalMap.Bins && shares.Max() == 1 && shares.Take(300).All(s => s == 0),
               "physical strip: full slices are fully coloured, unused RAM stays empty");
+        var record = Ram(out _) with { Physical = DemoPhysical(2UL << 30) };
+        var monitor = new DashboardMonitor(new VolumeFixture(), new DiskFixture { Records = [record] }, new FakeDialogs(),
+            usedLetters: () => new HashSet<char>());
+        Settle(monitor.SampleVirtualDisksAsync());
+        var disk = monitor.VirtualDisks.Single();
+        Check(disk.HasPhysicalMap, "a running RAM disk shows its allocation map");
+        disk.MarkUnavailable();
+        Check(!disk.HasPhysicalMap, "an unavailable RAM disk hides its old physical allocation map");
+        disk.Apply(record, DateTimeOffset.UtcNow);
+        Check(disk.HasPhysicalMap, "a fresh RAM disk snapshot restores its allocation map");
+        disk.Apply(record with { Native = null, Runtime = record.Runtime! with { State = ManagedDiskState.Stopped } }, DateTimeOffset.UtcNow);
+        Check(!disk.HasPhysicalMap, "a stopped RAM disk hides its allocation even if a record retains an old map");
     }
 
     private static void CacheMapFigures()
     {
+        Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(8017), 32768).Length == 8017,
+            "the expanded map shows individual 256 KiB chunks at 2 GiB instead of grouping them");
         // Chunk 0 free; 1 full and in order (read); 2 pending; 3 scattered, written; 4 two used slots.
         var map = new CacheLayoutMap(256 * 1024, 1, 5, [0, 64, 64, 40, 2], [0, 0, 64, 0, 0], [0, 64, 0, 0, 2], [0, 63, 63, 3, 1]);
         var cells = QueueCache.Desktop.Controls.CacheMap.Cells(map);
@@ -27,8 +41,9 @@ internal static class StatisticsTests
               cells[1].Fill == 1 && !cells[1].OutOfOrder && cells[3].OutOfOrder && !cells[4].OutOfOrder,
               "map squares: free, read, pending first, written; scattered marked only with enough data");
         Check(map.FreeChunks == 1 && Math.Abs(map.InOrder!.Value - 130.0 / 166) < 1e-9, "in-order share counts neighbouring pairs");
-        Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(32768)).Length == QueueCache.Desktop.Controls.CacheMap.MaxCells,
-              "large caches group chunks into at most 2,048 squares");
+        foreach (var chunks in new[] { 32768, 131072 })
+            Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(chunks)).Length == QueueCache.Desktop.Controls.CacheMap.MaxCells,
+                  "8/32 GiB cache fixtures group chunks into at most 2,048 squares");
     }
 
     public static void Run()

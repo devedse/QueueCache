@@ -49,6 +49,9 @@ public sealed partial class DashboardMonitor : ObservableObject
 
     /// <summary>Live values update at this interval; values older than three intervals are shown as unavailable.</summary>
     public TimeSpan Interval { get; set; } = TimeSpan.FromSeconds(1);
+    // Normal preferences retain the measured two-second map cadence; faster preferences
+    // also update visible maps faster. Per-volume Sampling prevents overlapping requests.
+    internal TimeSpan MapInterval => Interval < TimeSpan.FromSeconds(1) ? Interval : TimeSpan.FromSeconds(2);
     internal TimeSpan StaleAfter => TimeSpan.FromSeconds(Math.Max(3, Interval.TotalSeconds * 3));
     internal DateTimeOffset NextInventory { get; set; } = DateTimeOffset.MinValue;
     internal bool GlobalBusy { get; private set; }
@@ -159,7 +162,7 @@ public sealed partial class DashboardMonitor : ObservableObject
     public Task SampleAsync() => Task.WhenAll(Volumes.Concat(diskVolumes).ToArray().Select(SampleVolumeAsync));
 
     /// <summary>Still shown somewhere: a late sample for a replaced volume is dropped.</summary>
-    private bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);
+    internal bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);
 
     private void AttachDiskCaches()
     {
@@ -182,11 +185,15 @@ public sealed partial class DashboardMonitor : ObservableObject
             var now = clock();
             var rates = volume.State is null ? null : CacheTelemetry.Between(volume.State, state, now > volume.Sampled ? now - volume.Sampled : TimeSpan.FromTicks(1));
             volume.Apply(state, rates, now);
-            if (volume.MapRequested && now - volume.MapSampled >= TimeSpan.FromSeconds(2))
+            if (volume.MapRequested && now - volume.MapSampled >= MapInterval)
             {
                 volume.MapSampled = now;
-                try { volume.LayoutMap = await Caches.ReadLayoutMapAsync(volume.Volume); }
-                catch (Exception) { volume.LayoutMap = null; } // The map is optional; never fail the sample.
+                CacheLayoutMap? map;
+                try { map = await Caches.ReadLayoutMapAsync(volume.Volume); }
+                catch (Exception) { map = null; } // The map is optional; never fail the sample.
+                if (!closed && Owns(volume) && volume.MapRequested && !volume.IsStale &&
+                    volume.State is { } current && current.Instance == state.Instance && current.Generation == state.Generation)
+                    volume.LayoutMap = map is { IsComplete: true } && map.Generation == current.Generation ? map : null;
             }
             VirtualDisks.FirstOrDefault(d => d.Cache == volume)?.CacheSampled();
             _ = ApplyDeveloperSettingsAsync(volume, state);
@@ -301,12 +308,15 @@ public sealed partial class DashboardMonitor : ObservableObject
 
     private void Rebuild(IReadOnlyList<VolumeDescription> volumes)
     {
+        var previous = Volumes.ToArray();
         DiskGroups.Clear();
         Volumes.Clear();
         // Each volume is its own cache; volumes are grouped under the disk that holds them.
         foreach (var disk in volumes.GroupBy(v => (v.DiskNumber, v.Instance)).OrderBy(g => g.Key.DiskNumber))
         {
-            var members = disk.Select(v => new VolumeViewModel(this, v)).ToArray();
+            // An unrelated disk arriving must not retire a live pop-out's volume.
+            // Changed identities still get a new model and reject late samples.
+            var members = disk.Select(v => previous.FirstOrDefault(old => old.Volume == v) ?? new VolumeViewModel(this, v)).ToArray();
             foreach (var member in members)
                 Volumes.Add(member);
             DiskGroups.Add(new(this, members));

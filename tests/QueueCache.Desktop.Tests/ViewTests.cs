@@ -59,6 +59,26 @@ internal static class ViewTests
         if (theme == "dark")
             Check(Named<FAInfoBar>(window, "ProblemBar").IsOpen, "dark: a failing cache shows its problem with Retry");
         Save(window, output, $"caches-{theme}");
+        var selected = shell.Caches.Selected!;
+        selected.LayoutMap = Test.DemoMap(8017);
+        Dispatcher.UIThread.RunJobs();
+        Named<Button>(window, "PopoutMapButton").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        var mapWindow = window.OwnedWindows.OfType<CacheMapWindow>().Single();
+        Check(Texts(mapWindow).Contains("Darker: fuller") && Texts(mapWindow).Contains("Lighter: partly used"),
+            $"{theme}: the map legend explains both shade strengths");
+        Named<Button>(mapWindow, "FullScreenButton").RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        Check(mapWindow.WindowState == WindowState.FullScreen && Equals(Named<Button>(mapWindow, "FullScreenButton").Content, "Exit full screen"),
+            $"{theme}: the pop-out enters full screen and offers an exit");
+        mapWindow.KeyPress(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Escape, null);
+        mapWindow.KeyRelease(Avalonia.Input.Key.Escape, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.Escape, null);
+        Check(mapWindow.WindowState == WindowState.Maximized, $"{theme}: Escape restores the map window");
+        mapWindow.KeyPress(Avalonia.Input.Key.F11, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.F11, null);
+        mapWindow.KeyRelease(Avalonia.Input.Key.F11, Avalonia.Input.RawInputModifiers.None, Avalonia.Input.PhysicalKey.F11, null);
+        Check(mapWindow.WindowState == WindowState.FullScreen, $"{theme}: F11 toggles full screen");
+        mapWindow.Width = 1180;
+        mapWindow.Height = 820;
+        Save(mapWindow, output, $"memory-map-{theme}");
+        mapWindow.Close();
 
         Show(window, shell, AppPage.VirtualDisks);
         shell.VirtualDisks.Select(shell.Monitor.VirtualDisks.Single(d => d.IsImage));
@@ -98,7 +118,7 @@ internal static class ViewTests
         Show(window, shell, AppPage.Diagnostics);
         Save(window, output, $"diagnostics-{theme}");
         Show(window, shell, AppPage.Settings);
-        Check(Named<ComboBox>(window, "UpdateBox").SelectedIndex == 1, $"{theme}: Settings shows the update interval");
+        Check(Named<ComboBox>(window, "UpdateBox").SelectedIndex == Array.IndexOf(DesktopSettings.UpdateChoices, 1d), $"{theme}: Settings shows the update interval");
         Save(window, output, $"settings-{theme}");
         Named<FASettingsExpander>(window, "AdvancedSettings").IsExpanded = true;
         Show(window, shell, AppPage.Settings);

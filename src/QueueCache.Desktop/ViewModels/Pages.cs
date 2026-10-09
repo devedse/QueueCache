@@ -58,6 +58,7 @@ public sealed partial class OverviewViewModel : ObservableObject
 public sealed partial class CachesViewModel : ObservableObject
 {
     private string? selectedId;
+    private bool active = true;
 
     internal CachesViewModel(DashboardMonitor monitor)
     {
@@ -74,11 +75,15 @@ public sealed partial class CachesViewModel : ObservableObject
     partial void OnSelectedChanged(VolumeViewModel? oldValue, VolumeViewModel? newValue)
     {
         if (oldValue is not null)
+        {
             oldValue.MapRequested = false;
+            if (!oldValue.MapRequested)
+                oldValue.LayoutMap = null;
+        }
         if (newValue is not null)
         {
             selectedId = newValue.Volume.VolumeId;
-            newValue.MapRequested = true;
+            newValue.MapRequested = active;
             newValue.MapSampled = default; // Read its map at the next sample.
         }
     }
@@ -87,6 +92,20 @@ public sealed partial class CachesViewModel : ObservableObject
     [RelayCommand] private void DismissMessage() => Monitor.Message = null;
 
     public void Select(VolumeViewModel volume) => Selected = volume;
+
+    internal void SetActive(bool value)
+    {
+        if (active == value)
+            return;
+        active = value;
+        if (Selected is { } volume)
+        {
+            volume.MapRequested = value;
+            if (!volume.MapRequested)
+                volume.LayoutMap = null;
+            volume.MapSampled = default;
+        }
+    }
 
     private void Rebuild()
     {
@@ -227,7 +246,13 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public DesktopSettings Current { get; private set; }
     public IReadOnlyList<string> ThemeChoices { get; } = ["Use the Windows setting", "Light", "Dark"];
-    public IReadOnlyList<string> UpdateChoices { get; } = DesktopSettings.UpdateChoices.Select(s => s < 1 ? "Every half second" : s == 1 ? "Every second" : $"Every {s:0} seconds").ToArray();
+    public IReadOnlyList<string> UpdateChoices { get; } = DesktopSettings.UpdateChoices.Select(s => s switch
+    {
+        0.1 => "Every 0.1 seconds",
+        0.5 => "Every half second",
+        1 => "Every second",
+        _ => $"Every {s:0} seconds"
+    }).ToArray();
     public string Version { get; }
 
     public event EventHandler<DesktopSettings>? Changed;

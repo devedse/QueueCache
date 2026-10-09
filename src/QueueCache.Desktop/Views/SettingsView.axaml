@@ -17,7 +17,7 @@
       </ui:FASettingsExpander>
 
       <TextBlock Classes="section" Text="Live values" Margin="0,16,0,4" />
-      <ui:FASettingsExpander Header="Update interval" Description="How often caches and disks are read. Values older than three intervals show as unavailable.">
+      <ui:FASettingsExpander Header="Update interval" Description="How often live values, charts and visible memory maps update. The 0.1-second option updates ten times per second.">
         <ui:FASettingsExpander.IconSource><ui:FAPathIconSource Data="{StaticResource IconActivity}" /></ui:FASettingsExpander.IconSource>
         <ui:FASettingsExpander.Footer>
           <ComboBox Name="UpdateBox" MinWidth="200" ItemsSource="{Binding UpdateChoices}" SelectedIndex="{Binding UpdateChoice}" AutomationProperties.Name="Update interval" />

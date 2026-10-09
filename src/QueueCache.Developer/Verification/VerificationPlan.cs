@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 97;
+    public const int Version = 104;
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -68,6 +68,10 @@ public static class VerificationPlan
         "trim-cache",
         "trim-diagnostic",
         "trim-file",
+        "cache-concurrency",
+        "cache-sustained",
+        "cache-map-cost",
+        "cache-recall",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -128,6 +132,7 @@ public static class VerificationPlan
         "system-app-session" => [new("system-app-session", "system-app-session")],
         "policies" => [new("policy-integrity", "policies")],
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
+        "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
         "pressure" => [new("pressure-integrity", "pressure")],
@@ -380,6 +385,10 @@ public static class VerificationPlan
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
         if ((options.Suite is "sequential-resident" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
+        if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
+            throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
+        if (options.Suite == "cache-recall" && options.BudgetMiB < 1024)
+            throw new ArgumentException("cache-recall requires --budget-mib of at least 1024 so its whole-file passes are not dominated by request overhead.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)
@@ -390,8 +399,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance, sequential-resident or drain-decision and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost or cache-recall and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -405,14 +414,18 @@ public static class VerificationPlan
                 "deadline 0 (unlimited) or 1..1440 minutes.");
         }
 
+        if (options.SoakSeconds is not null && options.Suite != "cache-sustained" ||
+            options.Suite == "cache-sustained" && (options.Repeats != 1 || (options.SoakSeconds ?? 1800) is < 120 or > 3600 || (options.SoakSeconds ?? 1800) % 6 != 0))
+            throw new ArgumentException("cache-sustained requires --repeats 1 and soak 120..3600 seconds divisible by six; --soak-seconds applies only to that suite.");
+
         if (options.CaseFilter is not null &&
-            (options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
+            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

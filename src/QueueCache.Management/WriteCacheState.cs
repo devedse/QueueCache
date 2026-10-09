@@ -183,5 +183,8 @@ public enum WriteCacheAction : uint
     LabMeasureLayout,
     /// <summary>Lab: value = 1 prefetch next block | 2 copy runs within a 256 KiB chunk at once, for RAM-hit copies.
     /// Both are on by default (3); 0 restores the per-block copy for comparisons.</summary>
-    LabCopyFlags
+    LabCopyFlags,
+    /// <summary>Lab: value 1 (default) = read recall, 0 = the earlier bimodal insertion of read misses.
+    /// Changes only which clean data is kept, never what a read returns; clears the recall history.</summary>
+    LabReadRecall
 }

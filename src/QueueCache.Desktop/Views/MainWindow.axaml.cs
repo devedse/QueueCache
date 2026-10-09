@@ -35,13 +35,18 @@ public sealed partial class MainWindow : Window
     {
         base.OnDataContextChanged(e);
         if (Shell is { } shell)
+        {
             shell.PropertyChanged += OnShellChanged;
+            shell.SetWindowVisible(IsVisible);
+        }
         SelectNavigation();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
+        if (change.Property == IsVisibleProperty)
+            Shell?.SetWindowVisible(IsVisible);
         // Mica shows through only when Windows provides it; otherwise keep the solid base color.
         if (change.Property == ActualTransparencyLevelProperty)
         {

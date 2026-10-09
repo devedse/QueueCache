@@ -19,6 +19,7 @@ if (args.Length > 0 && args[0] == "--runner-child")
     return;
 }
 if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
+CacheExerciseTests.Run();
 await ManagedDiskTests.RunAsync();
 ManagedLifecycleTests.Run();
 
@@ -511,6 +512,19 @@ BinaryPrimitives.WriteUInt32LittleEndian(copyFlagBytes.AsSpan(4), CacheDiagnosti
 BinaryPrimitives.WriteUInt64LittleEndian(copyFlagBytes.AsSpan(CacheDiagnostics.LayoutWireSize), 3);
 var copyFlagDiagnostics = CacheDiagnostics.Decode(copyFlagBytes);
 Check(copyFlagDiagnostics.CopyFlags == 3 && copyFlagDiagnostics.Layout == layoutDiagnostics.Layout, "V19 copy flags and V18 prefix");
+Check(copyFlagDiagnostics.ReadRecall is null, "V19 has no read-recall mode, not mode 0");
+var recallBytes = new byte[CacheDiagnostics.ReadRecallWireSize];
+copyFlagBytes.CopyTo(recallBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(recallBytes, 20);
+BinaryPrimitives.WriteUInt32LittleEndian(recallBytes.AsSpan(4), CacheDiagnostics.ReadRecallWireSize);
+for (var i = 0; i < 3; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(recallBytes.AsSpan(CacheDiagnostics.CopyFlagsWireSize + i * 8), (ulong)(1 + 50 * i));
+var recallDiagnostics = CacheDiagnostics.Decode(recallBytes);
+Check(recallDiagnostics.ReadRecall == new CacheReadRecall(1, 51, 101) && recallDiagnostics.CopyFlags == 3, "V20 read recall and V19 prefix");
+// The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
+Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
+        .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))
+        .Max(f => (int)f.GetRawConstantValue()!), "diagnostics requests the newest wire size");
 var mapBytes = new byte[CacheLayoutMap.HeaderSize + 8];
 BinaryPrimitives.WriteUInt32LittleEndian(mapBytes, 1);
 BinaryPrimitives.WriteUInt32LittleEndian(mapBytes.AsSpan(4), (uint)mapBytes.Length);
