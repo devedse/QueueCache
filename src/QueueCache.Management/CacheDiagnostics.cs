@@ -69,6 +69,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int LayoutWireSize = 944;
     public const int CopyFlagsWireSize = 952;
     public const int ReadRecallWireSize = 976;
+    /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
+    public const int CurrentWireSize = ReadRecallWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
