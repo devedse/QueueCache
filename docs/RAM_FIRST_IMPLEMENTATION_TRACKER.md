@@ -3208,3 +3208,9 @@ contracts pass, light/dark pop-out screenshots inspected, and README app maps
 regenerated. VM UI check pending; 72-case write-performance matrix
 now authorized, to follow the UI commit. Merge and follow-up performance branch
 are authorized after verification.
+Pop-out follow-up: inventory refresh reuses unchanged volume models, so adding an
+unrelated volume keeps a live map open. Changed volume identities still close the
+pop-out and reject late samples. Desktop regression passes this case. The matrix
+is running on signed CI 0.4.476.1, filter SHA-256 `88880997C11D27A7…`, with native
+sources identical to the current PR head; same CDM DiskSpd hash, 2 GiB and three
+repetitions as the 0.4.426.1 reference. UI stays closed during scoring.

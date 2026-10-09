@@ -308,12 +308,15 @@ public sealed partial class DashboardMonitor : ObservableObject
 
     private void Rebuild(IReadOnlyList<VolumeDescription> volumes)
     {
+        var previous = Volumes.ToArray();
         DiskGroups.Clear();
         Volumes.Clear();
         // Each volume is its own cache; volumes are grouped under the disk that holds them.
         foreach (var disk in volumes.GroupBy(v => (v.DiskNumber, v.Instance)).OrderBy(g => g.Key.DiskNumber))
         {
-            var members = disk.Select(v => new VolumeViewModel(this, v)).ToArray();
+            // An unrelated disk arriving must not retire a live pop-out's volume.
+            // Changed identities still get a new model and reject late samples.
+            var members = disk.Select(v => previous.FirstOrDefault(old => old.Volume == v) ?? new VolumeViewModel(this, v)).ToArray();
             foreach (var member in members)
                 Volumes.Add(member);
             DiskGroups.Add(new(this, members));
