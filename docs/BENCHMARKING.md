@@ -10,6 +10,10 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 
 - The installed release, Driver Verifier off (`verifier /query`), Windows'
   Balanced power plan.
+- **Last-access timestamps off** on the test machine:
+  `fsutil behavior set disablelastaccess 1` (immediate, machine-wide; `2` restores the
+  Windows default). Otherwise NTFS writes a file's last-access time a little after
+  each benchmark opens it, and those few KiB can land inside a measurement.
 - **Cache:** the drive with a 2 GiB Fast cache:
   `qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`.
   Since 0.4.431.1 a cleared cache refills in order, so drop-clean before each run
@@ -32,6 +36,7 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 | Pitfall | What it did | Avoid it by |
 |---|---|---|
 | **Below-normal priority.** Task Scheduler starts programs at priority 7 (below normal, with low I/O and memory priorities) unless told otherwise, and DiskSpd inherits CrystalDiskMark's priority. | Cached SEQ1M Q8 read 16.4-17.7 instead of 28.9-30.6 GB/s; RAM disk SEQ1M Q8 write 16.3 instead of 24.7 GB/s; the uncached disk also improved from 262/116 to 640/270 MB/s. The experiment changed CPU, I/O and memory priorities together; it did not isolate their individual contributions. | Start CrystalDiskMark normally. When starting it from a scheduled task, use `New-ScheduledTaskSettingsSet -Priority 4` and check `Get-Process DiskMark64` shows `PriorityClass Normal`. |
+| **Last-access timestamps.** NTFS writes them to the disk a little after a file is opened. | 12-16 KiB of metadata writes (once an 8 KiB metadata read) landed in or just before strictly checked score windows; 5 runs were rejected in one day and rerun. | Turn them off (Setup). The runner also waits for a quiet cache before each layout window (plan 97). |
 | **Leftovers in the cache.** The 2 GiB cache still held earlier test files. | Part of the new 1 GiB test file was pushed out and read from the disk: 5-20 GB/s instead of 26-30 GB/s. | `qcache policy drop-clean Q:` before each run (drops clean read/retained-write data, never unwritten data). |
 | **Allocation history** (up to 0.4.430.1). Drop-clean emptied data but kept a free-slot order affected by earlier use. | Fully resident sequential reuse measured 29.8/10.8 GB/s (Q8/Q1), versus 36.9/15.5 with a fresh allocation. | Fixed by the chunk allocator (0.4.431.1). On older drivers, report fresh and reused results separately (`cache-layout` suite). |
 | **Right after a restart.** Windows' startup work (Defender, indexing) still running. | Lower and noisier results. | Wait at least 15 minutes after a restart; check the processor is idle. |

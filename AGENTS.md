@@ -91,7 +91,8 @@
   Since 0.4.431.1 a cleared cache refills in order (chunk allocator); RAM-hit copies
   use prefetch and in-chunk coalescing by default (`copy-flags`, 0.4.434.1). Use the
   `cache-layout*` suites for layout questions and record copy flags
-  (`docs/CACHE_LAYOUT_INVESTIGATION_20261008.md`).
+  (`docs/CACHE_LAYOUT_INVESTIGATION_20261008.md`). Keep NTFS last-access updates off
+  on the test VM (`fsutil behavior set disablelastaccess 1`; see `docs/BENCHMARKING.md`).
 - App screenshots are generated, never edited: `dotnet run --project
   tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images`.
 

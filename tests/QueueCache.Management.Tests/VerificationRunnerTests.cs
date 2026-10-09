@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 96, "plan 96 retires free-list order patterns for the chunk allocator; existing score workloads unchanged");
+        Check(VerificationPlan.Version == 97, "plan 97 waits for a quiet cache before layout windows; workloads and checks unchanged");
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1108,6 +1108,12 @@ internal static class VerificationRunnerTests
                      new(3, 300_000, 290_000, 290_000, 1, 0), new(3, 300_000, 300_001, 0, 0, 0) })
             Reject(() => CacheLayoutEvidence.ValidateLayout(measuredLayout with { Diagnostics = layoutDiagnostics with { Layout = bad } }, null));
         Check(true, "layout measurement must exist, be fresh, cover the resident file and be internally consistent");
+        Check(CacheLayoutEvidence.IsQuiet(layoutBefore, layoutBefore) &&
+            !CacheLayoutEvidence.IsQuiet(layoutBefore, layoutBefore with { State = warmState with { DirtyBytes = 12288 } }) &&
+            !CacheLayoutEvidence.IsQuiet(layoutBefore, layoutBefore with { State = warmState with { ReadMissBytes = warmState.ReadMissBytes + 8192 } }) &&
+            !CacheLayoutEvidence.IsQuiet(layoutBefore, layoutBefore with { Diagnostics = layoutDiagnostics with { Attribution = layoutAttribution with { LowerWriteAttempts = 1 } } }) &&
+            !CacheLayoutEvidence.IsQuiet(layoutBefore, layoutBefore with { Diagnostics = layoutDiagnostics with { Attribution = null } }),
+            "a quiet cache has nothing pending, written or read from the disk between snapshots");
         var emptyLayout = layoutBefore with { State = warmState with { CleanReadBytes = 0 } };
         CacheLayoutEvidence.ValidateReset(emptyLayout, emptyLayout);
         foreach (var changed in new[] { emptyLayout.State with { Generation = 2 }, emptyLayout.State with { Instance = 9 },

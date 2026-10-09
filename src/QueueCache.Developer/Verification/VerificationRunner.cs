@@ -684,6 +684,21 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             ?? throw new InvalidDataException("Missing cache layout snapshot.");
     }
 
+    /// <summary>Flush and wait until the cache stays clean for 2 s (up to 5 attempts, each recorded), so a
+    /// stray filesystem metadata write is not already pending when a strictly checked window starts.
+    /// The checks that follow stay strict; this only waits, it never accepts a dirty window.</summary>
+    private async Task WaitForQuiet(string name, CancellationToken token)
+    {
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            await Control(WriteCacheAction.Flush, token);
+            var first = await LayoutSnapshot($"{name}-quiet{attempt}a.json", token);
+            await Task.Delay(TimeSpan.FromSeconds(2), token);
+            if (CacheLayoutEvidence.IsQuiet(first, await LayoutSnapshot($"{name}-quiet{attempt}b.json", token)))
+                return;
+        }
+    }
+
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
     {
         await Control(WriteCacheAction.LabDelay, token);
@@ -711,6 +726,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
         if (scenario.Layout != CacheLayoutStage.None)
         {
+            await WaitForQuiet(scenario.Id + "-start", token);
             var layout = await LayoutSnapshot(scenario.Id + "-layout-start.json", token);
             CacheLayoutEvidence.ValidateTransition(layoutGeneration, layout, reuseLayout);
             layoutGeneration = layout.State.Generation;
@@ -768,6 +784,8 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         }
         await Control(WriteCacheAction.LabDelay, token, (ulong)scenario.DelayMs);
         var measureLayout = scenario.Layout != CacheLayoutStage.None && options.Suite is "cache-layout-steady" or "cache-layout-full";
+        if (scenario.Layout != CacheLayoutStage.None)
+            await WaitForQuiet(scenario.Id + "-score", token);
         if (measureLayout)
             await Control(WriteCacheAction.LabMeasureLayout, token);
         var beforePath = await Worker(Job("snapshot") with

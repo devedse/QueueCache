@@ -1377,3 +1377,12 @@ pinned hits are copied, apply live and are reported in diagnostics V19
 (`CopyFlags`), so every snapshot records the copy mode. Both are on by default
 since 0.4.434.1 (value 3); a coalesced run never crosses a 256 KiB chunk. Set 0 to
 compare against per-block copies; the setting lasts until the next restart.
+
+### Quiet wait before layout windows (plan 97)
+
+Before each layout case and again just before its score window, the runner flushes
+and requires two snapshots 2 s apart with nothing pending, written or read from the
+disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
+`*-score-quietNa/b.json`. It only waits: the score checks are unchanged, and a
+window that still sees disk I/O fails as before. On the test VM also turn
+last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).

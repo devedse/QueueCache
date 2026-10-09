@@ -13,6 +13,14 @@ public static class CacheLayoutEvidence
     public static bool Resets(CacheLayoutStage stage) =>
         stage is CacheLayoutStage.ResetAfterSequential or CacheLayoutStage.ResetAfterRandom or CacheLayoutStage.ResetAscending;
 
+    /// <summary>Nothing pending or written, and no disk reads, between two snapshots.</summary>
+    public static bool IsQuiet(CacheLayoutSnapshot first, CacheLayoutSnapshot second) =>
+        first.State.DirtyBytes == 0 && second.State.DirtyBytes == 0 &&
+        first.State.InFlightBytes == 0 && second.State.InFlightBytes == 0 &&
+        first.State.ReadMissBytes == second.State.ReadMissBytes && first.State.DrainedBytes == second.State.DrainedBytes &&
+        first.Diagnostics.Attribution is { } a && second.Diagnostics.Attribution is { } b &&
+        a.LowerWriteAttempts == b.LowerWriteAttempts && a.LowerReadAttempts == b.LowerReadAttempts;
+
     /// <summary>The measurement taken just before scoring must exist and cover the resident file.</summary>
     public static void ValidateLayout(CacheLayoutSnapshot measured, ulong? previousMeasurements)
     {
