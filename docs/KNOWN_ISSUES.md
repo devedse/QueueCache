@@ -196,9 +196,14 @@ re-enabling the cache; requests keep flowing to the disk.
 ## Application caching scope (T085)
 
 Paging-marked writes are admitted when their originating file object is not a
-paging file. Since plan 56 application paging read misses are kept as clean entries too. Remaining limit: NTFS metadata/zero-fill
-write-back is admitted like any other write, so the cache shares drain intervals
-with it.
+paging file. Paging read misses are not kept (plan 56 kept application ones; since
+plan 62 none are, because a clustered page-in's buffer can repeat the memory
+manager's shared dummy page, see `DistinctPages`). Paging reads of cached data are
+still served from RAM. So data that applications read through Windows' file cache
+(buffered reads) enters QueueCache's read cache only when it was written or read
+unbuffered; Windows' own file cache holds it otherwise. Remaining limit: NTFS
+metadata/zero-fill write-back is admitted like any other write, so the cache
+shares drain intervals with it.
 
 ## Fixed: bugcheck 0x7E after cache release (0.4.99.1-0.4.104.1)
 

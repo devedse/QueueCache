@@ -16,6 +16,13 @@ incomplete rows with later runs or infer causal timing-on/off gains. The origina
 RAM-first contract gaps must be closed, while speculative speed rewrites need
 measurements before implementation.
 
+## Current speed-up plan
+
+The ordered plan from sustained-use testing (2026-10-09), with what each item must
+show before it is kept, is in
+[SUSTAINED_CACHE_VALIDATION_20261009.md](SUSTAINED_CACHE_VALIDATION_20261009.md#speed-up-implementation-plan).
+Read recall (item 1) is implemented in 0.4.469.1.
+
 ## Product principle
 
 In explicitly selected volatile Fast mode, a valid supported write that fits the

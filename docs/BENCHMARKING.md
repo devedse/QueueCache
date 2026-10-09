@@ -17,7 +17,8 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 - **Cache:** the drive with a 2 GiB Fast cache:
   `qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`.
   Since 0.4.431.1 a cleared cache refills in order, so drop-clean before each run
-  is enough (older drivers kept allocation history; see below).
+  is enough (older drivers kept allocation history; see below). Since 0.4.469.1
+  drop-clean also clears the read-recall history, so every run starts the same way.
 - **RAM disk:** `qcache disk create --mode ram --size-mib 4096 --letter T`
   (Direct access, the default). Remove it afterwards with
   `qcache disk stop <id> --discard` and `qcache disk remove <id>`.

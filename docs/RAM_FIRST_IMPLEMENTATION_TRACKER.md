@@ -3150,3 +3150,25 @@ overlapping ranges; no throughput gain claimed. Normal steady map median 1.622 m
 recorded polling-window CPU median 46.875 ms over roughly 12 s. This excludes UI
 rendering. Existing two-second cadence retained; 4 GiB and old/current Q8 checks
 remain in progress.
+Plan 104 / read recall. Implementation: `5e17604` (driver 0.4.469.1) replaces
+bimodal read-fill insertion with a 4-way history of evicted blocks and their last
+use (`readrecall.h`, 4 bytes per slot in the fixed budget). A miss used more
+recently than the oldest used block still cached enters as recent; others stay at
+the eviction end. `QcLabReadRecall`/`developer driver read-recall` (action 18)
+restores bimodal insertion for A/B; diagnostics V20 report mode and decisions;
+`drop-clean` and mode changes clear the history. Modelled against the earlier
+rule before implementation (report). Compile-time table checks, host contracts,
+desktop tests and Windows Debug/Release CI pass. `10dc815` fixes the managed
+diagnostics request size (0.4.469.1's controller asked for V19). The runner adds
+`cache-recall` and exact whole-file warm passes. The old/current Q8 write recheck
+is blocked: 0.4.426.1's installer preflight cannot read the newer RAM provider's
+state and refuses to downgrade; the cross-day comparison is confounded by a
+255 vs 115 MiB/s disk-only change. Verification: quick, policies and pressure
+pass on 0.4.469.1 (recall on). `cache-recall` run
+`QueueCache-Verify-20261009-161142-fbaac21da41a4410b05e44dcbf28ef01` completed
+12/12 with clean restoration and the CI filter loaded: a fitting file re-read after
+stale data is 100% hits from its third pass with zero lower reads (19,052/18,988
+MiB/s Q1; 36,943 MiB/s Q8), against 12.1/17.6% and 158 MiB/s Q8 with bimodal
+insertion. The hot set stays 100% after a one-off and a repeated 1.5× scan in both
+modes; the loop is 48.6% in both. The 30-minute soak and 4 GiB map-cost rerun are
+in progress.

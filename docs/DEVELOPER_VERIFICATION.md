@@ -1492,3 +1492,41 @@ proof that the underlying physical RAM pages are adjacent. Compare occupancy,
 hit/miss counters and scored throughput as well as this percentage. Preparation
 and explicit flushes remain outside the scored DiskSpd span; enclosing snapshots
 and telemetry also include startup/teardown and are deliberately conservative.
+
+## Read recall and exact warm passes (plan 104)
+
+The driver keeps a short history of evicted blocks and when each was last used
+(`driver/qcache/readrecall.h`). A read miss whose block was used more recently
+than the oldest used block still cached is kept as recent; every other miss stays
+at the eviction end, as before. This replaces the earlier bimodal insertion (one
+miss in 16 kept as recent). `qcache developer driver read-recall <device> <0|1>`
+(`LabReadRecall`, action 18) switches between the two for A/B in one build; 1 is
+the default, changing it clears the history, and so does `drop-clean`. It changes
+only which clean data stays cached, never what a read returns. Diagnostics V20
+record the mode, misses kept as recent (`Recalled`) and history matches that were
+not (`Denied`). The runner captures the mode and restores it with the cache.
+
+```powershell
+qcache developer verify Q: --suite cache-recall --budget-mib 2048 --repeats 3 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+- `cache-recall`: four files sized from the budget: stale data (1.25 times the
+  cache), a fitting file (half), a hot set (a quarter) and a scan (1.5 times).
+  Every case configures a Fast Deferred cache, selects its mode, then drops clean
+  data. `reread` reads the stale file twice (so part of it was in use), waits
+  for a quiet cache, then reads the fitting file four times. `scan` reads the hot
+  set twice, then scan, hot set, scan, hot set, scan: a one-off scan larger than
+  the cache, then the same scan repeated as a loop. Each pass is one complete
+  unbuffered 1 MiB Q1 read of the whole file (`read-pass` worker), with before and
+  after snapshots: hits, misses, fills, recalled/denied decisions, evictions and
+  lower reads per pass in `<case>-passes.json`. A final three-second DiskSpd Q8
+  read of the reread file or hot set is the case score. Disk misses are intended
+  here; this is not a RAM-only score. Each pass must keep identity, allocation,
+  health and the selected mode, and account for all its bytes as hits or misses
+  (other readers such as Defender may add bytes). Workload and mode order reverse
+  each repetition. Requires `--budget-mib` of at least 1024.
+- Every exercise warm-up now fills with one exact whole-file read pass instead of
+  a ten-second DiskSpd window. A timed window read only part of a 2 GiB file from
+  disk on the plan-103 4 GiB `cache-map-cost` run, which correctly stopped with
+  "the first sequential warm pass did not read the entire fitting file". The
+  separate three-second zero-miss residency proof is unchanged.

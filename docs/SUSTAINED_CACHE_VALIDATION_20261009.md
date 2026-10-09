@@ -2,8 +2,11 @@
 
 This follows the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md).
 The first milestone adds maintained measurements and fixes memory-map lifecycle.
-It does not change the native allocator, copy flags or driver defaults. Performance
-acceptance is separate from successfully collecting a complete matrix.
+The second replaces how re-read data enters the cache ([read recall](#read-recall-plan-104-044691),
+driver 0.4.469.1, on by default): a fitting file read again after other activity now
+returns to RAM speed on its third pass instead of staying at disk speed. The
+allocator and copy flags are unchanged. Performance acceptance is separate from
+successfully collecting a complete matrix.
 
 ## What changed
 
@@ -16,6 +19,8 @@ acceptance is separate from successfully collecting a complete matrix.
 | Cache and RAM-disk map lifecycle | Reject obsolete/partial maps, clear unavailable state, stop cache polling on other pages and while hidden, request fresh data on return. | Frontend tests and Windows Debug/Release CI pass; generated README screenshots updated. |
 | Larger map display | Group at most 2,048 displayed cells and explain the grouping accurately. | 8/32 GiB frontend fixtures pass. A 32 GiB allocation has not been exercised on the 16 GiB VM. |
 | Failure cleanup | Oracle faults stop other streams, cancel/await the owned workload before restoration. | Host coordinator tests and Windows runner contracts pass. |
+| Read recall (driver) | History of evicted blocks; a re-read block used more recently than the oldest used cached block enters as recent. Replaces one-in-16 insertion; lab switch and V20 diagnostics. | `cache-recall` 12/12: fitting reread 158 → 36,943 MiB/s at Q8 (third pass on), scan resistance unchanged; integrity suites pass; Windows CI passes. Soak and 4 GiB map cost in progress. |
+| Exact warm passes | Exercise warm-ups read each file once completely instead of a timed window. | Used by every plan-104 exercise; the 4 GiB map-cost rerun is in progress. |
 
 ## Conditions and contracts
 
@@ -218,30 +223,115 @@ benchmarks.
 The 4 GiB polling and old/current Q8 write results are still being collected.
 No new native speed-up is claimed.
 
-## Next decisions
+## Read recall (plan 104, 0.4.469.1)
 
-| Idea | Judgment | Evidence needed before implementation |
+**What was going on.** A block read from disk for the first time goes to the
+eviction end of the clean list ("just read"), so a single big read can't push out
+data that is in use. Only one such block in 16 went to the recently used end. In a
+full cache the next new block then evicts the one before it, so a file read again
+after other activity evicted its own blocks: only about 1/16 of it stayed per pass.
+That is why the soak's churned reread stayed at disk speed (1–18% hits). The first
+reread after churn has to come from disk; the later ones did not need to.
+
+**The change.** The cache keeps a short history of evicted blocks and when each was
+last used (`driver/qcache/readrecall.h`): one 32-bit entry per cache slot, in
+four-way sets, which is 4 bytes per 4 KiB slot (0.1%) counted in the fixed budget.
+A read miss whose block is in the history *and* was last used more recently than
+the oldest used block still cached is kept at the recently used end. Every other
+miss stays at the eviction end. This is the order a least-recently-used cache with
+a longer memory would choose. It replaces the one-in-16 rule. Comparing last use,
+not eviction time, matters: with eviction times a loop larger than the cache kept
+re-admitting itself and fell to 0% hits in the model. The history never affects
+what a read returns, only which clean data stays. `drop-clean` clears it.
+`qcache developer driver read-recall <device> 0|1` switches back to the earlier rule
+in the same build (default 1); diagnostics V20 count both decisions.
+
+**Modelled before implementation.** A block-level model of the clean list, then a
+second one using a bit-exact Python port of `readrecall.h` with a millisecond clock
+(misses at 250 MiB/s), scaled to the suite's file ratios. Hit rate per pass, %:
+
+| Workload | Earlier rule | Read recall |
 |---|---|---|
-| Faster admission of repeatedly read sequential data | Continue; highest priority if slow recovery persists. | Compare an admission policy with current one-in-16 recent insertion. Preserve one-off scan resistance, Fast admission, capacity backpressure and byte/order checks. |
-| Read only missing ranges of a partly cached request | Investigate after admission. | Compare coalesced lower ranges against whole-request reads, including lower bytes, attempt count, ordering and errors. One hole currently sends the entire staged request to disk; a high byte-hit ratio alone may remain slow. |
-| Per-stream chunk placement | Conditional on concurrent-stream evidence. | Demonstrate a repeatable placement penalty before changing allocation. Warmed overwrites reuse their existing slots. |
-| Cache write-copy batching | Measured and removed (0.4.439.1, copy flag 8). | One copy per in-chunk run for cache writes passed integrity but gave +1.5% at Q1 and noise at Q8 ([layout investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401)). Revisit only with a profile showing per-block copy overhead. |
-| Idle relocation/defragmentation | Defer pending a fully resident placement bottleneck. | Demonstrate a throughput gain with a bounded migration budget and concurrent byte/order coverage. Relocation cannot restore data absent from RAM. |
-| Large-page allocations | Defer; not ruled out by these runs. | Profile translation/copy costs and perform a controlled A/B; map appearance is insufficient. |
-| RAM-disk Q8 read redesign | Separate follow-up. | Profile the provider path and try one design at a time. Prior system-worker offload experiments did not improve it. |
-| 32 GiB runtime polling | Remains open. | A larger VM or host; frontend grouping fixtures are not a large-allocation runtime measurement. |
+| Fitting file (half the cache) read 4× after stale data filled the cache | 0, 6, 12, 18 | 0, 0, 100, 100 |
+| Hot set (quarter) after a one-off scan / after the same scan repeated | 100 / 100 | 100 / 100 |
+| Loop 1.5× the cache, steady state | 47–64 | 50–67 |
+| Two files of 0.6× the cache read in turn | 64–65 | 67 |
+| Uniform random over 1.2× / 2× the cache | 83 / 50 | 83 / 50 |
+| Zipf-skewed random over 4× the cache (a = 0.8 / 1.0) | 65 / 82 | 67 / 84 |
+| Hot set read between blocks of a one-off 3× scan | 100 | 100 |
+
+Keeping the one-in-16 rule alongside recall lost 10% of a hot set in the loop cases
+(those kept blocks push out the oldest data), so it is replaced, not combined.
+Pass 2 of a reread is always from disk: those blocks were evicted during pass 1.
+
+### VM results
+
+`cache-recall` run `QueueCache-Verify-20261009-161142-fbaac21da41a4410b05e44dcbf28ef01`,
+plan 104, runner `10dc815`, native 0.4.469.1 (loaded filter SHA-256 `ED1B3F1B…`, the
+CI package's), completed 12/12 with clean restoration (mode 1 captured and restored).
+Three repetitions per workload and mode, alternating order; 2 GiB Fast cache,
+Defender on. Whole-file passes are Q1 unbuffered 1 MiB reads; the last row of each
+workload is a three-second DiskSpd Q8 read. Medians [min, max]:
+
+| Reread workload | Earlier rule: hits | MiB/s | Read recall: hits | MiB/s |
+|---|---:|---:|---:|---:|
+| Stale file, pass 1 / 2 | 0% / 78.3% | 158 / 618 | 0% / 78.3% | 178 / 685 |
+| Fitting file, pass 1 (from disk) | 0% | 159 | 0% | 169 |
+| Pass 2 | 6.2% | 170 | 0% (all 262,144 blocks recalled) | 162 |
+| Pass 3 | 12.1% | 178 [172, 222] | **100%** | **19,052** [18,975, 19,527] |
+| Pass 4 | 17.6% | 171 [160, 197] | **100%** | **18,988** [16,580, 19,264] |
+| Q8 afterwards | 22.8% | **158** [156, 170] | **100%** | **36,943** [33,769, 37,029] |
+
+With read recall, passes 3 and 4 and the Q8 window made zero disk reads; with the
+earlier rule every pass still sent about 1,024 requests to disk. The model predicted
+both columns (0/6/12/18% and 0/0/100/100%).
+
+| Scan workload | Earlier rule: hits | MiB/s | Read recall: hits | MiB/s |
+|---|---:|---:|---:|---:|
+| Hot set, pass 1 / 2 | 0% / 100% | 157 / 17,871 | 0% / 100% | 171 / 19,183 |
+| One-off scan (1.5× the cache) | 0% | 167 | 0% | 171 |
+| Hot set afterwards | 100% | 18,895 | 100% | 18,966 |
+| Same scan again | 48.6% | 312 | 48.6% (1 recalled, 401,246 denied) | 336 |
+| Hot set afterwards | 100% | 18,593 | 100% | 18,957 |
+| Scan a third time (loop) | 48.6% | 300 | 48.6% | 335 |
+| Hot set, Q8 afterwards | 100% | 36,971 | 100% | 36,891 |
+
+Scan resistance is unchanged: the hot set stays fully cached after a one-off scan and
+after the scan repeats, and the loop keeps the same hit rate; read recall turned down
+the loop's history matches against data in use. `quick`, `policies` and `pressure`
+pass on 0.4.469.1 with read recall on.
+
+## Speed-up implementation plan
+
+Ordered by expected benefit for everyday use. Each item says what is going on in
+plain terms, the change, and what a run must show before it is kept. Percentages
+elsewhere in this report are measurements; the expectations below are not.
+
+| # | What is going on | Change | Status | Must show before keeping |
+|---|---|---|---|---|
+| 1 | **A file read again after other activity stays slow.** The cache is full, the first reread comes from disk, and the earlier rule then let each new block evict the one before it. | **Read recall** (above): remember evicted blocks and let one back in when it was used more recently than the oldest used block still cached. | Implemented in 0.4.469.1 (`5e17604`), on by default. Verified by `cache-recall`: third pass on 100% hits, Q8 158 → 36,943 MiB/s; hot set and loop unchanged. Soak in progress. | `cache-recall`: a fitting file read again is (nearly) all hits by its third pass where the earlier rule stays near 12–18%; the hot set is not lower after a one-off or repeated scan; the loop larger than the cache is not lower. `cache-sustained`: churned rereads improve. Integrity suites pass. |
+| 2 | **A request that is only partly in RAM is read entirely from disk.** One missing 4 KiB block sends the whole request (up to 16 MiB) to the disk, so a file 90% in RAM can still read at disk speed. | (a) Count first: staged reads that already had cached blocks, and the bytes read from disk that RAM already held, in diagnostics and the exercise evidence. (b) Only if (a) shows real waste after read recall: read just the missing runs from disk (merging short gaps to bound the number of disk requests) and copy the rest from RAM, keeping today's ordering and error handling. | Not started. With read recall, the second reread pass finds nothing in RAM and the third finds everything, so this matters mainly for random/mixed workloads; (a) decides. | Disk bytes equal missing bytes (plus merge slack); byte checks with patterned partial residency; full-hit and full-miss speed unchanged. |
+| 3 | **Q8 sequential writes looked 3–14% slower with the new allocator.** | None yet. | The comparison is not controlled. The disk alone ("Off", cache disabled) ran at 255 MiB/s on one day and 115 MiB/s on the other, and Eager/Idle drain to that disk during the 10-second window. Within one build, Deferred and Eager Q8 writes differ by 0.5% (20,603 vs 20,491 MiB/s, `-Z1M`). Reinstalling 0.4.426.1 to repeat it is not possible: its installer's check cannot read the newer RAM-disk driver's state ("Invalid native RAM disk identity, geometry or lifetime state.") and refuses. | Only worth reopening with a same-build switch for the old slot order, compared on the same day with Deferred and Eager. |
+| 4 | **One reader on a RAM disk tops out at about 26 GB/s; four readers reach 40–42 GB/s.** The RAM disk handles one reader's requests one after another. | Profile the provider's read path first; then try one design (for example whole requests on the provider's own threads). | Two offload designs were measured and removed (no gain, or 13–17 GB/s). | A repeatable Q8 gain without slowing Q1 or small reads; byte round trips. |
+| 5 | **Buffered application reads never fill QueueCache's read cache.** Windows' file cache refills them with paging reads, which are deliberately not kept: keeping them once served another block's data on C:. | No change planned. Windows' own file cache holds that data. A safe design would need to prove it never caches data older than what Windows has in memory. | Correctness boundary, documented in [KNOWN_ISSUES](KNOWN_ISSUES.md#application-caching-scope-t085) and [cache policies](CACHE_POLICIES.md). | n/a |
+
+Not pursued, with reasons:
+
+- **Idle relocation/defragmentation:** cached data is already 99.6–100% in order
+  within chunks before scoring, and the slow reread was data missing from RAM,
+  which moving data around cannot fix.
+- **Per-stream chunk placement:** four streams were at most 2.8% (writes) and 7.8%
+  (reads, overlapping ranges) below one stream.
+- **Write-copy batching:** measured in 0.4.439.1, +1.5% at Q1 and noise at Q8
+  ([layout investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401)).
+- **Map polling:** no measurable cost at the app's two-second interval on 2 GiB.
+- **Large pages:** not ruled out, but nothing here points at address translation;
+  it would need a profile and a controlled A/B.
 
 The memory-map percentage measures consecutive disk-block links inside cache
 chunks. It is neither file-specific fragmentation nor proof of contiguous physical
 RAM. RAM-disk physical maps report allocated page locations; cache maps report
 logical slot use. Neither view promises automatic relocation.
-
-A candidate admission experiment is a bounded history of recently evicted or
-missed disk blocks: repeated demand would insert them nearer the recent end,
-while a one-off scan would retain the current conservative treatment. This
-costs some RAM and bookkeeping; it must be measured against both fitting-file
-recovery and a large cold scan before adoption. More aggressive promotion alone
-could evict an established working set.
 
 If resident placement later proves limiting, RAM permits bounded copying without
 SSD erase/wear costs. A relocation experiment would need a small copy budget,
