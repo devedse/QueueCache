@@ -90,15 +90,16 @@ default test (1 GiB, 5 passes), the better of two runs per column, QueueCache 0.
 
 | MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 594 | 38,828 | 25,353 |
-| Sequential write (SEQ1M Q8T1) | 112 | 21,465 | 23,266 |
-| Random 4K read (RND4K Q1T1) | 9.0 | 1,305 | 1,641 |
-| Random 4K write (RND4K Q1T1) | 1.2 | 1,050 | 1,317 |
+| Sequential read (SEQ1M Q8T1) | 594 | 39,492 | 25,353 |
+| Sequential write (SEQ1M Q8T1) | 112 | 21,504 | 23,266 |
+| Random 4K read (RND4K Q1T1) | 9.0 | 1,292 | 1,641 |
+| Random 4K write (RND4K Q1T1) | 1.2 | 1,031 | 1,317 |
 
 The test file fits in RAM, so this shows what QueueCache does for data that is
 in its cache. Work larger than the cache runs at the drive's own speed, which on
 this network storage varies (earlier the same day it wrote 245 MB/s
-sequentially); all three columns come from the same session.
+sequentially); all three columns were measured the same evening, without a
+restart in between.
 [How these were measured](docs/BENCHMARKING.md).
 
 ## Getting started

@@ -3185,3 +3185,15 @@ windows: with read recall the first minute after a reread is ~7 points lower
 (42.5% vs 49.4%), minutes 2–5 ~4 points higher (58.6% vs 54.7%). The RAM-path
 regression check (`cache-concurrency --case-filter s1-q8`, 10/10) matches the
 plan-103 results within 0.6% for writes and is higher for reads. Kept on by default.
+Housekeeping on the same branch: `7373135` fixes `qcache disk stop`/`remove`
+printing a null-reference message after succeeding (a stopped disk keeps statistics
+but has no native state), verified on the VM. `063fbde` makes a completed run
+remove its own workload folders from the tested volume (failed runs and system,
+managed-lifecycle and disk-removal suites keep them; `--keep-workloads`), verified
+on the VM; 63 older folders (174 GiB in total with the day's runs) were removed by
+hand. README CrystalDiskMark numbers and screenshots redone on 0.4.476.1 the same
+evening (cache column re-shot after that cleanup). Known issues now list the
+read-recall trade-off, partly cached requests, the RAM disk's single-reader limit
+and the blocked downgrade; the old Q8 write-gap note is closed as not demonstrated.
+Open: the 72-case `write-performance` matrix on this build (owner go-ahead pending);
+partial-hit counters after the merge.

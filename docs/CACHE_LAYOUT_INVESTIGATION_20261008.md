@@ -270,7 +270,10 @@ targeted next step.
   not a demonstrated cause: warmed writes ordinarily reuse existing slots, and a
   1 MiB request already fills four chunks under one lock. Concurrent separate-target
   controls and a contemporary old/new comparison are needed before changing the
-  allocator. Open.
+  allocator. Since resolved as not demonstrated: the concurrent controls showed no
+  placement penalty, the two-day comparison was confounded by the disk itself
+  (uncached 255 vs 115 MiB/s), and the old build cannot be reinstalled
+  ([sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md#speed-up-implementation-plan)).
 - **Memory map cost.** A full 2 GiB cache reads in 1.3-1.5 ms, about 45 us per
   256-chunk lock hold (independent of cache size). Polling 8x faster than the app left
   4K read hits at p50/p99/p99.9 0.003/0.009/0.037 ms (p99.99 0.18 vs 0.09 ms). No change
@@ -278,15 +281,22 @@ targeted next step.
 
 ## Remaining ideas
 
-1. Q8 sequential write gap: reproduce with contemporary old/new controls, then
-   investigate a demonstrated cause (coalesced write copies were measured and did
-   not help). Per-request open chunks remain conditional on placement evidence.
-2. *Defragment on read*: when a sequential read finds a file's blocks in several
-   places, re-place just that run at idle. Only worth it if real workloads show
-   larger gaps than the tests above.
-3. A concurrent multi-stream layout test (two files read at once) before adding
-   per-stream open chunks.
-4. A long-running steady test including writes and retained-write turnover.
+Followed up on 2026-10-09 ([sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md)),
+which now holds the ordered speed-up plan:
+
+1. Q8 sequential write gap: closed as not demonstrated. The contemporary old/new
+   comparison is impossible (0.4.426.1 cannot be installed over the current build)
+   and the original one was confounded by disk speed; within one build Deferred and
+   Eager Q8 writes differ by 0.5%. The 72-case `write-performance` matrix on the
+   current build is the new reference.
+2. *Defragment on read*: not pursued. Before scoring, data was 99.6-100% in order
+   within chunks in every concurrency case, and the slow sustained reread was data
+   missing from RAM, which read recall (0.4.469.1) fixed instead.
+3. Concurrent multi-stream test: done (`cache-concurrency`). Four streams at total
+   Q8 were at most 2.8% (writes) and 7.8% (reads, overlapping ranges) below one;
+   per-stream open chunks are not justified.
+4. Long-running test with writes and retained-write turnover: done
+   (`cache-sustained`, 30 minutes, byte checks during use and after drain).
 
 ## Scope and provenance
 
