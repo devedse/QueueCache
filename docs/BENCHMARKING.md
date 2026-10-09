@@ -43,6 +43,7 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 | **Right after a restart.** Windows' startup work (Defender, indexing) still running. | Lower and noisier results. | Wait at least 15 minutes after a restart; check the processor is idle. |
 | **Other programs.** A second benchmark, a game launcher updating, a VM host busy. | Lower results. | Close them; on a VM, check the host's load. |
 | **A notification over the window** (AutoPlay when a RAM disk appears). | Covers part of the screenshot. | Dismiss it before capturing. |
+| **Network storage speed changes.** Q: is a virtual disk on shared network storage. | Q: without cache wrote 245 MB/s (SEQ1M Q8T1) on the morning of 2026-10-09 and 112 MB/s that evening; cached and RAM-disk results stayed within 6%. | Measure all three columns in one session, and compare uncached numbers only within a session. |
 
 Keep preparation and machine conditions consistent: CrystalDiskMark's first
 pass reads while the freshly written test file is still being written to the
@@ -88,8 +89,17 @@ session, not in an SSH session:
   (`SetCursorPos` and `mouse_event` from user32, `SendKeys` for typing) does.
   In SendKeys text, `(` `)` `+` `^` `%` `~` must be escaped as `{(}` and so on.
 - Close CrystalDiskMark with its own close button so it saves its settings.
+- Read the scores from the window's UI Automation tree (each score box's name is
+  its value) rather than with Ctrl+C: the clipboard came back empty from a
+  scheduled task.
 - Screenshots can come from the hypervisor console (a whole-screen capture,
-  then cropped to the window).
+  then cropped to the window), or from the user's session with
+  `CopyFromScreen` over the window's visible frame (`DwmGetWindowAttribute`
+  with `DWMWA_EXTENDED_FRAME_BOUNDS`; `GetWindowRect` also includes Windows'
+  invisible resize border, which shows a strip of desktop).
+- From an SSH PowerShell session with `$ErrorActionPreference = 'Stop'`, run
+  `qcache disk create` through `cmd /c "... 2>&1"`: its progress lines go to
+  stderr, and PowerShell otherwise stops the script at the first one.
 
 These helpers are lab tooling and are not part of the repository.
 
