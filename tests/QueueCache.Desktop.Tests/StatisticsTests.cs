@@ -39,8 +39,9 @@ internal static class StatisticsTests
               cells[1].Fill == 1 && !cells[1].OutOfOrder && cells[3].OutOfOrder && !cells[4].OutOfOrder,
               "map squares: free, read, pending first, written; scattered marked only with enough data");
         Check(map.FreeChunks == 1 && Math.Abs(map.InOrder!.Value - 130.0 / 166) < 1e-9, "in-order share counts neighbouring pairs");
-        Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(32768)).Length == QueueCache.Desktop.Controls.CacheMap.MaxCells,
-              "large caches group chunks into at most 2,048 squares");
+        foreach (var chunks in new[] { 32768, 131072 })
+            Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(chunks)).Length == QueueCache.Desktop.Controls.CacheMap.MaxCells,
+                  "8/32 GiB cache fixtures group chunks into at most 2,048 squares");
     }
 
     public static void Run()

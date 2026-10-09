@@ -19,6 +19,7 @@ public sealed partial class ShellViewModel : ObservableObject
         Settings = new SettingsViewModel(settings, signIn);
         Overview = new OverviewViewModel(this);
         Caches = new CachesViewModel(Monitor);
+        Caches.SetActive(false);
         VirtualDisks = new VirtualDisksViewModel(Monitor);
         Diagnostics = new DiagnosticsViewModel(Monitor);
         Apply(Settings.Current);
@@ -44,14 +45,25 @@ public sealed partial class ShellViewModel : ObservableObject
     [ObservableProperty] private AppPage page;
     [ObservableProperty] private object currentPage;
 
-    partial void OnPageChanged(AppPage value) => CurrentPage = value switch
+    private bool windowVisible = true;
+    internal void SetWindowVisible(bool value)
     {
-        AppPage.Caches => Caches,
-        AppPage.VirtualDisks => VirtualDisks,
-        AppPage.Diagnostics => Diagnostics,
-        AppPage.Settings => Settings,
-        _ => Overview
-    };
+        windowVisible = value;
+        Caches.SetActive(windowVisible && Page == AppPage.Caches);
+    }
+
+    partial void OnPageChanged(AppPage value)
+    {
+        Caches.SetActive(windowVisible && value == AppPage.Caches);
+        CurrentPage = value switch
+        {
+            AppPage.Caches => Caches,
+            AppPage.VirtualDisks => VirtualDisks,
+            AppPage.Diagnostics => Diagnostics,
+            AppPage.Settings => Settings,
+            _ => Overview
+        };
+    }
 
     /// <summary>Starts live updates and the first discovery (at app start, with or without the window).</summary>
     public async Task StartAsync()

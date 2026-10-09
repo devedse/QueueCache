@@ -120,8 +120,10 @@ renders every page and dialog headlessly in light and dark and writes
 screenshots to the output folder (default `artifacts/ui-tests`). Review the
 screenshots when changing a view.
 
-Memory-map lifecycle (plan 98): the selected volume gets a map at most every two
-seconds. A response is published only while the same volume is still selected
+Memory-map lifecycle (plans 98–99): while the Caches page and window are visible,
+the selected volume gets a map at most every two seconds. Other pages and hiding
+the window in the notification area stop map requests; returning gets a fresh map.
+A response is published only while the same volume is still selected
 and its cache generation remains current. Partial replies (for example a resize
 during collection) are hidden. Stale/unavailable state, removal and allocation
 changes clear the prior map. The map tooltip describes within-chunk consecutive
@@ -129,3 +131,5 @@ block placement, rather than filesystem fragmentation. Headless tests cover late
 selection replies, changed generations, partial maps, resize and stale state.
 RAM disk physical maps also disappear when the disk's state is unavailable or
 stopped, and return with a fresh running snapshot.
+Headless map grouping checks cover 8 GiB and 32 GiB fixtures. This verifies the
+rendering contract, not the driver's polling cost with a 32 GiB allocation.

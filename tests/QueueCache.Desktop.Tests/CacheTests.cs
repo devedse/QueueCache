@@ -55,6 +55,7 @@ internal static class CacheTests
     public static void Run()
     {
         MapLifecycle();
+        MapVisibility();
         var volumes = new VolumeFixture();
         var dialogs = new FakeDialogs();
         var now = DateTimeOffset.UtcNow;
@@ -211,5 +212,36 @@ internal static class CacheTests
         Check(store.Load().Theme == AppTheme.Dark, "the theme setting is saved");
         shell.Stop();
         Console.WriteLine("Cache contracts passed.");
+    }
+
+    private static void MapVisibility()
+    {
+        var volumes = new VolumeFixture();
+        var now = DateTimeOffset.UtcNow;
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        var shell = new ShellViewModel(volumes, new DiskFixture(), new FakeDialogs(), new MemorySettingsStore(),
+            () => 8UL << 30, () => new HashSet<char>(), clock: () => now);
+        var window = new QueueCache.Desktop.Views.MainWindow { DataContext = shell };
+        window.Show();
+        Settle(shell.Monitor.RefreshAsync());
+        Check(volumes.MapReads == 0, "Overview does not request a hidden cache map");
+        var q = shell.Monitor.Volumes.Single(v => v.Volume.Volume == "Q:");
+        shell.Caches.Select(q);
+        shell.Page = AppPage.Caches;
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1 && q.HasLayoutMap, "a visible Caches page requests its selected map");
+        shell.Page = AppPage.Settings;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1 && !q.HasLayoutMap, "another page stops map polling and clears the hidden map");
+        shell.Page = AppPage.Caches;
+        window.Hide();
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1, "a window hidden in the notification area does not poll cache maps");
+        window.Show();
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 2 && q.HasLayoutMap, "showing the window resumes with a fresh map");
+        window.Close();
     }
 }

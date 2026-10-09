@@ -3057,7 +3057,17 @@ run `QueueCache-Verify-20261009-121724-e294932cf71f46baa28681a5fa0e98ce`
 stopped before scoring: a second half-budget file competed with the previously
 warmed file and still missed 37,789,696 bytes on its proof pass. No driver errors;
 restoration completed. This is INCOMPLETE, not a sustained-use pass. The corrected
-preparation and all six episodes still need VM proof. The RAM disk physical map
+plan-99 short smoke run `QueueCache-Verify-20261009-122536-2130df0b40f142e5abc883d8ab1c0508`
+completed 6/6 with clean restoration: 1,682 exact write/read checks, all 24 final
+oracle files verified from disk. Reread warm-up took 1/4/1/1/1/1 attempts. This is
+120 seconds of mixed I/O, not a 30-minute acceptance run. The full run is pending.
+The RAM disk physical map
 now clears when its state is unavailable; frontend tests cover unavailable,
 fresh and stopped snapshots. Sector writers rendezvous before each pair so both
 workers are ready before submission; this still does not force kernel overlap.
+Implementation also stops cache-map polling on other pages or while the window
+is hidden in the notification area. Frontend verification counts no requests in
+those states, with fresh-map requests on return; 8/32 GiB grouping fixtures pass.
+Added Windows runner contracts for rejecting empty/failing concurrent-sector
+checks before workload preparation, retaining a complete immutable plan and
+restoring ownership; their CI run is pending.

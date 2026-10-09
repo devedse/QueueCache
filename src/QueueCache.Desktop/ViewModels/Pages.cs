@@ -58,6 +58,7 @@ public sealed partial class OverviewViewModel : ObservableObject
 public sealed partial class CachesViewModel : ObservableObject
 {
     private string? selectedId;
+    private bool active = true;
 
     internal CachesViewModel(DashboardMonitor monitor)
     {
@@ -81,7 +82,7 @@ public sealed partial class CachesViewModel : ObservableObject
         if (newValue is not null)
         {
             selectedId = newValue.Volume.VolumeId;
-            newValue.MapRequested = true;
+            newValue.MapRequested = active;
             newValue.MapSampled = default; // Read its map at the next sample.
         }
     }
@@ -90,6 +91,19 @@ public sealed partial class CachesViewModel : ObservableObject
     [RelayCommand] private void DismissMessage() => Monitor.Message = null;
 
     public void Select(VolumeViewModel volume) => Selected = volume;
+
+    internal void SetActive(bool value)
+    {
+        if (active == value)
+            return;
+        active = value;
+        if (Selected is { } volume)
+        {
+            volume.MapRequested = value;
+            volume.LayoutMap = null;
+            volume.MapSampled = default;
+        }
+    }
 
     private void Rebuild()
     {
