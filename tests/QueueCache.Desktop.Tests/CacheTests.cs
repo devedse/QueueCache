@@ -270,7 +270,7 @@ internal static class CacheTests
         volumes.PendingMap = null;
         Check(!q.MapRequested && !q.HasLayoutMap, "a map arriving after its pop-out closes cannot republish a hidden snapshot");
         popout = QueueCache.Desktop.Views.CacheMapWindow.Open(window, q);
-        volumes.Volumes = [.. volumes.Volumes, volumes.Volumes[0] with { Volume = "Z:", VolumePath = "unrelated-volume", Instance = "unrelated-disk" }];
+        volumes.Volumes = [.. volumes.Volumes, volumes.Volumes[0] with { Volume = "Z:", VolumePath = @"\\?\Volume{00000000-0000-0000-0000-000000000099}\", Instance = "unrelated-disk" }];
         Settle(shell.Monitor.RefreshAsync());
         Check(popout.IsVisible && ReferenceEquals(q, shell.Monitor.Volumes.Single(v => v.Volume.Volume == "Q:")),
             "an unrelated volume arriving preserves the open cache map and its sample owner");
