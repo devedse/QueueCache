@@ -111,6 +111,15 @@ stays enabled without exclusions. Strict zero-lower-attempt score checks remain
 unchanged. This isolates fitting data from an accidentally oversized fixture;
 it does not subtract antivirus I/O or accept contaminated scores.
 
+Plan-103 focused run
+`QueueCache-Verify-20261009-141621-12627218a95d4a1dbd593cb888788b9e`
+completed 2/2 with clean restoration. Its sector/guard bytes matched active and
+post-drain data; the two-stream Deferred-write window measured 20,347 MiB/s with
+zero lower read/write/flush attempts and zero drain/data-miss bytes. Defender was
+still enabled. This confirms the focused fixture correction, not a complete
+matrix or a native optimization. Concurrent writes use precomputed `-Z1M`, so
+their scores cannot be compared directly with the `-Zr` write-performance matrix.
+
 ## Performance findings
 
 ### Thirty-minute soak

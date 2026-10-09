@@ -1427,6 +1427,8 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   pass did not remove them and is retired. Defender remains enabled; no exclusion
   is used. Strict score checks still require exactly zero lower attempts. The
   separate 72-case `write-performance` suite is unchanged.
+  Concurrent writes use the precomputed `-Z1M` payload. The separate
+  `write-performance` matrix uses `-Zr`; do not directly compare these scores.
   `--case-filter` can select a focused subset, which is never a full-matrix pass.
   Plan 99 first verifies 128 concurrent pairs of 512-byte writes to neighboring
   sectors in one 4K block, including unchanged guard bytes, while cached and after

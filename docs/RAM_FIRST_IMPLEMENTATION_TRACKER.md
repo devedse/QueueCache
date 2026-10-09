@@ -3130,3 +3130,9 @@ per shape, totaling half the budget; manifest/worker output records sizes and
 pre-warm checks enforce them. Defender stays enabled, no exclusions are used and
 strict score checks are unchanged. Implementation complete; host contracts and
 new VM regression pending. Windows Debug/Release CI passes at `7ebd503`.
+Plan-103 focused VM regression completed 2/2 with clean restoration: 128 sector
+pairs and post-drain guards matched; the two-stream Deferred-write control measured
+20,347 MiB/s with exactly zero lower read/write/flush attempts, drain bytes or
+data misses. Defender remained enabled. This verifies the focused fixture fix,
+not a full matrix or native speed-up. Windows Debug/Release CI passes at `3360135`;
+complete concurrency and 2/4 GiB polling matrices are running with that runner.
