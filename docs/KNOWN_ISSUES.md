@@ -83,7 +83,10 @@ writes differ by 0.5%, and four concurrent writers are at most 2.8% below one
 ([sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md#speed-up-implementation-plan)).
 The old allocator's build can no longer be installed over the current one (see
 Installer and compatibility debt), so the 72-case `write-performance` matrix on
-the current build is the reference from now on.
+the current build is the reference from now on. It completed 72/72 on 0.4.476.1:
+Q8 medians are 5–14% below 0.4.426.1, with overlapping ranges and a much slower
+uncached disk; cached Q1/random writes are higher. No allocator cause is proved
+([complete matrix](WRITE_PERFORMANCE_20261010.md)).
 
 ## A program resuming random I/O right after another file was re-read starts with fewer hits (performance, since 0.4.469.1)
 
@@ -130,13 +133,18 @@ splitting one large copy over its worker threads, so one program's queued reques
 are copied one after another. Four programs (or threads) give four copies at once.
 The cache instead hands queued hits to its own copy threads, so they overlap.
 
-Proposed change: let the RAM disk copy a single program's queued requests in
-parallel, with its own threads taking whole requests. Two simpler designs were
-measured and removed: handing large reads to Windows' system worker threads
-gave no gain (25 vs 26 GB/s) or was much slower (13-17 GB/s). Profile the read path
-before trying again. The possible gain is for one-thread, deep-queue readers (up to
-about 40 GB/s instead of 26); one request at a time (Q1) and multi-threaded readers
-would not change.
+The provider already has dedicated copy workers. A follow-up should profile the
+handoff, wake-up and copying costs before choosing another way to overlap whole
+requests. Earlier system-worker designs gave no gain (25 vs 26 GB/s) or fell to
+13-17 GB/s. Queued Direct copies using the provider's per-processor workers were
+also tried and removed (`3fb9d39`, `e8e31c8`): large reads reached 20.8-22.3 GB/s,
+with 21% of busy CPU samples spinning versus 28% copying. Adding worker threads
+alone therefore is not a demonstrated fix.
+
+The possible gain is for one-thread, deep-queue readers. Four readers' aggregate
+40-42 GB/s shows available bandwidth, but does not prove that one reader can reach
+it. Retain a scheduling change only after a controlled Q8 gain, with Q1,
+small-read and multi-threaded controls and byte/lifecycle checks.
 
 ## Raw disk reads and writes bypass the cache (by design)
 

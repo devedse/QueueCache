@@ -3195,8 +3195,8 @@ hand. README CrystalDiskMark numbers and screenshots redone on 0.4.476.1 the sam
 evening (cache column re-shot after that cleanup). Known issues now list the
 read-recall trade-off, partly cached requests, the RAM disk's single-reader limit
 and the blocked downgrade; the old Q8 write-gap note is closed as not demonstrated.
-Open: the 72-case `write-performance` matrix on this build (owner go-ahead pending);
-partial-hit counters after the merge.
+The 72-case `write-performance` matrix is now complete (final entry below).
+Partial-hit counters remain planned after the merge.
 
 2026-10-10 UI additions on PR #8. Implementation: a live cache-map pop-out with
 maximized/full-screen modes (F11/Escape), a shared darker/lighter occupancy legend,
@@ -3214,3 +3214,22 @@ pop-out and reject late samples. Desktop regression passes this case. The matrix
 is running on signed CI 0.4.476.1, filter SHA-256 `88880997C11D27A7…`, with native
 sources identical to the current PR head; same CDM DiskSpd hash, 2 GiB and three
 repetitions as the 0.4.426.1 reference. UI stays closed during scoring.
+
+Final write-matrix verification, 2026-10-10: plan 104 on signed CI 0.4.476.1
+completed 72/72, run
+`QueueCache-Verify-20261009-220533-0439cff369ce45c8b577e23951b77317`.
+All raw XML outputs/exits, readiness handshakes, interval coverage, loaded module
+hashes and restoration were checked. Original enabled 2 GiB policy/timing restored,
+zero dirty/in-flight bytes and no driver error. No driver implementation changed
+for this run. Cached random medians are 1–7% higher and sequential Q1 29–32% higher;
+sequential Q8 is 5–14% lower than the historical 0.4.426.1 reference, with overlapping
+ranges and much slower disk-only results. This is a current baseline, not a
+controlled causal comparison. Full table and limits:
+[write-performance reference](WRITE_PERFORMANCE_20261010.md).
+
+VM UI verification: the published current-source desktop preview on Windows
+opened the 8,017-chunk map through Pop out, rendered full-screen with F11, returned to maximized with Escape, and
+persisted `UpdateSeconds: 0.1`. The shared fuller/partly-used legend is visible.
+Headless tests cover page changes, minimization, closure, pending samples and
+unrelated inventory changes. The preview does not establish a 100 ms performance
+acceptance result. Temporary owner settings are restored after this check.
