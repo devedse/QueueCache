@@ -76,6 +76,33 @@ internal static class CacheExerciseTests
         Reject(() => VerificationPlan.Validate(recall with { BudgetMiB = 512 }));
         Check(CacheExercisePlan.Cases(options with { Suite = "quick" }).Count == 0, "New exercises are opt-in.");
 
+        // A completed run removes only its own workload folder and that folder's sector-oracle sibling.
+        var cleanupRoot = Directory.CreateTempSubdirectory("qc-cleanup-").FullName;
+        try
+        {
+            const string run = "QueueCache-Verify-20261009-000000-0123456789abcdef0123456789abcdef";
+            foreach (var name in new[] { run, run + "-sector-oracle", "QueueCache-Verify-other", "keep" })
+            {
+                Directory.CreateDirectory(Path.Combine(cleanupRoot, name, "nested"));
+                File.WriteAllText(Path.Combine(cleanupRoot, name, "nested", "f.dat"), "x");
+            }
+            var removed = WorkloadCleanup.Remove(cleanupRoot, run);
+            Check(removed.Count == 2 && !Directory.Exists(Path.Combine(cleanupRoot, run)) && !Directory.Exists(Path.Combine(cleanupRoot, run + "-sector-oracle")) &&
+                  Directory.Exists(Path.Combine(cleanupRoot, "QueueCache-Verify-other")) && Directory.Exists(Path.Combine(cleanupRoot, "keep")),
+                "Cleanup removes exactly the run's folder and its sector-oracle sibling.");
+            Check(WorkloadCleanup.Remove(cleanupRoot, run).Count == 0, "Cleanup of an already removed run is a no-op.");
+            foreach (var bad in new[] { "keep", "QueueCache-Verify-x/../keep", "..", "" })
+                Reject(() => WorkloadCleanup.Remove(cleanupRoot, bad));
+            Check(Directory.Exists(Path.Combine(cleanupRoot, "keep")), "Rejected names delete nothing.");
+        }
+        finally { Directory.Delete(cleanupRoot, true); }
+        Check(VerificationRunner.RemovesWorkloads(options) && VerificationRunner.RemovesWorkloads(options with { Suite = "quick" }) &&
+              !VerificationRunner.RemovesWorkloads(options with { KeepWorkloads = true }) &&
+              !VerificationRunner.RemovesWorkloads(options with { Suite = "system-files" }) &&
+              !VerificationRunner.RemovesWorkloads(options with { Suite = "managed-lifecycle-prepare" }) &&
+              !VerificationRunner.RemovesWorkloads(options with { Suite = "disk-removal" }),
+            "Suites whose later phases read their workloads, and --keep-workloads, keep them.");
+
         var state = new WriteCacheState(1 | 32 | 256 | 512, 0, 200UL << 30, 2UL << 30, 2UL << 30, 0, 0, 1UL << 30, 1, 0, 0, 0, 0, 0, 0, 0)
         { Instance = 7, Generation = 3 };
         var disabled = state with { Flags = state.Flags & ~1u, Generation = 4, OccupiedSlots = 0 };

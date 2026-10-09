@@ -130,9 +130,10 @@ internal static class VerificationCommands
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
         var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
+        var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -140,7 +141,8 @@ internal static class VerificationCommands
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
-            p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak)),
+            p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
+            p.GetValue(keepWorkloads)),
             new ConsoleProgress(), token);
         });
         return command;

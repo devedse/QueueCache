@@ -32,9 +32,22 @@ each run's provenance; file hashes are not hashes of kernel memory.
 
 `--output` is a parent directory (default `.`). Each invocation creates
 `QueueCache-Verify-<UTC>-<GUID>` beneath it and prints the absolute path. Workload
-files must live on the selected disk; their distinct retained directory is recorded
-in `workloads.json` or the integrity worker's report/log. Reports should live on a
-different disk so telemetry writes do not contaminate the workload.
+files must live on the selected disk, in a folder of the same name at its root
+(plus `<name>-sector-oracle` for the sector oracle), recorded in `workloads.json`
+or the integrity worker's report/log. Reports should live on a different disk so
+telemetry writes do not contaminate the workload.
+
+Since plan 104 a run that completes (including clean restoration) removes those two
+folders and records what it removed in `workloads.json` (`Retained: false`,
+`Removed`, `RemovedUtc`); a run that fails or stops keeps them for inspection, and
+`--keep-workloads` keeps them always. System and managed-lifecycle suites keep
+theirs (a later phase reads them), and so do the disk-removal suites. A removal
+error is logged and recorded but never changes the run's result. Workload
+preparation needs free space on the tested volume of about three times the cache
+budget plus 1 GiB, five times for the stream exercises and four times for
+`cache-recall`; it refuses with "Insufficient free space" otherwise. Older runs
+left their folders behind: check the volume root for `QueueCache-Verify-*` folders
+of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
