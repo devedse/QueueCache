@@ -3233,3 +3233,23 @@ persisted `UpdateSeconds: 0.1`. The shared fuller/partly-used legend is visible.
 Headless tests cover page changes, minimization, closure, pending samples and
 unrelated inventory changes. The preview does not establish a 100 ms performance
 acceptance result. Temporary owner settings are restored after this check.
+
+### Post-merge performance follow-up, 2026-10-10
+
+PR #8 merged as `fb34f878581590123a190b048fdfd23c5d4e9b39` after the full
+72-case matrix, host/Windows CI and real Windows pop-out/100 ms checks.
+The temporary UI preview exited, the owner's original preference state was
+restored, and the installed tray application resumed. Branch
+`perf/ram-read-followups` starts from the merged master.
+
+| Item | Implementation | Verification |
+|---|---|---|
+| RAM-disk single-reader Q8 scheduling | Planned; profile first, accounting for earlier rejected dedicated-worker experiments. | Existing 26 versus 40–42 GB/s observation is motivation; no new speed-up verified. |
+| Partly cached read diagnostics | Planned after merge; appended counters before conditional missing-span reads. | Focused accounting/byte evidence pending. |
+| ReFS caller-path backoff | Planned reason attribution and controlled shorter-backoff experiment, preserving exclusive foreground ownership. | ReFS/NTFS reference and ordering/flush/capacity checks pending. |
+| Background priority limits | Planned CPU/I/O/memory and copy-worker wait attribution. | Independent priority controls pending; no boost justified. |
+
+The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance and
+keeps implementation separate from verification. The initial draft PR contains
+this plan; the historical Q8 write gap remains unproved. Closed/accepted items
+remain closed, and the 72-case measurement contract is unchanged.
