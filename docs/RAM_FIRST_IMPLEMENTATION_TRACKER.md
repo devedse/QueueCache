@@ -3170,5 +3170,9 @@ pass on 0.4.469.1 (recall on). `cache-recall` run
 stale data is 100% hits from its third pass with zero lower reads (19,052/18,988
 MiB/s Q1; 36,943 MiB/s Q8), against 12.1/17.6% and 158 MiB/s Q8 with bimodal
 insertion. The hot set stays 100% after a one-off and a repeated 1.5× scan in both
-modes; the loop is 48.6% in both. The 30-minute soak and 4 GiB map-cost rerun are
-in progress.
+modes; the loop is 48.6% in both. The 30-minute `cache-sustained` soak on the same
+driver completed 6/6 with clean restoration, 22,123 oracle checks and 24 post-drain
+files verified: the churned Q8 reread reached 15,620–19,877 MiB/s at 99.6–99.8% hits
+in every episode (plan 100, bimodal: 130–237 MiB/s, 8.8–17.5%), and the mixed
+windows kept a 53.6–55.1% RAM hit rate (43.3–58.2% before). 4 GiB map-cost rerun in
+progress.

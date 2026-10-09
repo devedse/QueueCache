@@ -19,7 +19,7 @@ successfully collecting a complete matrix.
 | Cache and RAM-disk map lifecycle | Reject obsolete/partial maps, clear unavailable state, stop cache polling on other pages and while hidden, request fresh data on return. | Frontend tests and Windows Debug/Release CI pass; generated README screenshots updated. |
 | Larger map display | Group at most 2,048 displayed cells and explain the grouping accurately. | 8/32 GiB frontend fixtures pass. A 32 GiB allocation has not been exercised on the 16 GiB VM. |
 | Failure cleanup | Oracle faults stop other streams, cancel/await the owned workload before restoration. | Host coordinator tests and Windows runner contracts pass. |
-| Read recall (driver) | History of evicted blocks; a re-read block used more recently than the oldest used cached block enters as recent. Replaces one-in-16 insertion; lab switch and V20 diagnostics. | `cache-recall` 12/12: fitting reread 158 → 36,943 MiB/s at Q8 (third pass on), scan resistance unchanged; integrity suites pass; Windows CI passes. Soak and 4 GiB map cost in progress. |
+| Read recall (driver) | History of evicted blocks; a re-read block used more recently than the oldest used cached block enters as recent. Replaces one-in-16 insertion; lab switch and V20 diagnostics. | `cache-recall` 12/12: fitting reread 158 → 36,943 MiB/s at Q8 (third pass on), scan resistance unchanged. 30-minute soak 6/6: churned Q8 reread 130–237 → 15,620–19,877 MiB/s (8.8–17.5% → 99.6–99.8% hits), mixed hit rate unchanged. Integrity suites and Windows CI pass. |
 | Exact warm passes | Exercise warm-ups read each file once completely instead of a timed window. | Used by every plan-104 exercise; the 4 GiB map-cost rerun is in progress. |
 
 ## Conditions and contracts
@@ -301,6 +301,31 @@ after the scan repeats, and the loop keeps the same hit rate; read recall turned
 the loop's history matches against data in use. `quick`, `policies` and `pressure`
 pass on 0.4.469.1 with read recall on.
 
+**Thirty-minute soak with read recall.** Run
+`QueueCache-Verify-20261009-162618-74151ee0157b494cb40783406885fd6b` (plan 104, same driver)
+completed 6/6 with clean restoration: 22,123 exact oracle write/read checks during
+the mixed windows and all 24 oracle files verified after drain. Fresh reference
+19,087/37,263 MiB/s (Q1/Q8). Compared with the plan-100 soak above (earlier rule,
+0.4.441.1, same workload):
+
+| Episode | Earlier rule: Q8 reread after churn | Read recall | Mixed-window RAM hits, earlier → recall |
+|---|---:|---:|---:|
+| 1 | 237 MiB/s, 17.5% hits | **19,877 MiB/s, 99.8%** | 43.3% → 53.6% |
+| 2 | 233, 17.5% | **19,512, 99.8%** | 53.3% → 54.9% |
+| 3 | 233, 17.1% | **19,551, 99.8%** | 53.2% → 54.9% |
+| 4 | 229, 17.0% | **15,620, 99.6%** | 53.2% → 55.0% |
+| 5 | 143, 11.2% | **17,057, 99.8%** | 54.1% → 54.9% |
+| 6 | 130, 8.8% | **18,988, 99.8%** | 58.2% → 55.1% |
+
+The Q1 reread window before each Q8 one is the first pass and comes from disk in
+both (0.8–4.1% hits before, 0.0% now: the one-in-16 rule had kept a few blocks).
+The Q8 window is then RAM-bound except the part of the file the Q1 window had not
+reached yet. The mixed random workload keeps the same RAM hit rate (the model
+predicts no change for uniform random reads over twice the cache). Its MiB/s
+(74–84 now, 69–175 then) is disk-bound, and the disk was slower in this run: the
+first-pass Q1 rereads, from disk in both, were 144–175 MiB/s here against 224–229
+MiB/s in episodes 1–4 then. A same-build A/B of the mixed workload follows below.
+
 ## Speed-up implementation plan
 
 Ordered by expected benefit for everyday use. Each item says what is going on in
@@ -309,7 +334,7 @@ elsewhere in this report are measurements; the expectations below are not.
 
 | # | What is going on | Change | Status | Must show before keeping |
 |---|---|---|---|---|
-| 1 | **A file read again after other activity stays slow.** The cache is full, the first reread comes from disk, and the earlier rule then let each new block evict the one before it. | **Read recall** (above): remember evicted blocks and let one back in when it was used more recently than the oldest used block still cached. | Implemented in 0.4.469.1 (`5e17604`), on by default. Verified by `cache-recall`: third pass on 100% hits, Q8 158 → 36,943 MiB/s; hot set and loop unchanged. Soak in progress. | `cache-recall`: a fitting file read again is (nearly) all hits by its third pass where the earlier rule stays near 12–18%; the hot set is not lower after a one-off or repeated scan; the loop larger than the cache is not lower. `cache-sustained`: churned rereads improve. Integrity suites pass. |
+| 1 | **A file read again after other activity stays slow.** The cache is full, the first reread comes from disk, and the earlier rule then let each new block evict the one before it. | **Read recall** (above): remember evicted blocks and let one back in when it was used more recently than the oldest used block still cached. | Implemented in 0.4.469.1 (`5e17604`), on by default. Verified: `cache-recall` third pass on 100% hits, Q8 158 → 36,943 MiB/s, hot set and loop unchanged; 30-minute soak churned reread 130–237 → 15,620–19,877 MiB/s with the same mixed-window hit rate. | `cache-recall`: a fitting file read again is (nearly) all hits by its third pass where the earlier rule stays near 12–18%; the hot set is not lower after a one-off or repeated scan; the loop larger than the cache is not lower. `cache-sustained`: churned rereads improve. Integrity suites pass. |
 | 2 | **A request that is only partly in RAM is read entirely from disk.** One missing 4 KiB block sends the whole request (up to 16 MiB) to the disk, so a file 90% in RAM can still read at disk speed. | (a) Count first: staged reads that already had cached blocks, and the bytes read from disk that RAM already held, in diagnostics and the exercise evidence. (b) Only if (a) shows real waste after read recall: read just the missing runs from disk (merging short gaps to bound the number of disk requests) and copy the rest from RAM, keeping today's ordering and error handling. | Not started. With read recall, the second reread pass finds nothing in RAM and the third finds everything, so this matters mainly for random/mixed workloads; (a) decides. | Disk bytes equal missing bytes (plus merge slack); byte checks with patterned partial residency; full-hit and full-miss speed unchanged. |
 | 3 | **Q8 sequential writes looked 3–14% slower with the new allocator.** | None yet. | The comparison is not controlled. The disk alone ("Off", cache disabled) ran at 255 MiB/s on one day and 115 MiB/s on the other, and Eager/Idle drain to that disk during the 10-second window. Within one build, Deferred and Eager Q8 writes differ by 0.5% (20,603 vs 20,491 MiB/s, `-Z1M`). Reinstalling 0.4.426.1 to repeat it is not possible: its installer's check cannot read the newer RAM-disk driver's state ("Invalid native RAM disk identity, geometry or lifetime state.") and refuses. | Only worth reopening with a same-build switch for the old slot order, compared on the same day with Deferred and Eager. |
 | 4 | **One reader on a RAM disk tops out at about 26 GB/s; four readers reach 40–42 GB/s.** The RAM disk handles one reader's requests one after another. | Profile the provider's read path first; then try one design (for example whole requests on the provider's own threads). | Two offload designs were measured and removed (no gain, or 13–17 GB/s). | A repeatable Q8 gain without slowing Q1 or small reads; byte round trips. |
