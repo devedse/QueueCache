@@ -26,7 +26,6 @@ struct QC_EXTENSION
 #if QCACHE_CACHE_DRIVER
     QC_CACHE Cache;
     QC_RAM_BINDING RamDirect; // Direct access when the volume is on a QueueCache RAM disk.
-    volatile LONG RamDirectQueued, RamDirectProbe; // Large Direct reads on worker threads (copy flag 4).
     GUID RamResource;         // From the RAM disk's serial (EnsureDeviceGeometry).
     BOOLEAN RamSerial;
 #endif
@@ -173,7 +172,6 @@ static VOID RamDirectReadWorker(PDEVICE_OBJECT device, PVOID context)
         static_cast<ULONGLONG>(reinterpret_cast<ULONG_PTR>(irp->Tail.Overlay.DriverContext[2])),
         static_cast<ULONG>(reinterpret_cast<ULONG_PTR>(irp->Tail.Overlay.DriverContext[3])) };
     QcRamDirectFinishRead(&ext->RamDirect, irp, read);
-    InterlockedDecrement(&ext->RamDirectQueued);
     IoReleaseRemoveLock(&ext->RemoveLock, irp);
     IoCompleteRequest(irp, IO_NO_INCREMENT);
     IoFreeWorkItem(item);
@@ -1276,15 +1274,14 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
     // caller's thread. Declined requests continue on the standard path below.
-    // Copy flag 4: a large read is copied on a system worker thread instead while another one is
-    // queued there (and every 16th one, to notice a caller with several reads outstanding), so one
-    // caller's queued reads copy in parallel. Measured: one thread at Q8 copied at 26.5 GB/s,
-    // four threads at 40 GB/s. Never paging I/O.
+    // Copy flag 4: every large read is copied on a system worker thread instead, so one caller's
+    // queued reads copy in parallel. Measured: one thread at Q8 copied at 26.5 GB/s, four threads
+    // at 40 GB/s; offloading only while another read was queued (plus a 1-in-16 probe) never
+    // built up parallelism (0.4.439.1). Never paging I/O.
     bool declined = false;
     if (stack->MajorFunction == IRP_MJ_READ && ReadNoFence(&ext->RamDirect.Access) && !(irp->Flags & IRP_PAGING_IO) &&
         stack->Parameters.Read.Length >= 512 * 1024 && (ReadNoFence(&ext->Cache.CopyFlags) & QcCopyOffloadDirect) &&
-        KeGetCurrentIrql() == PASSIVE_LEVEL &&
-        (ReadNoFence(&ext->RamDirectQueued) > 0 || (InterlockedIncrement(&ext->RamDirectProbe) & 15) == 0))
+        KeGetCurrentIrql() == PASSIVE_LEVEL)
     {
         if (auto item = IoAllocateWorkItem(ext->Self))
         {
@@ -1295,7 +1292,6 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 irp->Tail.Overlay.DriverContext[1] = read.Buffer;
                 irp->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(read.At));
                 irp->Tail.Overlay.DriverContext[3] = reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(read.Length));
-                InterlockedIncrement(&ext->RamDirectQueued);
                 IoMarkIrpPending(irp);
                 IoQueueWorkItem(item, RamDirectReadWorker, DelayedWorkQueue, irp);
                 return STATUS_PENDING;
