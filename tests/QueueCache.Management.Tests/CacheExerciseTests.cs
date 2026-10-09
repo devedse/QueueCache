@@ -12,6 +12,15 @@ internal static class CacheExerciseTests
             try { action(); } catch (Exception e) when (e is ArgumentException or InvalidDataException) { return; }
             throw new Exception("Expected exercise rejection.");
         }
+        var pending = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var mismatch = new IOException("fixture byte mismatch");
+        var stopped = CacheExerciseTasks.CompleteWorkload(pending.Task, Task.FromException(mismatch));
+        Check(stopped.IsFaulted && !pending.Task.IsCompleted, "A failed oracle is reported before the workload completes.");
+        try { stopped.GetAwaiter().GetResult(); } catch (IOException error) { Check(ReferenceEquals(error, mismatch), "Oracle failure retains its original error."); }
+        var finishing = CacheExerciseTasks.CompleteWorkload(pending.Task, Task.CompletedTask);
+        Check(!finishing.IsCompleted, "An early successful oracle still waits for the workload.");
+        pending.SetResult(7);
+        Check(finishing.GetAwaiter().GetResult() == 7, "Successful score and oracle both complete before recording.");
         var options = new VerificationOptions("Q:", "cache-concurrency", DiskSpd: Environment.ProcessPath, BudgetMiB: 2048);
         VerificationPlan.Validate(options);
         var concurrency = CacheExercisePlan.Cases(options);

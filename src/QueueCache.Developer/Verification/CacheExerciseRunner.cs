@@ -96,6 +96,7 @@ public sealed partial class VerificationRunner
             Seconds = scenario.Seconds + 180
         }, children.Token, scenario.Seconds + 190);
         Task<string>? polling = null, oracle = null;
+        Task<DiskSpdScore>? workload = null;
         try
         {
             await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
@@ -120,9 +121,9 @@ public sealed partial class VerificationRunner
                 "-Z1M", $"-d{scenario.Seconds}", "-W0" };
             if (!sustained) arguments.Add($"-f{perFileMiB}M");
             if (scenario.Workload is "mixed" or "random-read") arguments.Add(scenario.Workload == "mixed" ? "-r64K" : "-r4K");
-            var score = await DiskTargets(scenario.Id + "-workload", sustained ? [Path.Combine(workDirectory, "writer.dat")] : targets,
+            workload = DiskTargets(scenario.Id + "-workload", sustained ? [Path.Combine(workDirectory, "writer.dat")] : targets,
                 arguments.ToArray(), children.Token);
-            if (oracle is not null) await oracle;
+            var score = await CacheExerciseTasks.CompleteWorkload(workload, oracle);
             var end = DateTimeOffset.UtcNow;
             storage.Write(scenario.Id + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
             File.WriteAllText(stop, "stop");
@@ -170,7 +171,7 @@ public sealed partial class VerificationRunner
         {
             File.WriteAllText(stop, "stop");
             children.Cancel();
-            foreach (var child in new Task?[] { telemetry, polling, oracle })
+            foreach (var child in new Task?[] { telemetry, polling, oracle, workload })
                 if (child is not null)
                     try { await child; } catch (Exception) { /* Retain the original failure. */ }
         }

@@ -3089,3 +3089,7 @@ build launches its test process below normal priority. The production gate was
 correct. Fixture tests now explicitly switch to Normal and restore the original
 priority, and separately prove below-normal execution is rejected before target
 access. Local compilation/host checks pass; corrected Windows CI remains pending.
+Oracle failure handling now cancels other streams and propagates a mismatch
+before the workload finishes. The coordinator cancels and awaits the owned score
+process before restoration. Host contracts exercise both early failure and early
+successful oracle completion.

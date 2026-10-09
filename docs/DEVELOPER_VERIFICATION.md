@@ -1402,6 +1402,10 @@ last-access timestamps disabled as described in [benchmark setup](BENCHMARKING.m
 Each run records immutable case IDs, the complete exercise plan, loaded-module
 provenance, raw XML, before/after snapshots and telemetry covering process startup
 through completion. Restoration uses the existing independent deadline.
+An oracle failure stops its other streams; the coordinator reports that failure,
+cancels its owned workload and waits for it to exit before restoration. Host-safe
+contracts exercise failure while the score is still pending and early successful
+oracle completion while the score continues.
 
 ```powershell
 qcache developer verify Q: --suite cache-concurrency --budget-mib 2048 --repeats 5 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results

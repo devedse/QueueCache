@@ -23,29 +23,39 @@ public static class ConcurrentCacheOracle
     public static async Task<CacheOracleResult> Run(string directory, int round, int seconds, Action<int, object> checkpoint)
     {
         const int bytes = 1 << 20;
+        using var failure = new CancellationTokenSource();
         var files = await Task.WhenAll(Enumerable.Range(0, 4).Select(stream => Task.Run(async () =>
         {
-            var name = $"oracle-r{round:D2}-s{stream}.dat";
-            var path = Path.Combine(directory, name);
-            var seed = checked(round * 100 + stream);
-            using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite))
+            try
             {
-                file.Write(Pattern(seed, 0, bytes));
-                file.Flush(true);
+                var name = $"oracle-r{round:D2}-s{stream}.dat";
+                var path = Path.Combine(directory, name);
+                var seed = checked(round * 100 + stream);
+                using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite))
+                {
+                    file.Write(Pattern(seed, 0, bytes));
+                    file.Flush(true);
+                }
+                var timer = Stopwatch.StartNew();
+                var epoch = 0;
+                byte[] expected;
+                do
+                {
+                    failure.Token.ThrowIfCancellationRequested();
+                    expected = Pattern(seed, ++epoch, bytes);
+                    UnbufferedFileWrite.WritePrefix(path, expected);
+                    if (!UnbufferedFileWrite.ReadPrefix(path, bytes).AsSpan().SequenceEqual(expected))
+                        throw new InvalidDataException($"Concurrent byte oracle mismatch: {name}, epoch {epoch}.");
+                    if (epoch % 20 == 1) checkpoint(stream, new { Name = name, Epoch = epoch, ElapsedSeconds = timer.Elapsed.TotalSeconds });
+                    await Task.Delay(250, failure.Token);
+                } while (timer.Elapsed.TotalSeconds < seconds);
+                return new CacheOracleFile(name, seed, epoch, Convert.ToHexString(SHA256.HashData(expected)));
             }
-            var timer = Stopwatch.StartNew();
-            var epoch = 0;
-            byte[] expected;
-            do
+            catch
             {
-                expected = Pattern(seed, ++epoch, bytes);
-                UnbufferedFileWrite.WritePrefix(path, expected);
-                if (!UnbufferedFileWrite.ReadPrefix(path, bytes).AsSpan().SequenceEqual(expected))
-                    throw new InvalidDataException($"Concurrent byte oracle mismatch: {name}, epoch {epoch}.");
-                if (epoch % 20 == 1) checkpoint(stream, new { Name = name, Epoch = epoch, ElapsedSeconds = timer.Elapsed.TotalSeconds });
-                await Task.Delay(250);
-            } while (timer.Elapsed.TotalSeconds < seconds);
-            return new CacheOracleFile(name, seed, epoch, Convert.ToHexString(SHA256.HashData(expected)));
+                failure.Cancel();
+                throw;
+            }
         })));
         return new(bytes, files, files.Sum(f => (long)f.Epoch));
     }
