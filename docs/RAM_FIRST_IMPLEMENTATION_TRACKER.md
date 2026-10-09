@@ -3109,5 +3109,9 @@ The following concurrency attempt
 is INCOMPLETE, 1/37: the oracle wrongly rejected Disable's intentional generation
 advance before comparing disk bytes. Restoration completed. Plan 101 corrects
 that lifecycle check and separates state evidence from byte evidence. Implementation
-complete; host regression and new VM matrices in progress. Consolidated results
+complete; host regression passes and the corrected VM sector oracle passes its
+128 active/post-drain byte pairs. Its focused RAM-read control and new VM matrices
+are in progress. Windows CI at `54339c7` exposed an outdated plan-100 fixture
+assertion; that assertion is updated to the documented plan-101 contract.
+Consolidated results
 and remaining decisions: [sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md).

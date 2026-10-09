@@ -83,8 +83,47 @@ wrong identity, retained data, errors and reservation changes.
 
 ## Performance findings
 
-The complete VM results and old/current Q8 write comparison are being collected.
-No new native speed-up is claimed at this stage.
+### Thirty-minute soak
+
+Run `QueueCache-Verify-20261009-130343-20af98641401425ab5705572c3d07e1c`,
+plan 100, managed runner from `ad7db99`, native 0.4.441.1, completed 6/6.
+The later runner changes concern fixture priority, failure cleanup, the sector
+target guard and Disable evidence; this healthy soak uses its recorded plan-100
+contracts. This is not a rerun with the latest managed binary.
+
+The fresh 1 GiB RAM-only reference measured Q1 **18,716.58 MiB/s** and Q8
+**36,858.24 MiB/s**, with zero lower attempts. All six episodes retained instance 6,
+generation 78 and the same payload capacity. No driver error was reported.
+Twenty score/reread intervals have complete telemetry coverage; the largest
+observed gap is 1.019 seconds, below the two-second bound. All 24 independent
+oracle files matched after drain; 24,414 exact 1 MiB write/read checks completed
+during the mixed windows. This verifies those oracle files, not DiskSpd's random
+write payload or forced kernel interleavings.
+
+| Episode | Mixed MiB/s | Recovery Q1 MiB/s | Recovery Q8 MiB/s | Q1 byte-hit % | Q8 byte-hit % | Map in-order % after mixed window |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 152.56 | 228.07 | 236.56 | 4.05 | 17.48 | 19.26 |
+| 2 | 169.66 | 229.47 | 233.37 | 4.10 | 17.50 | 6.95 |
+| 3 | 171.47 | 223.98 | 232.77 | 3.91 | 17.13 | 2.77 |
+| 4 | 174.87 | 223.68 | 228.87 | 3.90 | 17.01 | 1.37 |
+| 5 | 129.26 | 143.86 | 142.70 | 1.81 | 11.20 | 0.90 |
+| 6 | 69.12 | 116.88 | 129.57 | 0.78 | 8.79 | 0.67 |
+
+Every natural 20-second idle boundary still had a full cache, with zero dirty and
+in-flight bytes. Idle draining worked without emptying the cache. Recovery
+remained disk-bound; low residency prevents attributing this gap to RAM placement.
+Later mixed and disk-bound reread windows slowed together. This run does not
+isolate backend variability from admission behavior or prove that declining map
+order caused the decline.
+
+Source inspection suggests two mechanisms worth testing: `DemoteReadFill` keeps
+only one new fill in 16 recent, whereas existing hits become recent, and a hole
+in a staged read causes the whole request to be read from disk. The plan-99 proof
+passes increased the byte-hit share without reaching full residency. These are
+explanations supported by code and observations, not a causal optimization A/B.
+
+The concurrent-stream, polling-cost and old/current Q8 write results are still
+being collected. No new native speed-up is claimed.
 
 ## Next decisions
 
