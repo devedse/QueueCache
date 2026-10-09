@@ -3115,3 +3115,10 @@ are in progress. Windows CI at `54339c7` exposed an outdated plan-100 fixture
 assertion; that assertion is updated to the documented plan-101 contract.
 Consolidated results
 and remaining decisions: [sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md).
+Plan-101 full concurrency stopped at 10/37 on two lower paging-read attempts in
+the two-stream Deferred-write score; zero data-miss bytes, no drain writes/errors,
+clean restoration. The failed run is preserved. Plan 102 primes the exact write
+targets/shape outside scoring, retains those snapshots/XML and then uses the
+existing drain/quiet boundary. Strict zero-lower-attempt score checks and the
+72-case write-performance suite are unchanged. Implementation complete; focused
+VM regression pending. Windows Debug/Release CI passes at `a25d93c`.

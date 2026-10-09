@@ -10,7 +10,7 @@ acceptance is separate from successfully collecting a complete matrix.
 | Item | Implementation | Verification |
 |---|---|---|
 | Concurrent stream placement | Opt-in `cache-concurrency`, fixed total Q8 across one, two and four files; separate Q1 reference. | Host contracts and Windows CI pass; VM matrix in progress. |
-| Neighboring-sector correctness | 128 synchronized pairs of 512-byte writes in one cache block, unchanged guard bytes, cached and post-drain rereads. NTFS/512-byte sectors/4K cluster alignment required. | Host boundaries and Windows runner failure contracts pass; final VM check in progress. Submission does not force kernel overlap. |
+| Neighboring-sector correctness | 128 synchronized pairs of 512-byte writes in one cache block, unchanged guard bytes, cached and post-drain rereads. NTFS/512-byte sectors/4K cluster alignment required. | Plan-101 focused VM run completed 2/2: all sector/guard bytes matched and the strict RAM-read control completed. Host boundaries and Windows runner failure contracts pass. Submission does not force kernel overlap. |
 | Sustained mixed I/O | Six episodes without intervening clear/reallocation, independent byte oracles, natural idle boundaries and reread recovery. | Plan-100 VM run completed 6/6 with 24,414 exact write/read checks, all 24 post-drain files verified and clean restoration. |
 | Map polling cost | Complete allocation maps, ready handshake and interval coverage; off, two-second and 250 ms polling. | Host contracts pass; 2/4 GiB VM matrices in progress. |
 | Cache and RAM-disk map lifecycle | Reject obsolete/partial maps, clear unavailable state, stop cache polling on other pages and while hidden, request fresh data on return. | Frontend tests and Windows Debug/Release CI pass; generated README screenshots updated. |
@@ -33,7 +33,7 @@ SHA-256 `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
 The maintained foreground runner collects immutable case IDs, raw XML, interval
 telemetry, process ownership, control traces and independent restoration evidence.
 These are DiskSpd measurements, not CrystalDiskMark GUI scores.
-See [measurement contracts](DEVELOPER_VERIFICATION.md#concurrent-sustained-and-memory-map-exercises-plans-98101).
+See [measurement contracts](DEVELOPER_VERIFICATION.md#concurrent-sustained-and-memory-map-exercises-plans-98102).
 
 Fresh-reference, concurrency read and fitting Deferred-write controls require
 zero lower read/write/flush attempts, stable allocation and accounting for every
@@ -80,6 +80,18 @@ generation advance, unchanged instance/reservation/capacity and empty, error-fre
 state, then compares disk bytes separately. It records lifecycle snapshots and
 the expected/disk byte files. Host tests reject unchanged/extra generation changes,
 wrong identity, retained data, errors and reservation changes.
+
+Plan-101 concurrency attempt
+`QueueCache-Verify-20261009-134913-90855f89941f4b609682c2836fea2491`
+is INCOMPLETE, 10/37, clean restoration. The two-stream Deferred-write score had
+two lower paging-read attempts despite zero data-miss bytes, drain writes or
+errors. The driver recorded four paging reads (262,144 bytes) and seven admitted
+paging writes (25,088 bytes). Cold filesystem metadata on write-open is a working
+explanation, not proven file-level attribution. Plan 102 adds a separate one-second
+write preparation using the exact files/shape/payload before the existing explicit
+drain and quiet boundary. Its snapshots/XML are retained and must remain healthy.
+Scored controls still require zero lower attempts; no contamination allowance or
+retry is introduced. The original 72-case write-performance preparation is unchanged.
 
 ## Performance findings
 

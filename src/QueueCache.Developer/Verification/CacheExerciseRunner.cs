@@ -82,6 +82,17 @@ public sealed partial class VerificationRunner
         }
         if (!sustained)
             await WarmExercise(scenario.Id, targets, perFileMiB, token);
+        if (scenario.Workload == "write")
+        {
+            // A multi-target write had lower paging reads despite warm file data.
+            // Prime write handles with that exact target/shape outside scoring,
+            // retain the evidence, then drain and establish a quiet boundary below.
+            var primeBefore = await LayoutSnapshot(scenario.Id + "-write-prime-before.json", token);
+            var prime = await DiskTargets(scenario.Id + "-write-prime", targets,
+                ["-b1M", $"-o{scenario.QueueDepth}", "-t1", "-w100", "-Z1M", $"-f{perFileMiB}M", "-d1", "-W0"], token);
+            var primeAfter = await LayoutSnapshot(scenario.Id + "-write-prime-after.json", token);
+            CacheExerciseEvidence.Validate(primeBefore, primeAfter, prime.Bytes, "mixed", true);
+        }
         if (sustained && scenario.Repeat == 1)
             await ResidentReread(scenario.Id + "-fresh", token);
         await WaitForQuiet(scenario.Id + "-start", token);
