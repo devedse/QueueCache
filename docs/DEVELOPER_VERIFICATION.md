@@ -1392,3 +1392,52 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 `*-score-quietNa/b.json`. It only waits: the score checks are unchanged, and a
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
+
+## Concurrent, sustained and memory-map exercises (plan 98)
+
+These opt-in suites extend `qcache developer verify`; they never run as part of
+`full` or change the existing 72-case write-performance matrix. Use the same
+DiskSpd executable/hash and a normal-priority elevated process, with NTFS
+last-access timestamps disabled as described in [benchmark setup](BENCHMARKING.md#setup).
+Each run records immutable case IDs, the complete exercise plan, loaded-module
+provenance, raw XML, before/after snapshots and telemetry covering process startup
+through completion. Restoration uses the existing independent deadline.
+
+```powershell
+qcache developer verify Q: --suite cache-concurrency --budget-mib 2048 --repeats 5 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --suite cache-map-cost --budget-mib 4096 --repeats 5 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1 --soak-seconds 1800 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+- `cache-concurrency`: four separate stream files, with the combined accessed
+  prefix always half the cache budget. Shapes are one stream at Q1, one at Q8,
+  two at Q4 each and four at Q2 each. DiskSpd uses one thread per target. Read
+  controls and fitting Deferred writes must prove zero lower read/write/flush
+  attempts, unchanged allocation and accounting for all scored bytes. Eager
+  writes intentionally allow lower I/O. Shape and drain order reverse each repeat.
+  `--case-filter` can select a focused subset, which is never a full-matrix pass.
+- `cache-map-cost`: fitting random 4K reads with polling off, at the app's two-second
+  interval, and every 250 ms. A separate owned worker records map duration, CPU
+  time, allocation identity and complete-map counts. Its first sample must be ready
+  before the workload, and its samples must cover completion. Polling samples may
+  be at most the selected interval plus two seconds apart; normal driver telemetry
+  retains its stricter two-second bound. These reads also require zero lower I/O.
+- `cache-sustained`: six mixed 64K random read/write episodes over a file twice the
+  cache budget (30% writes). Their combined duration defaults to 30 minutes. Four
+  independent 1 MiB files are concurrently overwritten with deterministic bytes
+  and verified after every write. This oracle covers those four files, not DiskSpd's
+  random write payload. Every episode includes 20 seconds of natural idle time,
+  recorded before explicit flushing, and a warmed sequential reread at Q1/Q8.
+  No clear/reallocation occurs between episodes. After the sixth episode the cache
+  is disabled/drained and all 24 oracle files are independently reread from disk.
+  `--soak-seconds` accepts 120..3600, divisible by six; shorter than 1800 is a smoke
+  test, not sustained-use acceptance. `--repeats 1` is required; partial episodes
+  cannot be selected. Mixed-window disk I/O is intentional, while the final warmed
+  reread windows retain strict RAM-only checks.
+
+The map percentage counts possible links among used slots inside a chunk that
+join consecutive disk blocks. It is not a file-specific fragmentation measure or
+proof that the underlying physical RAM pages are adjacent. Compare occupancy,
+hit/miss counters and scored throughput as well as this percentage. Preparation
+and explicit flushes remain outside the scored DiskSpd span; enclosing snapshots
+and telemetry also include startup/teardown and are deliberately conservative.

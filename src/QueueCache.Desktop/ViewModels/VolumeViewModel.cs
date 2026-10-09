@@ -59,7 +59,7 @@ public sealed partial class VolumeViewModel : ObservableObject
     internal DateTimeOffset MapSampled { get; set; }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasLayoutMap), nameof(LayoutOrderText), nameof(LayoutFreeText))]
     private CacheLayoutMap? layoutMap;
-    public bool HasLayoutMap => LayoutMap is { Chunks: > 0 };
+    public bool HasLayoutMap => LayoutMap is { Chunks: > 0, IsComplete: true };
     public string LayoutOrderText => LayoutMap?.InOrder is { } order ? $"{order * 100:0}% in disk order" : "Nothing cached yet";
     public string LayoutFreeText => LayoutMap is { } map ? $"{map.FreeChunks:N0} of {map.TotalChunks:N0} free" : "";
 
@@ -147,6 +147,11 @@ public sealed partial class VolumeViewModel : ObservableObject
     /// <summary>A fresh driver sample. <paramref name="rates"/> is null for the first sample.</summary>
     internal void Apply(WriteCacheState state, CacheTelemetry? rates, DateTimeOffset now)
     {
+        if (State is null || State.Instance != state.Instance || State.Generation != state.Generation || state.PayloadCapacity == 0)
+        {
+            LayoutMap = null;
+            MapSampled = default;
+        }
         State = state;
         Sampled = now;
         IsStale = false;
@@ -216,6 +221,8 @@ public sealed partial class VolumeViewModel : ObservableObject
     internal void MarkStale()
     {
         IsStale = true;
+        LayoutMap = null;
+        MapSampled = default;
         Health = Health.Unknown;
         StatusText = "State unavailable";
         Description = "Waiting for a fresh answer from the driver. The last known state is not shown as live.";
@@ -226,6 +233,8 @@ public sealed partial class VolumeViewModel : ObservableObject
     internal void MarkUnavailable(Exception error)
     {
         State = null;
+        LayoutMap = null;
+        MapSampled = default;
         IsStale = false;
         HasCache = false;
         IsVolatile = false;

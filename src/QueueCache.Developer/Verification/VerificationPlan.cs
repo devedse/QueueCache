@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 97;
+    public const int Version = 98;
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -68,6 +68,9 @@ public static class VerificationPlan
         "trim-cache",
         "trim-diagnostic",
         "trim-file",
+        "cache-concurrency",
+        "cache-sustained",
+        "cache-map-cost",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -390,8 +393,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance, sequential-resident or drain-decision and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency or cache-map-cost and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -405,14 +408,18 @@ public static class VerificationPlan
                 "deadline 0 (unlimited) or 1..1440 minutes.");
         }
 
+        if (options.SoakSeconds is not null && options.Suite != "cache-sustained" ||
+            options.Suite == "cache-sustained" && (options.Repeats != 1 || (options.SoakSeconds ?? 1800) is < 120 or > 3600 || (options.SoakSeconds ?? 1800) % 6 != 0))
+            throw new ArgumentException("cache-sustained requires --repeats 1 and soak 120..3600 seconds divisible by six; --soak-seconds applies only to that suite.");
+
         if (options.CaseFilter is not null &&
-            (options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
+            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

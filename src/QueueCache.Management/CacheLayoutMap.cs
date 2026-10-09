@@ -10,9 +10,10 @@ public sealed record CacheLayoutMap(ulong ChunkBytes, ulong Generation, int Tota
     public const int HeaderSize = 32;
     public const int SlotsPerChunk = 64;
     public int Chunks => Used.Length;
+    public bool IsComplete => Chunks == TotalChunks;
     public int FreeChunks => Used.Count(u => u == 0);
-    /// <summary>Share of neighbouring cached slots kept in disk order (about 98% fresh, 0% scattered);
-    /// null when nothing is cached. Sequential reads from RAM are fastest when this is high.</summary>
+    /// <summary>Share of possible links among used slots within each chunk that join consecutive disk blocks;
+    /// null when nothing is cached. This describes block placement, not filesystem fragmentation or physical page adjacency.</summary>
     public double? InOrder
     {
         get
@@ -34,7 +35,8 @@ public sealed record CacheLayoutMap(ulong ChunkBytes, ulong Generation, int Tota
         var size = BinaryPrimitives.ReadUInt32LittleEndian(bytes[4..]);
         var total = BinaryPrimitives.ReadUInt32LittleEndian(bytes[8..]);
         var returned = BinaryPrimitives.ReadUInt32LittleEndian(bytes[12..]);
-        if (size != bytes.Length || size != HeaderSize + 4L * returned || returned > total)
+        if (size != bytes.Length || size != HeaderSize + 4L * returned || returned > total || total > int.MaxValue ||
+            BinaryPrimitives.ReadUInt64LittleEndian(bytes[16..]) != 256 * 1024)
             throw new InvalidDataException("Invalid cache layout map size.");
         var used = new byte[returned]; var dirty = new byte[returned]; var read = new byte[returned]; var ordered = new byte[returned];
         for (var i = 0; i < returned; i++)

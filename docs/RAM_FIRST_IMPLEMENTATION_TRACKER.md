@@ -3034,3 +3034,19 @@ pressure passed with write runs on; RAM disk round trips identical with offload 
 memory map polling at 8x the app rate only moved p99.99. Open: Q8 sequential write gap
 (3-14%), RAM disk Q8 reads (needs a different design). Details:
 [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401).
+
+### Concurrent and sustained cache validation (plan 98), 2026-10-09
+
+Implementation: new opt-in `cache-concurrency`, `cache-sustained` and
+`cache-map-cost` suites in the maintained runner. They compare fixed total Q8
+across 1/2/4 separate targets, retain strict lower-I/O checks for fitting Deferred
+writes/read hits, and distinguish intentional background/mixed disk I/O. The
+sustained run adds concurrent deterministic byte oracles, idle boundaries,
+sequential rereads and post-drain disk verification. Quiet waits now fail when
+all five attempts are exhausted and reject identity/error/flush changes.
+Memory views reject late, partial and changed-generation maps, clear maps when
+state goes stale or a cache is removed/resized, and explain their metric.
+
+Verification: host contracts and headless desktop tests passed. VM performance,
+long-run byte evidence, comparison to the old allocator, and CI are pending;
+no speed-up or resolved write regression is claimed at this point.

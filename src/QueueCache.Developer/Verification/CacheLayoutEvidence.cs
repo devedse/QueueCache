@@ -15,11 +15,15 @@ public static class CacheLayoutEvidence
 
     /// <summary>Nothing pending or written, and no disk reads, between two snapshots.</summary>
     public static bool IsQuiet(CacheLayoutSnapshot first, CacheLayoutSnapshot second) =>
+        first.State.Operational && second.State.Operational && first.State.Instance != 0 &&
+        first.State.Instance == second.State.Instance && first.State.Generation == second.State.Generation &&
+        first.State.PayloadCapacity == second.State.PayloadCapacity && first.State.Errors == second.State.Errors &&
+        first.State.LastError == 0 && second.State.LastError == 0 &&
         first.State.DirtyBytes == 0 && second.State.DirtyBytes == 0 &&
         first.State.InFlightBytes == 0 && second.State.InFlightBytes == 0 &&
         first.State.ReadMissBytes == second.State.ReadMissBytes && first.State.DrainedBytes == second.State.DrainedBytes &&
         first.Diagnostics.Attribution is { } a && second.Diagnostics.Attribution is { } b &&
-        a.LowerWriteAttempts == b.LowerWriteAttempts && a.LowerReadAttempts == b.LowerReadAttempts;
+        a.LowerWriteAttempts == b.LowerWriteAttempts && a.LowerReadAttempts == b.LowerReadAttempts && a.LowerFlushAttempts == b.LowerFlushAttempts;
 
     /// <summary>The measurement taken just before scoring must exist and cover the resident file.</summary>
     public static void ValidateLayout(CacheLayoutSnapshot measured, ulong? previousMeasurements)

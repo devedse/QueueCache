@@ -119,3 +119,11 @@ the view-model contracts against fixtures (no volume or disk is opened), then
 renders every page and dialog headlessly in light and dark and writes
 screenshots to the output folder (default `artifacts/ui-tests`). Review the
 screenshots when changing a view.
+
+Memory-map lifecycle (plan 98): the selected volume gets a map at most every two
+seconds. A response is published only while the same volume is still selected
+and its cache generation remains current. Partial replies (for example a resize
+during collection) are hidden. Stale/unavailable state, removal and allocation
+changes clear the prior map. The map tooltip describes within-chunk consecutive
+block placement, rather than filesystem fragmentation. Headless tests cover late
+selection replies, changed generations, partial maps, resize and stale state.

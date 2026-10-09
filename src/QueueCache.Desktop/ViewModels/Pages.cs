@@ -74,7 +74,10 @@ public sealed partial class CachesViewModel : ObservableObject
     partial void OnSelectedChanged(VolumeViewModel? oldValue, VolumeViewModel? newValue)
     {
         if (oldValue is not null)
+        {
             oldValue.MapRequested = false;
+            oldValue.LayoutMap = null;
+        }
         if (newValue is not null)
         {
             selectedId = newValue.Volume.VolumeId;

@@ -731,6 +731,46 @@ public static class VerificationWorker
             case "cache-layout-reset":
                 result = CacheLayoutResetProbe.Run(device, (name, evidence) => RunStorage.AtomicJson(job.Reply + "." + name + ".json", evidence));
                 break;
+            case "concurrent-oracle":
+                result = await ConcurrentCacheOracle.Run(job.WorkDirectory!, checked((int)job.Value), job.Seconds,
+                    (stream, progress) => RunStorage.AtomicJson(job.Reply + $".stream{stream}.json", progress));
+                break;
+            case "verify-concurrent-oracle":
+                result = ConcurrentCacheOracle.Verify(job.WorkDirectory!, job.OraclePath!);
+                break;
+            case "layout-map":
+                var mapTimer = Stopwatch.StartNew();
+                var mapState = device.GetWriteCacheState();
+                var map = device.GetLayoutMap(checked((int)(mapState.PayloadCapacity / (256 * 1024))));
+                result = new { Map = map, mapState.Instance, Milliseconds = mapTimer.Elapsed.TotalMilliseconds };
+                break;
+            case "map-poll":
+                using (var pollWriter = new StreamWriter(job.Reply, append: false))
+                {
+                    var pollTimer = Stopwatch.StartNew();
+                    using var pollProcess = Process.GetCurrentProcess();
+                    var pollCpuStart = pollProcess.TotalProcessorTime;
+                    while (pollTimer.Elapsed.TotalSeconds < job.Seconds)
+                    {
+                        var started = Stopwatch.GetTimestamp();
+                        var pollState = device.GetWriteCacheState();
+                        var polled = device.GetLayoutMap(checked((int)(pollState.PayloadCapacity / (256 * 1024))));
+                        await pollWriter.WriteLineAsync(JsonSerializer.Serialize(new
+                        {
+                            Utc = DateTimeOffset.UtcNow, polled.Generation, polled.TotalChunks, polled.Chunks,
+                            pollState.Instance, pollState.Errors, pollState.LastError,
+                            CpuMilliseconds = (pollProcess.TotalProcessorTime - pollCpuStart).TotalMilliseconds,
+                            polled.InOrder, polled.FreeChunks, UsedSlots = polled.Used.Sum(x => (long)x),
+                            Milliseconds = Stopwatch.GetElapsedTime(started).TotalMilliseconds
+                        }));
+                        await pollWriter.FlushAsync();
+                        if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
+                            RunStorage.AtomicJson(job.ReadyFile, new { Ready = true });
+                        if (File.Exists(job.StopFile)) break;
+                        await Task.Delay(checked((int)job.Value));
+                    }
+                }
+                return 0;
             case "snapshot":
                 result = new
                 {
@@ -804,12 +844,15 @@ public static class VerificationWorker
                 var directory = Path.GetFullPath(job.WorkDirectory!);
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
                     throw new IOException("Workload directory must be a new directory on the selected volume.");
-                if (new DriveInfo(target.Root).AvailableFreeSpace < ((long)job.BudgetMiB * 3 + 1024) * 1024 * 1024)
+                if (new DriveInfo(target.Root).AvailableFreeSpace < ((long)job.BudgetMiB * (job.Value == 1 ? 5 : 3) + 1024) * 1024 * 1024)
                     throw new IOException("Insufficient free space for unique workloads and headroom.");
                 Directory.CreateDirectory(directory);
                 var block = new byte[1 << 20];
                 Random.Shared.NextBytes(block);
-                foreach (var (name, length) in new[] { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) })
+                var workloadFiles = new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
+                if (job.Value == 1)
+                    workloadFiles.AddRange(Enumerable.Range(0, 4).Select(i => ($"stream-{i}.dat", job.BudgetMiB / 2)));
+                foreach (var (name, length) in workloadFiles)
                 {
                     using var file = new FileStream(Path.Combine(directory, name), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
                     for (var i = 0; i < length; i++)

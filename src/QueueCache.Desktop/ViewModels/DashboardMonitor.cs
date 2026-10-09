@@ -185,8 +185,12 @@ public sealed partial class DashboardMonitor : ObservableObject
             if (volume.MapRequested && now - volume.MapSampled >= TimeSpan.FromSeconds(2))
             {
                 volume.MapSampled = now;
-                try { volume.LayoutMap = await Caches.ReadLayoutMapAsync(volume.Volume); }
-                catch (Exception) { volume.LayoutMap = null; } // The map is optional; never fail the sample.
+                CacheLayoutMap? map;
+                try { map = await Caches.ReadLayoutMapAsync(volume.Volume); }
+                catch (Exception) { map = null; } // The map is optional; never fail the sample.
+                if (!closed && Owns(volume) && volume.MapRequested && !volume.IsStale &&
+                    volume.State is { } current && current.Instance == state.Instance && current.Generation == state.Generation)
+                    volume.LayoutMap = map is { IsComplete: true } && map.Generation == current.Generation ? map : null;
             }
             VirtualDisks.FirstOrDefault(d => d.Cache == volume)?.CacheSampled();
             _ = ApplyDeveloperSettingsAsync(volume, state);

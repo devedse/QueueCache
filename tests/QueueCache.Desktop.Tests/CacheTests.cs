@@ -5,8 +5,56 @@ using static Test;
 /// <summary>Volume caches as the monitor and the Caches page see them. No real volume is opened.</summary>
 internal static class CacheTests
 {
+    private static void MapLifecycle()
+    {
+        var volumes = new VolumeFixture();
+        var now = DateTimeOffset.UtcNow;
+        var monitor = new DashboardMonitor(volumes, new DiskFixture(), new FakeDialogs(), clock: () => now,
+            availableRam: () => 8UL << 30, usedLetters: () => new HashSet<char>());
+        Settle(monitor.RefreshAsync());
+        var page = new CachesViewModel(monitor);
+        var q = monitor.Volumes.Single(v => v.Volume.Volume == "Q:");
+        var s = monitor.Volumes.Single(v => v.Volume.Volume == "S:");
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        page.Select(q);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(q.HasLayoutMap && volumes.MapReads == 1, "the selected cache gets a complete map from its current allocation");
+        now += TimeSpan.FromMilliseconds(500);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 1, "map polling is limited to one request every two seconds");
+        now += TimeSpan.FromSeconds(2);
+        volumes.PendingMap = new();
+        var pending = monitor.SampleVolumeAsync(q);
+        page.Select(s);
+        volumes.PendingMap.SetResult(volumes.Map);
+        Settle(pending);
+        Check(!q.HasLayoutMap, "a map arriving after selection changed cannot republish the old cache");
+        volumes.PendingMap = null;
+        page.Select(q);
+        volumes.Map = volumes.Map! with { Generation = volumes.State.Generation + 1 };
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(!q.HasLayoutMap, "a map from another cache generation is rejected");
+        now += TimeSpan.FromSeconds(2);
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation, TotalChunks = 5 };
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(!q.HasLayoutMap, "a truncated map does not advertise totals for the complete cache");
+        now += TimeSpan.FromSeconds(2);
+        volumes.Map = DemoMap(4) with { Generation = volumes.State.Generation };
+        Settle(monitor.SampleVolumeAsync(q));
+        q.Apply(volumes.State with { Generation = volumes.State.Generation + 1 }, null, now);
+        Check(!q.HasLayoutMap, "a cache resize clears the prior allocation map immediately");
+        q.Apply(volumes.State, null, now);
+        Settle(monitor.SampleVolumeAsync(q));
+        Check(q.HasLayoutMap, "a fresh map returns after a cache allocation changes");
+        q.MarkStale();
+        Check(!q.HasLayoutMap, "stale cache state hides its memory map");
+        q.Apply(volumes.NoCache, null, now);
+        Check(!q.HasLayoutMap, "removing a cache clears the memory map");
+    }
+
     public static void Run()
     {
+        MapLifecycle();
         var volumes = new VolumeFixture();
         var dialogs = new FakeDialogs();
         var now = DateTimeOffset.UtcNow;

@@ -87,7 +87,8 @@
       <Border Classes="card" Name="MapCard" IsVisible="{Binding HasLayoutMap}">
         <StackPanel Spacing="10">
           <StackPanel Spacing="2">
-            <TextBlock Classes="strong" Text="Memory map" />
+            <TextBlock Classes="strong" Text="Memory map"
+                       ToolTip.Tip="Block placement in cache RAM. The percentage counts consecutive disk blocks placed next to each other within each chunk; it is not filesystem fragmentation." />
             <TextBlock Classes="secondary" TextWrapping="Wrap">
               <Run Text="{Binding LayoutOrderText}" /><Run Text=" · " /><Run Text="{Binding LayoutFreeText}" />
             </TextBlock>

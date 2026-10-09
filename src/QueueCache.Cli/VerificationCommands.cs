@@ -81,6 +81,10 @@ internal static class VerificationCommands
                                  cache, re-read, then ascending reset control. 18 cases; measures layout.
               cache-layout-full  Full cache: sequential fill past capacity, 120 s random 16K reads,
                                  re-read, then ascending reset control. 18 cases; measures layout.
+              cache-concurrency  Separate fitting files; 1/2/4 streams at total Q8, Q1 control, RAM-only and background-drain writes.
+              cache-sustained    Six mixed read/write episodes with concurrent byte oracles and idle rereads, never clearing.
+                                 --repeats 1, --soak-seconds 1800 (default); minimum 120 is a smoke test.
+              cache-map-cost     Resident 4K reads with map polling off, every 2 s, and every 250 ms.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
@@ -112,9 +116,10 @@ internal static class VerificationCommands
         var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 1024, Description = "Performance cache budget, 256..8192 MiB. Original configuration is restored." };
         var repeats = new Option<int>("--repeats") { DefaultValueFactory = _ => 3, Description = "Repetitions per performance case, 1..10; each retains separate evidence." };
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
+        var soak = new Option<int?>("--soak-seconds") { Description = "cache-sustained only: 120..3600 seconds, divisible by six. Default 1800; use --repeats 1." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
-        var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance, sequential-resident or drain-decision: case-sensitive ID substring. A selected run is not the complete matrix." };
+        var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance, sequential-resident, drain-decision, cache-concurrency or cache-map-cost: case-sensitive ID substring. A selected run is not the complete matrix." };
         var systemInstance = new Option<string?>("--system-instance") { Description = "System suites: exact expected C: physical-disk PnP instance ID." };
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
@@ -124,7 +129,7 @@ internal static class VerificationCommands
         var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         command.Arguments.Add(volume);
-        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter,
+        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
             systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition })
             command.Options.Add(option);
         command.SetAction((p, token) =>
@@ -133,7 +138,7 @@ internal static class VerificationCommands
             return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
             p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
-            p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition)),
+            p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak)),
             new ConsoleProgress(), token);
         });
         return command;

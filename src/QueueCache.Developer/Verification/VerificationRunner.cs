@@ -11,7 +11,7 @@ namespace QueueCache.Developer.Verification;
 
 /// <summary>Foreground coordinator. Driver calls live in owned child processes; no benchmark logic in the CLI.</summary>
 [SupportedOSPlatform("windows")]
-public sealed class VerificationRunner(string executable, IReadOnlyList<string>? executablePrefix = null, string? leaseDirectory = null)
+public sealed partial class VerificationRunner(string executable, IReadOnlyList<string>? executablePrefix = null, string? leaseDirectory = null)
 {
     private readonly IReadOnlyList<string> prefix = executablePrefix ?? [];
     private int sequence;
@@ -163,7 +163,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         VerificationPlan.Validate(selected);
         layoutGeneration = null;
         layoutMeasurements = null;
-        if (VerificationPlan.IsLayoutSuite(selected.Suite) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Cache layout suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -198,11 +198,13 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
         expected.AddRange(drainDecision.Select(c => c.Id));
+        expected.AddRange(exercises.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
         Log("Run directory: " + storage.DirectoryPath);
@@ -216,7 +218,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count} cases, not the complete suite matrix.");
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + exercises.Count} cases, not the complete suite matrix.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -226,6 +228,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             ExpectedCases = expected,
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
+            CacheExerciseCases = exercises,
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });
@@ -466,18 +469,24 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     return null;
                 });
-            if (performance.Count > 0 || drainDecision.Count > 0)
+            if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 await Worker(Job("prepare") with
                 {
                     WorkDirectory = workDirectory,
-                    BudgetMiB = options.BudgetMiB
+                    BudgetMiB = options.BudgetMiB,
+                    Value = exercises.Count > 0 ? 1UL : 0UL
                 }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => Measure(scenario, deadline.Token));
+                }
+                foreach (var scenario in exercises)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureExercise(scenario, deadline.Token));
                 }
                 foreach (var scenario in drainDecision)
                 {
@@ -697,6 +706,7 @@ public sealed class VerificationRunner(string executable, IReadOnlyList<string>?
             if (CacheLayoutEvidence.IsQuiet(first, await LayoutSnapshot($"{name}-quiet{attempt}b.json", token)))
                 return;
         }
+        throw new IOException("The cache did not stay quiet after five recorded attempts.");
     }
 
     private async Task<DiskSpdScore?> Measure(PerformanceCase scenario, CancellationToken token)
