@@ -219,10 +219,10 @@
         <!-- Where the disk's RAM sits in the machine's physical memory; fixed while the disk runs. -->
         <Border Classes="card" Name="PhysicalCard" IsVisible="{Binding HasPhysicalMap}">
           <StackPanel Spacing="8">
-            <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2">
               <TextBlock Classes="strong" Text="Place in physical memory" />
-              <TextBlock Grid.Column="1" Classes="secondary" Text="{Binding PhysicalText}" />
-            </Grid>
+              <TextBlock Classes="secondary" Text="{Binding PhysicalText}" TextWrapping="Wrap" />
+            </StackPanel>
             <ctl:PhysicalStrip Name="PhysicalStripControl" Map="{Binding PhysicalMap}" UsedBrush="{DynamicResource QcDisksBrush}"
                                TrackBrush="{DynamicResource QcFreeBrush}" AutomationProperties.Name="{Binding PhysicalText}" />
             <Grid ColumnDefinitions="*,*">

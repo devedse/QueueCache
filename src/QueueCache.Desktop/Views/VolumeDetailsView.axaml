@@ -86,12 +86,12 @@
       <!-- A defragmenter-style view of the cache's RAM; only for the selected cache, from newer drivers. -->
       <Border Classes="card" Name="MapCard" IsVisible="{Binding HasLayoutMap}">
         <StackPanel Spacing="10">
-          <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="2">
             <TextBlock Classes="strong" Text="Memory map" />
-            <TextBlock Grid.Column="1" Classes="secondary">
+            <TextBlock Classes="secondary" TextWrapping="Wrap">
               <Run Text="{Binding LayoutOrderText}" /><Run Text=" · " /><Run Text="{Binding LayoutFreeText}" />
             </TextBlock>
-          </Grid>
+          </StackPanel>
           <ctl:CacheMap Name="CacheMapControl" Map="{Binding LayoutMap}" ReadBrush="{DynamicResource QcReadBrush}"
                         WrittenBrush="{DynamicResource QcOnDiskBrush}" PendingBrush="{DynamicResource QcPendingBrush}"
                         FreeBrush="{DynamicResource QcFreeBrush}" MarkBrush="{DynamicResource TextFillColorPrimaryBrush}"
