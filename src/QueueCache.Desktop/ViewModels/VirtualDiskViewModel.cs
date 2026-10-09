@@ -146,6 +146,7 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
     internal void MarkUnavailable()
     {
         StateUnavailable = true;
+        PhysicalMap = null;
         Health = Health.Unknown;
         StatusText = "State unavailable";
         Headline = "State unavailable";

@@ -3057,4 +3057,7 @@ run `QueueCache-Verify-20261009-121724-e294932cf71f46baa28681a5fa0e98ce`
 stopped before scoring: a second half-budget file competed with the previously
 warmed file and still missed 37,789,696 bytes on its proof pass. No driver errors;
 restoration completed. This is INCOMPLETE, not a sustained-use pass. The corrected
-preparation and all six episodes still need VM proof.
+preparation and all six episodes still need VM proof. The RAM disk physical map
+now clears when its state is unavailable; frontend tests cover unavailable,
+fresh and stopped snapshots. Sector writers rendezvous before each pair so both
+workers are ready before submission; this still does not force kernel overlap.

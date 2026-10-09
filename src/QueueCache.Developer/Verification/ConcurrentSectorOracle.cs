@@ -40,10 +40,15 @@ public static class ConcurrentSectorOracle
         {
             var first = ConcurrentCacheOracle.Pattern(199, epoch, 512);
             var second = ConcurrentCacheOracle.Pattern(200, epoch, 512);
-            using var gate = new ManualResetEventSlim();
-            var a = Task.Run(() => { gate.Wait(); UnbufferedFileWrite.WriteRange(path, 0, first); });
-            var b = Task.Run(() => { gate.Wait(); UnbufferedFileWrite.WriteRange(path, 512, second); });
-            gate.Set();
+            using var gate = new Barrier(2);
+            void Write(long offset, byte[] bytes)
+            {
+                if (!gate.SignalAndWait(TimeSpan.FromSeconds(10)))
+                    throw new TimeoutException("Concurrent sector writers did not become ready together.");
+                UnbufferedFileWrite.WriteRange(path, offset, bytes);
+            }
+            var a = Task.Run(() => Write(0, first));
+            var b = Task.Run(() => Write(512, second));
             await Task.WhenAll(a, b);
             first.CopyTo(expected, 0);
             second.CopyTo(expected, 512);
@@ -57,7 +62,8 @@ public static class ConcurrentSectorOracle
             throw new IOException("Concurrent sector oracle lacks stable, error-free cache admission.");
         device.Control(WriteCacheAction.Disable);
         var drained = device.GetWriteCacheState();
-        if (drained.DirtyBytes != 0 || drained.InFlightBytes != 0 || drained.Errors != active.Errors || drained.LastError != 0 ||
+        if (drained.Enabled || drained.Instance != active.Instance || drained.Generation != active.Generation ||
+            drained.DirtyBytes != 0 || drained.InFlightBytes != 0 || drained.Errors != active.Errors || drained.LastError != 0 ||
             !UnbufferedFileWrite.ReadPrefix(path, expected.Length).AsSpan().SequenceEqual(expected))
             throw new InvalidDataException("Concurrent neighboring-sector oracle differs after cache drain.");
         return [new("concurrent-neighbor-sectors", "PASS",

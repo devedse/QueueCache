@@ -127,3 +127,5 @@ during collection) are hidden. Stale/unavailable state, removal and allocation
 changes clear the prior map. The map tooltip describes within-chunk consecutive
 block placement, rather than filesystem fragmentation. Headless tests cover late
 selection replies, changed generations, partial maps, resize and stale state.
+RAM disk physical maps also disappear when the disk's state is unavailable or
+stopped, and return with a fresh running snapshot.

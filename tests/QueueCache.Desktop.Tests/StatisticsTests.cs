@@ -16,6 +16,18 @@ internal static class StatisticsTests
         var shares = QueueCache.Desktop.Controls.PhysicalStrip.Shares(map);
         Check(map.Pages == (8UL << 30) / 4096 && shares.Length == RamPhysicalMap.Bins && shares.Max() == 1 && shares.Take(300).All(s => s == 0),
               "physical strip: full slices are fully coloured, unused RAM stays empty");
+        var record = Ram(out _) with { Physical = DemoPhysical(2UL << 30) };
+        var monitor = new DashboardMonitor(new VolumeFixture(), new DiskFixture { Records = [record] }, new FakeDialogs(),
+            usedLetters: () => new HashSet<char>());
+        Settle(monitor.SampleVirtualDisksAsync());
+        var disk = monitor.VirtualDisks.Single();
+        Check(disk.HasPhysicalMap, "a running RAM disk shows its allocation map");
+        disk.MarkUnavailable();
+        Check(!disk.HasPhysicalMap, "an unavailable RAM disk hides its old physical allocation map");
+        disk.Apply(record, DateTimeOffset.UtcNow);
+        Check(disk.HasPhysicalMap, "a fresh RAM disk snapshot restores its allocation map");
+        disk.Apply(record with { Native = null, Runtime = record.Runtime! with { State = ManagedDiskState.Stopped } }, DateTimeOffset.UtcNow);
+        Check(!disk.HasPhysicalMap, "a stopped RAM disk hides its allocation even if a record retains an old map");
     }
 
     private static void CacheMapFigures()
