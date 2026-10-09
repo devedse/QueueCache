@@ -206,8 +206,12 @@ internal static class CacheTests
         Check(shell.Page == AppPage.Caches && shell.Caches.Selected == stick && shell.CurrentPage == shell.Caches, "Add cache in the overview opens that volume on the Caches page");
         Check(shell.Caches.Rows.Count == 6 && shell.Caches.Rows[0] is DiskGroupViewModel && shell.Caches.Rows[2] is DiskGroupViewModel,
             "the Caches list shows each disk followed by its volumes");
-        shell.Settings.UpdateChoice = 3;
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 5d);
         Check(shell.Monitor.Interval == TimeSpan.FromSeconds(5) && store.Load().UpdateSeconds == 5, "the update interval setting applies at once and is saved");
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 0.1);
+        Check(shell.Monitor.Interval == TimeSpan.FromMilliseconds(100) && shell.Monitor.MapInterval == TimeSpan.FromMilliseconds(100) &&
+              store.Load().UpdateSeconds == 0.1 && shell.Settings.UpdateChoices[shell.Settings.UpdateChoice] == "Every 0.1 seconds",
+            "the 0.1-second preference updates live values and visible maps and is saved with its own label");
         shell.Settings.Theme = (int)AppTheme.Dark;
         Check(store.Load().Theme == AppTheme.Dark, "the theme setting is saved");
         shell.Stop();
@@ -242,6 +246,33 @@ internal static class CacheTests
         window.Show();
         Settle(shell.Monitor.SampleVolumeAsync(q));
         Check(volumes.MapReads == 2 && q.HasLayoutMap, "showing the window resumes with a fresh map");
+        var popout = QueueCache.Desktop.Views.CacheMapWindow.Open(window, q);
+        Check(ReferenceEquals(popout, QueueCache.Desktop.Views.CacheMapWindow.Open(window, q)), "reopening a cache map activates the existing window");
+        shell.Page = AppPage.Settings;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 3 && q.HasLayoutMap && q.MapRequested, "a visible pop-out keeps its map live on another page");
+        popout.WindowState = Avalonia.Controls.WindowState.Minimized;
+        now += TimeSpan.FromSeconds(3);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 3 && !q.MapRequested && !q.HasLayoutMap, "minimizing the only visible map stops requests and clears its snapshot");
+        popout.WindowState = Avalonia.Controls.WindowState.Maximized;
+        shell.Settings.UpdateChoice = Array.IndexOf(DesktopSettings.UpdateChoices, 0.1);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        now += TimeSpan.FromMilliseconds(100);
+        volumes.PendingMap = new();
+        var fastSample = shell.Monitor.SampleVolumeAsync(q);
+        Settle(shell.Monitor.SampleVolumeAsync(q));
+        Check(volumes.MapReads == 5 && !fastSample.IsCompleted, "100 ms sampling keeps one outstanding map request per volume");
+        popout.Close();
+        volumes.PendingMap.SetResult(volumes.Map);
+        Settle(fastSample);
+        volumes.PendingMap = null;
+        Check(!q.MapRequested && !q.HasLayoutMap, "a map arriving after its pop-out closes cannot republish a hidden snapshot");
+        popout = QueueCache.Desktop.Views.CacheMapWindow.Open(window, q);
+        volumes.Volumes = volumes.Volumes.Where(v => v.Volume != "Q:").ToArray();
+        Settle(shell.Monitor.RefreshAsync());
+        Check(!popout.IsVisible && !q.MapRequested, "replacing or removing the volume closes its pop-out and releases map polling");
         window.Close();
     }
 }

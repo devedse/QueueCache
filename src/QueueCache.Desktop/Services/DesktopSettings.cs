@@ -9,7 +9,7 @@ public enum AppTheme { System, Light, Dark }
 public sealed record DesktopSettings(double UpdateSeconds = 1, AppTheme Theme = AppTheme.System, bool KeepRunningInTray = true,
     bool DriverTiming = false, bool CallerPath = true)
 {
-    public static readonly double[] UpdateChoices = [0.5, 1, 2, 5, 10];
+    public static readonly double[] UpdateChoices = [0.1, 0.5, 1, 2, 5, 10];
 }
 
 public interface IDesktopSettingsStore

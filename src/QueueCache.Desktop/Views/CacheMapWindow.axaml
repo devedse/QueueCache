@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:QueueCache.Desktop.ViewModels"
+        xmlns:ctl="using:QueueCache.Desktop.Controls"
+        xmlns:views="using:QueueCache.Desktop.Views"
+        x:Class="QueueCache.Desktop.Views.CacheMapWindow"
+        x:DataType="vm:VolumeViewModel"
+        Title="{Binding Title, StringFormat='Memory map · {0}'}" Icon="/Assets/queuecache.ico"
+        Width="1100" Height="760" MinWidth="480" MinHeight="360"
+        WindowStartupLocation="CenterOwner" WindowState="Maximized"
+        Background="{DynamicResource SolidBackgroundFillColorBaseBrush}">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="24" RowSpacing="16">
+    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
+      <StackPanel Spacing="4">
+        <TextBlock Classes="subtitle" Text="{Binding Title, StringFormat='Memory map · {0}'}" />
+        <TextBlock Classes="secondary" IsVisible="{Binding HasLayoutMap}">
+          <Run Text="{Binding LayoutOrderText}" /><Run Text=" · " /><Run Text="{Binding LayoutFreeText}" />
+        </TextBlock>
+      </StackPanel>
+      <Button Grid.Column="1" Name="FullScreenButton" Content="Full screen" Click="ToggleFullScreen"
+              VerticalAlignment="Top" ToolTip.Tip="Toggle full screen (F11); Escape exits full screen" />
+      <Button Grid.Column="2" Name="CloseMapButton" Content="Close" Click="CloseMap" VerticalAlignment="Top" />
+    </Grid>
+    <Grid Grid.Row="1">
+      <ctl:CacheMap Name="ExpandedCacheMap" Map="{Binding LayoutMap}" CellLimit="32768" FillViewport="True"
+                    ReadBrush="{DynamicResource QcReadBrush}" WrittenBrush="{DynamicResource QcOnDiskBrush}"
+                    PendingBrush="{DynamicResource QcPendingBrush}" FreeBrush="{DynamicResource QcFreeBrush}"
+                    MarkBrush="{DynamicResource TextFillColorPrimaryBrush}" IsVisible="{Binding HasLayoutMap}"
+                    AutomationProperties.Name="{Binding LayoutOrderText}" />
+      <TextBlock Classes="secondary" Text="Waiting for a current memory map…" IsVisible="{Binding !HasLayoutMap}"
+                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+    </Grid>
+    <views:CacheMapLegend Grid.Row="2" />
+  </Grid>
+</Window>

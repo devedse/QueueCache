@@ -1,0 +1,38 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+       x:Class="QueueCache.Desktop.Views.CacheMapLegend">
+  <StackPanel Spacing="8">
+    <WrapPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcReadBrush}" />
+        <TextBlock Classes="caption secondary" Text="Read cache" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcOnDiskBrush}" />
+        <TextBlock Classes="caption secondary" Text="On disk, kept for reads" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+        <TextBlock Classes="caption secondary" Text="Not yet on disk" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcFreeBrush}" />
+        <TextBlock Classes="caption secondary" Text="Free" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <TextBlock Text="╱" FontWeight="Bold" />
+        <TextBlock Classes="caption secondary" Text="Out of disk order" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" />
+        <TextBlock Classes="caption secondary" Text="Darker: fuller" />
+      </StackPanel>
+      <StackPanel Classes="legend" Margin="0,0,16,4">
+        <Border Classes="swatch" Background="{DynamicResource QcPendingBrush}" Opacity="0.45" />
+        <TextBlock Classes="caption secondary" Text="Lighter: partly used" />
+      </StackPanel>
+    </WrapPanel>
+    <TextBlock Classes="caption secondary" TextWrapping="Wrap"
+               Text="Squares show 256 KiB chunks, grouped for larger caches. Marks show scattered disk blocks within a chunk." />
+  </StackPanel>
+</UserControl>

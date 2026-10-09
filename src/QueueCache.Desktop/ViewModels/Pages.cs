@@ -77,7 +77,8 @@ public sealed partial class CachesViewModel : ObservableObject
         if (oldValue is not null)
         {
             oldValue.MapRequested = false;
-            oldValue.LayoutMap = null;
+            if (!oldValue.MapRequested)
+                oldValue.LayoutMap = null;
         }
         if (newValue is not null)
         {
@@ -100,7 +101,8 @@ public sealed partial class CachesViewModel : ObservableObject
         if (Selected is { } volume)
         {
             volume.MapRequested = value;
-            volume.LayoutMap = null;
+            if (!volume.MapRequested)
+                volume.LayoutMap = null;
             volume.MapSampled = default;
         }
     }
@@ -244,7 +246,13 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public DesktopSettings Current { get; private set; }
     public IReadOnlyList<string> ThemeChoices { get; } = ["Use the Windows setting", "Light", "Dark"];
-    public IReadOnlyList<string> UpdateChoices { get; } = DesktopSettings.UpdateChoices.Select(s => s < 1 ? "Every half second" : s == 1 ? "Every second" : $"Every {s:0} seconds").ToArray();
+    public IReadOnlyList<string> UpdateChoices { get; } = DesktopSettings.UpdateChoices.Select(s => s switch
+    {
+        0.1 => "Every 0.1 seconds",
+        0.5 => "Every half second",
+        1 => "Every second",
+        _ => $"Every {s:0} seconds"
+    }).ToArray();
     public string Version { get; }
 
     public event EventHandler<DesktopSettings>? Changed;

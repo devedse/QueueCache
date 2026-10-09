@@ -49,6 +49,9 @@ public sealed partial class DashboardMonitor : ObservableObject
 
     /// <summary>Live values update at this interval; values older than three intervals are shown as unavailable.</summary>
     public TimeSpan Interval { get; set; } = TimeSpan.FromSeconds(1);
+    // Normal preferences retain the measured two-second map cadence; faster preferences
+    // also update visible maps faster. Per-volume Sampling prevents overlapping requests.
+    internal TimeSpan MapInterval => Interval < TimeSpan.FromSeconds(1) ? Interval : TimeSpan.FromSeconds(2);
     internal TimeSpan StaleAfter => TimeSpan.FromSeconds(Math.Max(3, Interval.TotalSeconds * 3));
     internal DateTimeOffset NextInventory { get; set; } = DateTimeOffset.MinValue;
     internal bool GlobalBusy { get; private set; }
@@ -159,7 +162,7 @@ public sealed partial class DashboardMonitor : ObservableObject
     public Task SampleAsync() => Task.WhenAll(Volumes.Concat(diskVolumes).ToArray().Select(SampleVolumeAsync));
 
     /// <summary>Still shown somewhere: a late sample for a replaced volume is dropped.</summary>
-    private bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);
+    internal bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);
 
     private void AttachDiskCaches()
     {
@@ -182,7 +185,7 @@ public sealed partial class DashboardMonitor : ObservableObject
             var now = clock();
             var rates = volume.State is null ? null : CacheTelemetry.Between(volume.State, state, now > volume.Sampled ? now - volume.Sampled : TimeSpan.FromTicks(1));
             volume.Apply(state, rates, now);
-            if (volume.MapRequested && now - volume.MapSampled >= TimeSpan.FromSeconds(2))
+            if (volume.MapRequested && now - volume.MapSampled >= MapInterval)
             {
                 volume.MapSampled = now;
                 CacheLayoutMap? map;

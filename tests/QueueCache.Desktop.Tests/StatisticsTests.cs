@@ -32,6 +32,8 @@ internal static class StatisticsTests
 
     private static void CacheMapFigures()
     {
+        Check(QueueCache.Desktop.Controls.CacheMap.Cells(DemoMap(8017), 32768).Length == 8017,
+            "the expanded map shows individual 256 KiB chunks at 2 GiB instead of grouping them");
         // Chunk 0 free; 1 full and in order (read); 2 pending; 3 scattered, written; 4 two used slots.
         var map = new CacheLayoutMap(256 * 1024, 1, 5, [0, 64, 64, 40, 2], [0, 0, 64, 0, 0], [0, 64, 0, 0, 2], [0, 63, 63, 3, 1]);
         var cells = QueueCache.Desktop.Controls.CacheMap.Cells(map);

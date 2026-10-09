@@ -3197,3 +3197,14 @@ read-recall trade-off, partly cached requests, the RAM disk's single-reader limi
 and the blocked downgrade; the old Q8 write-gap note is closed as not demonstrated.
 Open: the 72-case `write-performance` matrix on this build (owner go-ahead pending);
 partial-hit counters after the merge.
+
+2026-10-10 UI additions on PR #8. Implementation: a live cache-map pop-out with
+maximized/full-screen modes (F11/Escape), a shared darker/lighter occupancy legend,
+and a persisted 0.1-second application refresh option. Visible maps follow the
+fast preference; per-volume sample ownership prevents overlap, and minimizing or
+closing the pop-out releases its map request. Expanded maps fit the viewport and
+show up to 32,768 cells. Driver behavior is unchanged. Verification: desktop
+contracts pass, light/dark pop-out screenshots inspected, and README app maps
+regenerated. VM UI check pending; 72-case write-performance matrix
+now authorized, to follow the UI commit. Merge and follow-up performance branch
+are authorized after verification.

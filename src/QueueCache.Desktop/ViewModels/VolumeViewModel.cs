@@ -54,8 +54,22 @@ public sealed partial class VolumeViewModel : ObservableObject
     [ObservableProperty] private NoticeSeverity noticeSeverity;
     [ObservableProperty] private string supportDetails = "";
 
-    // Memory map, read only while this cache is selected (DashboardMonitor, every 2 s at most).
-    internal bool MapRequested { get; set; }
+    // The details pane and pop-out windows share one map sample for this volume.
+    private bool selectedMapRequested;
+    private int mapWindows;
+    internal bool MapRequested { get => selectedMapRequested || mapWindows > 0; set => selectedMapRequested = value; }
+    internal DashboardMonitor Monitor => monitor;
+    internal void AddMapWindow()
+    {
+        ++mapWindows;
+        MapSampled = default;
+    }
+    internal void RemoveMapWindow()
+    {
+        --mapWindows;
+        if (!MapRequested)
+            LayoutMap = null;
+    }
     internal DateTimeOffset MapSampled { get; set; }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasLayoutMap), nameof(LayoutOrderText), nameof(LayoutFreeText))]
     private CacheLayoutMap? layoutMap;
