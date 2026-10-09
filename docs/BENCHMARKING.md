@@ -12,9 +12,8 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
   Balanced power plan.
 - **Cache:** the drive with a 2 GiB Fast cache:
   `qcache policy apply Q: --budget-mib 2048 --accept-volatile-flush`.
-  Decide whether this is a fresh-allocation peak or a reused-cache measurement;
-  record that choice. Applying this command to an unchanged cache does not reset
-  allocation history. See the UI preparation steps below.
+  Since 0.4.431.1 a cleared cache refills in order, so drop-clean before each run
+  is enough (older drivers kept allocation history; see below).
 - **RAM disk:** `qcache disk create --mode ram --size-mib 4096 --letter T`
   (Direct access, the default). Remove it afterwards with
   `qcache disk stop <id> --discard` and `qcache disk remove <id>`.
@@ -34,7 +33,7 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 |---|---|---|
 | **Below-normal priority.** Task Scheduler starts programs at priority 7 (below normal, with low I/O and memory priorities) unless told otherwise, and DiskSpd inherits CrystalDiskMark's priority. | Cached SEQ1M Q8 read 16.4-17.7 instead of 28.9-30.6 GB/s; RAM disk SEQ1M Q8 write 16.3 instead of 24.7 GB/s; the uncached disk also improved from 262/116 to 640/270 MB/s. The experiment changed CPU, I/O and memory priorities together; it did not isolate their individual contributions. | Start CrystalDiskMark normally. When starting it from a scheduled task, use `New-ScheduledTaskSettingsSet -Priority 4` and check `Get-Process DiskMark64` shows `PriorityClass Normal`. |
 | **Leftovers in the cache.** The 2 GiB cache still held earlier test files. | Part of the new 1 GiB test file was pushed out and read from the disk: 5-20 GB/s instead of 26-30 GB/s. | `qcache policy drop-clean Q:` before each run (drops clean read/retained-write data, never unwritten data). |
-| **Allocation history.** Drop-clean empties data but preserves a free-slot order affected by earlier use. | Fully resident sequential reuse measured 29.8/10.8 GB/s (Q8/Q1), versus 36.9/15.5 with a fresh allocation; random reuse was slower still. | Keep and report allocation preparation consistently. Use the maintained `cache-layout` comparison below to distinguish reuse from fresh-allocation peaks. |
+| **Allocation history** (up to 0.4.430.1). Drop-clean emptied data but kept a free-slot order affected by earlier use. | Fully resident sequential reuse measured 29.8/10.8 GB/s (Q8/Q1), versus 36.9/15.5 with a fresh allocation. | Fixed by the chunk allocator (0.4.431.1). On older drivers, report fresh and reused results separately (`cache-layout` suite). |
 | **Right after a restart.** Windows' startup work (Defender, indexing) still running. | Lower and noisier results. | Wait at least 15 minutes after a restart; check the processor is idle. |
 | **Other programs.** A second benchmark, a game launcher updating, a VM host busy. | Lower results. | Close them; on a VM, check the host's load. |
 | **A notification over the window** (AutoPlay when a RAM disk appears). | Covers part of the screenshot. | Dismiss it before capturing. |
@@ -95,8 +94,8 @@ memory priority.
 
 ## Investigating allocation history
 
-`drop-clean` does not restore a newly allocated cache: clean slots return to its
-free list in eviction order. Reapplying the same budget also keeps the allocation.
+Up to 0.4.430.1, `drop-clean` did not restore a newly allocated cache: clean slots
+returned to a free list in eviction order (fixed by the chunk allocator in 0.4.431.1).
 To compare fresh allocation with reuse, use the maintained
 [`cache-layout` suite](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
 It verifies allocation generations, complete residency and zero lower I/O around
@@ -148,4 +147,4 @@ fresh peak alone does not establish sustained performance after ordinary use.
 
 Recreation is the demonstrated current reset method, not a requirement that every
 future optimization must free/reallocate RAM. Proposed ways to avoid the slowdown
-are recorded in the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented).
+are recorded in the [allocation investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#what-was-built-and-measured-plans-95-96).

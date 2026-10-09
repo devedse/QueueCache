@@ -1374,4 +1374,6 @@ results stay in the investigation record.
 1 prefetches the next block while a RAM hit is copied, 2 copies runs of whole,
 valid blocks that are memory neighbours with one copy. The flags change only how
 pinned hits are copied, apply live and are reported in diagnostics V19
-(`CopyFlags`), so every snapshot records the copy mode. They are runtime only.
+(`CopyFlags`), so every snapshot records the copy mode. Both are on by default
+since 0.4.434.1 (value 3); a coalesced run never crosses a 256 KiB chunk. Set 0 to
+compare against per-block copies; the setting lasts until the next restart.

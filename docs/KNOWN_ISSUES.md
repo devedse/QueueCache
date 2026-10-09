@@ -59,25 +59,22 @@ processor, or copy threads spinning) with the developer timing counters, then
 consider copying on the caller's thread when it is the only one waiting. Until then,
 benchmark at normal priority ([benchmarking](BENCHMARKING.md)).
 
-## Sequential reads slow down after cache allocation reuse (performance)
+## Fixed: sequential reads slowed down after cache allocation reuse (up to 0.4.430.1)
 
-On 0.4.414.1, a clean, fully resident cache can read sequentially more slowly after
-drop-clean/refill than after allocating the cache anew. In a controlled 24-case
-comparison, fresh Q8/Q1 medians were 36.850/15.462 GB/s, sequential reuse
-29.809/10.754, and random reuse 23.177/8.563. Recreating the allocation restored
-37.073/15.375. All score intervals had zero lower-I/O attempts, Verifier and timing
-were off, and restoration succeeded.
+Up to 0.4.430.1 a clean, fully resident cache read sequentially up to 45% slower
+after drop-clean and refill than after allocating it anew (Q1/Q8 10.8/29.8 GB/s
+after a sequential file, 8.6/23.2 after random reads, versus 15.5/36.9 fresh). The
+LIFO free-slot list handed slots back in reverse or random order. Since 0.4.431.1
+a chunk allocator fills each 256 KiB chunk upwards: reuse measures 14.6/35.7 and
+14.5/35.5 (fresh 15.1/35.9), and since 0.4.434.1 prefetch and in-chunk coalesced
+copies raise reads to about 19-21 GB/s Q1 and 37-39 GB/s Q8. See the
+[investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md).
 
-The cause is the free-slot order: clean LRU eviction feeds a LIFO free list, so a
-cleared sequential file refills in reverse slot order and random use leaves a
-random order. Rewriting only that order on the same allocation (0.4.423.1, plan
-93) restored 15.2/36.3 GB/s Q1/Q8; hardware cache/TLB costs were not isolated.
-It also happens without clearing: 60 s of random-read churn (plan 94) scattered 8%
-of a resident file and cost 9%/16% (Q1/Q8). Only order inside each 256 KiB chunk
-matters; a chunk allocator is proposed, not implemented. `drop-clean` and applying an unchanged budget
-do not recreate the allocation. No driver fix has been applied. Next: evaluate
-locality-preserving slot recycling against the maintained `cache-layout` suite
-and integrity checks. See [evidence and scope](CACHE_LAYOUT_INVESTIGATION_20261008.md).
+Still open: partial eviction leaves holes that no allocator joins (about 2-8% of
+neighbours out of order after churn; see idle defragmentation in the
+investigation), and sequential 1 MiB Q8 writes with write-back running measured
+8-14% lower with the chunk allocator (Q1 writes +28%, random writes unchanged),
+cause not yet known.
 
 ## Raw disk reads and writes bypass the cache (by design)
 

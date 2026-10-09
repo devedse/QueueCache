@@ -88,8 +88,9 @@
 - CrystalDiskMark numbers and screenshots: follow `docs/BENCHMARKING.md`. Above
   all, run CrystalDiskMark at normal priority (a scheduled task defaults to below
   normal and halved cached reads) and run `qcache policy drop-clean` before each run.
-  Drop-clean does not recreate the allocation: for resident sequential gaps use
-  the maintained `cache-layout` suite and report fresh/reused results separately
+  Since 0.4.431.1 a cleared cache refills in order (chunk allocator); RAM-hit copies
+  use prefetch and in-chunk coalescing by default (`copy-flags`, 0.4.434.1). Use the
+  `cache-layout*` suites for layout questions and record copy flags
   (`docs/CACHE_LAYOUT_INVESTIGATION_20261008.md`).
 - App screenshots are generated, never edited: `dotnet run --project
   tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images`.

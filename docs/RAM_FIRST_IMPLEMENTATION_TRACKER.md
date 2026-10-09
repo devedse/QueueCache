@@ -2967,7 +2967,7 @@ Full [results and limitations](CACHE_LAYOUT_INVESTIGATION_20261008.md); repeatab
 [method](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
 
 Follow-up design, 2026-10-08: [UI preparation and reset semantics](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
-are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented)
+are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#what-was-built-and-measured-plans-95-96)
 prioritize isolating free-slot order with unchanged buffers, then improving
 ordinary placement before considering idle compaction. Implementation: none of
 these optimizations is implemented. Verification: the plan-92 results above are
@@ -3007,7 +3007,7 @@ steady 18/18 completed with clean score windows. Medians Q1/Q8 GB/s: fresh
 scattered 8.48/22.64. Never cleared: 60 s random-read churn left 92% contiguous
 and 13.86/30.66 while about 1,500 whole chunks stayed free. Only order inside a
 256 KiB chunk matters. No production allocator change yet; design proposal in
-[the investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#proposed-design-not-implemented).
+[the investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#what-was-built-and-measured-plans-95-96).
 
 ### Chunk allocator and copy experiments (plan 96), 2026-10-08
 
@@ -3015,5 +3015,11 @@ Implementation: per-chunk free bitmaps replace the LIFO free list (open chunk fi
 upwards; wholly free chunks first, then the partial chunk that changed state last;
 O(1) list maintenance). Lab copy flags (prefetch next block, coalesce memory-neighbour
 runs) for A/B within one boot, reported in diagnostics V19. `cache-layout-patterns`
-retired. Verification: pending (baseline write-performance and cache-layout-full on
-0.4.426.1 first).
+retired. Verification (loaded driver hashes checked, Verifier/timing off, clean score
+windows): `quick`, `policies`, `pressure` pass on 0.4.431.1 and with copy flags 3 on
+0.4.433.1. cache-layout reuse Q1/Q8 14.61/35.66 and 14.50/35.48 (old allocator
+10.75/29.81, 8.56/23.18); steady/full churn unchanged; write-performance versus
+0.4.426.1: sequential Q1 +28%, random unchanged, sequential Q8 with write-back
+-8% to -14% (open). Copy flags (fresh Q1/Q8): 0 15.13/35.94, 1 18.25/37.44,
+2 uncapped 14.88/22.10, 2 capped 20.60/39.51, 3 20.85/39.36; both on by default
+since 0.4.434.1. Details: [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md).

@@ -158,56 +158,106 @@ Limits: churn was read-only and short; the cache was never completely full;
 writes, retained-write turnover and longer use are not measured. The hardware
 reason (prefetch, TLB or DRAM locality) for the direction effect is unmeasured.
 
-## Proposed design (not implemented)
+## What was built and measured (plans 95-96)
 
-The measurements make the target simple: **new data should fill a 256 KiB chunk
-upwards.** No global sort is needed, and RAM disks (fixed linear layout) are not
-affected; the disk image with RAM cache uses this cache and benefits.
+Every change was measured on the test VM with the maintained runner, the same CDM
+DiskSpd binary, Verifier and timing off, loaded driver hashes checked against CI,
+and only clean score windows (no misses, lower I/O, errors or reallocation).
+Medians of three repeats, GB/s, 1 MiB sequential reads of a 1 GiB file in a
+2 GiB Fast cache.
 
-1. **Chunk allocator instead of the LIFO free list.** Each chunk has exactly 64
-   slots, so its free map is one 64-bit word; the lowest free slot is one bit
-   scan. Allocation fills an open chunk upwards, opens whole free chunks first,
-   then the emptiest partial chunk (still upwards). Freeing sets a bit. This
-   never reverses order and would have used the free chunks in the churn test.
-   Moving no data, it changes only placement, not what is cached.
-2. **One open chunk per sequential stream.** A request continuing the previous
-   block range keeps its chunk; random small writes and fills share a separate
-   chunk, so parallel streams do not interleave inside a chunk.
-3. **Chunk-aware eviction.** Among the oldest clean blocks (for example the
-   oldest few hundred), prefer evicting those that complete a chunk, so whole
-   chunks free up naturally with little hit-rate cost.
-4. **Idle cleaner for a full cache.** Keep a small reserve of whole free
-   chunks (for example 8-32, at most about 1% of the cache) by moving the few live
-   blocks out of the emptiest chunks during idle time, in disk-offset order.
-   A move is a 4 KiB copy plus swapping the two slots' buffer pointers, so the
-   index and LRU stay unchanged. Skip pinned, in-flight, filling and (initially)
-   dirty blocks; small batches; stop on demand; never evict hot data for layout.
+**1. Chunk allocator (kept, 0.4.431.1+).** Per-chunk 64-bit free maps replace the
+LIFO free list: one open chunk fills upwards, wholly free chunks are used first,
+then the partial chunk that changed state last; O(1) bookkeeping.
+`quick`, `policies` and `pressure` pass.
 
-RAM-specific ideas beyond what an SSD can do (copies are cheap, nothing wears
-out, metadata is fast to scan):
+| Read after... | Old allocator Q1 / Q8 | Chunk allocator Q1 / Q8 |
+|---|---:|---:|
+| Fresh allocation | 15.46 / 36.85 | 15.13 / 35.94 |
+| Reuse after a sequential file + clear | 10.75 / 29.81 | 14.61 / 35.66 |
+| Reuse after random reads + clear | 8.56 / 23.18 | 14.50 / 35.48 |
 
-5. **Defragment on read.** Data read sequentially is the data whose layout
-   matters. When a sequential read hits scattered blocks, queue just that run
-   for re-placement into a fresh chunk at idle (it was just copied, so it is
-   already hot). Effort follows real access instead of scanning everything.
-6. **Software prefetch while copying scattered blocks.** The next block's buffer
-   address is known before the current copy starts; prefetching it may recover
-   part of the scattered penalty without moving any data. Cheap experiment.
-7. **Coalesced copies.** Once runs are contiguous, validate the run's blocks
-   (pins, valid sectors) and copy it with one memcpy of up to 256 KiB instead of
-   64 small copies; this may raise the peak above today's fresh numbers.
-8. **Large pages for chunk memory.** 2 MiB pages could cut TLB misses for both
-   good and scattered layouts; allocation can fail on fragmented RAM, so fall
-   back to normal pages. Experiment before relying on it.
-9. **Fragmentation in diagnostics and the UI.** The measured contiguous share is
-   a natural "fragmentation %" and can trigger the cleaner.
+It does not change partial eviction: after 60 s of random-read churn (steady)
+13.79 / 30.05 vs 13.86 / 30.66 before; in a full cache after 120 s of churn
+14.28 / 32.56 vs 14.15 / 33.17. Churn evicts parts of the file, and the parts
+that stay are elsewhere, which no placement policy can join without moving data.
 
-Suggested order: implement 1-2 and re-run `cache-layout-steady` plus the
-72-case `write-performance` suite; run experiments 6-8 independently (they may
-raise the peak regardless); add 3-4 only if a longer, write-including, truly full
-steady test still drifts. Every change needs byte-for-byte integrity checks with
-concurrent reads, writes and draining, overlapping/pinned versions, partial
-writes, capacity and error semantics, plus CPU cost and tail latency.
+Writes (`write-performance`, 72 cases, versus the old allocator on the same day):
+random 4K Q1/Q32 unchanged (-1.4% / +2.7%), sequential 1 MiB Q1 **+28%**
+(7.0 to 9.0 GB/s), sequential 1 MiB Q8 with write-back running **-8% to -14%**
+(within 5% with write-back off). The drain rate was about the same (155 vs 171
+MB/s, no capacity waits), so the Q8 drop is not explained yet; it is recorded in
+[known issues](KNOWN_ISSUES.md).
+
+**2. Copy experiments for RAM hits (kept, default on in 0.4.434.1).** Lab flags,
+A/B tested within one boot:
+
+| Copy flags | Fresh Q1 / Q8 | Reuse (seq) Q1 / Q8 | Reuse (random) Q1 / Q8 |
+|---|---:|---:|---:|
+| 0: one copy per 4 KiB block | 15.13 / 35.94 | 14.61 / 35.66 | 14.50 / 35.48 |
+| 1: prefetch the next block | 18.25 / 37.44 | 17.36 / 35.29 | 17.40 / 36.19 |
+| 2: copy runs, uncapped | 14.88 / **22.10** | 19.33 / 37.91 | 19.37 / 37.02 |
+| 2: copy runs within one chunk | 20.60 / 39.51 | 19.22 / 37.79 | 19.41 / 34.55 |
+| 3: prefetch + runs within one chunk | **20.85 / 39.36** | **19.34 / 37.71** | **19.32 / 37.17** |
+
+Uncapped runs could join neighbouring chunks into one 1 MiB copy and collapsed
+to 22 GB/s at Q8 on a fresh cache; capping a run at the 256 KiB chunk fixed
+that, which confirms the copy size was the cause (the exact system copy
+routine behaviour was not profiled). Prefetch also helps scattered data:
+Q1 +19% after steady and full-cache churn (16.42 and 17.01 GB/s). `quick`,
+`policies` and `pressure` pass with both flags on. Both are on by default;
+`qcache developer driver copy-flags <drive> 0` restores per-block copies.
+
+**3. Memory views (kept).** A read-only layout map per 256 KiB chunk drives the
+app's memory map (in-disk-order share, free chunks), and the RAM provider's
+physical map shows where a RAM disk's locked pages sit. See
+[desktop UI](DESKTOP_UI.md#memory-views).
+
+**Not built, with reasons:**
+
+- *One open chunk per stream.* The measured workloads were single-stream; a
+  1 MiB request already takes four consecutive chunk positions under the lock.
+  Needs a concurrent-stream test before it can be justified.
+- *Chunk-aware eviction and an idle cleaner.* In a full cache, data stayed
+  98% in disk order with the old and the new allocator (eviction reuses the
+  slot it just freed, in LRU order), so there was little to win.
+- *Large pages.* Shuffled 256 KiB chunks ran within 4% of a fresh layout, so
+  address translation is not the limit here; not pursued.
+- *Coalesced copies for writes.* Plausible fix for the Q8 write drop, but it
+  touches how write data is placed; postponed until it can get the same
+  integrity coverage.
+
+## Idle defragmentation: evaluated, not built
+
+What remains after partial eviction is holes: parts of a cached file evicted and
+re-read elsewhere. Idle defragmentation would move the surviving blocks next to
+each other. Measured on the final defaults (0.4.434.1, copy flags 3, clean windows):
+
+| Q1 / Q8 GB/s | Steady churn (60 s) | Full-cache churn (120 s) |
+|---|---:|---:|
+| Fresh | 20.65 / 40.59 | 20.65 / 40.01 |
+| After churn, file re-read | 19.15 / 34.45 | 19.54 / 36.02 |
+| Neighbours still in disk order | 97.7% | 99.2% |
+
+So the most idle defragmentation could recover here is 5-7% at Q1 and 10-15% at
+Q8, only for files that were partly evicted and are later read sequentially;
+even the churned file now reads faster at Q1 than a fresh cache did before these
+changes (15.5 GB/s). Moving cached blocks needs new locking around pins, drains
+and fills, and a mistake would silently corrupt cached data. Decision: not built
+now. The app's memory map shows the in-disk-order share of real caches; if real
+use shows much lower values than these tests, defragment-on-read (below) is the
+targeted next step.
+
+## Remaining ideas
+
+1. Find the cause of the -8% to -14% sequential Q8 write drop with write-back
+   running; try coalesced copies for writes with full integrity coverage.
+2. *Defragment on read*: when a sequential read finds a file's blocks in several
+   places, re-place just that run at idle. Only worth it if real workloads show
+   larger gaps than the tests above.
+3. A concurrent multi-stream layout test (two files read at once) before adding
+   per-stream open chunks.
+4. A long-running steady test including writes and retained-write turnover.
 
 ## Scope and provenance
 
