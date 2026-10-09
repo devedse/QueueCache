@@ -3174,5 +3174,14 @@ modes; the loop is 48.6% in both. The 30-minute `cache-sustained` soak on the sa
 driver completed 6/6 with clean restoration, 22,123 oracle checks and 24 post-drain
 files verified: the churned Q8 reread reached 15,620–19,877 MiB/s at 99.6–99.8% hits
 in every episode (plan 100, bimodal: 130–237 MiB/s, 8.8–17.5%), and the mixed
-windows kept a 53.6–55.1% RAM hit rate (43.3–58.2% before). 4 GiB map-cost rerun in
-progress.
+windows kept a 53.6–55.1% RAM hit rate (43.3–58.2% before). The 4 GiB map-cost
+rerun with exact warm passes completed 9/9 (clean restoration, zero lower attempts,
+complete 16,050-chunk maps): Off/2 s/250 ms medians 1,353.10/1,358.05/1,304.80
+MiB/s; two-second polling retained. Same-build switch off/on/off six-minute soaks
+(all 6/6, clean restoration) measured the trade-off: Q8 rereads 1,601–2,527 /
+27,554–30,216 / 2,674–26,622 MiB/s, while the 60-second mixed windows that follow
+a reread had 50.1 / 46.1 / 52.2% median RAM hits. Splitting the 30-minute soaks'
+windows: with read recall the first minute after a reread is ~7 points lower
+(42.5% vs 49.4%), minutes 2–5 ~4 points higher (58.6% vs 54.7%). The RAM-path
+regression check (`cache-concurrency --case-filter s1-q8`, 10/10) matches the
+plan-103 results within 0.6% for writes and is higher for reads. Kept on by default.
