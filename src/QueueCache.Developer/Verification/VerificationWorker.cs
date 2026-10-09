@@ -855,7 +855,7 @@ public static class VerificationWorker
                 Random.Shared.NextBytes(block);
                 var workloadFiles = new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
                 if (job.Value == 1)
-                    workloadFiles.AddRange(Enumerable.Range(0, 4).Select(i => ($"stream-{i}.dat", job.BudgetMiB / 2)));
+                    workloadFiles.AddRange(CacheExercisePlan.AllTargets(job.BudgetMiB).Select(file => (file.Name, file.MiB)));
                 foreach (var (name, length) in workloadFiles)
                 {
                     using var file = new FileStream(Path.Combine(directory, name), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
@@ -865,7 +865,8 @@ public static class VerificationWorker
                 }
                 result = new
                 {
-                    Directory = directory
+                    Directory = directory,
+                    Files = workloadFiles.Select(file => new { file.Name, MiB = file.Length }).ToArray()
                 };
                 break;
             case "application-flush":

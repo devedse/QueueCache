@@ -3122,3 +3122,11 @@ targets/shape outside scoring, retains those snapshots/XML and then uses the
 existing drain/quiet boundary. Strict zero-lower-attempt score checks and the
 72-case write-performance suite are unchanged. Implementation complete; focused
 VM regression pending. Windows Debug/Release CI passes at `a25d93c`.
+Plan-102 focused regression also failed on the same two paging reads, clean
+restoration; its write-prime pass did not help and is removed. The captured PID
+identifies Defender, and NTFS extents map the last read to the final 64 KiB of a
+1 GiB file beyond the 512 MiB hot prefix. Plan 103 uses distinct whole-file fixtures
+per shape, totaling half the budget; manifest/worker output records sizes and
+pre-warm checks enforce them. Defender stays enabled, no exclusions are used and
+strict score checks are unchanged. Implementation complete; host contracts and
+new VM regression pending. Windows Debug/Release CI passes at `7ebd503`.

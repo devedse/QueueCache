@@ -229,6 +229,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
             CacheExerciseCases = exercises,
+            CacheExerciseTargets = exercises.Count > 0 ? CacheExercisePlan.AllTargets(options.BudgetMiB) : [],
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });

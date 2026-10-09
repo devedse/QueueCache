@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 102;
+    public const int Version = 103;
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -384,6 +384,8 @@ public static class VerificationPlan
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
         if ((options.Suite is "sequential-resident" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
+        if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
+            throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
         if (options.Suite is "disk-removal" or "disk-removal-windows")
         {
             if (string.IsNullOrWhiteSpace(options.DisposableInstance) || options.DisposableBytes is null or <= 0)

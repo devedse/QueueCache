@@ -31,6 +31,17 @@ internal static class CacheExerciseTests
         var options = new VerificationOptions("Q:", "cache-concurrency", DiskSpd: Environment.ProcessPath, BudgetMiB: 2048);
         VerificationPlan.Validate(options);
         var concurrency = CacheExercisePlan.Cases(options);
+        foreach (var streams in new[] { 1, 2, 4 })
+        {
+            var targets = CacheExercisePlan.Targets(2048, streams);
+            Check(targets.Count == streams && targets.Sum(file => file.MiB) == 1024 &&
+                  targets.All(file => file.MiB == 1024 / streams), "Complete stream files fit the fixed half-budget working set.");
+        }
+        Check(CacheExercisePlan.AllTargets(2048).Select(file => file.Name).Distinct().Count() == 7,
+            "Each stream shape owns distinct complete files; no unaccessed tails require disk reads.");
+        Reject(() => CacheExercisePlan.Targets(2048, 3));
+        Reject(() => CacheExercisePlan.Targets(257, 4));
+        Reject(() => VerificationPlan.Validate(options with { BudgetMiB = 257 }));
         Check(VerificationPlan.Integrity(options).Single().Operation == "concurrent-sectors", "Concurrency verifies neighboring-sector bytes before performance.");
         Check(concurrency.Count == 36 && concurrency.Select(c => c.Id).Distinct().Count() == 36, "Concurrent plan has unique complete repetitions.");
         Check(concurrency.Where(c => c.QueueDepth != 1 || c.Streams != 1).All(c => c.Streams * c.QueueDepth == 8), "Concurrent shapes keep total queue depth at eight.");

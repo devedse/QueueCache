@@ -2,11 +2,23 @@ namespace QueueCache.Developer.Verification;
 
 public sealed record CacheExerciseCase(string Id, string Workload, int Streams, int QueueDepth,
     bool BackgroundDrain, int MapIntervalMs, int Seconds, int Repeat);
+public sealed record CacheExerciseTarget(string Name, int MiB);
 
 /// <summary>Focused workloads; the existing write-performance matrix remains unchanged.</summary>
 public static class CacheExercisePlan
 {
     public static bool Contains(string suite) => suite is "cache-concurrency" or "cache-sustained" or "cache-map-cost";
+
+    public static IReadOnlyList<CacheExerciseTarget> Targets(int budgetMiB, int streams)
+    {
+        if (streams is not (1 or 2 or 4) || budgetMiB < 8 || budgetMiB % (2 * streams) != 0)
+            throw new ArgumentException("Stream targets require one, two or four streams and an evenly divided half-budget working set.");
+        return Enumerable.Range(0, streams)
+            .Select(i => new CacheExerciseTarget($"stream-s{streams}-{i}.dat", budgetMiB / 2 / streams)).ToArray();
+    }
+
+    public static IReadOnlyList<CacheExerciseTarget> AllTargets(int budgetMiB) =>
+        [.. Targets(budgetMiB, 1), .. Targets(budgetMiB, 2), .. Targets(budgetMiB, 4)];
 
     public static IReadOnlyList<CacheExerciseCase> Cases(VerificationOptions options)
     {

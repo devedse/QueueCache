@@ -33,7 +33,7 @@ SHA-256 `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
 The maintained foreground runner collects immutable case IDs, raw XML, interval
 telemetry, process ownership, control traces and independent restoration evidence.
 These are DiskSpd measurements, not CrystalDiskMark GUI scores.
-See [measurement contracts](DEVELOPER_VERIFICATION.md#concurrent-sustained-and-memory-map-exercises-plans-98102).
+See [measurement contracts](DEVELOPER_VERIFICATION.md#concurrent-sustained-and-memory-map-exercises-plans-98103).
 
 Fresh-reference, concurrency read and fitting Deferred-write controls require
 zero lower read/write/flush attempts, stable allocation and accounting for every
@@ -92,6 +92,24 @@ write preparation using the exact files/shape/payload before the existing explic
 drain and quiet boundary. Its snapshots/XML are retained and must remain healthy.
 Scored controls still require zero lower attempts; no contamination allowance or
 retry is introduced. The original 72-case write-performance preparation is unchanged.
+
+Plan-102 focused attempt
+`QueueCache-Verify-20261009-140224-11f1238469ee41dda6df158cba547538`
+also remains INCOMPLETE, 2/2, clean restoration: two paging reads during the prime
+and two during the score. The last recorded read PID, 3636, identifies Defender's
+`MsMpEng.exe`, whose creation predates the run. Its 65,504,141,312-byte volume
+offset maps through the retained NTFS extents to file offset 1,073,676,288:
+the last 64 KiB of `stream-1.dat`. That file was 1 GiB, but the scored/warmed
+prefix was only 512 MiB. The cold tail explains the recorded read; it does not
+establish a data-write admission fallback. Attribution recorded two forwarded
+paging reads, zero data-miss bytes and zero drain writes.
+
+Plan 103 uses separate one/two/four-stream fixtures sized exactly to their
+combined half-budget working set, records those names/sizes and validates actual
+lengths before warming. The ineffective write-prime pass is removed. Defender
+stays enabled without exclusions. Strict zero-lower-attempt score checks remain
+unchanged. This isolates fitting data from an accidentally oversized fixture;
+it does not subtract antivirus I/O or accept contaminated scores.
 
 ## Performance findings
 
@@ -153,3 +171,17 @@ The memory-map percentage measures consecutive disk-block links inside cache
 chunks. It is neither file-specific fragmentation nor proof of contiguous physical
 RAM. RAM-disk physical maps report allocated page locations; cache maps report
 logical slot use. Neither view promises automatic relocation.
+
+A candidate admission experiment is a bounded history of recently evicted or
+missed disk blocks: repeated demand would insert them nearer the recent end,
+while a one-off scan would retain the current conservative treatment. This
+costs some RAM and bookkeeping; it must be measured against both fitting-file
+recovery and a large cold scan before adoption. More aggressive promotion alone
+could evict an established working set.
+
+If resident placement later proves limiting, RAM permits bounded copying without
+SSD erase/wear costs. A relocation experiment would need a small copy budget,
+idle detection that stops immediately when demand returns, and migration only
+when concurrent readers/writers/drainers can retain correct ownership. Cheap
+copies do not make synchronization free; neither copying nor physical page
+adjacency is justified merely by a low map percentage.

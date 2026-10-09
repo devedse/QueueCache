@@ -1393,7 +1393,7 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
 
-## Concurrent, sustained and memory-map exercises (plans 98–102)
+## Concurrent, sustained and memory-map exercises (plans 98–103)
 
 These opt-in suites extend `qcache developer verify`; they never run as part of
 `full` or change the existing 72-case write-performance matrix. Use the same
@@ -1419,13 +1419,14 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   controls and fitting Deferred writes must prove zero lower read/write/flush
   attempts, unchanged allocation and accounting for all scored bytes. Eager
   writes intentionally allow lower I/O. Shape and drain order reverse each repeat.
-  Plan 102 adds a one-second write preparation pass with the same files, shape
-  and precomputed payload, outside scoring. Read warm-up alone did not prevent
-  paging reads during multi-target writes on NTFS. Prime snapshots
-  and XML are retained; lifecycle/error checks still apply. The following explicit
-  drain and quiet boundary remain outside scoring, and score windows still require
-  exactly zero lower attempts. This changes the concurrency write preparation,
-  not the separate 72-case `write-performance` suite.
+  Plan 103 gives each shape distinct files whose entire sizes sum to half the
+  cache budget (budget must be divisible by eight). File sizes and names are in
+  the manifest/preparation reply and checked before warming. Previous shapes
+  used larger files with cold unaccessed tails: Defender's paging reads of those
+  tails contaminated multi-target write windows. Plan 102's attempted write-prime
+  pass did not remove them and is retired. Defender remains enabled; no exclusion
+  is used. Strict score checks still require exactly zero lower attempts. The
+  separate 72-case `write-performance` suite is unchanged.
   `--case-filter` can select a focused subset, which is never a full-matrix pass.
   Plan 99 first verifies 128 concurrent pairs of 512-byte writes to neighboring
   sectors in one 4K block, including unchanged guard bytes, while cached and after

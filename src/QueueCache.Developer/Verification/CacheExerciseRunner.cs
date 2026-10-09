@@ -70,8 +70,11 @@ public sealed partial class VerificationRunner
             await Control(WriteCacheAction.DropClean, token);
         }
         await Control(WriteCacheAction.PerformanceTiming, token, 0);
-        var targets = Enumerable.Range(0, scenario.Streams).Select(i => Path.Combine(workDirectory, $"stream-{i}.dat")).ToArray();
+        var targets = CacheExercisePlan.Targets(options.BudgetMiB, scenario.Streams)
+            .Select(file => Path.Combine(workDirectory, file.Name)).ToArray();
         var perFileMiB = options.BudgetMiB / 2 / scenario.Streams;
+        if (!sustained && targets.Any(file => new FileInfo(file).Length != ((long)perFileMiB << 20)))
+            throw new InvalidDataException("Stream file size differs from its complete fitting working set.");
         if (options.Suite == "cache-map-cost")
         {
             // Establish the hot reference before a cold scan fills the spare cache.
@@ -82,17 +85,6 @@ public sealed partial class VerificationRunner
         }
         if (!sustained)
             await WarmExercise(scenario.Id, targets, perFileMiB, token);
-        if (scenario.Workload == "write")
-        {
-            // A multi-target write had lower paging reads despite warm file data.
-            // Prime write handles with that exact target/shape outside scoring,
-            // retain the evidence, then drain and establish a quiet boundary below.
-            var primeBefore = await LayoutSnapshot(scenario.Id + "-write-prime-before.json", token);
-            var prime = await DiskTargets(scenario.Id + "-write-prime", targets,
-                ["-b1M", $"-o{scenario.QueueDepth}", "-t1", "-w100", "-Z1M", $"-f{perFileMiB}M", "-d1", "-W0"], token);
-            var primeAfter = await LayoutSnapshot(scenario.Id + "-write-prime-after.json", token);
-            CacheExerciseEvidence.Validate(primeBefore, primeAfter, prime.Bytes, "mixed", true);
-        }
         if (sustained && scenario.Repeat == 1)
             await ResidentReread(scenario.Id + "-fresh", token);
         await WaitForQuiet(scenario.Id + "-start", token);
