@@ -20,7 +20,19 @@ public static class ConcurrentSectorOracle
             throw new NotSupportedException("Concurrent shared-block sector oracle requires NTFS, 512-byte logical sectors and clusters aligned to 4K.");
     }
 
-    public static async Task<CheckResult[]> Run(DiskTarget target, CacheDevice device, string directory)
+    public static void ValidateDisabled(WriteCacheState active, WriteCacheState drained)
+    {
+        // Disable drains, clears clean slots and advances Generation once. It retains
+        // the instance and allocation; an unchanged generation is not a successful disable.
+        if (drained.Enabled || drained.Faulted || drained.Suspended || drained.Removed || drained.Draining ||
+            drained.Instance != active.Instance || drained.Generation != unchecked(active.Generation + 1) ||
+            drained.PayloadCapacity != active.PayloadCapacity || drained.ReservedBytes != active.ReservedBytes ||
+            drained.DirtyBytes != 0 || drained.InFlightBytes != 0 || drained.OccupiedSlots != 0 ||
+            drained.Errors != active.Errors || drained.LastError != 0)
+            throw new InvalidDataException("Concurrent sector oracle disable did not drain and clear the same allocation with one generation advance.");
+    }
+
+    public static async Task<CheckResult[]> Run(DiskTarget target, CacheDevice device, string directory, string evidence)
     {
         directory = Path.GetFullPath(directory + "-sector-oracle");
         if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
@@ -42,6 +54,7 @@ public static class ConcurrentSectorOracle
         }, true);
         device.Control(WriteCacheAction.PerformanceTiming, value: 0);
         var before = device.GetWriteCacheState();
+        RunStorage.AtomicJson(evidence + ".before.json", before);
         for (var epoch = 1; epoch <= 128; epoch++)
         {
             var first = ConcurrentCacheOracle.Pattern(199, epoch, 512);
@@ -62,15 +75,19 @@ public static class ConcurrentSectorOracle
                 throw new InvalidDataException($"Concurrent neighboring-sector oracle mismatch at epoch {epoch}.");
         }
         var active = device.GetWriteCacheState();
+        RunStorage.AtomicJson(evidence + ".active.json", active);
         if (!before.Operational || !active.Operational || before.Instance != active.Instance || before.Generation != active.Generation ||
             before.Errors != active.Errors || active.LastError != 0 || active.AcceptedBytes < before.AcceptedBytes ||
             active.AcceptedBytes - before.AcceptedBytes < 128UL * 1024)
             throw new IOException("Concurrent sector oracle lacks stable, error-free cache admission.");
         device.Control(WriteCacheAction.Disable);
         var drained = device.GetWriteCacheState();
-        if (drained.Enabled || drained.Instance != active.Instance || drained.Generation != active.Generation ||
-            drained.DirtyBytes != 0 || drained.InFlightBytes != 0 || drained.Errors != active.Errors || drained.LastError != 0 ||
-            !UnbufferedFileWrite.ReadPrefix(path, expected.Length).AsSpan().SequenceEqual(expected))
+        RunStorage.AtomicJson(evidence + ".disabled.json", drained);
+        ValidateDisabled(active, drained);
+        var diskBytes = UnbufferedFileWrite.ReadPrefix(path, expected.Length);
+        File.WriteAllBytes(evidence + ".expected.bin", expected);
+        File.WriteAllBytes(evidence + ".disk.bin", diskBytes);
+        if (!diskBytes.AsSpan().SequenceEqual(expected))
             throw new InvalidDataException("Concurrent neighboring-sector oracle differs after cache drain.");
         return [new("concurrent-neighbor-sectors", "PASS",
             $"128 concurrent pairs of 512-byte writes to one 4K block matched active and drained bytes, including 3072 untouched guard bytes. " +

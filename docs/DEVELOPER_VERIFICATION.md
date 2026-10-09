@@ -1393,7 +1393,7 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
 
-## Concurrent, sustained and memory-map exercises (plans 98–100)
+## Concurrent, sustained and memory-map exercises (plans 98–101)
 
 These opt-in suites extend `qcache developer verify`; they never run as part of
 `full` or change the existing 72-case write-performance matrix. Use the same
@@ -1427,6 +1427,10 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   fail clearly before creating the oracle file.
   Submission is concurrent but kernel overlap/order is not forced. This byte case
   does not claim zero lower I/O and is separate from the scored RAM-only controls.
+  Plan 101 checks the deliberate one-generation advance on Disable, alongside
+  unchanged instance/reservation/capacity and empty, error-free state. It records
+  before/active/disabled snapshots and separate expected/disk byte files. An
+  invalid lifecycle transition and a byte mismatch have distinct failure messages.
 - `cache-map-cost`: fitting random 4K reads with polling off, at the app's two-second
   interval, and every 250 ms. A separate owned worker records map duration, CPU
   time, allocation identity and complete-map counts. Its first sample must be ready

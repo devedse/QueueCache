@@ -1,6 +1,6 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-09-28. This is the authoritative execution tracker. Detailed
+Last updated: 2026-10-09. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
@@ -3097,3 +3097,17 @@ The neighboring-sector oracle now checks NTFS, 512-byte logical sectors and
 4K-aligned clusters before creating files, and records the cluster size. This
 ensures the two sectors share a cache block. Host target-boundary checks pass;
 the final VM check remains pending.
+
+Plan-100 full soak `QueueCache-Verify-20261009-130343-20af98641401425ab5705572c3d07e1c`
+completed 6/6 with clean restoration: 30 minutes of mixed I/O, 24,414 exact
+write/read checks and all 24 post-drain files verified. Natural rereads remain
+disk-bound with substantial misses; this is complete collection and the stated
+byte/lifecycle checks, not a residency-speed acceptance verdict.
+Windows Debug/Release CI passes through `59859a0`.
+The following concurrency attempt
+`QueueCache-Verify-20261009-134053-c604aa926e8d4582804bbbeffcd8bdac`
+is INCOMPLETE, 1/37: the oracle wrongly rejected Disable's intentional generation
+advance before comparing disk bytes. Restoration completed. Plan 101 corrects
+that lifecycle check and separates state evidence from byte evidence. Implementation
+complete; host regression and new VM matrices in progress. Consolidated results
+and remaining decisions: [sustained validation](SUSTAINED_CACHE_VALIDATION_20261009.md).

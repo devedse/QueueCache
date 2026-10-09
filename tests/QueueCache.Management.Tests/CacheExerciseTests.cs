@@ -51,6 +51,16 @@ internal static class CacheExerciseTests
 
         var state = new WriteCacheState(1 | 32 | 256 | 512, 0, 200UL << 30, 2UL << 30, 2UL << 30, 0, 0, 1UL << 30, 1, 0, 0, 0, 0, 0, 0, 0)
         { Instance = 7, Generation = 3 };
+        var disabled = state with { Flags = state.Flags & ~1u, Generation = 4, OccupiedSlots = 0 };
+        ConcurrentSectorOracle.ValidateDisabled(state, disabled);
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { Generation = 3 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { Generation = 5 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { Instance = 8 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { Flags = state.Flags }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { DirtyBytes = 512 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { OccupiedSlots = 1 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { Errors = 1 }));
+        Reject(() => ConcurrentSectorOracle.ValidateDisabled(state, disabled with { ReservedBytes = 0 }));
         var performance = JsonSerializer.Deserialize<CachePerformance>("{\"Frequency\":10000000}")!;
         var diagnostics = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { Attribution = JsonSerializer.Deserialize<CacheAttribution>("{}")! };
         var before = new CacheLayoutSnapshot(state, performance, diagnostics);

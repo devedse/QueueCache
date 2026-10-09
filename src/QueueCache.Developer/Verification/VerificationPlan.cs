@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 100;
+    public const int Version = 101;
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
