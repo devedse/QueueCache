@@ -46,6 +46,10 @@ internal static class CacheExerciseTests
         var io = after with { Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerWriteAttempts = 1 } } };
         Reject(() => CacheExerciseEvidence.Validate(before, io, 4096, "write", false));
         CacheExerciseEvidence.Validate(before, io, 4096, "mixed", true);
+        CacheExerciseEvidence.ValidateChurnedRead(before, io with { State = state with { ReadHitBytes = 2048, ReadMissBytes = 2048 } }, 4096);
+        Reject(() => CacheExerciseEvidence.ValidateChurnedRead(before, io, 8192));
+        Reject(() => CacheExerciseEvidence.ValidateChurnedRead(before, io with { State = state with { Generation = 4 } }, 4096));
+        Reject(() => CacheExerciseEvidence.ValidateChurnedRead(before, io with { State = state with { ReadMissBytes = 4096, Errors = 1 } }, 4096));
         Reject(() => CacheExerciseEvidence.Validate(before, after with { State = after.State with { Errors = 1 } }, 4096, "mixed", true));
         Check(!CacheLayoutEvidence.IsQuiet(before, before with { State = state with { Generation = 4 } }), "Quiet waits reject allocation changes.");
         Check(ConcurrentCacheOracle.Pattern(1, 2, 4096).SequenceEqual(ConcurrentCacheOracle.Pattern(1, 2, 4096)) &&

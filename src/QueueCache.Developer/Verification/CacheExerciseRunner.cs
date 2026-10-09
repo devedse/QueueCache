@@ -73,8 +73,13 @@ public sealed partial class VerificationRunner
         var targets = Enumerable.Range(0, scenario.Streams).Select(i => Path.Combine(workDirectory, $"stream-{i}.dat")).ToArray();
         var perFileMiB = options.BudgetMiB / 2 / scenario.Streams;
         if (options.Suite == "cache-map-cost")
+        {
+            // Establish the hot reference before a cold scan fills the spare cache.
+            // Otherwise this tests scan-resistant admission, not map polling cost.
+            await WarmExercise(scenario.Id + "-pre-fill", targets, perFileMiB, token);
             await Disk(scenario.Id + "-fill", Path.Combine(workDirectory, "writer.dat"),
                 ["-b1M", "-o8", "-t1", "-w0", $"-d{Math.Max(10, options.BudgetMiB / 128)}", "-W0"], token);
+        }
         if (!sustained)
             await WarmExercise(scenario.Id, targets, perFileMiB, token);
         if (sustained && scenario.Repeat == 1)
@@ -148,7 +153,7 @@ public sealed partial class VerificationRunner
                 // A real period of low usage precedes any explicit flush. Preserve both boundaries.
                 await Task.Delay(TimeSpan.FromSeconds(20), token);
                 await LayoutSnapshot(scenario.Id + "-idle.json", token);
-                await ResidentReread(scenario.Id + "-reread", token);
+                await ChurnedReread(scenario.Id + "-reread", token);
                 if (scenario.Repeat == 6)
                 {
                     await Control(WriteCacheAction.Disable, token);
@@ -179,10 +184,66 @@ public sealed partial class VerificationRunner
         await ExerciseMap(id, token);
         foreach (var depth in new[] { 1, 8 })
         {
-            var before = await LayoutSnapshot($"{id}-q{depth}-before.json", token);
-            var score = await DiskTargets($"{id}-q{depth}", files, ["-b1M", $"-o{depth}", "-t1", "-w0", $"-f{options.BudgetMiB / 2}M", "-d5", "-W0"], token);
-            var after = await LayoutSnapshot($"{id}-q{depth}-after.json", token);
+            var (before, after, score) = await RecordedReread($"{id}-q{depth}", files, depth, token);
             CacheExerciseEvidence.Validate(before, after, score.Bytes, "read", false);
+        }
+    }
+
+    private async Task ChurnedReread(string id, CancellationToken token)
+    {
+        // The preceding idle snapshot was taken before this explicit flush. Do not
+        // warm/clear/reallocate: how quickly the real cache recovers is the measurement.
+        await WaitForQuiet(id, token);
+        foreach (var depth in new[] { 1, 8 })
+        {
+            var prefix = $"{id}-q{depth}";
+            var (before, after, score) = await RecordedReread(prefix, [Path.Combine(workDirectory, "resident.dat")], depth, token);
+            CacheExerciseEvidence.ValidateChurnedRead(before, after, score.Bytes);
+            storage.Write(prefix + "-recovery.json", new
+            {
+                Measurement = "Churned reread; disk misses allowed, not a RAM-only score",
+                HitBytes = after.State.ReadHitBytes - before.State.ReadHitBytes,
+                MissBytes = after.State.ReadMissBytes - before.State.ReadMissBytes,
+                score.Bytes, score.Seconds
+            });
+        }
+        await ExerciseMap(id, token);
+    }
+
+    private async Task<(CacheLayoutSnapshot Before, CacheLayoutSnapshot After, DiskSpdScore Score)> RecordedReread(
+        string id, IReadOnlyList<string> files, int depth, CancellationToken token)
+    {
+        var before = await LayoutSnapshot(id + "-before.json", token);
+        var stop = storage.PathFor(id + ".stop");
+        var ready = storage.PathFor(id + ".ready.json");
+        using var child = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var telemetry = Worker(Job("telemetry") with
+        {
+            Reply = storage.PathFor(id + "-telemetry.jsonl"), StopFile = stop, ReadyFile = ready, Seconds = 190
+        }, child.Token, 200);
+        try
+        {
+            await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
+            var start = DateTimeOffset.UtcNow;
+            var score = await DiskTargets(id, files,
+                ["-b1M", $"-o{depth}", "-t1", "-w0", $"-f{options.BudgetMiB / 2}M", "-d10", "-W0"], child.Token);
+            var end = DateTimeOffset.UtcNow;
+            storage.Write(id + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
+            File.WriteAllText(stop, "stop");
+            await telemetry;
+            var samples = File.ReadAllLines(storage.PathFor(id + "-telemetry.jsonl"))
+                .Select(line => JsonSerializer.Deserialize<ExerciseSample>(line) ?? throw new InvalidDataException("Missing reread telemetry.")).ToArray();
+            TelemetryCoverage.Validate(samples.Select(s => s.Utc).ToArray(), start, end);
+            if (samples.Any(s => s.State.Instance != before.State.Instance || s.State.Generation != before.State.Generation ||
+                                 !s.State.Operational || s.State.Errors != before.State.Errors || s.State.LastError != 0))
+                throw new IOException("Cache identity, lifecycle or error state changed during the reread.");
+            return (before, await LayoutSnapshot(id + "-after.json", token), score);
+        }
+        finally
+        {
+            File.WriteAllText(stop, "stop");
+            child.Cancel();
+            try { await telemetry; } catch (Exception) { /* Keep the primary failure. */ }
         }
     }
 

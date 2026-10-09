@@ -3071,3 +3071,16 @@ those states, with fresh-map requests on return; 8/32 GiB grouping fixtures pass
 Added Windows runner contracts for rejecting empty/failing concurrent-sector
 checks before workload preparation, retaining a complete immutable plan and
 restoring ownership; their CI run is pending.
+
+Plan-99 long attempt `QueueCache-Verify-20261009-123638-526002062ef94655aad8118e88279f01`
+is INCOMPLETE, 1/6, clean restoration. After its five-minute mixed episode the
+five proof passes still missed 676/533/430/350/279 MB; throughput stayed near
+239 MiB/s and the last proof read less than the complete 1 GiB prefix. This is
+slow scan-resistant residency recovery, not a reported byte mismatch or driver
+fault. It remains an open performance finding.
+Plan 100 separates the strict fresh RAM reference from natural post-churn
+rereads with hit/miss accounting and their own telemetry coverage, so the full
+soak measures recovery rather than forcing it. Map-cost preparation establishes
+its hot reference before filling spare space and re-proves it afterward. Strict
+RAM-only controls are unchanged. Implementation/host checks complete; new VM
+smoke, full soak and remaining matrices pending.

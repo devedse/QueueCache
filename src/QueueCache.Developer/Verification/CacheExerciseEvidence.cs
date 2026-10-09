@@ -4,6 +4,17 @@ namespace QueueCache.Developer.Verification;
 
 public static class CacheExerciseEvidence
 {
+    /// <summary>A churned file can fit yet no longer be resident. Measure its actual
+    /// recovery with disk I/O, while still requiring stable identity and byte accounting.</summary>
+    public static void ValidateChurnedRead(CacheLayoutSnapshot before, CacheLayoutSnapshot after, long bytes)
+    {
+        Validate(before, after, bytes, "mixed", true);
+        var a = before.State; var b = after.State;
+        if (b.ReadHitBytes < a.ReadHitBytes || b.ReadMissBytes < a.ReadMissBytes ||
+            checked((b.ReadHitBytes - a.ReadHitBytes) + (b.ReadMissBytes - a.ReadMissBytes)) < (ulong)bytes)
+            throw new InvalidDataException("Churned reread failed to account for all scored bytes as RAM hits or disk misses.");
+    }
+
     public static void Validate(CacheLayoutSnapshot before, CacheLayoutSnapshot after, long bytes, string workload, bool drain)
     {
         var a = before.State; var b = after.State;

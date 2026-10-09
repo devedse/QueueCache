@@ -1393,7 +1393,7 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
 
-## Concurrent, sustained and memory-map exercises (plans 98–99)
+## Concurrent, sustained and memory-map exercises (plans 98–100)
 
 These opt-in suites extend `qcache developer verify`; they never run as part of
 `full` or change the existing 72-case write-performance matrix. Use the same
@@ -1427,26 +1427,44 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   before the workload, and its samples must cover completion. Polling samples may
   be at most the selected interval plus two seconds apart; normal driver telemetry
   retains its stricter two-second bound. These reads also require zero lower I/O.
+  Plan 100 warms the reference before a cold scan fills spare cache space, then
+  independently re-proves residency. Every map spans the entire allocation;
+  occupancy is recorded rather than assumed to be full.
 - `cache-sustained`: six mixed 64K random read/write episodes over a file twice the
   cache budget (30% writes). Their combined duration defaults to 30 minutes. Four
   independent 1 MiB files are concurrently overwritten with deterministic bytes
   and verified after every write. This oracle covers those four files, not DiskSpd's
   random write payload. Every episode includes 20 seconds of natural idle time,
-  recorded before explicit flushing, and a warmed sequential reread at Q1/Q8.
+  recorded before explicit flushing, and a sequential reread at Q1 then Q8.
   No clear/reallocation occurs between episodes. After the sixth episode the cache
   is disabled/drained and all 24 oracle files are independently reread from disk.
   `--soak-seconds` accepts 120..3600, divisible by six; shorter than 1800 is a smoke
   test, not sustained-use acceptance. `--repeats 1` is required; partial episodes
-  cannot be selected. Mixed-window disk I/O is intentional, while the final warmed
-  reread windows retain strict RAM-only checks.
+  cannot be selected. Mixed-window disk I/O is intentional.
+  Plan 100 keeps a fresh, strictly proven RAM-only Q1/Q8 reference before churn;
+  each later ten-second reread records actual RAM hits and disk misses without
+  forced warming. Q8 follows Q1's natural reads, so these are recovery stages,
+  not an independent queue-depth comparison. Reread telemetry has its own ready
+  handshake and complete interval coverage. All rereads require stable lifecycle,
+  identity, error state and accounting for every scored byte. Churned rereads
+  explicitly allow lower I/O and must never be presented as pure RAM-copy scores.
 
 Plan 99 records up to five warm-up attempts for scan-resistant cache insertion:
 each reads the complete accessed prefix, then requires a separate stable,
 zero-miss second pass. Only observed read misses in an otherwise stable,
 error-free allocation allow another attempt. Every attempt has unique raw output;
 exhaustion fails. This never clears a churned cache, relaxes score checks or retries
-driver faults. The first sustained episode warms only its reread reference; unused
+driver faults. The first sustained episode warms only its fresh reference; unused
 stream files do not compete with that reference during preparation.
+
+Why plan 100 changed the sustained contract: the plan-99 long run stopped after
+its first five-minute mixed episode because the full scan-resistant cache still
+had misses after five warm-up attempts. A fitting file is not guaranteed to be
+resident after churn. Requiring that proof before continuing hid the recovery
+behavior this suite should measure. The old run remains INCOMPLETE; its failed
+residency check is not converted to a pass. RAM-only concurrency, map-cost and
+fresh-reference checks remain strict. Completion of the new soak establishes
+byte/lifecycle checks and complete measurements, not a reread speed target.
 
 The map percentage counts possible links among used slots inside a chunk that
 join consecutive disk blocks. It is not a file-specific fragmentation measure or
