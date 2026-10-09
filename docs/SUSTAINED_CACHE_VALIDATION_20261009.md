@@ -9,10 +9,10 @@ acceptance is separate from successfully collecting a complete matrix.
 
 | Item | Implementation | Verification |
 |---|---|---|
-| Concurrent stream placement | Opt-in `cache-concurrency`, fixed total Q8 across one, two and four files; separate Q1 reference. | Host contracts and Windows CI pass; VM matrix in progress. |
+| Concurrent stream placement | Opt-in `cache-concurrency`, fixed total Q8 across one, two and four files; separate Q1 reference. | Plan-103 VM matrix completed 37/37 with clean restoration; all RAM-only controls had zero lower attempts. Host contracts and Windows CI pass. |
 | Neighboring-sector correctness | 128 synchronized pairs of 512-byte writes in one cache block, unchanged guard bytes, cached and post-drain rereads. NTFS/512-byte sectors/4K cluster alignment required. | Plan-101 focused VM run completed 2/2: all sector/guard bytes matched and the strict RAM-read control completed. Host boundaries and Windows runner failure contracts pass. Submission does not force kernel overlap. |
 | Sustained mixed I/O | Six episodes without intervening clear/reallocation, independent byte oracles, natural idle boundaries and reread recovery. | Plan-100 VM run completed 6/6 with 24,414 exact write/read checks, all 24 post-drain files verified and clean restoration. |
-| Map polling cost | Complete allocation maps, ready handshake and interval coverage; off, two-second and 250 ms polling. | Host contracts pass; 2/4 GiB VM matrices in progress. |
+| Map polling cost | Complete allocation maps, ready handshake and interval coverage; off, two-second and 250 ms polling. | 2 GiB VM matrix completed 9/9 with clean restoration and zero lower attempts. The 4 GiB matrix is in progress. |
 | Cache and RAM-disk map lifecycle | Reject obsolete/partial maps, clear unavailable state, stop cache polling on other pages and while hidden, request fresh data on return. | Frontend tests and Windows Debug/Release CI pass; generated README screenshots updated. |
 | Larger map display | Group at most 2,048 displayed cells and explain the grouping accurately. | 8/32 GiB frontend fixtures pass. A 32 GiB allocation has not been exercised on the 16 GiB VM. |
 | Failure cleanup | Oracle faults stop other streams, cancel/await the owned workload before restoration. | Host coordinator tests and Windows runner contracts pass. |
@@ -161,8 +161,62 @@ in a staged read causes the whole request to be read from disk. The plan-99 proo
 passes increased the byte-hit share without reaching full residency. These are
 explanations supported by code and observations, not a causal optimization A/B.
 
-The concurrent-stream, polling-cost and old/current Q8 write results are still
-being collected. No new native speed-up is claimed.
+### Concurrent stream shapes
+
+Run `QueueCache-Verify-20261009-142400-9963ca8d9903485bacc5610b4d5f4153`,
+plan 103, runner from `3360135`, native 0.4.441.1, completed 37/37 with clean
+restoration. Three repetitions, five-second scores, 2 GiB cache and a combined
+1 GiB working set. Read and Deferred-write controls had exactly zero lower
+read/write/flush attempts; all score windows retained copy flags 3 and stable
+allocation/error state. The neighboring-sector oracle also passed.
+
+MiB/s median [minimum, maximum] across all three complete repetitions:
+
+| Streams × queue per stream | RAM reads | Deferred writes (`-Z1M`) | Eager writes (`-Z1M`) |
+|---|---:|---:|---:|
+| 1 × Q1 reference | 18,300 [17,931, 19,175] | 13,256 [13,120, 13,330] | 12,970 [12,921, 13,209] |
+| 1 × Q8 | 34,704 [26,813, 36,028] | 20,603 [20,472, 20,638] | 20,491 [20,483, 20,541] |
+| 2 × Q4 | 34,154 [32,715, 35,722] | 20,332 [20,244, 20,368] | 20,009 [19,982, 20,092] |
+| 4 × Q2 | 31,999 [30,102, 32,296] | 20,028 [19,911, 20,266] | 19,909 [19,748, 19,937] |
+
+Four-stream read median is 7.8% below single-stream Q8, but the single-stream
+range overlaps both multiple-stream ranges. Four-stream write medians are about
+2.8% lower, with tighter ranges. In-chunk order before scoring is 99.6–100% across
+these shapes. This establishes measured stream-shape differences; it does not
+identify allocation placement as their cause. Thread/queue/copy costs and
+between-chunk locality are not isolated here. No per-stream allocator change is
+justified by this matrix alone. Profile if this workload matters before selecting
+an optimization.
+
+### Full-allocation map polling
+
+2 GiB run `QueueCache-Verify-20261009-145657-f0e75731497d457abf6db793df301ed3`,
+plan 103, completed 9/9 with clean restoration. Three repetitions per cadence,
+ten-second fitting random 4K Q8 reads. Every scored control had zero lower
+read/write/flush attempts. Maps covered all 8,024 chunks and 513,536 occupied slots
+(the complete payload capacity), with stable identity and interval coverage.
+
+| Polling interval | Throughput MiB/s median [min, max] | Read p99 ms, median | Steady map ms, median [max] | Poll-worker CPU ms, median [min, max] |
+|---|---:|---:|---:|---:|
+| Off | 1,389.55 [1,376.20, 1,421.44] | 0.045 | N/A | N/A |
+| 2 seconds | 1,383.92 [1,340.45, 1,434.60] | 0.047 | 1.622 [19.897] | 46.875 [15.625, 62.500] |
+| 250 ms | 1,399.04 [1,377.76, 1,407.13] | 0.045 | 1.404 [10.910] | 375.000 [281.250, 437.500] |
+
+Normal polling's median differs by -0.4% from Off; the ranges overlap. The stress
+cadence does not establish a throughput gain. These measurements support keeping
+the existing two-second interval. Hidden-page/window gating avoids unnecessary
+queries; its frontend tests prove zero requests in those states.
+
+Steady map durations exclude the initial ready sample. CPU is the recorded
+poll-worker delta between first and last samples, covering roughly 12.05–12.07 s
+at two-second cadence and 10.26–11.02 s at 250 ms, including the ending coverage
+sample. The process-time counter has coarse increments. This measures native/API
+polling and recording cost, not Avalonia rendering or total VM CPU. Generated
+frontend fixtures validate grouping/lifecycle; they are not runtime rendering
+benchmarks.
+
+The 4 GiB polling and old/current Q8 write results are still being collected.
+No new native speed-up is claimed.
 
 ## Next decisions
 
@@ -171,6 +225,7 @@ being collected. No new native speed-up is claimed.
 | Faster admission of repeatedly read sequential data | Continue; highest priority if slow recovery persists. | Compare an admission policy with current one-in-16 recent insertion. Preserve one-off scan resistance, Fast admission, capacity backpressure and byte/order checks. |
 | Read only missing ranges of a partly cached request | Investigate after admission. | Compare coalesced lower ranges against whole-request reads, including lower bytes, attempt count, ordering and errors. One hole currently sends the entire staged request to disk; a high byte-hit ratio alone may remain slow. |
 | Per-stream chunk placement | Conditional on concurrent-stream evidence. | Demonstrate a repeatable placement penalty before changing allocation. Warmed overwrites reuse their existing slots. |
+| Cache write-copy batching | Measured and removed (0.4.439.1, copy flag 8). | One copy per in-chunk run for cache writes passed integrity but gave +1.5% at Q1 and noise at Q8 ([layout investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401)). Revisit only with a profile showing per-block copy overhead. |
 | Idle relocation/defragmentation | Defer pending a fully resident placement bottleneck. | Demonstrate a throughput gain with a bounded migration budget and concurrent byte/order coverage. Relocation cannot restore data absent from RAM. |
 | Large-page allocations | Defer; not ruled out by these runs. | Profile translation/copy costs and perform a controlled A/B; map appearance is insufficient. |
 | RAM-disk Q8 read redesign | Separate follow-up. | Profile the provider path and try one design at a time. Prior system-worker offload experiments did not improve it. |

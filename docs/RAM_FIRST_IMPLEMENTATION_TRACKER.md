@@ -3136,3 +3136,17 @@ pairs and post-drain guards matched; the two-stream Deferred-write control measu
 data misses. Defender remained enabled. This verifies the focused fixture fix,
 not a full matrix or native speed-up. Windows Debug/Release CI passes at `3360135`;
 complete concurrency and 2/4 GiB polling matrices are running with that runner.
+Plan-103 full concurrency completed 37/37 with clean restoration. Three complete
+repetitions retained zero lower attempts for read/Deferred controls and copy flags
+3. Q8 read medians: one/two/four streams 34,704/34,154/31,999 MiB/s; write Deferred
+20,603/20,332/20,028 and Eager 20,491/20,009/19,909 MiB/s (`-Z1M`, not comparable
+with the separate `-Zr` matrix). In-chunk order is 99.6–100%; no placement cause
+or per-stream allocator improvement is proved. Polling matrices and the old/current
+Q8 write recheck remain in progress.
+Plan-103 2 GiB map-cost completed 9/9, clean restoration and zero lower attempts
+in every score; complete full-allocation maps (8,024 chunks, 513,536 used slots)
+and interval coverage. Median MiB/s Off/2 s/250 ms: 1,389.55/1,383.92/1,399.04,
+overlapping ranges; no throughput gain claimed. Normal steady map median 1.622 ms;
+recorded polling-window CPU median 46.875 ms over roughly 12 s. This excludes UI
+rendering. Existing two-second cadence retained; 4 GiB and old/current Q8 checks
+remain in progress.
