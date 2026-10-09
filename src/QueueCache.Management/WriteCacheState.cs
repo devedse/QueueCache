@@ -182,7 +182,6 @@ public enum WriteCacheAction : uint
     /// <summary>Diagnostic only: measure block/memory adjacency into <see cref="CacheDiagnostics.Layout"/>.</summary>
     LabMeasureLayout,
     /// <summary>Lab: value = 1 prefetch next block | 2 copy runs within a 256 KiB chunk at once, for RAM-hit copies.
-    /// Both are on by default (3); 0 restores the per-block copy for comparisons. 4: on a RAM disk volume with
-    /// Direct access, large reads are copied on worker threads so one caller's queued reads run in parallel.</summary>
+    /// Both are on by default (3); 0 restores the per-block copy for comparisons.</summary>
     LabCopyFlags
 }

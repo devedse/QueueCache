@@ -76,18 +76,6 @@ void QcRamDirectInitialize(QC_RAM_BINDING* binding);        // AddDevice
 NTSTATUS QcRamViewControl(PIRP irp);                         // Budget device, kernel registration
 // Hot path. True when served: IoStatus is set and the caller completes the IRP.
 bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp);
-// A Direct read split in two so the copy can run on another thread (copy flag 4): Prepare
-// validates, holds the store (rundown) and maps the buffer, declining exactly as Transfer would
-// (false: continue on the standard path). Finish copies, counts, releases the store and sets
-// IoStatus; it cannot decline, so a prepared read is always served.
-struct QC_RAM_DIRECT_READ
-{
-    PUCHAR Buffer;
-    ULONGLONG At;
-    ULONG Length;
-};
-bool QcRamDirectPrepareRead(QC_RAM_BINDING* binding, PIRP irp, QC_RAM_DIRECT_READ* read);
-void QcRamDirectFinishRead(QC_RAM_BINDING* binding, PIRP irp, const QC_RAM_DIRECT_READ& read);
 void QcRamDirectObserveControl(QC_RAM_BINDING* binding, ULONG code);
 // PASSIVE_LEVEL. lower is the next device in the volume stack.
 void QcRamDirectBind(QC_RAM_BINDING* binding, PDEVICE_OBJECT lower, const GUID& resource, ULONGLONG volumeBytes, ULONG flags);

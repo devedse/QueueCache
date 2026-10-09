@@ -73,8 +73,10 @@ copies raise reads to about 19-21 GB/s Q1 and 37-39 GB/s Q8. See the
 Still open: partial eviction leaves holes that no allocator joins (about 2-8% of
 neighbours out of order after churn; see idle defragmentation in the
 investigation), and sequential 1 MiB Q8 writes with write-back running measured
-8-14% lower with the chunk allocator (Q1 writes +28%, random writes unchanged),
-cause not yet known.
+3-14% lower with the chunk allocator (Q1 writes +28-33%, random writes unchanged).
+Lock and queue waits went down, and one copy per run did not help, so the cost is
+most likely concurrent writers filling neighbouring memory; next test: one open
+chunk per concurrent request.
 
 ## Raw disk reads and writes bypass the cache (by design)
 

@@ -159,24 +159,6 @@ static NTSTATUS ForwardQueryPnpState(QC_EXTENSION* ext, PIRP irp)
 }
 #endif
 
-#if QCACHE_CACHE_DRIVER
-// Copy flag 4: finishes a large Direct read prepared in dispatch; the store stays held until then,
-// so the read cannot be declined here and a disk stop waits for it.
-static IO_WORKITEM_ROUTINE RamDirectReadWorker;
-static VOID RamDirectReadWorker(PDEVICE_OBJECT device, PVOID context)
-{
-    const auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
-    const auto irp = static_cast<PIRP>(context);
-    const auto item = static_cast<PIO_WORKITEM>(irp->Tail.Overlay.DriverContext[0]);
-    const QC_RAM_DIRECT_READ read{ static_cast<PUCHAR>(irp->Tail.Overlay.DriverContext[1]),
-        static_cast<ULONGLONG>(reinterpret_cast<ULONG_PTR>(irp->Tail.Overlay.DriverContext[2])),
-        static_cast<ULONG>(reinterpret_cast<ULONG_PTR>(irp->Tail.Overlay.DriverContext[3])) };
-    QcRamDirectFinishRead(&ext->RamDirect, irp, read);
-    IoReleaseRemoveLock(&ext->RemoveLock, irp);
-    IoCompleteRequest(irp, IO_NO_INCREMENT);
-    IoFreeWorkItem(item);
-}
-#endif
 static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
 {
     IoCopyCurrentIrpStackLocationToNext(irp);
@@ -1274,33 +1256,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
     // caller's thread. Declined requests continue on the standard path below.
-    // Copy flag 4: every large read is copied on a system worker thread instead, so one caller's
-    // queued reads copy in parallel. Measured: one thread at Q8 copied at 26.5 GB/s, four threads
-    // at 40 GB/s; offloading only while another read was queued (plus a 1-in-16 probe) never
-    // built up parallelism (0.4.439.1). Never paging I/O.
-    bool declined = false;
-    if (stack->MajorFunction == IRP_MJ_READ && ReadNoFence(&ext->RamDirect.Access) && !(irp->Flags & IRP_PAGING_IO) &&
-        stack->Parameters.Read.Length >= 512 * 1024 && (ReadNoFence(&ext->Cache.CopyFlags) & QcCopyOffloadDirect) &&
-        KeGetCurrentIrql() == PASSIVE_LEVEL)
-    {
-        if (auto item = IoAllocateWorkItem(ext->Self))
-        {
-            QC_RAM_DIRECT_READ read;
-            if (QcRamDirectPrepareRead(&ext->RamDirect, irp, &read))
-            {
-                irp->Tail.Overlay.DriverContext[0] = item;
-                irp->Tail.Overlay.DriverContext[1] = read.Buffer;
-                irp->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(read.At));
-                irp->Tail.Overlay.DriverContext[3] = reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(read.Length));
-                IoMarkIrpPending(irp);
-                IoQueueWorkItem(item, RamDirectReadWorker, DelayedWorkQueue, irp);
-                return STATUS_PENDING;
-            }
-            IoFreeWorkItem(item);
-            declined = true; // Declined (and counted) by Prepare: the standard path answers.
-        }
-    }
-    if (!declined && (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
+    if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
         ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
     {
         IoReleaseRemoveLock(&ext->RemoveLock, irp);

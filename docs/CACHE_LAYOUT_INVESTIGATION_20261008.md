@@ -248,10 +248,34 @@ now. The app's memory map shows the in-disk-order share of real caches; if real
 use shows much lower values than these tests, defragment-on-read (below) is the
 targeted next step.
 
+## Follow-up experiments (0.4.439.1-0.4.440.1)
+
+- **Quiet runs.** NTFS last-access updates wrote 12-16 KiB to the test volume at random
+  moments and five strictly checked runs were rejected in one day. They are now off on
+  the test VM, and the runner waits for a quiet cache before layout windows (plan 97).
+- **RAM disk reads at Q8 (removed).** One DiskSpd thread reads a RAM disk at 26.5 GB/s at
+  both Q1 and Q8, four threads at 40-42 GB/s: Direct access copies each read inline (split
+  over the provider's workers), so one caller's queued reads run one after another.
+  Copying large reads on system worker threads did not help: only while another was
+  queued (with a 1-in-16 probe) Q8 25 vs 26 GB/s, always Q1 13 and Q8 17 vs 26 GB/s. A
+  different design is needed (for example the provider's own threads taking whole
+  requests); not pursued now.
+- **One copy per run for writes (removed).** +1.2-1.8% at Q1, -2.7% to +8.4% at Q8
+  (noise), and it did not close the Q8 write gap. quick, policies and pressure passed.
+- **Q8 sequential writes.** With the chunk allocator the request path waits less (lock
+  waits 269 to 62 ms/s, queue waits 870 to 290 ms/s) yet Q8 writes measure 3-14% lower,
+  and fewer copy calls did not help. The cost is most likely eight writers filling
+  neighbouring memory; spreading concurrent requests over separate chunks (one open
+  chunk per stream) is the next thing to test. Open.
+- **Memory map cost.** A full 2 GiB cache reads in 1.3-1.5 ms, about 45 us per
+  256-chunk lock hold (independent of cache size). Polling 8x faster than the app left
+  4K read hits at p50/p99/p99.9 0.003/0.009/0.037 ms (p99.99 0.18 vs 0.09 ms). No change
+  needed.
+
 ## Remaining ideas
 
-1. Find the cause of the -8% to -14% sequential Q8 write drop with write-back
-   running; try coalesced copies for writes with full integrity coverage.
+1. Q8 sequential write gap: try one open chunk per concurrent request (coalesced write
+   copies were measured and did not help).
 2. *Defragment on read*: when a sequential read finds a file's blocks in several
    places, re-place just that run at idle. Only worth it if real workloads show
    larger gaps than the tests above.

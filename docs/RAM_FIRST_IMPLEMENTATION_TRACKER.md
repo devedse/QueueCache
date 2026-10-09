@@ -3023,3 +3023,14 @@ windows): `quick`, `policies`, `pressure` pass on 0.4.431.1 and with copy flags 
 -8% to -14% (open). Copy flags (fresh Q1/Q8): 0 15.13/35.94, 1 18.25/37.44,
 2 uncapped 14.88/22.10, 2 capped 20.60/39.51, 3 20.85/39.36; both on by default
 since 0.4.434.1. Details: [investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md).
+
+### Follow-up experiments (plan 97), 2026-10-09
+
+Implementation: runner waits for a quiet cache before layout windows (plan 97); NTFS
+last-access updates off on the test VM; `qcache developer driver layout-map`. Measured
+and removed: RAM disk Direct reads on worker threads (no gain or much slower) and one
+copy per run for writes (+1.5% Q1, noise at Q8). Verification: quick, policies and
+pressure passed with write runs on; RAM disk round trips identical with offload on;
+memory map polling at 8x the app rate only moved p99.99. Open: Q8 sequential write gap
+(3-14%), RAM disk Q8 reads (needs a different design). Details:
+[investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401).

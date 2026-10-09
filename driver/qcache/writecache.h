@@ -254,16 +254,14 @@ enum : ULONG
     // Diagnostic only: count block/memory adjacency into the V18 diagnostics. No
     // parameters; holds the cache lock for one pass over the slots.
     QcLabMeasureLayout,
-    // Lab: Value = QcCopyPrefetch | QcCopyCoalesce (cache hits, both on by default) | QcCopyOffloadDirect.
+    // Lab: Value = QcCopyPrefetch | QcCopyCoalesce for RAM-hit copies (both on by default).
     // Changes only how hits are copied, never what is cached; read live, runtime only.
     QcLabCopyFlags
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
     QcCopyPrefetch = 1, // Prefetch the next block's buffer while copying the current one.
-    QcCopyCoalesce = 2, // Copy whole valid blocks that are memory neighbours with one copy.
-    QcCopyOffloadDirect = 4, // RAM disk Direct access: copy large reads on worker threads (driver.cpp).
-    QcCopyCoalesceWrites = 8 // Copy a write into following slots of one chunk with one copy.
+    QcCopyCoalesce = 2  // Copy whole valid blocks that are memory neighbours with one copy.
 };
 struct QC_SLOT
 {

@@ -1646,7 +1646,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
         break;
     case QcLabCopyFlags:
-        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyOffloadDirect | QcCopyCoalesceWrites) || command.BudgetBytes)
+        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce) || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
@@ -2088,36 +2088,20 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     }
     // No other foreground request runs during publication. Filling prevents
     // drain selection; bounded pointer batches allow payload copies unlocked.
-    const auto copyFlags = InterlockedCompareExchange(&c->CopyFlags, 0, 0);
     for (auto block = firstBlock; block < end;)
     {
         PUCHAR buffers[64];
-        ULONG indices[64];
         ULONG count = static_cast<ULONG>(min(64LL, (end - block + Chunk - 1) / Chunk));
         for (ULONG i = 0; i < count; ++i)
-        {
-            indices[i] = admittedSlot != NoSlot ? admittedSlot : FindSlot(c, block + i * Chunk);
-            buffers[i] = c->Slots[indices[i]].Buffer;
-        }
+            buffers[i] = c->Slots[admittedSlot != NoSlot ? admittedSlot : FindSlot(c, block + i * Chunk)].Buffer;
         ReleaseCache(c);
-        for (ULONG i = 0; i < count;)
+        for (ULONG i = 0; i < count; ++i)
         {
-            const auto current = block + i * static_cast<LONGLONG>(Chunk);
+            const auto current = block + i * Chunk;
             const auto from = max(current, offset.QuadPart);
-            SIZE_T run = static_cast<SIZE_T>(min(current + Chunk, end) - from);
-            // QcCopyCoalesceWrites: one copy into following slots of the same chunk (the next 4 KiB of
-            // memory), while the run so far ends exactly at the end of block `last`.
-            auto last = i;
-            while ((copyFlags & QcCopyCoalesceWrites) && last + 1 < count &&
-                   from + static_cast<LONGLONG>(run) == block + (last + 1) * static_cast<LONGLONG>(Chunk) &&
-                   indices[last + 1] == indices[last] + 1 && indices[last + 1] % SlotsPerSlab != 0)
-            {
-                ++last;
-                const auto next = block + last * static_cast<LONGLONG>(Chunk);
-                run += static_cast<SIZE_T>(min(next + Chunk, end) - next);
-            }
-            RtlCopyMemory(buffers[i] + (from - current), source + (from - offset.QuadPart), run);
-            i = last + 1;
+            const auto to = min(current + Chunk, end);
+            RtlCopyMemory(buffers[i] + (from - current), source + (from - offset.QuadPart),
+                          static_cast<SIZE_T>(to - from));
         }
         AcquireCache(c);
         block += count * Chunk;
@@ -2684,25 +2668,13 @@ static NTSTATUS CopyOffloadedWrite(QC_CACHE* c, const QC_PAGING_READ* entry, ULO
     AcquireCache(c);
     for (auto block = firstBlock; block < end; block += Chunk)
         slots[(block - firstBlock) / Chunk] = FindSlot(c, block);
-    const auto copyFlags = InterlockedCompareExchange(&c->CopyFlags, 0, 0);
     ReleaseCache(c);
     for (auto block = firstBlock; block < end; block += Chunk)
     {
         const auto from = max(block, offset);
-        auto slot = slots[(block - firstBlock) / Chunk];
-        const auto destination = c->Slots[slot].Buffer + (from - block);
-        SIZE_T run = static_cast<SIZE_T>(min(block + Chunk, end) - from);
-        // QcCopyCoalesceWrites: as in Write; these blocks are Filling, so no one else uses them.
-        while ((copyFlags & QcCopyCoalesceWrites) && from + static_cast<LONGLONG>(run) == block + Chunk && block + Chunk < end)
-        {
-            const auto next = slots[(block + Chunk - firstBlock) / Chunk];
-            if (next != slot + 1 || next % SlotsPerSlab == 0)
-                break;
-            slot = next;
-            block += Chunk;
-            run += static_cast<SIZE_T>(min(block + Chunk, end) - block);
-        }
-        RtlCopyMemory(destination, entry->Source + (from - offset), run);
+        const auto to = min(block + Chunk, end);
+        RtlCopyMemory(c->Slots[slots[(block - firstBlock) / Chunk]].Buffer + (from - block),
+                      entry->Source + (from - offset), static_cast<SIZE_T>(to - from));
     }
     AcquireCache(c);
     auto status = FinishWrite(c, entry->Irp, offset, static_cast<ULONG>(end - offset), slots,
