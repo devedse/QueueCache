@@ -192,9 +192,11 @@ internal static class ManagedDiskCommands
     private static Option<bool> JsonOption(Command command) { var option = new Option<bool>("--json"); command.Options.Add(option); return option; }
     private static async Task<ManagedDiskRecord> FindAsync(IManagedDiskService service, Guid resource, CancellationToken token) =>
         (await service.ListAsync(token)).SingleOrDefault(r => r.ResourceId == resource) ?? throw new IOException("The selected managed resource does not exist.");
-    private static void Print(object value, bool asJson)
+    private static void Print(object? value, bool asJson)
     {
         if (asJson) { Console.WriteLine(JsonSerializer.Serialize(value, json)); return; }
+        if (value is null)
+            return; // `disk remove` leaves no record to show; its message already says so.
         foreach (var record in value is ManagedDiskRecord item ? new[] { item } : (IReadOnlyList<ManagedDiskRecord>)value)
         {
             var runtime = record.Runtime;
@@ -204,7 +206,8 @@ internal static class ManagedDiskCommands
                 Console.WriteLine($"  access {record.Definition.Access}" + (record.Direct is { } direct ? $": {direct.Describe()} (direct reads {direct.ReadRequests}, writes {direct.WriteRequests})" : ""));
             if (record.Statistics is { } stats)
                 Console.WriteLine($"  requests read {stats.ReadRequests}, write {stats.WriteRequests} (standard path)" +
-                    ((record.Native!.Flags & RamDiskFlags.Timing) != 0
+                    // A stopped disk keeps its last statistics but has no native state, so no timing mode to report.
+                    (record.Native is not { } native ? "" : (native.Flags & RamDiskFlags.Timing) != 0
                         ? $"; timing reads avg {stats.AverageReadMicroseconds:0.0} us max {stats.MaxReadMicroseconds:0.0} us ({stats.TimedReads}), writes avg {stats.AverageWriteMicroseconds:0.0} us max {stats.MaxWriteMicroseconds:0.0} us ({stats.TimedWrites})"
                         : "; timing off"));
             if (record.CommittedImage is not null) Console.WriteLine($"  startup image: {record.CommittedImage.Identity.Path}; saved at {record.SavedAt?.ToString("O") ?? "not yet checkpointed"}");
