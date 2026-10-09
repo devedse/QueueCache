@@ -3050,3 +3050,11 @@ state goes stale or a cache is removed/resized, and explain their metric.
 Verification: host contracts and headless desktop tests passed. VM performance,
 long-run byte evidence, comparison to the old allocator, and CI are pending;
 no speed-up or resolved write regression is claimed at this point.
+
+Plan 99 adds a separate neighboring-sector concurrent byte oracle and a bounded
+warm-up for scan-resistant insertion without clearing the cache. The plan-98 smoke
+run `QueueCache-Verify-20261009-121724-e294932cf71f46baa28681a5fa0e98ce`
+stopped before scoring: a second half-budget file competed with the previously
+warmed file and still missed 37,789,696 bytes on its proof pass. No driver errors;
+restoration completed. This is INCOMPLETE, not a sustained-use pass. The corrected
+preparation and all six episodes still need VM proof.

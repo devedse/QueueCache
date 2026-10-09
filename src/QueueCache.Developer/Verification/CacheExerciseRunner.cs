@@ -20,11 +20,32 @@ public sealed partial class VerificationRunner
 
     private async Task WarmExercise(string id, IReadOnlyList<string> targets, int perFileMiB, CancellationToken token)
     {
-        await DiskTargets(id + "-warm1", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d10", "-W0"], token);
-        var before = await LayoutSnapshot(id + "-warm-before.json", token);
-        var warm = await DiskTargets(id + "-warm2", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d3", "-W0"], token);
-        var after = await LayoutSnapshot(id + "-warm-after.json", token);
-        WarmResidentEvidence.Validate(before.State, after.State, warm.Bytes, checked((ulong)perFileMiB * (ulong)targets.Count << 20));
+        var fileBytes = checked((ulong)perFileMiB * (ulong)targets.Count << 20);
+        // Scan-resistant insertion can retain a previous working set. Repeated reads
+        // may promote this one naturally; never clear the sustained cache to force it.
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            var prefix = $"{id}-warm{attempt}";
+            var first = await DiskTargets(prefix + "-fill", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d10", "-W0"], token);
+            WarmResidentEvidence.ValidateFirstPass(first.Bytes, fileBytes);
+            var before = await LayoutSnapshot(prefix + "-before.json", token);
+            var warm = await DiskTargets(prefix + "-proof", targets, ["-b1M", "-o8", "-t1", "-w0", $"-f{perFileMiB}M", "-d3", "-W0"], token);
+            var after = await LayoutSnapshot(prefix + "-after.json", token);
+            try
+            {
+                WarmResidentEvidence.Validate(before.State, after.State, warm.Bytes, fileBytes);
+                storage.Write(id + "-warm-summary.json", new { Attempts = attempt, FileBytes = fileBytes, Proven = true });
+                return;
+            }
+            catch (InvalidDataException) when (attempt < 5 &&
+                before.State.Operational && after.State.Operational && before.State.Instance != 0 &&
+                before.State.Instance == after.State.Instance && before.State.Generation == after.State.Generation &&
+                after.State.ReadMissBytes > before.State.ReadMissBytes &&
+                before.State.Errors == after.State.Errors && after.State.LastError == 0)
+            {
+                // Preserve every failed residency proof; identity/error failures are never retried.
+            }
+        }
     }
 
     private async Task ExerciseMap(string id, CancellationToken token) =>
@@ -54,7 +75,7 @@ public sealed partial class VerificationRunner
         if (options.Suite == "cache-map-cost")
             await Disk(scenario.Id + "-fill", Path.Combine(workDirectory, "writer.dat"),
                 ["-b1M", "-o8", "-t1", "-w0", $"-d{Math.Max(10, options.BudgetMiB / 128)}", "-W0"], token);
-        if (!sustained || scenario.Repeat == 1)
+        if (!sustained)
             await WarmExercise(scenario.Id, targets, perFileMiB, token);
         if (sustained && scenario.Repeat == 1)
             await ResidentReread(scenario.Id + "-fresh", token);
@@ -159,7 +180,7 @@ public sealed partial class VerificationRunner
         foreach (var depth in new[] { 1, 8 })
         {
             var before = await LayoutSnapshot($"{id}-q{depth}-before.json", token);
-            var score = await DiskTargets($"{id}-q{depth}", files, ["-b1M", $"-o{depth}", "-t1", "-w0", "-d5", "-W0"], token);
+            var score = await DiskTargets($"{id}-q{depth}", files, ["-b1M", $"-o{depth}", "-t1", "-w0", $"-f{options.BudgetMiB / 2}M", "-d5", "-W0"], token);
             var after = await LayoutSnapshot($"{id}-q{depth}-after.json", token);
             CacheExerciseEvidence.Validate(before, after, score.Bytes, "read", false);
         }

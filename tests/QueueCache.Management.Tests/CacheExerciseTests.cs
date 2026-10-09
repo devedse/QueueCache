@@ -15,6 +15,7 @@ internal static class CacheExerciseTests
         var options = new VerificationOptions("Q:", "cache-concurrency", DiskSpd: Environment.ProcessPath, BudgetMiB: 2048);
         VerificationPlan.Validate(options);
         var concurrency = CacheExercisePlan.Cases(options);
+        Check(VerificationPlan.Integrity(options).Single().Operation == "concurrent-sectors", "Concurrency verifies neighboring-sector bytes before performance.");
         Check(concurrency.Count == 36 && concurrency.Select(c => c.Id).Distinct().Count() == 36, "Concurrent plan has unique complete repetitions.");
         Check(concurrency.Where(c => c.QueueDepth != 1 || c.Streams != 1).All(c => c.Streams * c.QueueDepth == 8), "Concurrent shapes keep total queue depth at eight.");
         Check(concurrency.Where(c => c.Workload == "read").All(c => !c.BackgroundDrain), "Read controls never enable background drain.");

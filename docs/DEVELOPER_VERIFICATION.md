@@ -1393,7 +1393,7 @@ disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 window that still sees disk I/O fails as before. On the test VM also turn
 last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
 
-## Concurrent, sustained and memory-map exercises (plan 98)
+## Concurrent, sustained and memory-map exercises (plans 98–99)
 
 These opt-in suites extend `qcache developer verify`; they never run as part of
 `full` or change the existing 72-case write-performance matrix. Use the same
@@ -1416,6 +1416,11 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   attempts, unchanged allocation and accounting for all scored bytes. Eager
   writes intentionally allow lower I/O. Shape and drain order reverse each repeat.
   `--case-filter` can select a focused subset, which is never a full-matrix pass.
+  Plan 99 first verifies 128 concurrent pairs of 512-byte writes to neighboring
+  sectors in one 4K block, including unchanged guard bytes, while cached and after
+  drain. This requires 512-byte logical sectors; unsupported targets fail clearly.
+  Submission is concurrent but kernel overlap/order is not forced. This byte case
+  does not claim zero lower I/O and is separate from the scored RAM-only controls.
 - `cache-map-cost`: fitting random 4K reads with polling off, at the app's two-second
   interval, and every 250 ms. A separate owned worker records map duration, CPU
   time, allocation identity and complete-map counts. Its first sample must be ready
@@ -1434,6 +1439,14 @@ qcache developer verify Q: --suite cache-sustained --budget-mib 2048 --repeats 1
   test, not sustained-use acceptance. `--repeats 1` is required; partial episodes
   cannot be selected. Mixed-window disk I/O is intentional, while the final warmed
   reread windows retain strict RAM-only checks.
+
+Plan 99 records up to five warm-up attempts for scan-resistant cache insertion:
+each reads the complete accessed prefix, then requires a separate stable,
+zero-miss second pass. Only observed read misses in an otherwise stable,
+error-free allocation allow another attempt. Every attempt has unique raw output;
+exhaustion fails. This never clears a churned cache, relaxes score checks or retries
+driver faults. The first sustained episode warms only its reread reference; unused
+stream files do not compete with that reference during preparation.
 
 The map percentage counts possible links among used slots inside a chunk that
 join consecutive disk blocks. It is not a file-specific fragmentation measure or

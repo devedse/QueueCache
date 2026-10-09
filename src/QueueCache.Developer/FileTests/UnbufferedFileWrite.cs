@@ -34,6 +34,13 @@ internal static class UnbufferedFileWrite
     {
         if (bytes.Length == 0 || bytes.Length % 4096 != 0)
             throw new ArgumentException("Requires aligned payload.");
+        WriteRange(path, 0, bytes, writeThrough, flush);
+    }
+    /// <summary>Sector-aligned writes to an existing owned file; callers validate target sector size.</summary>
+    public static void WriteRange(string path, long offset, byte[] bytes, bool writeThrough = false, bool flush = false)
+    {
+        if (bytes.Length == 0 || bytes.Length % 512 != 0 || offset < 0 || offset % 512 != 0)
+            throw new ArgumentException("Requires sector-aligned offset and payload.");
         using var file = CreateFileW(path, 0x40000000, 3, IntPtr.Zero, 3, 0x20000000u | (writeThrough ? 0x80000000u : 0), IntPtr.Zero);
         if (file.IsInvalid)
             throw new Win32Exception();
@@ -42,6 +49,8 @@ internal static class UnbufferedFileWrite
             throw new Win32Exception();
         try
         {
+            if (!SetFilePointerEx(file, offset, out _, 0))
+                throw new Win32Exception();
             Marshal.Copy(bytes, 0, memory, bytes.Length);
             if (!WriteFile(file, memory, (uint)bytes.Length, out var written, IntPtr.Zero))
                 throw new Win32Exception();
@@ -54,6 +63,9 @@ internal static class UnbufferedFileWrite
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFilePointerEx(SafeFileHandle handle, long distance, out long position, uint method);
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool WriteFile(SafeFileHandle handle, IntPtr data, uint length, out uint written, IntPtr overlapped);

@@ -797,6 +797,10 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, pagingChecks);
                 ReportFailures(pagingChecks, Console.Error);
                 return pagingChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "concurrent-sectors":
+                var sectorChecks = await ConcurrentSectorOracle.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, sectorChecks);
+                return sectorChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);
