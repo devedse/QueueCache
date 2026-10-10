@@ -3249,6 +3249,12 @@ restored, and the installed tray application resumed. Branch
 | ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks pass; native CI and controlled ReFS/NTFS reference, ordering/flush/capacity checks pending. No performance gain established. |
 | Background priority limits | Planned CPU/I/O/memory and copy-worker wait attribution. | Independent priority controls pending; no boost justified. |
 
+Plan 112 implements the supported 24-window `caller-backoff` comparison, with
+alternating 256/0 cooldowns, 64 KiB mixed Q1/Q8 and 4K/1M read controls, complete
+residency proofs and independent concurrent/post-drain byte checks after scoring.
+Implementation is complete; host contracts pass; Windows CI and VM verification are pending.
+The mixed boundaries also retain the V21 staged-read counters for overlap evidence.
+
 The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance and
 keeps implementation separate from verification. The initial draft PR contains
 this plan; the historical Q8 write gap remains unproved. Closed/accepted items

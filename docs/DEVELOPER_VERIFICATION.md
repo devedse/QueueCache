@@ -1696,3 +1696,21 @@ checks always apply. Live fields are individually atomic; quiescent deltas rejec
 resets, changed configuration and more declines than candidates. Older drivers
 report unavailable attribution and keep their existing restoration contract.
 ReFS/NTFS measurements and native ordering qualification are pending.
+
+Plan 112 adds the opt-in `caller-backoff` suite (excluded from `full`). At three
+repetitions its 24 unique windows alternate cooldown 256/0 and shape order:
+64 KiB random 70/30 read/write Q1/Q8, random 4 KiB read Q1, sequential 1 MiB read
+Q8, one submitting thread. A half-budget fitting file is prepared and residency
+proved before each timing-off Fast/Deferred score; no competing byte oracle runs
+during scoring. The read controls require zero lower attempts. Mixed windows
+record lower attempts and staged-read overlap rather than claiming RAM-only I/O.
+Routing snapshots cover process startup/close as well as the score. After each
+score, four independent deterministic files are overwritten/read concurrently for
+five seconds, drained, and checked again with the cache disabled. They validate
+those files, not DiskSpd's random payload. The original cooldown is restored by
+plan 111's contract. `--case-filter mixed` selects all 12 mixed windows without
+claiming the complete suite. Use owned NTFS/ReFS lab volumes and the same binary:
+
+```powershell
+qcache developer verify V: --suite caller-backoff --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```

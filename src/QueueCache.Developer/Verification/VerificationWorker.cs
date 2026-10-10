@@ -888,13 +888,17 @@ public static class VerificationWorker
                 var directory = Path.GetFullPath(job.WorkDirectory!);
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
                     throw new IOException("Workload directory must be a new directory on the selected volume.");
-                // Value 1 adds the stream files; value 2 prepares only the cache-recall files.
-                if (new DriveInfo(target.Root).AvailableFreeSpace < ((long)job.BudgetMiB * (job.Value is 1 ? 5 : job.Value is 2 ? 4 : 3) + 1024) * 1024 * 1024)
+                // Value 1 adds stream files; 2 prepares recall files; 3 only the caller experiment's fitting file.
+                var requiredMiB = job.Value == 3 ? job.BudgetMiB / 2L + 1024 :
+                    (long)job.BudgetMiB * (job.Value is 1 ? 5 : job.Value is 2 ? 4 : 3) + 1024;
+                if (new DriveInfo(target.Root).AvailableFreeSpace < requiredMiB * 1024 * 1024)
                     throw new IOException("Insufficient free space for unique workloads and headroom.");
                 Directory.CreateDirectory(directory);
                 var block = new byte[1 << 20];
                 Random.Shared.NextBytes(block);
-                var workloadFiles = job.Value == 2
+                var workloadFiles = job.Value == 3
+                    ? CacheExercisePlan.Targets(job.BudgetMiB, 1).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
+                    : job.Value == 2
                     ? CacheExercisePlan.RecallTargets(job.BudgetMiB).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
                     : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
                 if (job.Value == 1)

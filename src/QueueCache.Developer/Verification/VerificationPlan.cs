@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 111;
+    public const int Version = 112;
     public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
@@ -73,6 +73,7 @@ public static class VerificationPlan
         "cache-sustained",
         "cache-map-cost",
         "cache-recall",
+        "caller-backoff",
         "partial-read-accounting",
         "ram-read-reference",
         "ram-read-queue",
@@ -405,8 +406,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost or cache-recall and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost, cache-recall or caller-backoff and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.

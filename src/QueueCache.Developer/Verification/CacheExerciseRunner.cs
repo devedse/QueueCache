@@ -71,6 +71,8 @@ public sealed partial class VerificationRunner
             await Control(WriteCacheAction.DropClean, token);
         }
         await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        if (scenario.CallerBackoff >= 0)
+            await Control(WriteCacheAction.LabCallerBackoff, token, (ulong)scenario.CallerBackoff);
         var targets = CacheExercisePlan.Targets(options.BudgetMiB, scenario.Streams)
             .Select(file => Path.Combine(workDirectory, file.Name)).ToArray();
         var perFileMiB = options.BudgetMiB / 2 / scenario.Streams;
@@ -152,6 +154,9 @@ public sealed partial class VerificationRunner
                 throw new IOException("Cache identity or error state changed during the exercise.");
             var after = await LayoutSnapshot(scenario.Id + "-after.json", token);
             CacheExerciseEvidence.Validate(before, after, score.Bytes, scenario.Workload, scenario.BackgroundDrain);
+            if (scenario.CallerBackoff >= 0)
+                storage.Write(scenario.Id + "-routing.json",
+                    CacheExerciseEvidence.CallerRouting(before, after, score.Bytes, scenario.CallerBackoff));
             await ExerciseMap(scenario.Id + "-after", token);
             if (sustained)
             {
@@ -168,6 +173,24 @@ public sealed partial class VerificationRunner
                             WorkDirectory = workDirectory, OraclePath = storage.PathFor(CacheExercisePlan.Cases(options)[round - 1].Id + "-oracle.json")
                         }, token);
                 }
+            }
+            if (scenario.CallerBackoff >= 0)
+            {
+                // Independent deterministic files exercise concurrent ownership after scoring,
+                // then must survive an explicit drain and disabled-cache reread. They do not
+                // perturb the routing score or claim to validate DiskSpd's random write buffer.
+                var oraclePath = storage.PathFor(scenario.Id + "-oracle.json");
+                await Worker(Job("concurrent-oracle") with
+                {
+                    Reply = oraclePath, WorkDirectory = workDirectory, Seconds = 5,
+                    Value = ulong.Parse(scenario.Id.AsSpan(0, 4), System.Globalization.CultureInfo.InvariantCulture)
+                }, token, 125);
+                await Control(WriteCacheAction.Disable, token);
+                await Worker(Job("verify-concurrent-oracle") with
+                {
+                    Reply = storage.PathFor(scenario.Id + "-oracle-persisted.json"),
+                    WorkDirectory = workDirectory, OraclePath = oraclePath
+                }, token);
             }
             return score;
         }

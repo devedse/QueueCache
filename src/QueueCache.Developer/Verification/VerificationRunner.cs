@@ -235,7 +235,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue") : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
-                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : CacheExercisePlan.AllTargets(options.BudgetMiB),
+                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite == "caller-backoff"
+                ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
         });
@@ -492,7 +493,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     WorkDirectory = workDirectory,
                     BudgetMiB = options.BudgetMiB,
-                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : 1UL
+                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite == "caller-backoff" ? 3UL : 1UL
                 }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
