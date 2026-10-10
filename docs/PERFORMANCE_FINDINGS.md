@@ -16,16 +16,19 @@ backoff benefits mixed Q8 but harms large NTFS reads, so production backoff stay
 The independent 36-window priority comparison is complete: CPU BelowNormal loses
 34.20% resident Q8 throughput. Focused churn accounting is also complete and finds
 under 1% aggregate overlap in lower traffic for the tested shapes. CPU/wait
-attribution is complete and points at scheduling/utilization; a priority/affinity
-control is the next diagnostic. All five retained-driver qualification scenarios
+attribution is complete and points at scheduling/utilization. Thirty RAM-disk
+affinity/source-lane controls are now complete: they leave most of the single-
+versus multi-submitter gap intact. Request concurrency and copy-helper handoff
+cost remain the next investigation; cache CPU-priority/affinity interaction is
+a separate untested question. All five retained-driver qualification scenarios
 completed with their raw checks and restoration inspected.
 
 Plan 114 now implements the maintained single-command campaign and durable
 completion event; automatic Manager wakeup remains external. A new focused
 RAM-disk comparison holds copying fixed and isolates affinity plus source-stream
-overlap, addressing the earlier queue experiment's combined changes. Windows/VM
-qualification and the resulting measurements are recorded separately in the
-tracker; no new driver speed-up is accepted merely because this diagnostic exists.
+overlap, addressing the earlier queue experiment's combined changes. Windows contracts, Debug/Release CI and the six-phase focused VM campaign pass.
+The controls do not establish a production speed-up; no driver/default change
+is accepted. The tracker records implementation and verification separately.
 
 ## Which changes belong together
 
@@ -266,6 +269,66 @@ Complete reference: 36/36, run
 are diagnostic, not the acceptance baseline. Full results and compatibility
 reservations: [RAM scheduling](RAM_READ_SCHEDULING_20261010.md).
 
+## RAM-disk affinity and source-lane controls: gap remains
+
+The plan-114 focused campaign on unchanged signed 0.4.514.1 completed **6/6
+phases, 81 retained correctness checks and 30 RAM measurement windows**, run
+`QueueCache-Campaign-20261010-124559-697930c96ddb4e57a97924a301d5a7e3`,
+12:45:59–13:03:20 UTC (**17 min 21 s**). Managed preview code matches `4307679`;
+Windows Release host contracts and Debug/Release CI pass. Loaded filter/provider
+SHA-256 are `C8856CCD2DABAC66B9648FBFE6CF0A3697A2F2EB4CA8D936806E683E6348B764` /
+`8BC6DF3260FA77B447E7DF737800370706A10D324F345FC2A4C6A5AE88EA9A8C`.
+The DiskSpd hash is the unchanged bundled 2.2 hash in the measurement rules above.
+Copy/native code stays fixed; CPU Normal, memory default 5 and XML I/O hint 3,
+three-second warmup, ten-second score, no ETW or Desktop workload. Every entry
+is the median and full range of three alternating repetitions. GB/s is decimal.
+
+| Read shape | Default affinity GB/s (range) | Unbound GB/s (range) | Median change |
+|---|---:|---:|---:|
+| 1M Q1T1 | 26.48 (26.10–26.87) | 26.36 (26.04–26.48) | -0.45% |
+| 1M Q8T1 | 25.84 (25.59–26.12) | 26.30 (25.89–26.53) | +1.77% |
+| 1M Q2T4, overlapping | 38.10 (37.61–38.60) | 39.48 (38.01–40.13) | +3.63% |
+| 1M Q2T4, separate lanes | 37.97 (37.00–38.53) | 39.04 (38.31–39.54) | +2.83% |
+| 4K random Q1T1 | 1.755 (1.742–1.761) | 1.741 (1.733–1.747) | -0.76% |
+
+**Decision:** no production change. Removing affinity adds only 1.77% to the
+single-submitter Q8 median, with overlapping ranges. It does not turn 26 GB/s
+into the four-submitter score. Removing shared source blocks changes four-reader
+medians by −0.34% with default affinity and −1.11% unbound, also overlapping ranges.
+That is evidence against shared source locality explaining most of this gap for
+this workload. Four separate readers still reach 37.97–39.04 GB/s. These are
+matched controls; the older 45 GB/s reference had different driver/launch/warmup
+conditions and is not a release comparison with this run.
+
+The retained Direct path performs its large copy before completing the request
+([transfer](../driver/qcache/ramdirect.cpp), [completion](../driver/qcache/driver.cpp));
+configured Q8 does not guarantee eight copies overlap from one submitter.
+Together with earlier function profiles, this makes request-level concurrency
+and split-helper handoff/coordination the next candidates. That is a source-based
+inference, not a completed causal attribution. No faster cache-copy loop was
+ported into the RAM disk here. The rejected queue changed both scheduling and
+whole-copy granularity; a future experiment should keep `CopySplit` fixed first.
+Cache BelowNormal × affinity interaction remains a separate open diagnostic.
+
+All thirty raw XML/settings, scored-byte calculations, owned priority readbacks,
+1 GiB before/after hashes, native identities/counters, readiness and enclosing
+intervals were inspected. Every window has zero image/backing read/write attempts;
+maximum RAM sample gap is **1.021481 s**, below the unchanged two-second contract.
+Priority application completes within **0.0227392 s**. All 93 owned process exits
+are zero; 22 control readiness handshakes have maximum gap **0.246594 s**. All three
+RAM fixture groups return the original resource IDs and 2 GiB reservation. Final
+fault tests record exactly three accepted injected errors and restore a healthy
+lab; no later benchmark follows them.
+
+The original Q: runtime, timing/recall/backoff and saved profiles restore exactly,
+with zero pending bytes or error. The owned NTFS lab is detached and the installed
+tray resumes in the signed-in session. Private immutable raw archive SHA-256:
+`7AF11BA9579E1C73A52F737D3B149308A117916502B8E3C5D614223DFE6BC4F3`.
+The earlier dirty-preflight and 4/6 interrupted campaign attempts remain separate;
+none of their checks/scores are used to complete this run. The explicit bounded
+phase preparation fix preserves strict clean capture and refuses faults before
+controls; [orchestration evidence and failure history](PERFORMANCE_CAMPAIGN_PLAN.md).
+
 ## Caller-path backoff: retain the production default
 
 An overlap can send the next 256 eligible candidates to the ordered worker.
@@ -451,7 +514,7 @@ running again. Private evidence and lab files remain preserved.
 
 ## Recorded verification time
 
-These selected completed runs total approximately **2 hours 46 minutes**. This
+These selected completed runs total approximately **3 hours 5 minutes**. This
 is measured run time, not a reconstruction of all engineering work or every
 earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
 attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
@@ -470,6 +533,7 @@ to 06:55 was not two hours spent executing that benchmark.
 | Focused churn, six episodes | 9 min 38 s |
 | Five retained-driver scenarios | 3 min 09 s |
 | Plan-114 campaign smoke, two phases | 59 s |
+| Plan-114 focused campaign, 81 correctness checks + 30 RAM windows | 17 min 21 s |
 
 The priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
@@ -484,7 +548,7 @@ polling.
 
 | Order | Next step | Result-driven action |
 |---|---|---|
-| 1 | Add a focused priority/affinity control before a scheduling experiment | Completed trace shows more ready delay and idle helper CPUs with BelowNormal. Separate affinity interaction and per-thread coordination first; keep normal benchmark settings and preserve user/driver priorities. |
+| 1 | Investigate request concurrency and split-helper handoffs with copying held fixed | Thirty normal-priority RAM controls complete: affinity/source overlap leave the 26 versus 38–39 GB/s gap. Profile coordination/completion, then consider an isolated asynchronous experiment retaining `CopySplit`; preserve Q1/small/four-reader and lifecycle checks. Cache CPU-priority × affinity remains separate and untested. |
 | 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
 | 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
 | 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); connect Manager delivery separately | Plan 114 composes maintained typed suites and publishes one durable completion event after evidence/restoration. Windows host contracts and the 59-second two-phase driver smoke pass. Automatic Manager wakeup needs its external completion API; no delivery is claimed. |

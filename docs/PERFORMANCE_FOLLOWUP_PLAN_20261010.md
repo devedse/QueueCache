@@ -42,3 +42,19 @@ Preliminary CPU evidence from the incomplete 0.4.497.1 Direct Q1 reference:
 attribution over the enclosing process interval, not an exact score-window
 profile or a completed baseline. It supports examining helper-loop overhead
 before a shared sleeping whole-read queue experiment; it proves no speed gain.
+
+## Plan-114 follow-up closure
+
+Single-command smoke/focused/performance/release campaigns and a strict durable
+completion consumer are implemented; automatic Manager wake delivery needs an
+external controller API. Windows host/CLI contracts and Debug/Release CI pass.
+The smoke and six-phase focused campaign both complete with exact restoration;
+81 retained checks and thirty RAM scheduling windows are inspected. Default /
+unbound Q8 remains 25.84 / 26.30 GB/s with overlapping ranges; separate four-reader
+source lanes retain 38–39 GB/s. Thread placement or overlapping source reads do
+not explain most of the gap in these controls. The next candidate is request
+concurrency and split-helper handoff cost, with copying held fixed; exact
+attribution and lifecycle qualification remain prerequisites for a production
+change. Cache CPU-priority/affinity interaction remains separate and untested.
+All matched medians/ranges, raw identities, timing, failure history and decisions
+are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).

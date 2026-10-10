@@ -190,3 +190,33 @@ An earlier attempt, `QueueCache-Verify-20261010-033934-ab5c8b71121448fdaf674d9eb
 stopped before any score because the control handle was read-only (Win32 5).
 It restored cleanly; the managed writable-handle fix is in `408e49c`.
 That incomplete attempt is preserved separately and contributes no scores.
+
+## Completed plan-114 focused controls on 0.4.514.1
+
+Campaign `QueueCache-Campaign-20261010-124559-697930c96ddb4e57a97924a301d5a7e3`
+completes 6/6 phases, 81 retained checks and all 30 RAM windows in 17 min 21 s.
+The RAM phase takes 13 min 45 s; its thirty ten-second scores total about five
+minutes, plus ninety seconds of warmup. The rest includes fixture creation,
+preparation, two full 1 GiB hashes per window, inventory/byte checks and cleanup.
+`timing.json` common preparation is zero for this integrity-style scenario; these
+internal preparations are included in its case time, not absent.
+
+| Read shape | Default affinity GB/s (range) | Unbound GB/s (range) | Median change |
+|---|---:|---:|---:|
+| 1M Q1T1 | 26.48 (26.10–26.87) | 26.36 (26.04–26.48) | -0.45% |
+| 1M Q8T1 | 25.84 (25.59–26.12) | 26.30 (25.89–26.53) | +1.77% |
+| 1M Q2T4, overlapping | 38.10 (37.61–38.60) | 39.48 (38.01–40.13) | +3.63% |
+| 1M Q2T4, separate lanes | 37.97 (37.00–38.53) | 39.04 (38.31–39.54) | +2.83% |
+| 4K random Q1T1 | 1.755 (1.742–1.761) | 1.741 (1.733–1.747) | -0.76% |
+
+The matching native/copy path remains unchanged. Affinity adds 1.77% to Q8
+median with overlapping ranges; disjoint four-reader lanes remain about 38–39
+GB/s, close to overlapping streams. Neither closes the single-reader gap or
+qualifies a driver speed-up. Request serialization and split-helper coordination
+are next source-based candidates, not proven causes. The separate cache
+BelowNormal/affinity interaction was not exercised. Historical absolute scores
+are not a matched release comparison with the new warmup/driver/launch contract.
+
+Provenance, complete raw checks, sampling/priority bounds, restoration, private
+archive hash and result-driven decisions are consolidated in
+[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#ram-disk-affinity-and-source-lane-controls-gap-remains).

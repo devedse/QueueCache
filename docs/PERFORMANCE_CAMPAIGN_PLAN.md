@@ -72,7 +72,7 @@ their strict clean-cache capture: verify the original configuration and errors,
 flush the filesystem volume, drain the cache once, and wait for clean accounting.
 Owned control telemetry records this preparation. Fault/configuration mismatch
 stops before controls; this does not retry a fault or change benchmark settings.
-It handles late lab-container metadata after restoring an active backing cache.
+It handles transient writes after restoring an active backing cache.
 
 Every phase declares a target role, filesystem, budget, repetitions, score and
 warmup durations, expected cases, failure policy, driver feature requirements and
@@ -204,8 +204,24 @@ relaxed. This smoke qualifies orchestration, not the full performance profile.
 The first focused attempt
 `QueueCache-Campaign-20261010-123104-34e4bdc4c0c54e6e8bf4eacd52949a91`,
 managed source `6a7cae5`, completed four correctness phases, then stopped before
-any RAM score because late lab-container metadata left the active Q: cache dirty
-at the next strict capture. Restoration completed. This exposed the need for the
+any RAM score because transient writes left the active Q: cache dirty
+at the next strict capture. The writer/file was not attributed. Restoration
+completed. This exposed the need for the
 explicit phase preparation above; the failed run is preserved, not recombined
 with a retry. Its private raw archive SHA-256 is
 `ED3B90EDAA46BE8DA4CFC14B97B7A03424A69D6ECDD99EBC1E6CB52EC9C0A515`.
+
+The preparation fix is qualified by the complete new focused run
+`QueueCache-Campaign-20261010-124559-697930c96ddb4e57a97924a301d5a7e3`,
+managed preview code matching `4307679`: 6/6 phases, 111 inner checks including
+30 RAM windows, 17 min 21 s, exit zero. The strict read-only completion consumer
+accepts the event/digest. All 93 owned exits and 22 control readiness handshakes
+pass; maximum control gap 0.246594 s. All phase evidence, explicit preparation,
+independent restoration and final target identities/configuration were inspected.
+The three injected lab errors are accepted only by the final ordering phase;
+no later benchmark follows them. The original Q: configuration/profiles restore
+exactly, the owned NTFS lab is detached and the installed tray resumes. Full
+performance/release profiles and optional ReFS orchestration were not rerun for
+this managed change. Native benchmark findings, timing, raw archive hash and
+next decisions are consolidated in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+Automatic Manager delivery remains external.
