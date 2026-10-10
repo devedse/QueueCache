@@ -9,8 +9,9 @@ bandwidth, not proof that a single reader can reach it.
 
 The consolidated decisions, including earlier retained improvements and rejected
 experiments, are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md). The
-[campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) describes future
-single-command orchestration; it is not an available command yet.
+[campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) describes the implemented
+single-command runner. Smoke and focused campaigns have completed on the VM;
+automatic Manager wake-up remains an external integration.
 
 | Order | Problem and intended change | Implementation | Required evidence |
 |---|---|---|---|
@@ -51,10 +52,117 @@ external controller API. Windows host/CLI contracts and Debug/Release CI pass.
 The smoke and six-phase focused campaign both complete with exact restoration;
 81 retained checks and thirty RAM scheduling windows are inspected. Default /
 unbound Q8 remains 25.84 / 26.30 GB/s with overlapping ranges; separate four-reader
-source lanes retain 38–39 GB/s. Thread placement or overlapping source reads do
-not explain most of the gap in these controls. The next candidate is request
+source lanes retain 38–39 GB/s. Benchmark-thread affinity or overlapping source
+reads do not explain most of the gap in these controls. Provider helpers still
+have fixed CPU assignments; their placement was not independently varied. The next candidate is request
 concurrency and split-helper handoff cost, with copying held fixed; exact
 attribution and lifecycle qualification remain prerequisites for a production
 change. Cache CPU-priority/affinity interaction remains separate and untested.
 All matched medians/ranges, raw identities, timing, failure history and decisions
 are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+
+## Continuation plan after findings review
+
+This is a plan, not another completed measurement or an accepted driver change.
+Keep the established allocator, cache-copy optimizations, read recall and
+synchronous RAM-disk split copies. The latest matched comparison is about
+26 GB/s from one submitting thread versus 38–39 GB/s from four. It establishes
+available aggregate throughput for those workloads, not a single-thread target
+or a regression from historical 42–45 GB/s scores under different conditions.
+
+The removed queue changed both request scheduling and copy granularity. Its
+loss rejects that implementation; a future experiment must isolate its change.
+The latest thirty RAM windows qualify the diagnostic comparison. The 81
+correctness checks qualify the retained behavior exercised by those scenarios;
+they do not qualify an asynchronous implementation that has not been built.
+
+| Priority | Work | Concrete completion condition | Decision after the result |
+|---|---|---|---|
+| 1, orchestration track | Connect the campaign terminal event to DeveAgentManager process completion. | One foreground job produces one resumed-agent result after evidence and restoration, with duplicate/reconnect handling and explicit failure/cancellation outcomes. | Close the remaining automation gap. Requires a supported Manager API; do not hold up the performance diagnosis if it is unavailable. |
+| 1, performance track | Attribute RAM-disk request concurrency and split-copy coordination on the current retained code. | A focused comparison explains actual concurrent requests, copy work, helper handoff/withdrawal and completion waits for one versus four submitters. | Choose one demonstrated cost to reduce, or stop native experimentation if no actionable cost is established. |
+| 2, conditional | Implement one default-off RAM experiment selected by that attribution, keeping the copy algorithm and 256 KiB split size fixed. | Same-build alternating A/B shows a repeatable practical gain and passes affected byte, latency and lifecycle controls. | Retain only a qualified improvement; otherwise remove the experiment and preserve its findings. |
+| 3 | Isolate CPU priority versus benchmark affinity for resident disk-cache reads. | Normal/BelowNormal crossed with default/unbound benchmark threads, all other priorities fixed; Q8 plus Q1/small controls. | Determine whether the observed 34.20% low-priority loss is tied to submitter placement. Change driver scheduling only after attribution; retain application priorities. |
+| 4, optional | Measure real Desktop map cost at 100 ms. | Compare closed UI, default cadence and 100 ms pop-out/full-screen using the same map size/workload; record throughput, CPU and responsiveness. | Keep fast refresh as an option; optimize sampling/rendering only for a demonstrated cost. The native 250 ms result does not qualify 100 ms UI rendering. |
+| 5, conditional | Investigate a request-size-aware caller policy on NTFS and ReFS. | Small mixed gains survive transitions into large reads with the large-copy backoff retained, plus ordering/flush/capacity checks. | Lower priority than RAM diagnosis: global backoff 0 gained only 4–5% mixed throughput and lost 21% NTFS large-read throughput. |
+| Release gate | Qualify the final retained native change with the relevant maintained campaign. | Required phases and restoration complete; compare matched baselines and record regressions separately from collection success. | Use the write matrix when shared write behavior is affected or for release qualification; update README benchmarks only after an accepted performance change. |
+
+### RAM diagnosis and experiment gate
+
+Source review confirms that [Direct reads](../driver/qcache/ramdirect.cpp)
+finish copying before [request completion](../driver/qcache/driver.cpp).
+[Provider CopySplit](../driver/ramdisk/transfer.cpp) posts helper work, lets the
+submitter copy chunks, withdraws untaken helper entries, then waits for taken
+helpers. `WorkerMain` includes queue handling and a bounded poll as well as copy
+dispatch. Workers retain their CPU assignments when DiskSpd uses `-n`.
+These are specific mechanisms to measure, not proof that any one causes the gap.
+
+1. Reuse preserved profiles to define the hypothesis; do not rerun the completed
+   affinity/source-lane matrix just to reconfirm its result. Extend the maintained
+   RAM scenario only where the new attribution needs evidence. Use current
+   loaded-module hashes and matching symbols, fixed Normal launch settings,
+   payload/copy mode, file size, native timing state and DiskSpd hash.
+2. Profile 1 MiB Q1T1, Q8T1 and Q2T4. Establish actual concurrent Direct requests,
+   helper participation and time spent copying, posting/withdrawing work,
+   waiting for helpers and completing requests. Separate helper polling from
+   useful work; a function-level WorkerMain percentage alone cannot do that.
+   Prefer sampled/context-switch evidence first. Add bounded default-off
+   diagnostics only if necessary and measure their overhead. Diagnostic/traced
+   scores remain separate from untraced performance acceptance.
+3. If handoff dominates, change one handoff decision while keeping completion
+   and copy behavior fixed. If inline request serialization dominates, consider
+   one bounded asynchronous experiment retaining CopySplit. Prove the executor
+   can make progress without waiting for work queued behind itself, and preserve
+   stack/helper lifetime, request ownership, cancellation and withdrawal. Do not
+   revive the removed whole-copy queue unchanged.
+4. Compare control and candidate in the same build with at least three alternating
+   repetitions. Retain Q1, Q8, four readers including separate source lanes, and
+   small-read controls. Proposed usefulness gate: at least a 5% target-workload
+   gain that exceeds observed run variation; investigate any repeatable 3% or
+   greater control loss. These are decision thresholds, not statistical proof.
+   Inspect latency and CPU cost as well as throughput; add focused repetitions
+   only when uncertainty could change the decision.
+5. Byte/accounting and zero-backing-I/O checks must pass before accepting scores.
+   Before promotion, exercise affected cancellation, stop/withdrawal, resource
+   pressure, ordering and restoration paths. Shared provider changes also need
+   affected Standard-path and write controls. A new lifetime/scheduling path
+   requires its own qualification; the existing 81 checks are not a substitute.
+
+### Completion integration and run budget
+
+The Manager owns the process/job-to-conversation mapping and delivery retries.
+After process exit it validates `completion.json` using `verify-completion`,
+records the stable event ID and wakes the associated agent once. A controller
+restart must recover a pending event without rerunning the benchmark; duplicate
+delivery must not start duplicate analysis. Missing terminal evidence after an
+unexpected process exit is an interrupted run requiring inspection, not success.
+Test controller success, failure, cancellation, interruption and reconnect with
+fixtures; the approximately one-minute campaign smoke is enough for the first
+end-to-end VM check. No broad performance matrix is needed for notification work.
+
+Use one focused command per diagnostic or A/B stage, with automatic process-exit
+delivery when available. Until then, await the owned foreground job once and
+consume its evidence; repeated agent SSH/status polling is not the intended flow.
+The completed focused campaign took 17 min 21 s. Budget roughly 20–40 minutes of
+VM time for a new focused diagnostic/A/B stage, depending on its frozen scope;
+coding, CI, deployment and analysis are additional and are not yet timed.
+A release run that includes the existing write matrix and 30-minute soak already
+contains about 84 minutes of those phases before its other work. Do not schedule
+it to answer a question that a focused stage can resolve.
+
+### Keep deferred unless new evidence changes the decision
+
+- Missing-span reads: measured overlap is 0.788% of mixed staged bytes and
+  0.449% during recovery. Reopen only for a representative workload with material
+  waste and favorable request-fragmentation costs; the artificial 12.55% fixture
+  is not performance acceptance.
+- Global zero caller backoff, the removed whole-read queue and unbounded copy
+  coalescing: measured regressions outweigh their gains.
+- Idle relocation, per-stream chunks and large pages: current evidence does not
+  justify their complexity. Existing in-chunk ordering optimizations remain.
+- Historical cross-day Q8 write differences: obtain a controlled comparison only
+  if a new current observation warrants it; preserve the completed 72-case baseline.
+
+After each stage, append the conclusion and immutable evidence identity to
+PERFORMANCE_FINDINGS.md and update implementation and verification separately
+in RAM_FIRST_IMPLEMENTATION_TRACKER.md. Stop an unsuccessful branch of the
+investigation rather than widening the matrix without a new hypothesis.

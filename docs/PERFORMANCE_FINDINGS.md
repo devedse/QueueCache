@@ -309,6 +309,10 @@ inference, not a completed causal attribution. No faster cache-copy loop was
 ported into the RAM disk here. The rejected queue changed both scheduling and
 whole-copy granularity; a future experiment should keep `CopySplit` fixed first.
 Cache BelowNormal × affinity interaction remains a separate open diagnostic.
+The completed `-n` control changes DiskSpd thread affinity. Provider copy helpers
+still use fixed CPU assignments in `driver/ramdisk/transfer.cpp`; their placement
+and handoff cost were not independently varied. The next attribution must also
+distinguish useful helper work from polling/coordination before selecting a change.
 
 All thirty raw XML/settings, scored-byte calculations, owned priority readbacks,
 1 GiB before/after hashes, native identities/counters, readiness and enclosing
@@ -551,8 +555,13 @@ polling.
 | 1 | Investigate request concurrency and split-helper handoffs with copying held fixed | Thirty normal-priority RAM controls complete: affinity/source overlap leave the 26 versus 38–39 GB/s gap. Profile coordination/completion, then consider an isolated asynchronous experiment retaining `CopySplit`; preserve Q1/small/four-reader and lifecycle checks. Cache CPU-priority × affinity remains separate and untested. |
 | 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
 | 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
-| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); connect Manager delivery separately | Plan 114 composes maintained typed suites and publishes one durable completion event after evidence/restoration. Windows host contracts and the 59-second two-phase driver smoke pass. Automatic Manager wakeup needs its external completion API; no delivery is claimed. |
-| 5 | Select the next optimization from measured bottlenecks | Most promising candidates are bounded missing-span reads if churn supports them, then targeted copy coordination or request-size caller policy if profiles/controls support them. No promised single-reader 42 GB/s. |
+| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); connect Manager delivery separately | Plan 114 composes maintained typed suites and publishes one durable completion event after evidence/restoration. Windows contracts, the 59-second smoke and the 17 min 21 s focused campaign pass. Automatic Manager wakeup needs its external completion API; no delivery is claimed. Complete that integration alongside performance attribution, using a short smoke rather than a broad matrix. |
+| 5 | Gate the next native experiment on RAM attribution | Keep the copy algorithm fixed and change only a demonstrated coordination or request-concurrency cost. Use same-build alternating A/B and qualify new lifecycle paths. Missing-span reads stay deferred; request-size caller policy is a lower-priority conditional candidate. No promised single-reader 42 GB/s. |
+
+The reviewed [continuation plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review)
+sets the implementation order, proposed acceptance thresholds, completion-integration
+checks and run budget. Cache priority/affinity and optional 100 ms Desktop cost
+remain separate questions. This review adds no new measurements or production changes.
 
 For a missing-span experiment, first record how many missing runs each partly
 cached request contains. Start with a runtime default-off implementation using
