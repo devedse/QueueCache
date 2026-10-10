@@ -170,6 +170,11 @@ cursors versus `-s4M -T1M` interleaved lanes. Each thread in the latter starts o
 blocks while preserving four readers, total depth eight, block/file sizes and
 the non-interlocked submission path. Contract reference:
 [Microsoft DiskSpd threading/stride documentation](https://github.com/microsoft/diskspd/wiki/Threading-and-concurrency).
+The [DiskSpd 2.2 offset implementation](https://github.com/microsoft/diskspd/blob/v2.2/Common/Common.h)
+wraps sequential offsets to the thread's starting offset modulo sequential
+stride. With these sizes, the inferred lanes remain 0/1/2/3 MiB modulo 4 MiB
+across the 1 GiB file wrap. XML verifies the selected settings; this is an
+inference from documented/versioned semantics, not a captured offset trace.
 The actual bundled 2.2 XML is required to match affinity, stride, depth, file size,
 duration and normal I/O settings; a three-second warmup and owned Normal CPU /
 memory-default 5 readbacks precede every score. Existing whole-file byte guards,

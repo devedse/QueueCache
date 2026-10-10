@@ -76,14 +76,14 @@ public static class VerificationCampaignEvidence
     public static string DriversKey(LoadedDriverObservation observation) => JsonSerializer.Serialize(
         observation.Modules.OrderBy(m => m.ModulePath, StringComparer.OrdinalIgnoreCase).Select(m => new { m.ModulePath, m.FilePath, m.FileSha256 }));
 
-    public static void ValidateConfiguration(RecoverySnapshot expected, RecoverySnapshot actual, bool allowInjectedErrors = false)
+    public static void ValidateConfiguration(RecoverySnapshot expected, RecoverySnapshot actual, bool allowInjectedErrors = false, bool allowPending = false)
     {
         if (expected.Target != actual.Target || expected.Machine != actual.Machine || actual.SchemaVersion != 1 ||
             expected.Profiles != actual.Profiles || expected.Timing != actual.Timing || expected.ReadRecall != actual.ReadRecall ||
             expected.CallerBackoff != actual.CallerBackoff || expected.State.Enabled != actual.State.Enabled ||
             expected.State.BudgetBytes != actual.State.BudgetBytes || expected.State.UnsafeDefer != actual.State.UnsafeDefer ||
             expected.State.Options != actual.State.Options || expected.State.Instance != actual.State.Instance ||
-            actual.State.LastError != 0 || actual.State.DirtyBytes != 0 || actual.State.InFlightBytes != 0 ||
+            actual.State.LastError != 0 || !allowPending && (actual.State.DirtyBytes != 0 || actual.State.InFlightBytes != 0) ||
             (allowInjectedErrors ? actual.State.Errors < expected.State.Errors : actual.State.Errors != expected.State.Errors))
             throw new IOException("Campaign baseline identity, runtime configuration, hooks or saved profiles changed between phases.");
     }

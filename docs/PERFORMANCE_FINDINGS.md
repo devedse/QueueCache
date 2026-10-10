@@ -233,7 +233,10 @@ copies versus 28% copying. Moving the same copy to another thread does not
 automatically improve throughput.
 
 The new PR #9 experiment instead used a bounded shared queue and three sleeping
-whole-read executors. Its 54-window same-build comparison completed on
+whole-read executors. These executors copied each request without the retained
+provider split helper. Scheduling **and copy granularity** changed together;
+the result rejects this combined implementation, not every possible scheduling
+improvement or the earlier cache-copy optimizations. Its 54-window same-build comparison completed on
 0.4.503.1, run `20261010-034755-884b991306b245e7b91b3aea82fa9351`:
 
 | Direct large-read shape | Retained synchronous median MiB/s | Experimental queue median MiB/s | Change |
@@ -466,6 +469,7 @@ to 06:55 was not two hours spent executing that benchmark.
 | Traced priority subset, four windows | 2 min 38 s |
 | Focused churn, six episodes | 9 min 38 s |
 | Five retained-driver scenarios | 3 min 09 s |
+| Plan-114 campaign smoke, two phases | 59 s |
 
 The priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
@@ -483,7 +487,7 @@ polling.
 | 1 | Add a focused priority/affinity control before a scheduling experiment | Completed trace shows more ready delay and idle helper CPUs with BelowNormal. Separate affinity interaction and per-thread coordination first; keep normal benchmark settings and preserve user/driver priorities. |
 | 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
 | 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
-| 4 | Implement the [single-command campaign and completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) | Compose maintained typed suites; send one completion event after evidence and restoration are finalized. Preserve fail-fast behavior and explicit targets. |
+| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); connect Manager delivery separately | Plan 114 composes maintained typed suites and publishes one durable completion event after evidence/restoration. Windows host contracts and the 59-second two-phase driver smoke pass. Automatic Manager wakeup needs its external completion API; no delivery is claimed. |
 | 5 | Select the next optimization from measured bottlenecks | Most promising candidates are bounded missing-span reads if churn supports them, then targeted copy coordination or request-size caller policy if profiles/controls support them. No promised single-reader 42 GB/s. |
 
 For a missing-span experiment, first record how many missing runs each partly

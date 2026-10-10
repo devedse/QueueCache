@@ -67,6 +67,13 @@ pause and independent restoration. An active different backing cache is refused.
 The campaign owns all target disk leases between phases. It never creates or
 formats a lab disk automatically.
 
+Performance-target phases use an explicit bounded preparation worker before
+their strict clean-cache capture: verify the original configuration and errors,
+flush the filesystem volume, drain the cache once, and wait for clean accounting.
+Owned control telemetry records this preparation. Fault/configuration mismatch
+stops before controls; this does not retry a fault or change benchmark settings.
+It handles late lab-container metadata after restoring an active backing cache.
+
 Every phase declares a target role, filesystem, budget, repetitions, score and
 warmup durations, expected cases, failure policy, driver feature requirements and
 restoration deadline. Resolve roles to exact volume IDs and owned lab registrations
@@ -171,3 +178,34 @@ Use the short smoke and focused checks to qualify orchestration; a broad matrix
 is not needed merely to validate reporting/notification plumbing. A first release profile's
 benchmark time includes about 54 minutes for the current write matrix and at
 least 30 minutes of sustained mixed I/O, before other phases/preparation/drains.
+
+### Qualification on 2026-10-10
+
+Windows Release host contracts pass for success, failure, cancellation, unsafe
+preflight, missing markers, count/driver/baseline mismatch and failed cleanup.
+They use owned fake workers and files, without workload disk or driver access.
+The real-driver smoke on unchanged signed 0.4.514.1, managed source `51cb288`,
+completed 2/2 phases and cases in **59.15 seconds**, run
+`QueueCache-Campaign-20261010-122615-ed7dc35c4c30483dbf6375a92b103211`.
+Both indexed child reports, raw checks, eight telemetry readiness handshakes
+(maximum control-sample gap 0.245152 seconds), 26 zero-exit owned process records,
+backing pause/restoration and final target snapshots were inspected; the
+read-only completion command accepted the event and immutable manifest digest.
+Raw archive SHA-256:
+`CD25CEEC2EB93F3A215E90E464E923B78C3FF6FD33FA8E6E3855C57CE7D36F12`.
+
+The earlier attempt
+`QueueCache-Campaign-20261010-122501-a82a7be5cfe241f28676db226461b260`
+is preserved separately as INCOMPLETE, zero phases started: attaching the lab
+left Q: dirty and preflight refused it. Explicit preparation drained the setup
+writes before the new run. Neither evidence nor the clean-cache guard was
+relaxed. This smoke qualifies orchestration, not the full performance profile.
+
+The first focused attempt
+`QueueCache-Campaign-20261010-123104-34e4bdc4c0c54e6e8bf4eacd52949a91`,
+managed source `6a7cae5`, completed four correctness phases, then stopped before
+any RAM score because late lab-container metadata left the active Q: cache dirty
+at the next strict capture. Restoration completed. This exposed the need for the
+explicit phase preparation above; the failed run is preserved, not recombined
+with a retry. Its private raw archive SHA-256 is
+`ED3B90EDAA46BE8DA4CFC14B97B7A03424A69D6ECDD99EBC1E6CB52EC9C0A515`.

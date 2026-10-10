@@ -42,6 +42,34 @@ public static class VerificationWorker
         foreach (var check in checks.Where(c => c.Result != "PASS"))
             error.WriteLine($"{check.Result}: {check.Name}: {check.Detail}");
     }
+    /// <summary>Explicit benchmark preparation, never a retry of a fault or a relaxed clean-cache capture.</summary>
+    public static async Task<RecoverySnapshot> PrepareCampaignAsync(RecoverySnapshot expected,
+        Func<RecoverySnapshot> capture, Action flushVolume, Action flushCache,
+        Action<string, RecoverySnapshot> record, TimeSpan deadline)
+    {
+        var timer = Stopwatch.StartNew();
+        RecoverySnapshot Observe()
+        {
+            var snapshot = capture();
+            ConfigurationManager.EnsureHealthy(snapshot.State);
+            VerificationCampaignEvidence.ValidateConfiguration(expected, snapshot, allowPending: true);
+            return snapshot;
+        }
+        record("before", Observe());
+        flushVolume(); record("after-volume-flush", Observe());
+        flushCache(); record("after-cache-flush", Observe());
+        for (;;)
+        {
+            var snapshot = Observe();
+            if (snapshot.State.DirtyBytes == 0 && snapshot.State.InFlightBytes == 0)
+            {
+                VerificationCampaignEvidence.ValidateConfiguration(expected, snapshot);
+                record("clean", snapshot); return snapshot;
+            }
+            if (timer.Elapsed >= deadline) throw new TimeoutException("Campaign preparation did not reach a clean state; inspect recorded controls and telemetry.");
+            await Task.Delay(100);
+        }
+    }
     public static void ValidateActiveImageRouting(WriteCacheState enabled, WriteCacheState observed,
         ulong requiredAcceptedBytes)
     {
@@ -627,6 +655,7 @@ public static class VerificationWorker
                 break;
             case "capture":
             case "campaign-inspect":
+            case "campaign-prepare":
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
                 if (inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0)
@@ -639,12 +668,23 @@ public static class VerificationWorker
                 ConfigurationManager.EnsureHealthy(state);
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
-                if (state.DirtyBytes != 0)
+                if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
                     throw new IOException("Start with a clean cache; drain your workload first.");
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
                     device.GetDiagnostics().CallerRouting?.Backoff);
-                if (job.Operation == "capture") result = capturedSnapshot;
+                if (job.Operation == "campaign-prepare")
+                {
+                    var expectedPreparation = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))
+                        ?? throw new InvalidDataException("Missing campaign preparation baseline.");
+                    result = await PrepareCampaignAsync(expectedPreparation, () => new RecoverySnapshot(1, target,
+                        device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow,
+                        Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode, device.GetDiagnostics().CallerRouting?.Backoff),
+                        () => { Stage("explicit phase preparation: flushing filesystem volume"); using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true); volume.Flush(); },
+                        () => { Stage("explicit phase preparation: draining cache"); device.Control(WriteCacheAction.Flush); },
+                        (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot), TimeSpan.FromSeconds(job.Seconds));
+                }
+                else if (job.Operation == "capture") result = capturedSnapshot;
                 else
                 {
                     var role = (CampaignTargetRole)job.Value;

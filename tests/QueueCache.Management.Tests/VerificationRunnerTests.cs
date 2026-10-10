@@ -1826,6 +1826,26 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { DeadlineMinutes = -1 } }));
         Reject(() => VerificationCampaignPlan.Create(measured with { Verification = measured.Verification with { BudgetMiB = 1024 } }));
         var scheduling = RamReadReferencePlan.SchedulingCases(3);
+        var boundary = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99990, 8L << 30, "fixture"),
+            new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "unchanged", DateTimeOffset.UtcNow, "fixture");
+        var pending = boundary with { State = boundary.State with { DirtyBytes = 4096 } };
+        Reject(() => VerificationCampaignEvidence.ValidateConfiguration(boundary, pending));
+        var preparationOrder = new List<string>(); var drainedBoundary = false;
+        var preparedBoundary = await VerificationWorker.PrepareCampaignAsync(boundary, () => drainedBoundary ? boundary : pending,
+            () => preparationOrder.Add("volume"), () => { preparationOrder.Add("cache"); drainedBoundary = true; },
+            (stage, _) => preparationOrder.Add(stage), TimeSpan.FromSeconds(1));
+        Check(preparedBoundary == boundary && preparationOrder.SequenceEqual(new[] { "before", "volume", "after-volume-flush", "cache", "after-cache-flush", "clean" }),
+            "explicit boundary preparation drains after filesystem flush without changing the baseline");
+        foreach (var invalid in new[] { pending with { State = pending.State with { LastError = 5 } }, pending with { State = pending.State with { Errors = 1 } } })
+        {
+            var controls = 0;
+            try { await VerificationWorker.PrepareCampaignAsync(boundary, () => invalid, () => controls++, () => controls++, (_, _) => { }, TimeSpan.FromSeconds(1));
+                throw new Exception("Preparation accepted a fault."); }
+            catch (IOException) { Check(controls == 0, "faults never reach preparation controls or drain retry"); }
+        }
+        try { await VerificationWorker.PrepareCampaignAsync(boundary, () => pending, () => { }, () => { }, (_, _) => { }, TimeSpan.Zero);
+            throw new Exception("Preparation ignored its clean-state deadline."); }
+        catch (TimeoutException) { }
         Check(scheduling.Count == 30 && scheduling.Select(c => c.Id).Distinct().Count() == 30 && scheduling.All(c => c.SchedulingControl && c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct),
             "RAM scheduling freezes the existing Direct/copy path with unique alternating controls");
         Check(scheduling.Count(c => c.Interleaved) == 6 && scheduling.Where(c => c.Interleaved).All(c => c.Threads == 4 && c.BlockKiB == 1024),

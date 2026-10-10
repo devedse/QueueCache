@@ -89,7 +89,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
 
     private async Task<string> Worker(WorkerJob job, CancellationToken token, int timeoutSeconds = 120)
     {
-        if (job.Operation is not ("control" or "configure" or "restore"))
+        if (job.Operation is not ("control" or "configure" or "restore" or "campaign-prepare"))
             return await ExecuteWorker(job, token, timeoutSeconds);
         // Continue sampling while a management command is stuck, including during final recovery.
         var trace = storage.PathFor($"control-trace-{Interlocked.Increment(ref sequence):D5}");
@@ -704,16 +704,22 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
 
     /// <summary>Campaign backing-cache actions use the same owned workers, control telemetry and restoration deadline.</summary>
     internal async Task<string> CampaignMaintenanceAsync(VerificationOptions selected, RecoverySnapshot baseline,
-        string evidenceParent, bool restore, IProgress<string>? progress, CancellationToken token)
+        string evidenceParent, bool restore, IProgress<string>? progress, CancellationToken token, bool prepare = false)
     {
         options = selected with { Volume = baseline.Target.Device };
         original = baseline; storage = new RunStorage(evidenceParent); progressSink = progress;
-        progressLabel = restore ? "Restoring campaign backing cache" : "Pausing campaign backing cache";
+        progressLabel = prepare ? "Preparing campaign phase" : restore ? "Restoring campaign backing cache" : "Pausing campaign backing cache";
         storage.Write("recovery.json", baseline);
         storage.Write("manifest.json", new { PlanVersion = VerificationPlan.Version, Options = options });
         try
         {
-            if (restore)
+            if (prepare)
+            {
+                var prepared = await Worker(Job("campaign-prepare") with { Recovery = storage.PathFor("recovery.json"),
+                    Reply = storage.PathFor("prepared.json"), Seconds = selected.PreparationFlushSeconds }, token, selected.PreparationFlushSeconds);
+                VerificationCampaignEvidence.ValidateConfiguration(baseline, JsonSerializer.Deserialize<RecoverySnapshot>(File.ReadAllText(prepared))!);
+            }
+            else if (restore)
             {
                 OwnedProcess.EnsureStopped(evidenceParent);
                 await Worker(Job("restore") with { Recovery = storage.PathFor("recovery.json"), Reply = storage.PathFor("restored.json") }, CancellationToken.None, 300);
@@ -724,9 +730,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 await Control(WriteCacheAction.Disable, token);
             }
             OwnedProcess.EnsureStopped(storage.DirectoryPath);
-            storage.Write("status.json", new { Status = "COMPLETED", Restoration = restore ? "RESTORED" : "PENDING" });
+            storage.Write("status.json", new { Status = "COMPLETED", Restoration = prepare ? "UNCHANGED" : restore ? "RESTORED" : "PENDING" });
             File.WriteAllText(storage.PathFor("FINISHED.txt"), "COMPLETED\n");
-            Log(restore ? "Original campaign backing cache restored." : "Campaign backing cache paused; independent restoration is required.");
+            Log(prepare ? "Explicit phase preparation completed; baseline unchanged and clean." : restore ? "Original campaign backing cache restored." : "Campaign backing cache paused; independent restoration is required.");
             return storage.DirectoryPath;
         }
         catch (Exception ex)

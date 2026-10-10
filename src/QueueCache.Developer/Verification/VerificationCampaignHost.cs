@@ -119,6 +119,9 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             if (pause)
                 await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                     main.Recovery, Path.Combine(directory, "maintenance"), false, progress, token);
+            if (target.Role == CampaignTargetRole.Performance)
+                await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
+                    target.Recovery, Path.Combine(directory, "maintenance"), false, progress, token, prepare: true);
             var exit = await runner.RunAsync(phase.Options with { Output = Path.Combine(directory, "phases", phase.Id) }, progress, token);
             var child = runner.DirectoryPath ?? throw new InvalidDataException("Phase did not allocate its evidence directory.");
             result = VerificationCampaignEvidence.ReadPhase(phase, child, exit, timer.Elapsed.TotalSeconds, target, diskSpdHash);
