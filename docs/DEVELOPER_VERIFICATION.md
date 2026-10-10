@@ -51,7 +51,7 @@ of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
-Plans 105–107 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
+Plans 105–108 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.
 
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
@@ -1586,7 +1586,7 @@ diagnostics also retain these fields, but their enclosing windows include
 startup/warm-up and must not be treated as exact DiskSpd score windows.
 
 
-## RAM-disk read reference (plans 106–107)
+## RAM-disk read reference (plans 106–108)
 
 ```powershell
 qcache developer verify Q: --suite ram-read-reference --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
@@ -1643,3 +1643,23 @@ zero. Creation/boot identity, access, no-image-I/O, readiness/coverage and traff
 checks remain strict. A byte mismatch records the exact offending expected and
 actual MiB off-target before cleanup. This contract change does not change the
 72-case write suite or driver scheduling.
+
+
+Plan 108 separates live native sampling from the full broker inventory. The
+plan-107 run (`QueueCache-Verify-20261010-024925-e957193997ef4dd7a415ed233edf97d5`)
+passed the first two Direct windows, including the payload guard and byte
+oracles, then stopped INCOMPLETE on a 2.084-second telemetry gap during the
+four-thread window. Independent fixture/cache restoration succeeded. The raw
+output remains preserved; these windows do not form a completed baseline.
+
+A dedicated sleeping sampling thread now retains provider and volume handles
+and queries native identity/geometry, published/frozen/timing state, error and
+traffic counters and filter access/cache state once per second. The full broker
+identity, lifecycle, definition, volume and image-I/O checks remain mandatory at
+both boundaries. Native samples do not synthesize image counters or broker
+states. Readiness, final sampling, full byte checks and the two-second coverage
+limit are unchanged. This removes broker round trips and thread-pool scheduling
+from the sample path; it does not alter RAM-disk scheduling or accept the old
+incomplete run. Host tests reject geometry, access, health, identity and coverage
+failures independently of boundary image-I/O checks. Windows/VM validation of
+this sampler is pending.

@@ -43,6 +43,7 @@ internal static class RamReadReferenceScenarios
                 var current = (await service.ListAsync()).Single(r => r.ResourceId == definition.ResourceId);
                 if (current.Runtime?.State != ManagedDiskState.Ready || current.VolumePath is null || current.PhysicalDiskNumber is null)
                     throw new IOException("Owned RAM reference did not become Ready.");
+                var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
                 var file = definition.PreferredLetter + @":\ram-read-reference.dat";
                 var expectedHash = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
                 foreach (var scenario in group)
@@ -52,10 +53,15 @@ internal static class RamReadReferenceScenarios
                     var beforeHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".before");
                     if (beforeHash != expectedHash) throw new InvalidDataException("RAM reference oracle hash changed.");
                     var before = await Snapshot();
-                    var samples = new List<RamReadReferenceBoundary>();
+                    var samples = new List<RamReadReferenceSample>();
+                    using var provider = WindowsRamDisk.Connect();
+                    using var sampledDevice = CacheDevice.OpenVolumeName(current.VolumePath);
                     using var stop = new CancellationTokenSource();
                     var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    var observer = Observe();
+                    // A dedicated sleeping thread avoids broker inventory requests and
+                    // thread-pool continuations competing with saturated copy workers.
+                    var observer = Task.Factory.StartNew(Observe, CancellationToken.None,
+                        TaskCreationOptions.LongRunning, TaskScheduler.Default);
                     DiskSpdScore? score = null; DateTimeOffset start = default, end = default;
                     using var child = new CancellationTokenSource();
                     Task<ProcessResult>? workload = null;
@@ -101,23 +107,31 @@ internal static class RamReadReferenceScenarios
                         if (record.Definition != definition || record.Runtime is not { } runtime || record.Native is not { } native ||
                             record.Statistics is not { } statistics || record.ImageIo is not { } io || record.VolumePath != current.VolumePath)
                             throw new IOException("RAM reference identity/statistics are missing or changed.");
+                        native.RequireSameCreation(expectedNative);
+                        if (native.Errors != 0) throw new IOException("RAM reference provider recorded an error.");
                         using var device = CacheDevice.OpenVolumeName(record.VolumePath!);
                         return new(DateTimeOffset.UtcNow, record.ResourceId, runtime.BootEpoch, runtime.CreationGeneration,
                             runtime.WriteGeneration, runtime.State, device.GetWriteCacheState().Enabled,
                             (native.Flags & RamDiskFlags.Timing) != 0, device.GetRamDirectState(), statistics.ReadRequests,
                             io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes);
                     }
-                    async Task Observe()
+                    void Observe()
                     {
                         using var log = new StreamWriter(prefix + ".telemetry.jsonl");
                         for (;;)
                         {
-                            var sample = await Snapshot(); samples.Add(sample);
-                            await log.WriteLineAsync(JsonSerializer.Serialize(sample)); await log.FlushAsync();
+                            var native = provider.Query(expectedNative);
+                            native.RequireSameCreation(expectedNative);
+                            var statistics = provider.Statistics(expectedNative)
+                                ?? throw new IOException("RAM reference provider statistics are unavailable.");
+                            var enabled = sampledDevice.GetWriteCacheState().Enabled;
+                            var direct = sampledDevice.GetRamDirectState();
+                            var sample = new RamReadReferenceSample(DateTimeOffset.UtcNow, native, statistics, enabled, direct);
+                            samples.Add(sample);
+                            log.WriteLine(JsonSerializer.Serialize(sample)); log.Flush();
                             ready.TrySetResult();
                             if (stop.IsCancellationRequested) break;
-                            try { await Task.Delay(1000, stop.Token); }
-                            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+                            stop.Token.WaitHandle.WaitOne(1000);
                         }
                     }
                 }

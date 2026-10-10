@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 107, "plan 107 guards reference payloads and records separate volume metadata writes");
+        Check(VerificationPlan.Version == 108, "plan 108 samples native RAM state independently of broker inventory and thread-pool scheduling");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -80,8 +80,14 @@ internal static class VerificationRunnerTests
             QueueCache.Operations.ManagedDisks.ManagedDiskState.Ready, false, false, direct, 0, 0, 0, null, 0, 0);
         var referenceAfter = referenceBefore with { Utc = sampleTime.AddSeconds(1), Direct = direct with { ReadRequests = 64, ReadBytes = 64UL << 20 } };
         var referenceScore = new DiskSpdScore(64L << 20, 64, 1, 64, 64, .1, null, .1, .1);
+        RamReadReferenceSample NativeSample(RamReadReferenceBoundary boundary) => new(boundary.Utc,
+            new QueueCache.Management.RamDiskSnapshot(resource, boot, 1, 2UL << 30, boundary.WriteGeneration, 2UL << 30,
+                Guid.Empty, 512, QueueCache.Management.RamDiskFlags.Published | QueueCache.Management.RamDiskFlags.DirectRegistered,
+                0, 0, boundary.ProviderWriteBytes ?? 0, 0, 0, 0, 0),
+            new QueueCache.Management.RamDiskStatistics(boundary.ProviderReadRequests, boundary.ProviderWriteRequests ?? 0,
+                10000000, 0, 0, 0, 0, 0, 0), boundary.CacheEnabled, boundary.Direct);
         void ValidateReference(RamReadReferenceBoundary after, DiskSpdScore score) =>
-            RamReadReferenceEvidence.Validate(references[0], [referenceBefore, after], referenceBefore, after, score,
+            RamReadReferenceEvidence.Validate(references[0], [NativeSample(referenceBefore), NativeSample(after)], referenceBefore, after, score,
                 sampleTime.AddMilliseconds(100), sampleTime.AddMilliseconds(900));
         ValidateReference(referenceAfter, referenceScore);
         ValidateReference(referenceAfter with { WriteGeneration = 6, Direct = referenceAfter.Direct with { WriteBytes = 4096 } }, referenceScore);
@@ -90,6 +96,23 @@ internal static class VerificationRunnerTests
         Reject(() => ValidateReference(referenceAfter with { ImageReadAttempts = 1 }, referenceScore));
         Reject(() => ValidateReference(referenceAfter with { Direct = direct }, referenceScore));
         Reject(() => ValidateReference(referenceAfter, referenceScore with { Bytes = 0, Operations = 0 }));
+        var nativeBefore = NativeSample(referenceBefore); var nativeAfter = NativeSample(referenceAfter);
+        void ValidateNative(RamReadReferenceSample changed) => RamReadReferenceEvidence.Validate(references[0],
+            [nativeBefore, changed], referenceBefore, referenceAfter, referenceScore,
+            sampleTime.AddMilliseconds(100), sampleTime.AddMilliseconds(900));
+        Reject(() => ValidateNative(nativeAfter with { Native = nativeAfter.Native with { ResourceId = Guid.NewGuid() } }));
+        Reject(() => ValidateNative(nativeAfter with { Native = nativeAfter.Native with { Errors = 1 } }));
+        Reject(() => ValidateNative(nativeAfter with { Native = nativeAfter.Native with { CapacityBytes = 1UL << 30 } }));
+        Reject(() => ValidateNative(nativeAfter with { Native = nativeAfter.Native with { Flags = QueueCache.Management.RamDiskFlags.Published } }));
+        Reject(() => ValidateNative(nativeAfter with { Native = nativeAfter.Native with { Flags = nativeAfter.Native.Flags | QueueCache.Management.RamDiskFlags.Frozen } }));
+        Reject(() => ValidateNative(nativeAfter with { Utc = sampleTime.AddSeconds(2.084) }));
+        var standardCase = references.First(c => c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Standard && c.BlockKiB == 1024);
+        var standardBefore = referenceBefore with { Direct = direct with { Access = QueueCache.Management.RamDirectAccess.None } };
+        var standardAfter = standardBefore with { Utc = referenceAfter.Utc, ProviderReadRequests = 64 };
+        RamReadReferenceSample StandardSample(RamReadReferenceBoundary boundary) => NativeSample(boundary) with
+            { Native = NativeSample(boundary).Native with { Flags = QueueCache.Management.RamDiskFlags.Published } };
+        RamReadReferenceEvidence.Validate(standardCase, [StandardSample(standardBefore), StandardSample(standardAfter)],
+            standardBefore, standardAfter, referenceScore, sampleTime.AddMilliseconds(100), sampleTime.AddMilliseconds(900));
         var ownedDefinition = QueueCache.Operations.ManagedDisks.ManagedDiskDefinition.New(QueueCache.Operations.ManagedDisks.ManagedDiskMode.EphemeralRam)
             with { CapacityBytes = 2UL << 30, Label = "QC-ReadRef-fixture" };
         RamReadReferenceEvidence.ValidateOwnedDefinition(ownedDefinition, ownedDefinition, []);
