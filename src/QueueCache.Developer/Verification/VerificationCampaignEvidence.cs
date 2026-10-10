@@ -140,7 +140,20 @@ public static class VerificationCampaignEvidence
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "manifest.json")));
         var state = status.RootElement;
         var plan = manifest.RootElement;
+        var expectedPhases = plan.GetProperty("Phases").Deserialize<VerificationCampaignPhase[]>() ?? throw new InvalidDataException("Missing frozen campaign phases.");
         var phases = JsonSerializer.Deserialize<CampaignPhaseResult[]>(File.ReadAllText(Path.Combine(directory, "results.json"))) ?? throw new InvalidDataException("Missing campaign phase results.");
+        if (phases.Length > expectedPhases.Length || !phases.Select(p => p.Id).SequenceEqual(expectedPhases.Take(phases.Length).Select(p => p.Id)))
+            throw new InvalidDataException("Recorded phases differ from the frozen sequential campaign.");
+        foreach (var phase in phases)
+        {
+            var expected = expectedPhases.Single(p => p.Id == phase.Id);
+            var root = Path.GetFullPath(Path.Combine(directory, "phases", phase.Id)) + Path.DirectorySeparatorChar;
+            if (phase.Suite != expected.Options.Suite || phase.Volume != expected.Options.Volume || phase.Expected != expected.ExpectedCases.Count ||
+                phase.Collected < 0 || phase.Collected > phase.Expected || !Path.GetFullPath(phase.Directory).StartsWith(root, StringComparison.OrdinalIgnoreCase) ||
+                phase.Status == "COMPLETED" && (phase.Collected != phase.Expected || phase.Restoration != "RESTORED" || phase.Failure is not null || phase.RestorationFailure is not null))
+                throw new InvalidDataException("Recorded phase counts, identity or restoration disagree with the campaign.");
+        }
+        using var restoration = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "restoration.json")));
         if (completion.SchemaVersion != 1 || completion.EventId != completion.CampaignId + ":terminal:1" ||
             completion.Directory != directory || completion.ManifestSha256 != hash ||
             plan.GetProperty("Kind").GetString() != "VerificationCampaign" || plan.GetProperty("CampaignId").GetString() != completion.CampaignId ||
@@ -151,9 +164,12 @@ public static class VerificationCampaignEvidence
             state.GetProperty("ExpectedCases").GetInt32() != completion.ExpectedCases ||
             (state.GetProperty("CollectedCases").ValueKind == JsonValueKind.Null ? (int?)null : state.GetProperty("CollectedCases").GetInt32()) != completion.CollectedCases ||
             state.GetProperty("Restoration").GetString() != completion.Restoration ||
+            restoration.RootElement.GetProperty("Status").GetString() != (completion.Restoration == "RESTORED" ? "RESTORED" : "FAILED") ||
             phases.Select(p => p.Id).Distinct().Count() != phases.Length || phases.Count(p => p.Status == "COMPLETED") != completion.CompletedPhases ||
+            completion.CollectedCases is { } collected && (collected < phases.Sum(p => p.Collected) || collected > completion.ExpectedCases) ||
             completion.Status is not ("COMPLETED" or "INCOMPLETE" or "RESTORATION_FAILED" or "CANCELLED") ||
-            completion.Status == "COMPLETED" && (completion.CompletedPhases != completion.ExpectedPhases || completion.CollectedCases != completion.ExpectedCases || completion.Restoration != "RESTORED") ||
+            completion.Status == "COMPLETED" && (completion.CompletedPhases != completion.ExpectedPhases || completion.CollectedCases != completion.ExpectedCases ||
+                phases.Sum(p => p.Collected) != completion.CollectedCases || completion.Restoration != "RESTORED") ||
             !File.ReadAllText(Path.Combine(directory, "FINISHED.txt")).StartsWith(completion.Status + "\n", StringComparison.Ordinal))
             throw new InvalidDataException("Completion event disagrees with finalized campaign evidence.");
         _ = File.ReadAllText(Path.Combine(directory, "SUMMARY.md")); _ = File.ReadAllText(Path.Combine(directory, "run.log"));

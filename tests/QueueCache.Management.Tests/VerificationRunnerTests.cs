@@ -1875,6 +1875,13 @@ internal static class VerificationRunnerTests
                 if (mode == "success")
                 {
                     Check(completion.CompletedPhases == 2 && completion.CollectedCases == 2 && completion.Restoration == "RESTORED", "complete counts/restoration");
+                    var resultPath = Path.Combine(directory, "results.json"); var resultText = File.ReadAllText(resultPath);
+                    var recorded = JsonSerializer.Deserialize<CampaignPhaseResult[]>(resultText)!;
+                    RunStorage.AtomicJson(resultPath, recorded.Select((r, i) => i == 0 ? r with { Collected = 0 } : r));
+                    Reject(() => VerificationCampaignEvidence.ReadCompletion(directory)); File.WriteAllText(resultPath, resultText);
+                    var eventPath = Path.Combine(directory, "completion.json"); var eventText = File.ReadAllText(eventPath);
+                    var eventNode = System.Text.Json.Nodes.JsonNode.Parse(eventText)!.AsObject(); eventNode.Remove("CollectedCases");
+                    File.WriteAllText(eventPath, eventNode.ToJsonString()); Reject(() => VerificationCampaignEvidence.ReadCompletion(directory)); File.WriteAllText(eventPath, eventText);
                     var manifest = Path.Combine(directory, "manifest.json"); var original = File.ReadAllText(manifest);
                     File.AppendAllText(manifest, " "); Reject(() => VerificationCampaignEvidence.ReadCompletion(directory)); File.WriteAllText(manifest, original);
                     File.Delete(Path.Combine(directory, "FINISHED.txt")); Reject(() => VerificationCampaignEvidence.ReadCompletion(directory));
