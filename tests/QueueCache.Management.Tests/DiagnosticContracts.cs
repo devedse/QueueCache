@@ -109,6 +109,51 @@ internal static class DiagnosticContracts
             Check(commands.Count == 2 && JsonSerializer.Deserialize<TraceOwnership>(File.ReadAllText(journalPath))!.State == "FINISHED", "parent finalizes a recording after abrupt worker exit");
             VerificationTraceSession.CleanupAsync(journalPath, Execute).GetAwaiter().GetResult();
             Check(commands.Count == 2, "finalized cleanup is idempotent");
+            var shortPath = Path.Combine(Path.GetTempPath(), journal.Instance);
+            var stagedJournal = journal with { WorkDirectory = shortPath, State = "FINALIZING" };
+            Reject(() => VerificationTraceSession.ValidateOwnership(stagedJournal with { WorkDirectory = root }, journalPath));
+            Directory.CreateDirectory(shortPath);
+            try
+            {
+                File.Delete(journal.Etl);
+                File.WriteAllText(Path.Combine(shortPath, "trace.etl"), "trace stopped before worker death");
+                RunStorage.AtomicJson(journalPath, stagedJournal);
+                VerificationTraceSession.CleanupAsync(journalPath, (_, args, _, _) =>
+                {
+                    Check(args[0] == "-status", "already stopped staging trace must not be stopped again");
+                    return Task.FromResult(new ProcessResult(0, "WPR is not recording", ""));
+                }).GetAwaiter().GetResult();
+                Check(File.ReadAllText(journal.Etl) == "trace stopped before worker death" &&
+                    !Directory.Exists(shortPath) && File.Exists(journalPath + ".hash.json"),
+                    "parent preserves short-path ETL and digest after worker death without recursive deletion");
+            }
+            finally { if (Directory.Exists(shortPath)) Directory.Delete(shortPath, true); }
+            var deep = Directory.CreateDirectory(Path.Combine(root, new string('a', 100), new string('b', 100), new string('c', 80))).FullName;
+            var deepJournal = Path.Combine(deep, "owned.trace.json");
+            var started = false;
+            Task<ProcessResult> NativePaths(string _, string[] args, string __, bool ___)
+            {
+                switch (args[0])
+                {
+                    case "-profiles": return Task.FromResult(new ProcessResult(0, "CPU CPU usage", ""));
+                    case "-exportprofile":
+                        Check(args[2].Length < 260 && !args[2].StartsWith(deep), "WPR export uses a short path outside deep evidence");
+                        File.WriteAllText(args[2], "<WindowsPerformanceRecorder><Keyword Value='SampledProfile'/><Keyword Value='CSwitch'/><Keyword Value='ReadyThread'/></WindowsPerformanceRecorder>");
+                        break;
+                    case "-start":
+                        Check(args[4].Length < 260 && File.Exists(deepJournal), "WPR start uses short staging with ownership persisted");
+                        started = true; break;
+                    case "-stop":
+                        Check(args[1].Length < 260, "WPR stop uses short staging");
+                        File.WriteAllText(args[1], "deep trace fixture"); break;
+                    case "-status": return Task.FromResult(new ProcessResult(0, started ? "WPR recording is in progress" : "WPR is not recording", ""));
+                }
+                return Task.FromResult(new ProcessResult(0, "", ""));
+            }
+            VerificationTraceSession.StartAsync(deepJournal, NativePaths).GetAwaiter().GetResult();
+            VerificationTraceSession.CleanupAsync(deepJournal, NativePaths).GetAwaiter().GetResult();
+            Check(File.ReadAllText(deepJournal + ".etl") == "deep trace fixture" && File.Exists(deepJournal + ".wprp"),
+                "short native files are retained in original deep evidence directory");
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("Attribution and priority/affinity contracts passed (no driver access).");

@@ -611,6 +611,28 @@ copy and polling. Process intervals include startup/warmup; measured read bytes
 remain separate. Exact request overlap and coordination timing remain unknown
 without instruction mapping or scoped native counters. No new gain is claimed.
 
+### Attribution bootstrap failures (no performance result)
+
+The first launch rejected phase-only `--trace-symbols` during generic campaign
+validation before allocating a campaign. Validation now scopes it to the selected
+RAM phase, and all registered RAM suites share the same integrity dispatch.
+These fixes pass Windows contracts and Debug/Release CI at `8997447`.
+
+The next attempt, `QueueCache-Campaign-20261010-180641-82bbd17c82f2409c81c198801840e0a6`,
+completed four retained correctness phases, then stopped while exporting the WPR
+profile: `0x80070006` (invalid handle). No trace or score began. The same installed
+WPR exported the same profile successfully to a short path; the nested campaign
+filename exceeded its native path handling. The run remained INCOMPLETE (4/6),
+took 212.45 s and restored cleanly. Its raw evidence remains separate.
+
+WPR now exports/records/stops in a short unique journal-owned temporary directory;
+managed I/O copies the profile and finalized ETL into the original run. Publishing
+the ETL uses a same-directory rename after copying, retains the staging source
+until publication, and resumes after a worker exits between stop and publication.
+Only empty staging directories are removed; unexpected evidence is preserved.
+Host contracts cover deep paths, cross-directory refusal and interrupted finalization.
+This is a verification-tool compatibility fix, not a driver speedup.
+
 ### Final campaign restoration gap found by controller smoke
 
 The first plan-115 controller smoke completed both test phases in about 50 s,

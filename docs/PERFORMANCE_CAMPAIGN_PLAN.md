@@ -1,9 +1,10 @@
 # Single-command performance verification and completion delivery
 
 Status: typed campaigns, sequential execution, combined reports and durable
-completion events are implemented in plan 114. Windows/VM qualification is recorded
-separately in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md). Automatic Manager
-wakeup remains an external integration. `full` does not include every specialized
+completion events were introduced in plan 114; current contract is plan 115.
+Windows/VM qualification is recorded separately in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
+Companion Manager job/delivery code is implemented; live deployment/wake verification
+remains separate. `full` does not include every specialized
 performance suite or the separate write matrix. Findings and priorities are in
 [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
@@ -172,8 +173,9 @@ credentials, private VM connection data or raw secrets in the event.
 | VM smoke | Two short maintained phases on owned NTFS lab; actual native identity, immutable evidence, process ownership and exact restoration | Validate orchestration, not a broad performance acceptance matrix. |
 | First full campaign | Freeze profile/options, run once on the normal-priority quiet VM, inspect every phase and final restoration | Establish campaign reference and document elapsed phase times and result-driven next steps. |
 
-The coordinator/event implementation is in this PR. Manager delivery/reconnect
-outbox handling is a future controller task, determined by its supported API.
+The coordinator/event implementation is in this PR. Companion Manager delivery
+and reconnect handling are implemented separately (see the plan-115 section);
+deployment and real wake verification remain outstanding.
 Use the short smoke and focused checks to qualify orchestration; a broad matrix
 is not needed merely to validate reporting/notification plumbing. A first release profile's
 benchmark time includes about 54 minutes for the current write matrix and at

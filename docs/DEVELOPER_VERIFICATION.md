@@ -1796,6 +1796,11 @@ ReadyThread; another active default recording is refused. Named trace ownership
 is journaled before start, finalized on failure and by parent recovery after
 worker death. Unusable/missing symbols or lost events reject attribution. Raw ETL,
 profile/tool/hash records and typed `.attribution.json` stay in the exact run.
+WPR itself uses a short unique temporary directory recorded in the ownership
+journal because its native path handling rejects deeply nested campaign paths.
+The profile and finalized ETL are retained in the original evidence directory;
+parent cleanup also resumes publication after an interrupted stop. No global
+WPR stop/cancel or system path configuration change is used.
 Process lifetime is an enclosing interval, not an exact DiskSpd score window.
 
 `priority-affinity` is a separate cached-volume factorial: sequential 1 MiB
