@@ -554,6 +554,35 @@ Check(ramQueueDiagnostics.RamReadQueue == new CacheRamReadQueue(2, 17, 15, 1, 4,
 Reject(() => CacheDiagnostics.Decode(ramQueueBytes.AsSpan(0, CacheDiagnostics.RamReadQueueWireSize - 1)), "short V22 diagnostics");
 BinaryPrimitives.WriteUInt64LittleEndian(ramQueueBytes.AsSpan(CacheDiagnostics.StagedReadWireSize), 3);
 Reject(() => CacheDiagnostics.Decode(ramQueueBytes), "unsupported RAM queue mode");
+BinaryPrimitives.WriteUInt64LittleEndian(ramQueueBytes.AsSpan(CacheDiagnostics.StagedReadWireSize), 2);
+Check(ramQueueDiagnostics.CallerRouting is null, "V22 has no caller routing attribution");
+var callerRoutingBytes = new byte[CacheDiagnostics.CallerRoutingWireSize];
+ramQueueBytes.CopyTo(callerRoutingBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(callerRoutingBytes, 23);
+BinaryPrimitives.WriteUInt32LittleEndian(callerRoutingBytes.AsSpan(4), CacheDiagnostics.CallerRoutingWireSize);
+ulong[] callerValues = [256, 200, 1, 2, 3, 4, 5, 60, 7];
+for (var i = 0; i < callerValues.Length; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(callerRoutingBytes.AsSpan(CacheDiagnostics.RamReadQueueWireSize + 8 * i), callerValues[i]);
+var callerDiagnostics = CacheDiagnostics.Decode(callerRoutingBytes);
+Check(callerDiagnostics.CallerRouting == new CacheCallerRouting(256, 200, 1, 2, 3, 4, 5, 60, 7) &&
+      callerDiagnostics.RamReadQueue == ramQueueDiagnostics.RamReadQueue, "V23 appends caller counters without changing V22");
+Reject(() => CacheDiagnostics.Decode(callerRoutingBytes.AsSpan(0, callerRoutingBytes.Length - 1)), "short V23 diagnostics");
+BinaryPrimitives.WriteUInt32LittleEndian(callerRoutingBytes, 22);
+Reject(() => CacheDiagnostics.Decode(callerRoutingBytes), "V23 size requires V23 version");
+BinaryPrimitives.WriteUInt32LittleEndian(callerRoutingBytes, 23);
+BinaryPrimitives.WriteUInt64LittleEndian(callerRoutingBytes.AsSpan(CacheDiagnostics.RamReadQueueWireSize), 257);
+Reject(() => CacheDiagnostics.Decode(callerRoutingBytes), "caller backoff above 256 rejected");
+BinaryPrimitives.WriteUInt64LittleEndian(callerRoutingBytes.AsSpan(CacheDiagnostics.RamReadQueueWireSize), 0);
+BinaryPrimitives.WriteUInt64LittleEndian(callerRoutingBytes.AsSpan(CacheDiagnostics.RamReadQueueWireSize + 8), 1);
+Check(CacheDiagnostics.Decode(callerRoutingBytes).CallerRouting?.Controls == 1,
+    "live caller counters may straddle updates; only quiescent deltas enforce accounting");
+var callerBefore = new CacheCallerRouting(16, 10, 1, 1, 1, 1, 1, 1, 1);
+var callerAfter = new CacheCallerRouting(16, 30, 2, 3, 4, 5, 6, 2, 2);
+Check(callerAfter.Since(callerBefore) == new CacheCallerRouting(16, 20, 1, 2, 3, 4, 5, 1, 1),
+    "caller delta preserves first-reason attribution");
+Reject(() => (callerAfter with { Backoff = 0 }).Since(callerBefore), "caller delta requires unchanged backoff");
+Reject(() => (callerAfter with { Controls = 0 }).Since(callerBefore), "caller counter reset rejected");
+Reject(() => (callerAfter with { Candidates = 11 }).Since(callerBefore), "quiescent declines cannot exceed candidates");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

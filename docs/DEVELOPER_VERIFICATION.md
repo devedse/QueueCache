@@ -1685,3 +1685,14 @@ empty stderr; any additional warning/error is rejected. Raw output is retained.
 No workload arguments or scoring windows change. This is aggregate resident
 read throughput, with potentially overlapping source data, not a single global
 sequential stream. The completed plan-108 raw output satisfies this rule.
+
+Plan 111 captures and restores the runtime caller backoff, including a separate
+expected/actual restoration artifact. Diagnostics V23 append eligible dispatch
+candidates and mutually exclusive first-decline reasons: queued control, queued
+request, active worker, active caller owner, offloaded copy, cooldown and periodic
+probe. Later cache-service declines remain in `CallerPath.Declined`. The lab-only
+action accepts 0..256 requests; the default remains 256, and busy/ownership/control
+checks always apply. Live fields are individually atomic; quiescent deltas reject
+resets, changed configuration and more declines than candidates. Older drivers
+report unavailable attribution and keep their existing restoration contract.
+ReFS/NTFS measurements and native ordering qualification are pending.

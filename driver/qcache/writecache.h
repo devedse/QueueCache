@@ -142,6 +142,9 @@ struct QC_DIAGNOSTICS
     // V22: runtime-only RAM read scheduling experiment (default 0, synchronous).
     ULONGLONG RamReadQueueMode, RamReadQueued, RamReadCompleted, RamReadCancelled;
     ULONGLONG RamReadInline, RamReadQueueFull, RamReadFallback;
+    // V23: caller-routing candidates and mutually exclusive first-decline reasons.
+    ULONGLONG CallerBackoff, CallerCandidates, CallerControls, CallerQueued;
+    ULONGLONG CallerWorkerActive, CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -164,7 +167,9 @@ static constexpr ULONG QcDiagnosticsV18Size = 944;
 static constexpr ULONG QcDiagnosticsV19Size = 952;
 static constexpr ULONG QcDiagnosticsV20Size = 976;
 static constexpr ULONG QcDiagnosticsV21Size = 1008;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1064);
+static constexpr ULONG QcDiagnosticsV22Size = 1064;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1136);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadRecall) == QcDiagnosticsV19Size);
@@ -280,7 +285,10 @@ enum : ULONG
     // Lab RAM reads: 0 synchronous (default); 1 shared sleeping queue;
     // 2 adaptive queue, retaining synchronous Q1 after 16 isolated completions.
     // Values 1/2 apply only to ordinary 512 KiB..1 MiB Direct reads. Runtime only.
-    QcLabRamReadQueue
+    QcLabRamReadQueue,
+    // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
+    // ownership checks still apply to every request. Runtime only.
+    QcLabCallerBackoff
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -447,6 +455,9 @@ struct QC_CACHE
     volatile LONG RamReadQueueMode;
     volatile LONG64 RamReadQueued, RamReadCompleted, RamReadCancelled;
     volatile LONG64 RamReadInline, RamReadQueueFull, RamReadFallback;
+    volatile LONG CallerBackoff;
+    volatile LONG64 CallerCandidates, CallerControls, CallerQueued, CallerWorkerActive;
+    volatile LONG64 CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
     ULONGLONG PagingSequence;
     BOOLEAN PagingStop;
     KEVENT PagingWork, PagingDone;

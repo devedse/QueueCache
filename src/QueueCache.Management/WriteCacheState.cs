@@ -189,5 +189,8 @@ public enum WriteCacheAction : uint
     LabReadRecall,
     /// <summary>Lab RAM reads: 0 synchronous (default), 1 shared sleeping queue,
     /// 2 adaptive queue with the synchronous Q1 path. Ordinary 512 KiB..1 MiB Direct reads only.</summary>
-    LabRamReadQueue
+    LabRamReadQueue,
+    /// <summary>Lab post-overlap caller backoff, 0..256 (default 256). Exclusive
+    /// foreground ownership and every busy/queued/control check remain mandatory.</summary>
+    LabCallerBackoff
 }

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 110, "plan 110 validates reference stderr and declares independent sequential cursors");
+        Check(VerificationPlan.Version == 111, "plan 111 captures, restores and verifies the runtime caller backoff");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -1147,7 +1147,8 @@ internal static class VerificationRunnerTests
             (uint)QueueCache.Management.WriteCacheAction.LabMeasureLayout == 16 &&
             (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17 &&
             (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabRamReadQueue == 19, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabRamReadQueue == 19 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabCallerBackoff == 20, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),
@@ -1392,6 +1393,15 @@ internal static class VerificationRunnerTests
         }
         Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "changed", 1).Count == 2,
             "profile and timing mismatches both retained");
+        var recordedBackoff = original with { CallerBackoff = 16 };
+        Check(VerificationWorker.RestorationMismatches(recordedBackoff, drained, healthy, "[]", 0, 16).Count == 0,
+            "runtime caller backoff restored exactly");
+        Check(VerificationWorker.RestorationMismatches(recordedBackoff, drained, healthy, "[]", 0, 256)
+            .SequenceEqual(["CallerBackoff: expected 16, actual 256"]), "backoff mismatch identifies both settings");
+        Check(VerificationWorker.RestorationMismatches(recordedBackoff, drained, healthy, "[]", 0).Count == 1,
+            "missing driver backoff cannot pass restoration");
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0, 256).Count == 0,
+            "older snapshots do not invent a backoff requirement");
         var originalOptions = new QueueCache.Management.CacheOptions();
         Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
             drained, healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,

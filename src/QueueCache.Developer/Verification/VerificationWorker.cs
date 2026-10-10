@@ -21,7 +21,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? DiskSpd = null, int ReferenceRepeats = 3, bool ReferenceQueue = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
-    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null);
+    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
 public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
@@ -166,7 +166,7 @@ public static class VerificationWorker
     /// or in flight there. A restored cache that is enabled again (Fast or Strict) can already hold new writes
     /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
-        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing)
+        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -190,6 +190,7 @@ public static class VerificationWorker
         Compare(nameof(restored.UnsafeDefer), original.State.UnsafeDefer, restored.UnsafeDefer);
         Compare(nameof(restored.Options), original.State.Options, restored.Options);
         Compare(nameof(original.Timing), original.Timing ? 1UL : 0UL, timing);
+        if (original.CallerBackoff is not null) Compare(nameof(original.CallerBackoff), original.CallerBackoff, callerBackoff);
         return mismatches;
     }
     public static async Task<int> ExecuteAsync(string jobPath)
@@ -257,7 +258,8 @@ public static class VerificationWorker
                     if (SavedConfigurations.IsSaved(target.VolumeId))
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
-                        systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName));
+                        systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName,
+                        diagnosticsBefore.ReadRecall?.Mode, diagnosticsBefore.CallerRouting?.Backoff));
                     return 0;
                 }
                 if (job.Operation == "system-restore")
@@ -276,12 +278,17 @@ public static class VerificationWorker
                         systemDevice.GetWriteCacheState,
                         (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot));
                     systemDevice.Control(WriteCacheAction.Release);
+                    if (original.CallerBackoff is { } systemBackoff)
+                        systemDevice.Control(WriteCacheAction.LabCallerBackoff, value: systemBackoff);
                     systemDevice.Control(WriteCacheAction.FlushPolicy, value: original.State.UnsafeDefer ? 1UL : 0UL);
                     if (original.State.Options is not null)
                         systemDevice.SetOptions(original.State.Options);
                     var restored = systemDevice.GetWriteCacheState();
                     RunStorage.AtomicJson(job.Reply, restored);
-                    var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(), systemDevice.GetPerformance().TimingEnabled);
+                    var systemRestoredBackoff = systemDevice.GetDiagnostics().CallerRouting?.Backoff;
+                    RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = systemRestoredBackoff });
+                    var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(),
+                        systemDevice.GetPerformance().TimingEnabled, systemRestoredBackoff);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
                     var requiredOracles = job.ImageOraclePaths ?? [];
@@ -634,7 +641,8 @@ public static class VerificationWorker
                 if (state.DirtyBytes != 0)
                     throw new IOException("Start with a clean cache; drain your workload first.");
                 result = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
-                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode);
+                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
+                    device.GetDiagnostics().CallerRouting?.Backoff);
                 break;
             case "restore":
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
@@ -645,6 +653,8 @@ public static class VerificationWorker
                 device.Control(WriteCacheAction.LabDelay, value: 0);
                 if (original.ReadRecall is { } recallMode)
                     device.Control(WriteCacheAction.LabReadRecall, value: recallMode);
+                if (original.CallerBackoff is { } originalBackoff)
+                    device.Control(WriteCacheAction.LabCallerBackoff, value: originalBackoff);
                 if (device.GetDiagnostics().LabGate is not null)
                     device.Control(WriteCacheAction.LabGate, value: 0);
                 if (device.GetDiagnostics().PagingAdmission is not null)
@@ -715,7 +725,9 @@ public static class VerificationWorker
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
-                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming);
+                var restoredBackoff = device.GetDiagnostics().CallerRouting?.Backoff;
+                RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = restoredBackoff });
+                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming, restoredBackoff);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new

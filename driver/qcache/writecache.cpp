@@ -190,6 +190,15 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->RamReadInline = InterlockedCompareExchange64(&c->RamReadInline, 0, 0);
     output->RamReadQueueFull = InterlockedCompareExchange64(&c->RamReadQueueFull, 0, 0);
     output->RamReadFallback = InterlockedCompareExchange64(&c->RamReadFallback, 0, 0);
+    output->CallerBackoff = static_cast<ULONG>(InterlockedCompareExchange(&c->CallerBackoff, 0, 0));
+    output->CallerCandidates = InterlockedCompareExchange64(&c->CallerCandidates, 0, 0);
+    output->CallerControls = InterlockedCompareExchange64(&c->CallerControls, 0, 0);
+    output->CallerQueued = InterlockedCompareExchange64(&c->CallerQueued, 0, 0);
+    output->CallerWorkerActive = InterlockedCompareExchange64(&c->CallerWorkerActive, 0, 0);
+    output->CallerOwnerActive = InterlockedCompareExchange64(&c->CallerOwnerActive, 0, 0);
+    output->CallerOffloaded = InterlockedCompareExchange64(&c->CallerOffloaded, 0, 0);
+    output->CallerBackoffRequests = InterlockedCompareExchange64(&c->CallerBackoffRequests, 0, 0);
+    output->CallerProbes = InterlockedCompareExchange64(&c->CallerProbes, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -1242,6 +1251,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->Performance.Frequency = frequency.QuadPart;
     c->Options = QcDefaultOptions();
     c->CallerPath = QcDefaultCallerPath;
+    c->CallerBackoff = QcCallerPathWorkerWindow;
     c->Instance = InterlockedIncrement64(&NextInstance);
     InterlockedExchange64(&SharedMemoryBudget.LimitBytes, static_cast<LONG64>(MemoryLimit()));
     // A disk-class upper filter can accidentally be installed ABOVE partmgr.
@@ -1715,6 +1725,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             c->RamReadInlineStreak = c->RamReadProbe = 0;
             KeReleaseSpinLock(&c->PagingLock, irql);
         }
+        break;
+    case QcLabCallerBackoff:
+        if (command.Value > QcCallerPathWorkerWindow || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            InterlockedExchange(&c->CallerBackoff, static_cast<LONG>(command.Value));
         break;
     case QcLabDelay:
         if (command.Value > 2000)
