@@ -10,6 +10,36 @@ public sealed record TraceOwnership(string Instance, string Executable, string E
 /// <summary>Named WPR ownership survives worker death. Cleanup never issues a global stop/cancel.</summary>
 public static class VerificationTraceSession
 {
+    public static int ConfigureDiagnosticProfile(System.Xml.Linq.XDocument profile, string? instance = null)
+    {
+        var collectors = profile.Descendants().Where(e => e.Name.LocalName is "SystemCollector" or "EventCollector").ToArray();
+        if (collectors.Length is < 1 or > 2) throw new InvalidDataException("Unexpected CPU collector inventory; buffer budget cannot be proven.");
+        foreach (var collector in collectors)
+        {
+            if (instance is not null) collector.SetAttributeValue("Name", instance + (collector.Name.LocalName == "SystemCollector" ? "-System" : "-Events"));
+            var size = collector.Elements().Single(e => e.Name.LocalName == "BufferSize");
+            var buffers = collector.Elements().Single(e => e.Name.LocalName == "Buffers");
+            size.SetAttributeValue("Value", 1024);
+            buffers.SetAttributeValue("Value", 128);
+            buffers.SetAttributeValue("PercentageOfTotalMemory", "false");
+            buffers.SetAttributeValue("Operation", "Set");
+        }
+        return collectors.Length * 128; // configured upper pool capacity in MiB, not observed allocation
+    }
+
+    public static void ValidateCollectorStatus(string output, int collectors)
+    {
+        static int[] Values(string output, string label) => System.Text.RegularExpressions.Regex.Matches(output,
+            @"(?m)^" + System.Text.RegularExpressions.Regex.Escape(label) + @"\s*:\s*(\d+)\s*$")
+            .Select(m => int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToArray();
+        foreach (var (label, expected) in new[] { ("Buffer Size (KB)", 1024), ("Number of Buffers", 128), ("Events Lost", 0) })
+        {
+            var values = Values(output, label);
+            if (values.Length != collectors || values.Any(value => value != expected))
+                throw new InvalidDataException("WPR collector readback missing/mismatched: " + label);
+        }
+    }
+
     public static void ValidateOwnership(TraceOwnership journal, string journalPath)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(journalPath))!;
@@ -52,18 +82,23 @@ public static class VerificationTraceSession
             var profilePath = Path.Combine(journal.WorkDirectory!, "profile.wprp");
             var definition = await execute(executable, ["-exportprofile", "CPU.Verbose", profilePath, "-filemode"], journalPath + ".profile", false);
             _ = definition;
-            File.Copy(profilePath, journalPath + ".wprp", overwrite: false);
+            File.Copy(profilePath, journalPath + ".installed.wprp", overwrite: false);
             var xml = System.Xml.Linq.XDocument.Load(profilePath);
             var keywords = xml.Descendants().Where(e => e.Name.LocalName == "Keyword").Select(e => e.Attribute("Value")?.Value).ToArray();
             if (!keywords.Contains("SampledProfile") || !keywords.Contains("CSwitch") || !keywords.Contains("ReadyThread"))
                 throw new InvalidDataException("WPR CPU profile lacks sampling/context-switch/ready-thread providers.");
-            File.Delete(profilePath);
+            var maximumMiB = ConfigureDiagnosticProfile(xml, journal.Instance);
+            xml.Save(profilePath);
+            File.Copy(profilePath, journalPath + ".wprp", overwrite: false);
             RunStorage.AtomicJson(journalPath + ".tool.json", new { Path = executable,
                 Version = File.Exists(executable) ? FileVersionInfo.GetVersionInfo(executable).FileVersion : null, Profile = "CPU.Verbose",
+                BufferKiB = 1024, BuffersPerCollector = 128, ConfiguredMaximumMiB = maximumMiB,
+                InstalledProfileSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(journalPath + ".installed.wprp"))),
                 ProfileSha256 = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(journalPath + ".wprp"))) });
-            await execute(executable, ["-start", "CPU.Verbose", "-filemode", "-recordtempto", journal.WorkDirectory!,
+            await execute(executable, ["-start", profilePath + "!CPU.Verbose", "-filemode", "-recordtempto", journal.WorkDirectory!,
                 "-instancename", journal.Instance], journalPath + ".start", false);
-            await execute(executable, ["-status", "-instancename", journal.Instance], journalPath + ".started", false);
+            var started = await execute(executable, ["-status", "collectors", "-details", "-instancename", journal.Instance], journalPath + ".started", false);
+            ValidateCollectorStatus(started.Output, maximumMiB / 128);
             RunStorage.AtomicJson(journalPath, journal with { State = "RECORDING" });
         }
         catch
@@ -113,6 +148,12 @@ public static class VerificationTraceSession
             RunStorage.AtomicJson(journalPath + ".hash.json", new { Sha256 = Convert.ToHexString(SHA256.HashData(etl)),
                 Bytes = etl.Length, Finished = DateTimeOffset.UtcNow });
             RunStorage.AtomicJson(journalPath, journal with { State = "FINISHED" });
+            if (journal.WorkDirectory is not null)
+            {
+                var profile = Path.Combine(journal.WorkDirectory, "profile.wprp");
+                if (File.Exists(profile) && File.Exists(journalPath + ".wprp") &&
+                    File.ReadAllBytes(profile).AsSpan().SequenceEqual(File.ReadAllBytes(journalPath + ".wprp"))) File.Delete(profile);
+            }
             if (journal.WorkDirectory is not null && System.IO.Directory.Exists(journal.WorkDirectory) &&
                 !System.IO.Directory.EnumerateFileSystemEntries(journal.WorkDirectory).Any())
                 System.IO.Directory.Delete(journal.WorkDirectory); // never recursive; preserve unexpected evidence

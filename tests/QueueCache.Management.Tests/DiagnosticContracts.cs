@@ -12,6 +12,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
+        Check(VerificationPlan.Version == 116, "trace buffer contract has a new verification plan version on every host");
         var cases = RamReadReferencePlan.CasesFor(RamReadRunKind.Attribution, 3);
         Check(cases.Count == 9 && cases.Select(c => c.Id).Distinct().Count() == 9 &&
             cases.GroupBy(c => (c.QueueDepth, c.Threads)).All(g => g.Count() == 3) &&
@@ -138,15 +139,16 @@ internal static class DiagnosticContracts
                     case "-profiles": return Task.FromResult(new ProcessResult(0, "CPU CPU usage", ""));
                     case "-exportprofile":
                         Check(args[2].Length < 260 && !args[2].StartsWith(deep), "WPR export uses a short path outside deep evidence");
-                        File.WriteAllText(args[2], "<WindowsPerformanceRecorder><Keyword Value='SampledProfile'/><Keyword Value='CSwitch'/><Keyword Value='ReadyThread'/></WindowsPerformanceRecorder>");
+                        File.WriteAllText(args[2], "<WindowsPerformanceRecorder><SystemCollector><BufferSize Value='1024'/><Buffers Value='20'/></SystemCollector><Keyword Value='SampledProfile'/><Keyword Value='CSwitch'/><Keyword Value='ReadyThread'/></WindowsPerformanceRecorder>");
                         break;
                     case "-start":
                         Check(args[4].Length < 260 && File.Exists(deepJournal), "WPR start uses short staging with ownership persisted");
+                        Check(args[1].EndsWith("profile.wprp!CPU.Verbose") && File.ReadAllText(args[1].Split('!')[0]).Contains("Value=\"128\""), "recording uses the actual bounded derived profile");
                         started = true; break;
                     case "-stop":
                         Check(args[1].Length < 260, "WPR stop uses short staging");
                         File.WriteAllText(args[1], "deep trace fixture"); break;
-                    case "-status": return Task.FromResult(new ProcessResult(0, started ? "WPR recording is in progress" : "WPR is not recording", ""));
+                    case "-status": return Task.FromResult(new ProcessResult(0, started ? "WPR recording is in progress\nBuffer Size (KB): 1024\nNumber of Buffers: 128\nEvents Lost: 0\n" : "WPR is not recording", ""));
                 }
                 return Task.FromResult(new ProcessResult(0, "", ""));
             }
@@ -154,6 +156,22 @@ internal static class DiagnosticContracts
             VerificationTraceSession.CleanupAsync(deepJournal, NativePaths).GetAwaiter().GetResult();
             Check(File.ReadAllText(deepJournal + ".etl") == "deep trace fixture" && File.Exists(deepJournal + ".wprp"),
                 "short native files are retained in original deep evidence directory");
+            var oversizedProfile = System.Xml.Linq.XDocument.Parse("<Profiles><SystemCollector/><EventCollector/><EventCollector/></Profiles>");
+            Reject(() => VerificationTraceSession.ConfigureDiagnosticProfile(oversizedProfile));
+            var collectorStatus = "Buffer Size (KB): 1024\nNumber of Buffers: 128\nEvents Lost: 0\n";
+            VerificationTraceSession.ValidateCollectorStatus(collectorStatus + collectorStatus, 2);
+            Reject(() => VerificationTraceSession.ValidateCollectorStatus(collectorStatus, 2));
+            Reject(() => VerificationTraceSession.ValidateCollectorStatus(collectorStatus.Replace("128", "20"), 1));
+            Reject(() => VerificationTraceSession.ValidateCollectorStatus(collectorStatus.Replace("Lost: 0", "Lost: 1"), 1));
+            var fixtureHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(deepJournal + ".etl")));
+            string borrowed;
+            using (var input = VerificationTraceInput.Open(deepJournal + ".etl", fixtureHash))
+            {
+                borrowed = input.FilePath;
+                Check(borrowed.Length < 260 && File.ReadAllText(borrowed) == "deep trace fixture", "native analyzer receives a short verified clone");
+            }
+            Check(!File.Exists(borrowed) && File.Exists(deepJournal + ".etl"), "analysis disposes only its clone and preserves raw ETL");
+            Reject(() => VerificationTraceInput.Open(deepJournal + ".etl", new string('0', 64)));
             var analysisJobPath = Path.Combine(deep, "worker-00002-ram-read-reference.job.json");
             var analysisJob = new WorkerJob("ram-read-reference", "Q:", Path.Combine(deep, "reply.json"),
                 OraclePath: Path.Combine(deep, "owned.json"), Seconds: 10, ReferenceRepeats: 1, ReferenceKind: RamReadRunKind.Attribution);

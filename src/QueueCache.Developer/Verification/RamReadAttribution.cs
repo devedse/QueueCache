@@ -94,7 +94,8 @@ public static class RamReadAttribution
             if (NativeTraceSymbols.ReadPdbIdentity(pdb) != (symbol.Signature, symbol.Age) || Convert.ToHexString(SHA256.HashData(pdb)) != symbol.PdbSha256)
                 throw new InvalidDataException("PDB does not match the original native symbol evidence.");
         }
-        using var trace = TraceProcessor.Create(journal.Etl, new TraceProcessorSettings { AllowLostEvents = false });
+        using var input = VerificationTraceInput.Open(journal.Etl, traceHash);
+        using var trace = TraceProcessor.Create(input.FilePath, new TraceProcessorSettings { AllowLostEvents = false });
         var cpu = trace.UseCpuSamplingData(); var scheduling = trace.UseCpuSchedulingData(); var symbols = trace.UseSymbols();
         trace.Process(); // missing providers and lost events fail, never relaxed
         // TraceProcessor resolves symbols against the image's recorded PDB signature, not its version string.
@@ -143,7 +144,7 @@ public static class RamReadAttribution
                 acts.GroupBy(a => a.Thread!.Id).Select(g => new AttributionWait(g.Key, g.Count(),
                     g.Any(a => a.WaitingDuration is null) ? null : g.Sum(a => (double)a.WaitingDuration!.Value.TotalMicroseconds) / 1000,
                     g.Any(a => a.ReadyDuration is null) ? null : g.Sum(a => (double)a.ReadyDuration!.Value.TotalMicroseconds) / 1000)).ToArray(),
-                "Enclosing process lifetime includes startup/warmup; ScoreBytes is the separate measured read-byte count.",
+                "Machine-wide CPU samples in the enclosing benchmark process lifetime include startup/warmup; native helper stacks are not resource-tagged. ScoreBytes is separate. Scheduler sums are predecessor waits for observed in-window switch-ins, not complete window wait totals.",
                 "UNKNOWN: sampled stacks do not establish concurrent Direct requests.",
                 "UNKNOWN: WorkerMain includes useful copying and polling; source lines/RVAs aid mapping but its whole share cannot be called wasted CPU.",
                 busy.SelectMany(s => s.Stack?.Frames.Where(Native).Distinct().Select(f =>

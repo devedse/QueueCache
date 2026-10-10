@@ -51,7 +51,7 @@ budget plus 1 GiB, five times for the stream exercises and four times for
 left their folders behind: check the volume root for `QueueCache-Verify-*` folders
 of finished runs before a large matrix.
 
-## Campaigns (plan version 114)
+## Campaigns (introduced in plan 114; current plan 116)
 
 `--campaign` runs maintained suites sequentially in one foreground process, with
 one `QueueCache-Campaign-*` report indexing its exact child runs. `--suite` remains
@@ -93,7 +93,7 @@ CPU/memory settings, three-second warmup, raw XML profile checks, byte oracles,
 native accounting, telemetry coverage and fixture restoration are required.
 This is a diagnostic comparison, not an accepted driver optimization.
 
-## Suites (current plan version 114; earlier additions below)
+## Suites (current plan version 116; earlier additions below)
 
 Plans 105–110 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.
@@ -1783,7 +1783,7 @@ The coordinator, user applications and driver thread priorities are untouched.
 qcache developer verify V: --suite priority-cost --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 ```
 
-### Plan 115: focused attribution and priority/affinity
+### Plans 115–116: focused attribution and priority/affinity
 
 `ram-read-attribution` uses an owned 2 GiB Direct RAM fixture and 1 GiB file.
 Exactly three shapes per repetition: sequential 1 MiB Q1T1, Q8T1 and Q2T4
@@ -1806,6 +1806,10 @@ lines to distinguish regions inside helper functions. Sampled instructions and
 stack return-address context are labeled separately; the latter is not exclusive
 CPU time. Missing lines remain null and unidentified process samples are counted
 as unknown, not busy. Counts are statistical attribution, not measured utilization.
+CPU samples cover the machine within each owned process lifetime, including
+helper threads and unrelated activity; helper stacks have no resource-ID tag.
+Submitter scheduler sums cover predecessor waits for observed switch-ins and are
+not complete blocked/ready totals. These limits remain explicit in each window.
 For improved analysis or an analyzer failure, reuse the finalized ETL without
 repeating workloads:
 
@@ -1823,6 +1827,15 @@ an elevated quiet Windows machine. Set `QCACHE_TEST_WPR=1` and
 the owned test process briefly, finalizes only its named trace, and checks CPU and
 scheduler parsing through a deeply nested path before a longer diagnostic. It
 accesses no driver or workload disk and retains its unique raw evidence folder.
+Plan 116 derives the installed `CPU.Verbose` file profile with fixed 128 buffers
+of 1 MiB per collector (one/two collectors, configured maximum 128/256 MiB).
+Both the original and derived definitions/hashes and actual collector status are
+retained. Collector names are unique to the journal, and startup requires the
+declared buffer count/size and zero loss. This diagnostic-only change follows a rejected 45,918-lost-event smoke;
+`AllowLostEvents` remains false. Native trace readers use a short hash-verified
+ETL clone and preserve the original. Buffer capacity affects the recording pool
+and must be recorded alongside traced results; see Microsoft's
+[profile/collector explanation](https://devblogs.microsoft.com/performance-diagnostics/authoring-custom-profiles-part-1/).
 Process lifetime is an enclosing interval, not an exact DiskSpd score window.
 
 `priority-affinity` is a separate cached-volume factorial: sequential 1 MiB

@@ -633,6 +633,31 @@ Only empty staging directories are removed; unexpected evidence is preserved.
 Host contracts cover deep paths, cross-directory refusal and interrupted finalization.
 This is a verification-tool compatibility fix, not a driver speedup.
 
+Installed-tool smoke then proved collection/finalization at deep paths, but the
+bundled native analysis reader rejected that deep path (`E_UNEXPECTED`). A short,
+hash-verified clone makes the reader open the same ETL successfully. The next
+smoke was correctly rejected for **45,918 lost events**; its original ETL remains
+immutable. No attribution or performance conclusion comes from either smoke.
+Plan 116 derives the installed CPU file profile with 128 × 1 MiB buffers per
+collector (maximum two collectors/256 MiB configured pool capacity). It records
+original/derived definitions and hashes plus actual collector status. Missing
+samples remain failures; `AllowLostEvents` stays false. The enlarged diagnostic
+pool is a recording-contract change, not a production/default speedup.
+The enlarged-pool installed-tool smoke passes on Windows: 350 samples and 299
+scheduler activities for its owned test PID, both collectors read back 128 ×
+1 MiB buffers with zero lost events, and strict final ETL processing succeeds.
+All Windows host contracts pass in that preview. Follow-up ownership hardening
+gives each collector a unique name and enforces its startup buffer/loss readbacks;
+its final smoke/CI and the actual three-shape diagnostic are tracked separately.
+
+Schema-2 analysis retains native sampled/return-context addresses and available
+source lines, with unknown process samples separate. `verify-attribution` reuses
+a finalized owned run in a unique analysis folder: it checks the worker/plan,
+original ETL digest and original PDB signature/hash without workloads or driver
+access. Reanalysis preserves the original collection verdict. Machine-wide
+samples and observed predecessor scheduler waits are not exact score-window CPU
+or complete blocked/ready totals; resource-tagged request overlap remains unknown.
+
 The separate priority/affinity campaign
 `QueueCache-Campaign-20261010-181219-edcb92e1d3bd4a49877854b8675108c0`
 stopped before benchmarking: the first sector policy case did not observe a clean

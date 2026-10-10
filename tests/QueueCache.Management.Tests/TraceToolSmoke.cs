@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Microsoft.Windows.EventTracing;
 using QueueCache.Developer.Verification;
 
@@ -25,7 +26,9 @@ internal static class TraceToolSmoke
                 Thread.Sleep(2000);
             }
             finally { VerificationTraceSession.CleanupAsync(journal).GetAwaiter().GetResult(); }
-            using (var trace = TraceProcessor.Create(journal + ".etl", new TraceProcessorSettings { AllowLostEvents = false }))
+            using var original = File.OpenRead(journal + ".etl");
+            using var input = VerificationTraceInput.Open(journal + ".etl", Convert.ToHexString(SHA256.HashData(original)));
+            using (var trace = TraceProcessor.Create(input.FilePath, new TraceProcessorSettings { AllowLostEvents = false }))
             {
                 var cpu = trace.UseCpuSamplingData(); var scheduling = trace.UseCpuSchedulingData();
                 trace.Process();

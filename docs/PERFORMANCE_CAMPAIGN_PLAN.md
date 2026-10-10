@@ -1,7 +1,7 @@
 # Single-command performance verification and completion delivery
 
 Status: typed campaigns, sequential execution, combined reports and durable
-completion events were introduced in plan 114; current contract is plan 115.
+completion events were introduced in plan 114; current contract is plan 116.
 Windows/VM qualification is recorded separately in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 Companion Manager job/delivery code is implemented; live deployment/wake verification
 remains separate. `full` does not include every specialized
