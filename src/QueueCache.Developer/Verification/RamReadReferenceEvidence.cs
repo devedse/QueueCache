@@ -6,7 +6,7 @@ namespace QueueCache.Developer.Verification;
 public sealed record RamReadReferenceBoundary(DateTimeOffset Utc, Guid ResourceId, Guid BootEpoch,
     ulong CreationGeneration, ulong WriteGeneration, ManagedDiskState State, bool CacheEnabled,
     bool Timing, RamDirectState Direct, ulong ProviderReadRequests, ulong ImageReadAttempts, ulong ImageWriteAttempts,
-    string? Error);
+    string? Error, ulong? ProviderWriteRequests = null, ulong? ProviderWriteBytes = null);
 
 /// <summary>These checks establish collection, residency and lifecycle, never speed acceptance.</summary>
 public static class RamReadReferenceEvidence
@@ -34,12 +34,18 @@ public static class RamReadReferenceEvidence
         {
             if (sample.ResourceId == Guid.Empty || sample.BootEpoch == Guid.Empty || sample.CreationGeneration == 0 ||
                 sample.ResourceId != before.ResourceId || sample.BootEpoch != before.BootEpoch ||
-                sample.CreationGeneration != before.CreationGeneration || sample.WriteGeneration != before.WriteGeneration ||
+                sample.CreationGeneration != before.CreationGeneration || sample.WriteGeneration < before.WriteGeneration ||
                 sample.State != ManagedDiskState.Ready || sample.CacheEnabled || sample.Timing || sample.Error is not null ||
+                sample.ProviderWriteRequests is null || sample.ProviderWriteBytes is null ||
                 sample.ImageReadAttempts != 0 || sample.ImageWriteAttempts != 0 ||
                 (scenario.Access == RamAccess.Direct ? !sample.Direct.Full || sample.Direct.ResourceId != sample.ResourceId : sample.Direct.Access != RamDirectAccess.None))
                 throw new InvalidDataException("RAM reference identity, access, residency or health changed during the workload.");
         }
+        var ordered = samples.Prepend(before).Append(after).ToArray();
+        if (ordered.Zip(ordered.Skip(1)).Any(p => p.Second.WriteGeneration < p.First.WriteGeneration ||
+            p.Second.ProviderWriteRequests < p.First.ProviderWriteRequests || p.Second.ProviderWriteBytes < p.First.ProviderWriteBytes ||
+            p.Second.Direct.WriteBytes < p.First.Direct.WriteBytes))
+            throw new InvalidDataException("RAM reference content counters decreased during the workload.");
         if (score.Bytes <= 0 || score.Operations <= 0 || score.Bytes != checked(score.Operations * scenario.BlockKiB * 1024L))
             throw new InvalidDataException("RAM reference has missing completions or wrong transfer size.");
         if (after.Direct.ReadBytes < before.Direct.ReadBytes || after.ProviderReadRequests < before.ProviderReadRequests ||

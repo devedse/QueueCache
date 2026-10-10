@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 106, "plan 106 adds RAM read references without changing performance matrices");
+        Check(VerificationPlan.Version == 107, "plan 107 guards reference payloads and records separate volume metadata writes");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -77,14 +77,16 @@ internal static class VerificationRunnerTests
         var direct = new QueueCache.Management.RamDirectState(QueueCache.Management.RamDirectAccess.Reads | QueueCache.Management.RamDirectAccess.Writes,
             QueueCache.Management.RamDirectReason.None, 0, resource, 0, 2UL << 30, 0, 0, 0, 0, 0, "fixture");
         var referenceBefore = new RamReadReferenceBoundary(sampleTime, resource, boot, 1, 5,
-            QueueCache.Operations.ManagedDisks.ManagedDiskState.Ready, false, false, direct, 0, 0, 0, null);
+            QueueCache.Operations.ManagedDisks.ManagedDiskState.Ready, false, false, direct, 0, 0, 0, null, 0, 0);
         var referenceAfter = referenceBefore with { Utc = sampleTime.AddSeconds(1), Direct = direct with { ReadRequests = 64, ReadBytes = 64UL << 20 } };
         var referenceScore = new DiskSpdScore(64L << 20, 64, 1, 64, 64, .1, null, .1, .1);
         void ValidateReference(RamReadReferenceBoundary after, DiskSpdScore score) =>
             RamReadReferenceEvidence.Validate(references[0], [referenceBefore, after], referenceBefore, after, score,
                 sampleTime.AddMilliseconds(100), sampleTime.AddMilliseconds(900));
         ValidateReference(referenceAfter, referenceScore);
-        Reject(() => ValidateReference(referenceAfter with { WriteGeneration = 6 }, referenceScore));
+        ValidateReference(referenceAfter with { WriteGeneration = 6, Direct = referenceAfter.Direct with { WriteBytes = 4096 } }, referenceScore);
+        Reject(() => ValidateReference(referenceAfter with { WriteGeneration = 4 }, referenceScore));
+        Reject(() => ValidateReference(referenceAfter with { ProviderWriteBytes = null }, referenceScore));
         Reject(() => ValidateReference(referenceAfter with { ImageReadAttempts = 1 }, referenceScore));
         Reject(() => ValidateReference(referenceAfter with { Direct = direct }, referenceScore));
         Reject(() => ValidateReference(referenceAfter, referenceScore with { Bytes = 0, Operations = 0 }));

@@ -49,7 +49,7 @@ internal static class RamReadReferenceScenarios
                 {
                     var prefix = evidence + "." + scenario.Id;
                     Console.WriteLine($"Reference {scenario.Id} ({checks.Count + 1} of {plan.Count})"); Console.Out.Flush();
-                    var beforeHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB);
+                    var beforeHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".before");
                     if (beforeHash != expectedHash) throw new InvalidDataException("RAM reference oracle hash changed.");
                     var before = await Snapshot();
                     var samples = new List<RamReadReferenceBoundary>();
@@ -62,6 +62,9 @@ internal static class RamReadReferenceScenarios
                     Exception? failure = null;
                     try
                     {
+                        // Forbid writes to the payload while allowing the read-only
+                        // DiskSpd handle. NTFS may still write unrelated volume metadata.
+                        using var payloadGuard = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
                         await Task.WhenAny(ready.Task, observer).WaitAsync(TimeSpan.FromSeconds(45));
                         if (observer.IsCompleted) { await observer; throw new IOException("RAM telemetry ended before readiness."); }
                         await ready.Task;
@@ -87,7 +90,7 @@ internal static class RamReadReferenceScenarios
                     RunStorage.AtomicJson(prefix + ".boundaries.json", new { Before = before, After = after });
                     RunStorage.AtomicJson(prefix + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
                     RamReadReferenceEvidence.Validate(scenario, samples, before, after, score!, start, end);
-                    var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB);
+                    var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
                     RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, Before = beforeHash, After = afterHash, Bytes = 1L << 30 });
                     if (afterHash != expectedHash) throw new InvalidDataException("RAM reference byte oracle changed after scoring.");
                     RunStorage.AtomicJson(prefix + ".score.json", score!);
@@ -102,7 +105,7 @@ internal static class RamReadReferenceScenarios
                         return new(DateTimeOffset.UtcNow, record.ResourceId, runtime.BootEpoch, runtime.CreationGeneration,
                             runtime.WriteGeneration, runtime.State, device.GetWriteCacheState().Enabled,
                             (native.Flags & RamDiskFlags.Timing) != 0, device.GetRamDirectState(), statistics.ReadRequests,
-                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError);
+                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes);
                     }
                     async Task Observe()
                     {
