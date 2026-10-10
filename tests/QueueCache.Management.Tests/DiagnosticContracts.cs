@@ -154,8 +154,22 @@ internal static class DiagnosticContracts
             VerificationTraceSession.CleanupAsync(deepJournal, NativePaths).GetAwaiter().GetResult();
             Check(File.ReadAllText(deepJournal + ".etl") == "deep trace fixture" && File.Exists(deepJournal + ".wprp"),
                 "short native files are retained in original deep evidence directory");
+            var analysisJobPath = Path.Combine(deep, "worker-00002-ram-read-reference.job.json");
+            var analysisJob = new WorkerJob("ram-read-reference", "Q:", Path.Combine(deep, "reply.json"),
+                OraclePath: Path.Combine(deep, "owned.json"), Seconds: 10, ReferenceRepeats: 1, ReferenceKind: RamReadRunKind.Attribution);
+            RunStorage.AtomicJson(analysisJobPath, analysisJob);
+            RunStorage.AtomicJson(analysisJob.Reply + ".plan.json", new { Cases = RamReadReferencePlan.CasesFor(RamReadRunKind.Attribution, 1), Seconds = 10 });
+            Reject(() => RamReadAttribution.ReadInputs(deep));
+            File.WriteAllText(Path.Combine(deep, "FINISHED.txt"), "INCOMPLETE original verdict remains");
+            Check(RamReadAttribution.ReadInputs(deep).Cases.Length == 3, "finalized failed collection can be analyzed without rerunning its benchmark");
+            RunStorage.AtomicJson(analysisJobPath, analysisJob with { OraclePath = Path.Combine(root, "outside.json") });
+            Reject(() => RamReadAttribution.ReadInputs(deep));
+            RunStorage.AtomicJson(analysisJobPath, analysisJob);
+            RunStorage.AtomicJson(analysisJob.Reply + ".plan.json", new { Cases = RamReadReferencePlan.CasesFor(RamReadRunKind.Attribution, 1), Seconds = 11 });
+            Reject(() => RamReadAttribution.ReadInputs(deep));
         }
         finally { Directory.Delete(root, true); }
         Console.WriteLine("Attribution and priority/affinity contracts passed (no driver access).");
+        TraceToolSmoke.RunOptional();
     }
 }

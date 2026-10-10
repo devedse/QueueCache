@@ -213,4 +213,13 @@ internal static class VerificationCommands
                 VerificationCampaignEvidence.ReadCompletion(p.GetValue(directory)!), RunStorage.Json)); return 0; });
         return command;
     }
+    public static Command CreateAttributionAnalysis()
+    {
+        var command = new Command("verify-attribution", "Analyze a finalized ram-read-attribution run without repeating workloads or changing driver state. Writes a new analysis folder; preserves the original collection verdict.");
+        var directory = new Argument<string>("run-directory"); command.Arguments.Add(directory);
+        var symbols = new Option<string>("--trace-symbols") { Required = true, Description = "Native PDB directory matching the original captured GUID/age and hashes." };
+        command.Options.Add(symbols);
+        command.SetAction(async p => { Console.WriteLine(await RamReadAttribution.ReanalyzeAsync(p.GetValue(directory)!, p.GetValue(symbols)!)); return 0; });
+        return command;
+    }
 }

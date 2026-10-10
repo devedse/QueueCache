@@ -51,7 +51,7 @@ foreach ($name in @('pause', 'resume', 'remove'))
     }
 }
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-completion'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
+foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-completion'), @('developer', 'verify-attribution'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
 {
     & $cli @command --help
     if ($LASTEXITCODE)

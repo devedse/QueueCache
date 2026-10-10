@@ -1801,6 +1801,28 @@ journal because its native path handling rejects deeply nested campaign paths.
 The profile and finalized ETL are retained in the original evidence directory;
 parent cleanup also resumes publication after an interrupted stop. No global
 WPR stop/cancel or system path configuration change is used.
+Schema-2 attribution also retains native instruction RVAs and available source
+lines to distinguish regions inside helper functions. Sampled instructions and
+stack return-address context are labeled separately; the latter is not exclusive
+CPU time. Missing lines remain null and unidentified process samples are counted
+as unknown, not busy. Counts are statistical attribution, not measured utilization.
+For improved analysis or an analyzer failure, reuse the finalized ETL without
+repeating workloads:
+
+```powershell
+qcache developer verify-attribution C:\QueueCache-Results\QueueCache-Verify-<run-id> --trace-symbols C:\Tools\Symbols
+```
+
+Pass the exact attribution child directory, not its campaign parent. This verifies
+the recorded worker/plan binding, ETL digest and original PDB GUID/age/hashes,
+then writes a unique `attribution-analysis-*` folder. It reads no driver state,
+does not start tracing or benchmarks, and preserves the original collection verdict.
+An optional installed-tool smoke runs through the same host-test executable on
+an elevated quiet Windows machine. Set `QCACHE_TEST_WPR=1` and
+`QCACHE_TEST_WPR_OUTPUT` to an existing absolute evidence directory. It records
+the owned test process briefly, finalizes only its named trace, and checks CPU and
+scheduler parsing through a deeply nested path before a longer diagnostic. It
+accesses no driver or workload disk and retains its unique raw evidence folder.
 Process lifetime is an enclosing interval, not an exact DiskSpd score window.
 
 `priority-affinity` is a separate cached-volume factorial: sequential 1 MiB
