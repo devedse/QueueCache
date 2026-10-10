@@ -1,5 +1,11 @@
 # Performance continuation: implementation handoff
 
+**Superseded execution plan:** use
+[PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md).
+It bounds the remaining diagnosis/candidate work and defines final acceptance or
+closure. This document retains historical design detail; its old stage order,
+proposed names and broad intermediate test commands are not the current backlog.
+
 Prepared 2026-10-10 against `perf/ram-read-followups`, planning commit `4fdb73f`,
 verification plan 114. This document records the plan at that checkpoint. Implementation has since
 started: consult the tracker for actual suite/delivery/verification status;

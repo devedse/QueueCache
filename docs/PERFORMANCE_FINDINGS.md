@@ -573,6 +573,13 @@ completed measurements.
 
 ## What to do next and when to repeat tests
 
+Current execution/closure instructions are in
+[PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md).
+One bounded diagnostic and candidate attempt must finish with an accepted speedup
+or no acceptable speedup found within scope; a verification blocker remains a
+separate honest outcome. New suites/profile in that plan are proposed, not yet
+implemented. This plan adds no performance measurement or accepted optimization.
+
 User prioritization, 2026-10-11: the measured low-priority/affinity interaction is
 documented and further diagnosis is parked. It explains a benchmark setup
 sensitivity; these results do not establish a normal-priority product regression

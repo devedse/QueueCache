@@ -14,9 +14,12 @@
   Runner helper can launch owned jobs now; automatic notifications additionally
   require the updated Manager service. Live wake verification remains separate
   from controller event validation. Use focused campaigns for affected regressions.
-  For the next implementation stages, follow the file-level steps, evidence gates
-  and handback checklist in `docs/PERFORMANCE_AGENT_HANDOFF.md`; proposed suites
-  there must be implemented before use.
+  Follow `docs/PERFORMANCE_FINALIZATION_HANDOFF.md` for the current bounded
+  investigation and final acceptance/stop gates. It supersedes the execution
+  order in `docs/PERFORMANCE_AGENT_HANDOFF.md`, which remains technical reference.
+  Proposed suites/profiles must be implemented before use. Close with a verified
+  speedup or no acceptable speedup found within that scope; record verification
+  blockers separately. Do not expand failed research into unrelated work.
   Current user priority: investigate and compare concrete RAM speedup candidates
   with the smallest maintained suite and affected correctness checks first.
   `--campaign focused` also runs 81 retained correctness checks; use an existing

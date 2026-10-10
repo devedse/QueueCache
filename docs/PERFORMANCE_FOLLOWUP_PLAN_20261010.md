@@ -63,6 +63,12 @@ are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
 ## Continuation plan after findings review
 
+The current agent-ready execution plan is
+[PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md): one
+remaining diagnostic, at most one candidate mechanism plus one justified revision,
+focused comparisons first and a single final broad campaign only for a winner.
+Its stop conditions supersede the historical continuation order below.
+
 Current scope after user review, 2026-10-11: prioritize concrete RAM speedup
 experiments and finish automatic completion delivery. The completed cached
 priority/affinity comparison explains a benchmark-launch sensitivity; additional

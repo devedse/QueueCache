@@ -3236,6 +3236,14 @@ acceptance result. Temporary owner settings are restored after this check.
 
 ### User scope review, 2026-10-11
 
+Final handoff: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
+is now the execution plan. Implementation: documentation only; proposes one
+missing-fact diagnostic, one candidate plus at most one justified revision, narrow
+campaign composition and final qualification/negative closure. Verification:
+source entry points and current suite/campaign contracts reviewed; no proposed
+suite/profile implemented and no VM tests or new performance findings. Automatic
+Manager wake remains unverified. Original handoff is historical technical reference.
+
 | Item | Implementation / plan status | Verification |
 |---|---|---|
 | Low-priority follow-up (user item 4) | Completed priority/affinity findings retained; further tracing is parked. Keep normal-priority benchmark launches. Reopen only for a relevant observed problem or new request. | Existing comparison establishes setup sensitivity, not a normal-priority product regression or its prevalence in real applications. No new run. |
