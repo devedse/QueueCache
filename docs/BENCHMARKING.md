@@ -6,6 +6,12 @@ CrystalDiskMark screenshots are redone. For QueueCache's own verification suites
 (DiskSpd in XML mode, telemetry, regression matrices) see
 [developer verification](DEVELOPER_VERIFICATION.md).
 
+Performance findings and keep/reject decisions are consolidated in
+[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md), including priority,
+allocation-history and background-interference results. Check that reference
+before repeating an investigation; changed code/settings still need the relevant
+regression checks.
+
 ## Setup
 
 - The installed release, Driver Verifier off (`verifier /query`), Windows'

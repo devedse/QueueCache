@@ -2,6 +2,14 @@
 
 ## Keep verification maintainable
 
+- Performance conclusions and decisions are consolidated in
+  `docs/PERFORMANCE_FINDINGS.md`; read it before starting an investigation and
+  update it when a result changes a decision. Preserve dated/raw evidence. Do not
+  rerun an established experiment merely because its finding was forgotten;
+  repeat relevant regressions when code, environment or measurement contracts
+  change. The proposed maintained campaign/completion workflow is in
+  `docs/PERFORMANCE_CAMPAIGN_PLAN.md` (a plan, not an available CLI feature).
+
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
   update implementation and verification separately for each item changed.

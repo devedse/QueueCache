@@ -3247,13 +3247,13 @@ restored, and the installed tray application resumed. Branch
 | RAM-disk single-reader Q8 scheduling | Supported reference sampler and archived same-build comparison implemented. The shared sleeping queue engine is rejected and removed; V22 prefix/action reservation preserved. Synchronous split copies retained. See [profile/design/results](RAM_READ_SCHEDULING_20261010.md). | 36/36 plan-108 reference and 54/54 plan-110 same-build windows completed with exact bytes, telemetry and independent restoration. The queue loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput on large reads; small controls remain within variation. No scheduling gain or priority boost justified. Lifecycle qualification of the removed experiment is deliberately not pursued. |
 | Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; plan-105 `partial-read-accounting` uses a held unbuffered handle and patterned partial sectors. Lower-read behavior unchanged. | Host ABI/window/runner contracts pass, including rejection of empty and failed worker checks. Windows Debug/Release CI and plan-105 VM run `20261010-020527-79bbee34e94c47faa71b8b062523627a` pass all ten byte/accounting checks on 0.4.495.1. Original settings restored, no errors/pending bytes. Concurrent ordering remains covered by existing scenarios, not this serialized counter window. |
 | ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks and Windows Debug/Release CI pass. Signed 0.4.514.1 quick and both complete 24-window NTFS/ReFS comparisons restore cleanly. Cooldown 0 gains 5.26%/3.79% mixed Q8, but loses 21.18% NTFS large-read Q8; ReFS large-read ranges overlap. Retain 256. [Raw-result summary](CALLER_BACKOFF_20261010.md). Separate default-path ordering/flush/capacity checks remain pending; no shorter production policy is promoted. |
-| Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host plan/bounds checks and Windows Debug/Release application/readback/owned-timeout contracts pass at `1788970`; VM evidence pending. Memory settings are process defaults after launch, without pressure injection or locked-page changes. No priority boost justified. |
+| Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host and Windows Debug/Release contracts pass at `1788970`. Full W: retry `20261010-073414-2f6dd18225094fc98abc3560ddaca39e` completed 36/36, all 940 process exits zero, maximum gap 0.689031 seconds, zero lower/staged I/O and clean restoration. CPU BelowNormal loses 34.20% Q8; I/O/memory Q8 ranges overlap normal. First attempt remains INCOMPLETE and separate. Focused CPU/wait trace running. [Evidence](PRIORITY_COST_20261010.md). Process memory defaults only, without pressure or locked-page changes. No boost implemented. |
 
 Plan 112 implements the supported 24-window `caller-backoff` comparison, with
 alternating 256/0 cooldowns, 64 KiB mixed Q1/Q8 and 4K/1M read controls, complete
 residency proofs and independent concurrent/post-drain byte checks after scoring.
 Implementation is complete; host and Windows CI contracts pass. All 24 NTFS
-windows per filesystem completed, independently restored and inspected.
+windows for each filesystem completed, independently restored and inspected.
 The mixed boundaries retain the V21 staged-read counters, but none of the fitting
 windows staged disk reads. Real eviction/churn evidence remains separate.
 
@@ -3276,3 +3276,14 @@ were inspected; original enabled 2 GiB Fast/Idle settings restored with timing
 off, zero dirty/in-flight bytes and no driver error. This validates accounting,
 not a missing-span speed-up. The shaped overlap is 12.55% of the lower traffic;
 real random/mixed windows are still needed before changing lower-read behavior.
+
+2026-10-10 documentation follow-up. Implementation: consolidated performance
+findings and decisions in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md),
+referenced by AGENTS.md and benchmarking guidance. Earlier retained changes,
+merged PR #8, new PR #9 diagnostics and rejected experiments are distinguished.
+Verification: cross-checked against the completed dated reports, including the
+36-window priority retry; CPU/wait attribution, churn and retained-driver
+qualification are explicitly pending. The
+[single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) is a
+design only, with maintained typed suites, independent restoration and terminal
+events; orchestration and DeveAgentManager wake integration are not implemented.
