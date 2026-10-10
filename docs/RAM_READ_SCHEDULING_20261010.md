@@ -72,3 +72,41 @@ VM collection, speed acceptance and explicit cancellation/binding withdrawal/
 stop/removal/freeze/snapshot/overlapping-write qualification are pending. The
 experiment stays disabled by default. The [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md)
 separates implementation from verification.
+
+
+## Completed reference on 0.4.497.1
+
+Plan-108 tools 0.4.501.1 (`ccf429e3f6d9091fa273c316376bf21a46a78c28`)
+ran against the unchanged installed 0.4.497.1 filter/provider above. Exact run
+`QueueCache-Verify-20261010-031011-5ff0b7da045a4b559abcc5cef68060b1`,
+03:10:11–03:25:40 UTC, completed all 36 windows and independent restoration.
+All raw XML/recognized trailers, exit codes/stderr, 1 GiB byte guards/oracles,
+readiness/native coverage, access/traffic, FINISHED/status/summary/results/log
+and restoration were inspected. Maximum native sampling gap: 1.137449 seconds.
+The original enabled 2 GiB Fast/Idle cache and managed resource IDs/reservation
+were restored, with zero errors/dirty/in-flight bytes.
+
+Each entry below is a median of three complete windows in MiB/s (1,048,576
+bytes/s). CPU ETW recording was enabled for this reference; it adds overhead,
+so scheduling acceptance uses a separate same-build A/B without recording.
+DiskSpd SHA-256: `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+
+| Read shape | Direct MiB/s | Standard MiB/s |
+|---|---:|---:|
+| 1M Q1T1 | 23,915.08 | 21,264.50 |
+| 1M Q8T1 | 22,984.92 | 19,153.05 |
+| 1M Q2T4 | 43,807.49 | 43,157.60 |
+| 4K Q1T1 | 1,605.10 | 851.87 |
+| 4K Q32T1 | 1,425.30 | 784.71 |
+| 4K Q8T4 | 4,788.81 | 2,771.62 |
+
+The large Direct Q8/four-thread medians are 24.10/45.94 decimal GB/s. Four
+threads use independent sequential cursors in the same resident file, rather
+than DiskSpd's globally interlocked sequence. DiskSpd emits its exact known
+`consider -si` warning for these six windows; all other stderr is empty. This
+control measures aggregate throughput and may include source-data locality
+from overlapping streams; it does not promise a 45.94 GB/s single stream.
+Plan 110 makes this stderr rule explicit and rejects every other warning/error,
+including an extra line after the recognized warning. Workload arguments stay
+unchanged. Native queue speed acceptance and lifecycle qualification remain
+pending.

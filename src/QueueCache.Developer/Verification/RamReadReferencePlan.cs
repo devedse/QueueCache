@@ -9,6 +9,15 @@ public sealed record RamReadReferenceCase(string Id, RamAccess Access, int Block
 public static class RamReadReferencePlan
 {
     public const int DiskMiB = 2048, FileMiB = 1024;
+    public const string IndependentSequentialWarning = "WARNING: target access pattern will not be sequential, consider -si";
+    public static void ValidateStandardError(RamReadReferenceCase scenario, string error)
+    {
+        var text = error.Trim();
+        // Each thread has its own sequential file cursor. The four-thread control
+        // is aggregate throughput, without DiskSpd's globally interlocked stride.
+        if (text.Length == 0 || (!scenario.Random && scenario.Threads > 1 && text == IndependentSequentialWarning)) return;
+        throw new InvalidDataException("Unexpected RAM reference DiskSpd stderr; inspect the preserved raw output.");
+    }
     public static IReadOnlyList<RamReadReferenceCase> Cases(int repeats, bool includeQueue = false)
     {
         if (repeats is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(repeats));

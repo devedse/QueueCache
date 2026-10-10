@@ -31,7 +31,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 109;
+    public const int Version = 110;
     public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";

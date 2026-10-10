@@ -88,6 +88,7 @@ internal static class RamReadReferenceScenarios
                         if (await Task.WhenAny(workload, observer) == observer) { await observer; throw new IOException("RAM telemetry ended during the workload."); }
                         var result = await workload;
                         if (result.ExitCode != 0) throw new IOException($"RAM reference DiskSpd exit {result.ExitCode}; inspect raw stderr/stdout.");
+                        RamReadReferencePlan.ValidateStandardError(scenario, result.Error);
                         score = DiskSpdParser.Parse(result.Output);
                         end = DateTimeOffset.UtcNow;
                     }

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 109, "plan 109 adds an opt-in same-build adaptive RAM queue comparison");
+        Check(VerificationPlan.Version == 110, "plan 110 validates reference stderr and declares independent sequential cursors");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -64,6 +64,12 @@ internal static class VerificationRunnerTests
               RamReadReferencePlan.Arguments(references[0], 10).Contains("-Rxml") &&
               !RamReadReferencePlan.Arguments(references[0], 10).Any(a => a.StartsWith("-c")),
               "RAM reference scores do not recreate files or hide preparation inside warm-up");
+        RamReadReferencePlan.ValidateStandardError(references[0], "");
+        RamReadReferencePlan.ValidateStandardError(references[2], RamReadReferencePlan.IndependentSequentialWarning + "\n");
+        Reject(() => RamReadReferencePlan.ValidateStandardError(references[0], RamReadReferencePlan.IndependentSequentialWarning));
+        Reject(() => RamReadReferencePlan.ValidateStandardError(references[^1], RamReadReferencePlan.IndependentSequentialWarning));
+        Reject(() => RamReadReferencePlan.ValidateStandardError(references[2], RamReadReferencePlan.IndependentSequentialWarning + "\nERROR: could not read"));
+        Reject(() => RamReadReferencePlan.ValidateStandardError(references[2], "WARNING: unknown warning"));
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", DiskSpd = null, BudgetMiB = 2048 }));
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", BudgetMiB = 1024 }));
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "ram-read-reference"),

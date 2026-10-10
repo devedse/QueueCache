@@ -51,7 +51,7 @@ of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
-Plans 105–109 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
+Plans 105–110 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.
 
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
@@ -1661,8 +1661,8 @@ states. Readiness, final sampling, full byte checks and the two-second coverage
 limit are unchanged. This removes broker round trips and thread-pool scheduling
 from the sample path; it does not alter RAM-disk scheduling or accept the old
 incomplete run. Host tests reject geometry, access, health, identity and coverage
-failures independently of boundary image-I/O checks. Windows/VM validation of
-this sampler is pending.
+failures independently of boundary image-I/O checks. Windows CI and the complete plan-108 VM reference now pass;
+[results and limits](RAM_READ_SCHEDULING_20261010.md).
 
 
 ### Same-build RAM scheduling experiment (plan 109)
@@ -1676,3 +1676,12 @@ managed disks retain their settings. The manifest declares all 54 immutable
 measurement IDs. V22 diagnostics are required; no missing mode is inferred as
 zero. See [scheduling design and acceptance](RAM_READ_SCHEDULING_20261010.md).
 This opt-in suite is excluded from `full` and changes no existing write matrix.
+
+
+Plan 110 explicitly validates DiskSpd stderr. Four-thread sequential controls
+use independent per-thread cursors and may emit only the exact known warning
+about a non-global sequential pattern (`consider -si`). Other cases require
+empty stderr; any additional warning/error is rejected. Raw output is retained.
+No workload arguments or scoring windows change. This is aggregate resident
+read throughput, with potentially overlapping source data, not a single global
+sequential stream. The completed plan-108 raw output satisfies this rule.
