@@ -55,6 +55,30 @@ internal static class DiagnosticContracts
         Check(NativeTraceSymbols.ReadPdbIdentity(pdb) == (signature, 2), "native PDB signature and age come from the information stream");
         Number(1036, 1000); Reject(() => NativeTraceSymbols.ReadPdbIdentity(pdb));
         Reject(() => NativeTraceSymbols.ReadPdbIdentity([1, 2, 3]));
+        var target = new QueueCache.Operations.DiskTarget('Q', 99990, 8L << 30, "fixture");
+        var recovery = new RecoverySnapshot(1, target, new(1, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            false, "unchanged profiles", DateTimeOffset.UtcNow, "fixture");
+        var finalTarget = new CampaignTargetEvidence(CampaignTargetRole.Performance, recovery, "NTFS", "fixture", "fixture", null,
+            false, null, null, new(true, null, []));
+        var finalOrder = new List<string>(); var finalClean = false;
+        VerificationCampaignHost.FinalizeTargetsAsync([finalTarget],
+            _ => { finalOrder.Add("prepare"); finalClean = true; return Task.CompletedTask; },
+            t => { finalOrder.Add("inspect"); return Task.FromResult(finalClean ? t : t with { Recovery = t.Recovery with { State = t.Recovery.State with { DirtyBytes = 4096 } } }); })
+            .GetAwaiter().GetResult();
+        Check(finalOrder.SequenceEqual(["prepare", "inspect"]), "final backing restoration prepares before strict clean capture");
+        finalOrder.Clear();
+        var disabledTarget = finalTarget with { Recovery = recovery with { State = recovery.State with { Flags = 0 } } };
+        VerificationCampaignHost.FinalizeTargetsAsync([disabledTarget],
+            _ => { finalOrder.Add("unexpected drain"); return Task.CompletedTask; }, t => Task.FromResult(t)).GetAwaiter().GetResult();
+        Check(finalOrder.Count == 0, "disabled baseline observations do not cause a drain");
+        var inspectedFault = false;
+        try
+        {
+            VerificationCampaignHost.FinalizeTargetsAsync([finalTarget], _ => Task.FromException(new IOException("fixture restoration fault")),
+                t => { inspectedFault = true; return Task.FromResult(t); }).GetAwaiter().GetResult();
+            throw new Exception("Final restoration accepted a fault.");
+        }
+        catch (IOException) { Check(!inspectedFault, "final preparation failure stops without observation/retry/success"); }
         var root = Directory.CreateTempSubdirectory("qc-trace-").FullName;
         try
         {

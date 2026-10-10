@@ -610,3 +610,16 @@ A higher WorkerMain share alone does not prove polling overhead: it contains bot
 copy and polling. Process intervals include startup/warmup; measured read bytes
 remain separate. Exact request overlap and coordination timing remain unknown
 without instruction mapping or scoped native counters. No new gain is claimed.
+
+### Final campaign restoration gap found by controller smoke
+
+The first plan-115 controller smoke completed both test phases in about 50 s,
+but final restoration verification failed: the resumed Q: backing cache had
+transient dirty filesystem metadata. The controller validated the nonzero exit's
+`RESTORATION_FAILED` event; it did not label it successful or relaunch work.
+Exact failed campaign: `QueueCache-Campaign-20261010-173916-42bc00c7467348efa904638243fd9ed3`.
+Recorded backing restoration had completed, the native cache remained healthy,
+and subsequent inspection found zero dirty/in-flight bytes. Finalization now
+uses the existing explicit bounded filesystem/cache preparation on an enabled
+performance baseline before the unchanged strict clean capture. Faults still
+stop restoration; disabled observations do not drain. Regression smoke pending.

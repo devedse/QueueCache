@@ -176,10 +176,22 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
         if (restorationBlocked is not null) throw new CampaignRestorationException(restorationBlocked);
         if (!preflightAccepted) return; // Read-only preflight failed; no cache action was authorized or attempted.
         if (backingPaused) await RestoreBacking(directory, progress);
-        // Read-only final verification catches changes to a different target during a child phase.
-        foreach (var target in baselines.Values)
+        await FinalizeTargetsAsync(baselines.Values,
+            target => new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
+                target.Recovery, Path.Combine(directory, "maintenance"), false, progress, CancellationToken.None, prepare: true),
+            target => Inspect(target.Role, target.Recovery.Target.Device, directory, progress, CancellationToken.None, target.Recovery.Target));
+    }
+
+    public static async Task FinalizeTargetsAsync(IEnumerable<CampaignTargetEvidence> targets,
+        Func<CampaignTargetEvidence, Task> prepare, Func<CampaignTargetEvidence, Task<CampaignTargetEvidence>> inspect)
+    {
+        foreach (var target in targets)
         {
-            var current = await Inspect(target.Role, target.Recovery.Target.Device, directory, progress, CancellationToken.None, target.Recovery.Target);
+            // Lab filesystem cleanup can dirty its backing volume after the saved task
+            // was resumed. Explicit final restoration preparation flushes that filesystem
+            // and drains under its own deadline before the unchanged strict capture.
+            if (target.Role == CampaignTargetRole.Performance && target.Recovery.State.Enabled) await prepare(target);
+            var current = await inspect(target);
             VerificationCampaignEvidence.ValidateConfiguration(target.Recovery, current.Recovery);
             if (VerificationCampaignEvidence.DriversKey(target.Drivers) != VerificationCampaignEvidence.DriversKey(current.Drivers))
                 throw new IOException("Loaded driver identity changed before campaign cleanup completed.");
