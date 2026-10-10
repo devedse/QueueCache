@@ -11,6 +11,9 @@
   in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Run one foreground campaign and consume
   its `completion.json` after process exit; automatic agent wakeup still requires
   an external Manager integration. Use focused campaigns for affected regressions.
+  For the next implementation stages, follow the file-level steps, evidence gates
+  and handback checklist in `docs/PERFORMANCE_AGENT_HANDOFF.md`; proposed suites
+  there must be implemented before use.
 
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;

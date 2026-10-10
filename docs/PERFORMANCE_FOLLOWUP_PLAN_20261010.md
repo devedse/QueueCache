@@ -63,6 +63,10 @@ are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
 ## Continuation plan after findings review
 
+The [agent implementation handoff](PERFORMANCE_AGENT_HANDOFF.md) provides exact
+file/entry-point mappings, ordered changes, proposed workload counts, commands,
+tests, dependency handling and acceptance/stop gates for these priorities.
+
 This is a plan, not another completed measurement or an accepted driver change.
 Keep the established allocator, cache-copy optimizations, read recall and
 synchronous RAM-disk split copies. The latest matched comparison is about
