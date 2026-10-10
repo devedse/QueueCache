@@ -149,12 +149,12 @@ credentials or arbitrary callback command. For failed runs, inspect the indexed
 child/maintenance directory; `verify-recover` still applies to a recorded child
 run, not to restarting or recombining a campaign.
 
-The current exposed `dam-tools` command only supports sharing images; no
-completion notification or agent wake API is available here. Automatic awakening
-therefore needs an explicit DeveAgentManager job/completion integration, or an
-existing controller process-completion feature verified by its owner. Do not
-claim this integration already exists. Until it does, stream/await one owned
-foreground process and inspect its completion once; use manual status only for
+The installed Runner helper now exposes `dam-tools run-job`, `job-status`,
+`job-completion`, `job-reviewed` and `job-cancel`, alongside image sharing. It
+owns the foreground command and completion reader. The companion Manager service
+implements guarded notification delivery, but its live deployment and automatic
+agent wake remain unverified here. Until that service is qualified, await the
+owned controller process and inspect completion once; use manual status only for
 operator requests or diagnosing stalls. A watcher should be event-driven, not an
 agent repeatedly opening SSH sessions.
 
@@ -242,9 +242,10 @@ than automatic resubmission. Controller outbox checks consume no agent turns.
 `job-reviewed` suppresses a delayed notification already analyzed in the active turn.
 
 Real controller smoke covers both a valid restoration-failure event and a completed
-retry with exact restoration. Deployment of the updated Manager service/helper and
-live automatic wake are separate verification gaps; an event file alone does not
-close them. The smoke failure found transient backing-cache metadata after resume.
+retry with exact restoration. The updated Runner helper is deployed; deployment of
+the updated Manager service and live automatic wake remain verification gaps. An
+event file alone does not close them. The smoke failure found transient
+backing-cache metadata after resume.
 Final restoration now explicitly uses bounded filesystem/cache preparation before
 the existing strict final capture. Faults are not retried; disabled baseline
 observations do not drain. Detailed evidence is in PERFORMANCE_FINDINGS.md.

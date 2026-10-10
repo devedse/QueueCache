@@ -647,8 +647,12 @@ The enlarged-pool installed-tool smoke passes on Windows: 350 samples and 299
 scheduler activities for its owned test PID, both collectors read back 128 ×
 1 MiB buffers with zero lost events, and strict final ETL processing succeeds.
 All Windows host contracts pass in that preview. Follow-up ownership hardening
-gives each collector a unique name and enforces its startup buffer/loss readbacks;
-its final smoke/CI and the actual three-shape diagnostic are tracked separately.
+gives each collector a unique name and enforces its startup buffer/loss readbacks.
+The final smoke (`Wpr-Smoke-7bd5858fdd7e404ab7666acce19ce941`) passes with
+351 owned samples and 409 scheduler activities, zero lost events and all Windows
+host contracts passing. Windows Debug/Release build and CLI CI #552 pass at
+`78ecfb2`. This qualifies collection/analysis tooling, not driver performance;
+the actual three-shape diagnostic is tracked separately.
 
 Schema-2 analysis retains native sampled/return-context addresses and available
 source lines, with unknown process samples separate. `verify-attribution` reuses
