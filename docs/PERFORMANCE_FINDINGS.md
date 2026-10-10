@@ -18,13 +18,17 @@ The independent 36-window priority comparison is complete: CPU BelowNormal loses
 under 1% aggregate overlap in lower traffic for the tested shapes. CPU/wait
 attribution is complete and points at scheduling/utilization. Thirty RAM-disk
 affinity/source-lane controls are now complete: they leave most of the single-
-versus multi-submitter gap intact. Request concurrency and copy-helper handoff
-cost remain the next investigation; cache CPU-priority/affinity interaction is
-a separate untested question. All five retained-driver qualification scenarios
-completed with their raw checks and restoration inspected.
+versus multi-submitter gap intact. Plan-116 instruction attribution now confirms
+32–33% of samples in helper polling with one reader versus 7% with four readers.
+It does not establish a throughput fix; request concurrency and resource-scoped
+handoff timing remain unknown, so no new native candidate is justified. Cache
+CPU-priority/affinity interaction is a separate diagnostic now running. All five
+retained-driver qualification scenarios completed again with raw checks and
+restoration inspected in the attribution campaign.
 
-Plan 114 now implements the maintained single-command campaign and durable
-completion event; automatic Manager wakeup remains external. A new focused
+The maintained single-command campaign and durable completion event are implemented
+(current plan 116). The installed Manager helper runs owned jobs and validates
+completion; live service delivery/automatic wake remains unverified. A focused
 RAM-disk comparison holds copying fixed and isolates affinity plus source-stream
 overlap, addressing the earlier queue experiment's combined changes. Windows contracts, Debug/Release CI and the six-phase focused VM campaign pass.
 The controls do not establish a production speed-up; no driver/default change
@@ -234,6 +238,13 @@ GB/s versus about 26.2 GB/s inline, and system-worker offload gave no gain or
 13–17 GB/s. A historical sample profile had 21% busy samples spinning between
 copies versus 28% copying. Moving the same copy to another thread does not
 automatically improve throughput.
+
+Earlier provider tuning on signed 0.4.354.1 also found no throughput difference
+between three/four workers or 50/200 microsecond polling duration. Streaming
+non-temporal copies gave no worker gain and slowed split reads; 512 KiB split
+chunks did not engage a helper in time. These negative findings belong here as
+well as in the historical tracker. They are not a matched experiment on 514,
+but a new poll-duration or copy-size experiment needs a specific new reason.
 
 The new PR #9 experiment instead used a bounded shared queue and three sleeping
 whole-read executors. These executors copied each request without the retained
@@ -661,6 +672,70 @@ original ETL digest and original PDB signature/hash without workloads or driver
 access. Reanalysis preserves the original collection verdict. Machine-wide
 samples and observed predecessor scheduler waits are not exact score-window CPU
 or complete blocked/ready totals; resource-tagged request overlap remains unknown.
+
+### Plan 116 RAM attribution: useful copies versus polling
+
+The corrected diagnostic completes **6/6 phases** in **458.47 s (7 min 38 s)**,
+run `QueueCache-Campaign-20261010-215743-5ce1b38bf4c747a0868bf6eab778c43d`.
+Managed preview source is `78ecfb2`, plan 116; the native baseline remains signed
+0.4.514.1/source `0b450a2`. Filter/provider SHA-256:
+`C8856CCD2DABAC66B9648FBFE6CF0A3697A2F2EB4CA8D936806E683E6348B764` /
+`8BC6DF3260FA77B447E7DF737800370706A10D324F345FC2A4C6A5AE88EA9A8C`.
+DiskSpd remains CDM 9.0.3's x64 2.2,
+`7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+The fitting file is 1 GiB on an owned 2 GiB Direct RAM fixture; 256 KiB split
+copies, default affinity, Normal CPU, memory priority 5, I/O hint 3, W3 and timing
+off are unchanged. This is one traced repetition, not speed acceptance.
+
+| Exact diagnostic case | CPU samples / resolved native samples | Provider memcpy samples | Helper poll samples at `transfer.cpp:109` | Caller helper-wait samples at `transfer.cpp:173` | Traced score, decimal GB/s |
+|---|---:|---:|---:|---:|---:|
+| `0001-r1-attribution-q1-t1` | 52,318 / 44,975 (100% native resolved) | 24,367 (46.58%) | 17,326 (33.12%) | 1,075 (2.05%) | 24.372 |
+| `0002-r1-attribution-q8-t1` | 52,271 / 46,224 (100%) | 24,279 (46.45%) | 16,779 (32.10%) | 1,495 (2.86%) | 20.799 |
+| `0003-r1-attribution-q2-t4` | 52,284 / 45,713 (100%) | 35,494 (67.89%) | 3,673 (7.03%) | 1,196 (2.29%) | 37.270 |
+
+Percentages use **all machine-wide CPU samples in each enclosing benchmark PID
+lifetime**, including startup/warmup, not score-window CPU time. Provider memcpy
+uses the exclusive sampled function. Poll/wait counts use sampled instruction
+addresses, excluding stack return contexts; native inclusive stack counts overlap
+and must not be summed as CPU time. Polling maps to RVAs `0x2696`/`0x2699` in
+the bounded PAUSE loop, rather than assuming all `WorkerMain` samples are waste.
+Known busy-sample fractions are 99.74/96.92/96.21/95.49% across CPUs 0–3 at Q1,
+99.87/96.01/94.90/93.88% at Q8, and about 99.7–99.8% with four readers. These
+are sampling fractions, not a new utilization or latency acceptance contract.
+
+Observed benchmark-thread predecessor ready-time sums are 251.27, 354.87 and
+15,597.59 ms respectively. They sum multiple threads, include preceding waits
+at in-window switch-ins and are not complete window totals. Waiting-duration
+fields are unavailable and remain null. Exact simultaneous Direct requests,
+post-to-take latency and owned-resource helper participation remain unknown.
+
+**Decision: B2 completed; throughput cause remains inconclusive/no justified
+optimization.** The trace proves polling CPU cost, and four submitters keep more
+useful copy work supplied. It does not prove that shortening polling improves
+throughput: polling keeps helpers responsive, may be a consequence of a single
+submitter supplying work slowly, and earlier duration tuning found no gain.
+The relatively small sampled completion-wait share also does not demonstrate a
+dominant handoff stall. Stage C is skipped under the handoff's B exit gate;
+no new native mode/default or promised 42 GB/s single-reader score is added.
+If revisiting this, B3 should first answer only the missing question: per-resource
+Direct active/peak requests plus helper posted/taken/withdrawn counts, useful
+caller/helper bytes and sampled post/take/wait timing, default-off with an
+off/on/off perturbation comparison. It must distinguish supply from handoff
+latency before choosing an asynchronous or helper-admission change.
+
+Evidence inspection: all 75 recorded owned exits are successful; 26 readiness
+files, three raw XML profiles and enclosing native telemetry intervals are
+present. Each window has 15 native samples; maximum gaps are 1.020724,
+1.010109 and 1.013838 s, below the unchanged two-second bound. Native errors and
+recorded image read/write attempts remain zero; Direct byte accounting and all
+three independent whole-file hashes pass. WPR startup reads back two unique
+collectors at 128 × 1 MiB; strict final TraceProcessor analysis accepts zero lost
+events. Matching PDB GUID/age gates pass and every native sample resolves.
+ETL is 264,241,152 bytes, SHA-256
+`FE68D2A227F39C02A819D51E1491066047C5A33D4BC748EEE765E3B596133F6B`.
+All five retained correctness phases complete, including fault/ordering last.
+Final restoration succeeds in 8.86 s; the controller validates the durable event
+and records REVIEWED after inspection. Raw evidence remains private and immutable.
 
 The separate priority/affinity campaign
 `QueueCache-Campaign-20261010-181219-edcb92e1d3bd4a49877854b8675108c0`
