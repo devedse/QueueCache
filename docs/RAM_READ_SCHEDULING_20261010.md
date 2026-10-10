@@ -123,7 +123,11 @@ Loaded filter SHA-256:
 `537FA897D4C6C0E961327A798CE6AC9C53A46E9F44D9D2C71D317FE9B03C4578`;
 provider `5EFE752DCF8D4D72B4989A6733552836D881B109489117F7082854AFCAFA9427`.
 DiskSpd/hash, resident files, normal priority, timing-off state and native build
-were identical between modes. No CPU trace or UI ran during this comparison.
+were identical between modes. No CPU trace ran. The installed tray process
+remained resident throughout (hidden at the post-run check), a preflight gap;
+it was closed before subsequent measurements. No interactive UI work was done.
+This limits claims about observer overhead but does not turn the consistent
+negative queue result into a gain.
 All raw XML/trailers/exits/stderr, byte guards and whole-file hashes, mode/counter
 boundaries, native identity/access/traffic, readiness/coverage and independent
 restoration were inspected. Maximum sampling gap: 1.237431 seconds. The original

@@ -89,6 +89,24 @@ internal static class CacheExerciseTests
         Check(CacheExercisePlan.Cases(caller with { CaseFilter = "mixed" }).Count == 12,
             "focused mixed caller selection keeps both modes and all repetitions");
         Reject(() => VerificationPlan.Validate(caller with { CaseFilter = "missing" }));
+        var priorityOptions = options with { Suite = "priority-cost" };
+        VerificationPlan.Validate(priorityOptions);
+        var priorityCases = CacheExercisePlan.Cases(priorityOptions);
+        Check(priorityCases.Count == 36 && priorityCases.Select(c => c.Id).Distinct().Count() == 36 &&
+            priorityCases.All(c => c.Priority is not null && c.CallerBackoff == -1 && c.Recall == -1 && !c.BackgroundDrain),
+            "independent priorities compare only fitting resident reads, without changing caller/recall/drain policy");
+        Check(priorityCases.GroupBy(c => (c.Workload, c.QueueDepth, c.Priority)).All(g => g.Count() == 3),
+            "each priority/shape has three complete repetitions");
+        Check(priorityCases.Take(4).Select(c => c.Priority).SequenceEqual(Enum.GetValues<ReadPriority>().Select(p => (ReadPriority?)p)) &&
+            priorityCases.Skip(12).Take(4).Select(c => c.Priority).SequenceEqual(Enum.GetValues<ReadPriority>().Reverse().Select(p => (ReadPriority?)p)),
+            "priority and shape order reverse in the second repetition");
+        Check(CacheExercisePlan.Cases(priorityOptions with { CaseFilter = "read-q8" }).Count == 12,
+            "priority Q8 selection keeps every control and repetition");
+        new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 5).Validate();
+        new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.BelowNormal, 2).Validate();
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.High, 5).Validate());
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 0).Validate());
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 6).Validate());
 
         // A completed run removes only its own workload folder and that folder's sector-oracle sibling.
         var cleanupRoot = Directory.CreateTempSubdirectory("qc-cleanup-").FullName;

@@ -89,6 +89,8 @@ internal static class VerificationCommands
                                  and a hot set across a one-off and a repeated scan larger than the cache.
               caller-backoff     256/0 caller cooldown, fitting 64K mixed Q1/Q8 and 4K/1M read controls.
                                  V23 diagnostics, normal priority; byte oracles run after each score.
+              priority-cost      Fitting RAM reads: independent Normal/CPU BelowNormal/I/O Low/memory Low.
+                                 1M Q1/Q8 and 4K Q1 controls; owned child settings, three-second warmup.
               partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
@@ -130,7 +132,7 @@ internal static class VerificationCommands
         var soak = new Option<int?>("--soak-seconds") { Description = "cache-sustained only: 120..3600 seconds, divisible by six. Default 1800; use --repeats 1." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
-        var caseFilter = new Option<string?>("--case-filter") { Description = "write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost, cache-recall or caller-backoff: case-sensitive ID substring. A selected run is not the complete matrix." };
+        var caseFilter = new Option<string?>("--case-filter") { Description = "Focused performance suite: case-sensitive ID substring. A selected run is not the complete matrix." };
         var systemInstance = new Option<string?>("--system-instance") { Description = "System suites: exact expected C: physical-disk PnP instance ID." };
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };

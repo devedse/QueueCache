@@ -1714,3 +1714,27 @@ claiming the complete suite. Use owned NTFS/ReFS lab volumes and the same binary
 ```powershell
 qcache developer verify V: --suite caller-backoff --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 ```
+
+Plan 113 adds `priority-cost`, excluded from `full`: 36 windows at three
+alternating repetitions, fully resident 1 MiB Q1/Q8 and random 4 KiB Q1 reads.
+Four variants change one owned DiskSpd child setting at a time: Normal CPU /
+normal I/O / normal memory; BelowNormal CPU only; low I/O hint only (`-I2`);
+low process memory priority only (2 versus normal 5). Every variant has a
+three-second warmup; CPU/memory settings are applied and read back within two
+seconds of process launch, before scoring, or the owned child is stopped and
+the case fails. Expected/actual settings and elapsed application time are raw
+artifacts. XML must report the requested I/O hint and warmup. All read controls
+require resident hit accounting and zero lower attempts, with normal-priority
+telemetry and the existing readiness/two-second coverage contract.
+
+This tests process default memory priority after launch, not a claim that every
+previously allocated page has that priority. No memory pressure is injected and
+the cache's locked payload pages are unchanged. CPU, I/O and memory controls
+follow [DiskSpd's documented hints](https://github.com/microsoft/diskspd/wiki/Command-line-and-parameters)
+and [Windows process memory priority](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation).
+The coordinator, user applications and driver thread priorities are untouched.
+`--case-filter read-q8` selects all twelve Q8 controls; it is not the full suite.
+
+```powershell
+qcache developer verify V: --suite priority-cost --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```

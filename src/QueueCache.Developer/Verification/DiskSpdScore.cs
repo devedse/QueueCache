@@ -13,6 +13,15 @@ public static class DiskSpdParser
 {
     public static DiskSpdScore Parse(string xml)
     {
+        var root = ParseXml(xml);
+        var spans = root.Elements("TimeSpan").ToArray();
+        if (spans.Length != 1)
+            throw new InvalidDataException("Expected exactly one measured time span.");
+        return ParseSpan(spans[0]);
+    }
+
+    public static XElement ParseXml(string xml)
+    {
         // CDM 9.0.3's DiskSpd 2.2 appends these two text lines even in XML mode.
         // Strip only this complete, recognized trailer. Never scrape a Results element
         // out of arbitrary error output or use the trailer's zero scores as metrics.
@@ -28,10 +37,11 @@ public static class DiskSpdParser
         var root = XDocument.Parse(xml).Root ?? throw new InvalidDataException("Missing DiskSpd XML.");
         if (root.Name.LocalName != "Results")
             throw new InvalidDataException("Expected DiskSpd Results XML (use -Rxml).");
-        var spans = root.Elements("TimeSpan").ToArray();
-        if (spans.Length != 1)
-            throw new InvalidDataException("Expected exactly one measured time span.");
-        var span = spans[0];
+        return root;
+    }
+
+    private static DiskSpdScore ParseSpan(XElement span)
+    {
         double Number(XElement parent, string name) => double.Parse(parent.Element(name)?.Value ??
             throw new InvalidDataException("Missing DiskSpd " + name), CultureInfo.InvariantCulture);
         var seconds = Number(span, "TestTimeSeconds");

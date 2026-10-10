@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 112, "plan 112 declares caller-backoff windows and independent post-score byte checks");
+        Check(VerificationPlan.Version == 113, "plan 113 declares independent child CPU/I/O/memory priority controls");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -1526,6 +1526,24 @@ internal static class VerificationRunnerTests
             var process = await OwnedProcess.RunAsync(executable, [.. prefix, "--runner-child", "two words", "--argument", "Q:\\a b.dat"], store.PathFor("child"), TimeSpan.FromSeconds(20), CancellationToken.None);
             Check(process.ExitCode == 0 && process.Error.Contains("captured stderr"), "stdout/stderr persisted");
             Check(JsonSerializer.Deserialize<string[]>(process.Output)!.SequenceEqual(["two words", "--argument", "Q:\\a b.dat"]), "exact argument vector");
+            try
+            {
+                await OwnedProcess.RunAsync(executable, [.. prefix, "--runner-child", "hang"], store.PathFor("missing-priority-warmup"),
+                    TimeSpan.FromSeconds(20), CancellationToken.None, new(System.Diagnostics.ProcessPriorityClass.Normal, 5));
+                throw new Exception("Missing scheduling warmup accepted.");
+            }
+            catch (ArgumentException) { }
+            Check(!File.Exists(store.PathFor("missing-priority-warmup.process.json")), "invalid scheduling contracts never launch a child");
+            try
+            {
+                await OwnedProcess.RunAsync(executable, [.. prefix, "--runner-child", "hang", "-W3"], store.PathFor("priority-cancel"),
+                    TimeSpan.FromMilliseconds(500), CancellationToken.None, new(System.Diagnostics.ProcessPriorityClass.BelowNormal, 2));
+                throw new Exception("Scheduled child deadline did not fire.");
+            }
+            catch (TimeoutException) { }
+            Check(File.Exists(store.PathFor("priority-cancel.scheduling.json")) &&
+                JsonSerializer.Deserialize<System.Text.Json.Nodes.JsonObject>(File.ReadAllText(store.PathFor("priority-cancel.exit.json")))!["Exited"]!.GetValue<bool>(),
+                "owned priority controls are read back, recorded and stopped on timeout");
             try
             {
                 await OwnedProcess.RunAsync(executable, [.. prefix, "--runner-child", "hang"], store.PathFor("timeout"), TimeSpan.FromMilliseconds(300), CancellationToken.None);

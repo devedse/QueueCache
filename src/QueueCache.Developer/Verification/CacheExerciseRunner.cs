@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using QueueCache.Management;
 using QueueCache.Operations;
 
@@ -6,13 +7,25 @@ namespace QueueCache.Developer.Verification;
 
 public sealed partial class VerificationRunner
 {
-    private async Task<DiskSpdScore> DiskTargets(string id, IReadOnlyList<string> files, string[] arguments, CancellationToken token)
+    private async Task<DiskSpdScore> DiskTargets(string id, IReadOnlyList<string> files, string[] arguments, CancellationToken token,
+        ProcessScheduling? scheduling = null)
     {
         var result = await RunProcess(id, options.DiskSpd!, [.. arguments, "-Rxml", "-L", "-S", .. files],
             TimeSpan.FromSeconds(int.Parse(arguments.Single(a => a.StartsWith("-d", StringComparison.Ordinal))[2..],
-                System.Globalization.CultureInfo.InvariantCulture) + 120), token);
+                System.Globalization.CultureInfo.InvariantCulture) + 120), token, scheduling);
         if (result.ExitCode != 0)
             throw new IOException($"DiskSpd XML-mode exit {result.ExitCode}: {ErrorDetail(result.Error)}.");
+        if (scheduling is not null && !string.IsNullOrWhiteSpace(result.Error))
+            throw new IOException("Unexpected priority comparison DiskSpd stderr; inspect raw output.");
+        if (scheduling is not null)
+        {
+            var xml = DiskSpdParser.ParseXml(result.Output);
+            var priorities = xml.Descendants("Profile").Descendants("IOPriority").Select(p => p.Value).ToArray();
+            var requested = arguments.Single(a => a.StartsWith("-I", StringComparison.Ordinal))[2..];
+            if (priorities.Length != files.Count || priorities.Any(p => p != requested) ||
+                xml.Descendants("Profile").Descendants("Warmup").SingleOrDefault()?.Value != "3")
+                throw new InvalidDataException("Priority profile did not report the requested I/O hint and warmup.");
+        }
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);
         return score;
@@ -127,8 +140,16 @@ public sealed partial class VerificationRunner
                 "-Z1M", $"-d{scenario.Seconds}", "-W0" };
             if (!sustained) arguments.Add($"-f{perFileMiB}M");
             if (scenario.Workload is "mixed" or "random-read") arguments.Add(scenario.Workload == "mixed" ? "-r64K" : "-r4K");
+            ProcessScheduling? scheduling = null;
+            if (scenario.Priority is { } priority)
+            {
+                arguments.Remove("-W0"); arguments.Add("-W3");
+                arguments.Add(priority == ReadPriority.IoLow ? "-I2" : "-I3");
+                scheduling = new(priority == ReadPriority.CpuBelowNormal ? System.Diagnostics.ProcessPriorityClass.BelowNormal
+                    : System.Diagnostics.ProcessPriorityClass.Normal, priority == ReadPriority.MemoryLow ? 2u : 5u);
+            }
             workload = DiskTargets(scenario.Id + "-workload", sustained ? [Path.Combine(workDirectory, "writer.dat")] : targets,
-                arguments.ToArray(), children.Token);
+                arguments.ToArray(), children.Token, scheduling);
             var score = await CacheExerciseTasks.CompleteWorkload(workload, oracle);
             var end = DateTimeOffset.UtcNow;
             storage.Write(scenario.Id + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });

@@ -34,11 +34,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     }
 
     private async Task<ProcessResult> RunProcess(string id, string tool, IReadOnlyList<string> arguments,
-        TimeSpan timeout, CancellationToken token)
+        TimeSpan timeout, CancellationToken token, ProcessScheduling? scheduling = null)
     {
         Log($"Starting {id}; timeout {timeout.TotalSeconds:F0}s. Raw output: {storage.PathFor(id)}.*");
         var watch = Stopwatch.StartNew();
-        var process = OwnedProcess.RunAsync(tool, arguments, storage.PathFor(id), timeout, token);
+        var process = OwnedProcess.RunAsync(tool, arguments, storage.PathFor(id), timeout, token, scheduling);
         using var heartbeatStop = new CancellationTokenSource();
         async Task Heartbeat()
         {
@@ -235,7 +235,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue") : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
-                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite == "caller-backoff"
+                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost"
                 ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
@@ -493,7 +493,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     WorkDirectory = workDirectory,
                     BudgetMiB = options.BudgetMiB,
-                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite == "caller-backoff" ? 3UL : 1UL
+                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" ? 3UL : 1UL
                 }, deadline.Token, 900);
                 foreach (var scenario in performance)
                 {
