@@ -147,7 +147,36 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
         {
             if (!write)
             {
+                auto& coordination = store->Coordination;
+                const bool diagnostic = QcRamCoordinationBegin(&coordination);
+                LONG64 stamp = 0;
+                if (diagnostic)
+                {
+                    auto& counts = coordination.Counts;
+                    const auto active = InterlockedIncrement64(&counts.Active);
+                    for (auto peak = ReadNoFence64(&counts.PeakActive); active > peak;)
+                    {
+                        const auto prior = InterlockedCompareExchange64(&counts.PeakActive, active, peak);
+                        if (prior == peak) break;
+                        peak = prior;
+                    }
+                    const auto sequence = InterlockedIncrement64(&counts.Started);
+                    if ((sequence & 63) == 1) stamp = KeQueryPerformanceCounter(nullptr).QuadPart;
+                }
                 Copy(binding, store, at, buffer, length, false);
+                if (diagnostic)
+                {
+                    auto& counts = coordination.Counts;
+                    if (stamp)
+                    {
+                        InterlockedAdd64(&counts.DirectTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+                        InterlockedIncrement64(&counts.DirectSamples);
+                    }
+                    InterlockedAdd64(&counts.DirectBytes, length);
+                    InterlockedIncrement64(&counts.Completed);
+                    InterlockedDecrement64(&counts.Active);
+                    QcRamCoordinationEnd(&coordination);
+                }
                 served = true;
             }
             else

@@ -3,7 +3,7 @@
 #include "provider.h"
 
 struct SPLIT;
-struct HELP { WORK Work; SPLIT* Split; BOOLEAN Taken; };
+struct HELP { WORK Work; SPLIT* Split; BOOLEAN Taken; LONG64 PostedAt; };
 // One large transfer copied in chunks by its submitter and any workers that join; lives on
 // the submitter's stack.
 struct SPLIT
@@ -11,6 +11,7 @@ struct SPLIT
     QC_RAM_STORE* Store; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes, Chunk, Chunks; BOOLEAN Write;
     volatile LONG Next, Helpers;
     HELP Help[MaxWorkers];
+    BOOLEAN Diagnostic, Sampled;
 };
 
 // Small transfers are cheapest inline (completed during StartIo). A large write goes to a
@@ -54,15 +55,19 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
     StorPortNotification(RequestComplete, adapter, request->Srb);
     KeLowerIrql(irql);
 }
-static void CopyChunks(SPLIT* split)
+static void CopyChunks(SPLIT* split, bool helper = false)
 {
+    ULONG copied = 0;
     for (;;)
     {
         const auto index = static_cast<ULONG>(InterlockedIncrement(&split->Next) - 1);
         if (index >= split->Chunks) break;
         const auto start = index * split->Chunk, bytes = min(split->Chunk, split->Bytes - start);
         QcRamStoreCopy(split->Store, split->Offset + start, split->Buffer + start, bytes, split->Write);
+        if (split->Diagnostic) copied += bytes;
     }
+    if (split->Diagnostic)
+        InterlockedAdd64(helper ? &split->Store->Coordination.Counts.HelperBytes : &split->Store->Coordination.Counts.CallerBytes, copied);
 }
 static void WorkerMain(PVOID context)
 {
@@ -80,7 +85,22 @@ static void WorkerMain(PVOID context)
         {
             work = CONTAINING_RECORD(RemoveHeadList(&worker->Queue), WORK, Link);
             // Taken and Helpers change under the queue lock that CopySplit's withdrawal holds.
-            if (work->Kind == WorkHelp) { auto help = CONTAINING_RECORD(work, HELP, Work); help->Taken = TRUE; InterlockedIncrement(&help->Split->Helpers); }
+            if (work->Kind == WorkHelp)
+            {
+                auto help = CONTAINING_RECORD(work, HELP, Work); help->Taken = TRUE;
+                InterlockedIncrement(&help->Split->Helpers);
+                if (help->Split->Diagnostic)
+                {
+                    auto& counts = help->Split->Store->Coordination.Counts;
+                    InterlockedIncrement64(&counts.Taken);
+                    InterlockedOr64(&counts.HelperCpuMask, 1LL << worker->Processor);
+                    if (help->PostedAt)
+                    {
+                        InterlockedAdd64(&counts.TakeTicks, KeQueryPerformanceCounter(nullptr).QuadPart - help->PostedAt);
+                        InterlockedIncrement64(&counts.TakeSamples);
+                    }
+                }
+            }
         }
         KeReleaseSpinLockFromDpcLevel(&worker->Lock);
         const bool found = work != nullptr;
@@ -88,7 +108,7 @@ static void WorkerMain(PVOID context)
         {
             // The help request lives on the submitter's stack; it may be gone after the decrement.
             auto split = CONTAINING_RECORD(work, HELP, Work)->Split;
-            CopyChunks(split); InterlockedDecrement(&split->Helpers); work = nullptr;
+            CopyChunks(split, true); InterlockedDecrement(&split->Helpers); work = nullptr;
         }
         KeLowerIrql(irql);
         if (found)
@@ -153,6 +173,16 @@ void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR b
 {
     SPLIT split{}; split.Store = store; split.Buffer = buffer; split.Offset = offset; split.Bytes = bytes; split.Write = write;
     split.Chunk = SplitChunk; split.Chunks = (bytes + split.Chunk - 1) / split.Chunk;
+    // Read-only research scope. The held rundown covers every stack-backed helper.
+    split.Diagnostic = !write && QcRamCoordinationBegin(&store->Coordination);
+    if (split.Diagnostic)
+    {
+        const auto sequence = InterlockedIncrement64(&store->Coordination.Counts.Splits);
+        InterlockedAdd64(&store->Coordination.Counts.SplitBytes, bytes);
+        split.Sampled = (sequence & 63) == 1;
+        if (split.Sampled) InterlockedIncrement64(&store->Coordination.Counts.SampledSplits);
+    }
+    LONG64 stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     const auto current = KeGetCurrentProcessorNumberEx(nullptr);
     WORKER* targets[MaxWorkers]{}; ULONG helpers = 0;
     for (ULONG i = 0; i < adapter->WorkerCount && helpers + 1 < split.Chunks; ++i)
@@ -160,17 +190,29 @@ void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR b
         auto worker = &adapter->Workers[i];
         if (worker->Processor == current) continue;
         auto help = &split.Help[helpers]; help->Work.Kind = WorkHelp; help->Split = &split;
+        if (split.Sampled) help->PostedAt = KeQueryPerformanceCounter(nullptr).QuadPart;
         Post(worker, &help->Work);
+        if (split.Diagnostic) InterlockedIncrement64(&store->Coordination.Counts.Posted);
         targets[helpers++] = worker;
     }
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.PostTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
     CopyChunks(&split);
+    stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     for (ULONG i = 0; i < helpers; ++i)
     {
         KIRQL irql; KeAcquireSpinLock(&targets[i]->Lock, &irql);
-        if (!split.Help[i].Taken) RemoveEntryList(&split.Help[i].Work.Link);
+        if (!split.Help[i].Taken)
+        {
+            RemoveEntryList(&split.Help[i].Work.Link);
+            if (split.Diagnostic) InterlockedIncrement64(&store->Coordination.Counts.Withdrawn);
+        }
         KeReleaseSpinLock(&targets[i]->Lock, irql);
     }
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.WithdrawTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+    stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     while (ReadNoFence(&split.Helpers)) YieldProcessor();
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.WaitTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+    if (split.Diagnostic) QcRamCoordinationEnd(&store->Coordination);
 }
 // Direct access (volume filter): split a large copy across idle workers. Raised to
 // DISPATCH_LEVEL as in StartIo, so the request is copied without being preempted.

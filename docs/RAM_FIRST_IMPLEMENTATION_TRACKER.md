@@ -3236,6 +3236,14 @@ acceptance result. Temporary owner settings are restored after this check.
 
 ### User scope review, 2026-10-11
 
+Finalization implementation checkpoint (plan 117): default-off per-store Direct
+copy overlap/helper counters and 1/64 sampled handoff timings, versioned research
+query/settings with unchanged public prefixes, nine-window off/on/off typed suite
+and one-phase `experiment` campaign. Implementation and contract checks are in
+progress; VM/native build and perturbation verification are pending. No candidate
+optimization selected and no speedup claim. Automatic live Manager delivery
+remains separate from helper/event validation.
+
 Final handoff: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
 is now the execution plan. Implementation: documentation only; proposes one
 missing-fact diagnostic, one candidate plus at most one justified revision, narrow

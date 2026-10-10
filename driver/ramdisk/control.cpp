@@ -78,6 +78,15 @@ static NTSTATUS Change(ADAPTER* adapter, DISK* disk, const QC_RAM_REQUEST& comma
         *returned = sizeof(*reply) + sizeof(QC_RAM_STATISTICS);
         return STATUS_SUCCESS;
     }
+    case QcRamCoordination:
+        if (output < sizeof(*reply) + sizeof(QC_RAM_COORDINATION_DATA) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
+        QcRamCoordinationSnapshot(&store.Coordination, reinterpret_cast<QC_RAM_COORDINATION_DATA*>(reply + 1));
+        *returned = sizeof(*reply) + sizeof(QC_RAM_COORDINATION_DATA);
+        return STATUS_SUCCESS;
+    case QcRamSetCoordination:
+        if (command.Flags || command.Offset > 1 || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
+        QcRamCoordinationConfigure(&store.Coordination, command.Offset != 0);
+        return STATUS_SUCCESS;
     case QcRamPhysicalMap:
     {
         if (output < sizeof(*reply) + sizeof(QC_RAM_PHYSICAL_MAP) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
@@ -138,7 +147,8 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     if (!Authorized(irp)) status = STATUS_ACCESS_DENIED;
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
-        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamPhysicalMap) || reply->Action == QcRamDeveloperCreateAllocationFailure) &&
+        ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamPhysicalMap) ||
+         (reply->Action >= QcRamDeveloperCreateAllocationFailure && reply->Action <= QcRamSetCoordination)) &&
         input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;

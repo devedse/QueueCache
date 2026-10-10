@@ -11,10 +11,11 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 /// <summary>Campaigns compose existing suite contracts, with no scenario logic in the CLI.</summary>
 public static class VerificationCampaignPlan
 {
-    public static readonly string[] Profiles = ["smoke", "focused", "performance", "release-performance"];
+    public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults",
-     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution",
+     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 
@@ -37,9 +38,12 @@ public static class VerificationCampaignPlan
             throw new ArgumentException("Campaign selection cannot be combined with a suite, case filter or lifecycle/system options.");
         if (options.Verification.TraceSymbols is not null && options.FocusSuite != "ram-read-attribution")
             throw new ArgumentException("--trace-symbols requires focused ram-read-attribution.");
-        if ((options.Profile == "focused") != (options.FocusSuite is not null) ||
+        if ((options.Profile is "focused" or "experiment") != (options.FocusSuite is not null) ||
             options.FocusSuite is { } focus && !FocusSuites.Contains(focus))
-            throw new ArgumentException("--focus-suite is required only for the focused campaign and must name a supported performance/correctness suite.");
+            throw new ArgumentException("--focus-suite is required only for focused/experiment campaigns and must name a supported suite.");
+        if (options.Profile == "experiment" && (options.FocusSuite is null || !ExperimentSuites.Contains(options.FocusSuite) ||
+            options.LabRefs is not null || options.Verification.TraceSymbols is not null || options.Verification.SoakSeconds is not null))
+            throw new ArgumentException("Experiment campaigns allow only implemented narrow RAM suites, without ReFS, tracing or sustained options.");
         if (options.Verification.SoakSeconds is not null && options.Profile is not ("performance" or "release-performance") && options.FocusSuite != "cache-sustained")
             throw new ArgumentException("--soak-seconds requires a campaign with a sustained phase.");
         static void Volume(string value)
@@ -80,7 +84,9 @@ public static class VerificationCampaignPlan
             phases.Add(new($"{phases.Count + 1:D2}-{suite}-{role}", role, selected, expected, windows));
         }
 
-        if (options.Profile == "smoke")
+        if (options.Profile == "experiment")
+            Add(options.FocusSuite!, CampaignTargetRole.Performance);
+        else if (options.Profile == "smoke")
         {
             Add("quick", CampaignTargetRole.NtfsLab);
             Add("partial-read-accounting", CampaignTargetRole.NtfsLab);

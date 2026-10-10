@@ -137,6 +137,7 @@ NTSTATUS AllocateDisk(ADAPTER* adapter, const QC_RAM_REQUEST* request, PIRP irp,
     ExInitializeRundownProtection(&disk->Users);
     auto& store = disk->Store;
     store.Size = sizeof(store); store.Version = QcRamStoreVersion;
+    QcRamCoordinationInitialize(&store.Coordination);
     store.Capacity = request->Capacity; store.SectorBytes = request->SectorBytes;
     store.SlabCount = static_cast<ULONG>((store.Capacity + QcRamSlabBytes - 1) / QcRamSlabBytes);
     disk->Resource = request->Resource; disk->Epoch = adapter->Epoch; disk->Creation = ++adapter->NextCreation;

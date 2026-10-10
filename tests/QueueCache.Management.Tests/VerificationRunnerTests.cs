@@ -46,7 +46,18 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 116, "plan 116 declares diagnostics with bounded trace buffers");
+        Check(VerificationPlan.Version == 117, "plan 117 declares narrow coordination diagnostics and one-phase experiments");
+        var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
+        Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
+            coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
+            coordinationPlan.All(c => c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct && c.SchedulingControl &&
+                c.Interleaved == (c.Threads == 4)), "coordination freezes nine off/on/off shapes with separate four-reader lanes");
+        Check(RamReadReferencePlan.CasesFor(RamReadRunKind.Coordination, 2).Count == 18 &&
+            RamReadReferencePlan.KindFor("ram-read-coordination") == RamReadRunKind.Coordination,
+            "coordination kind is forwarded and permits one explicitly counted retry");
+        Reject(() => RamReadReferencePlan.CoordinationCases(3));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-coordination", BudgetMiB = 2048, DiskSpd = "fixture", Repeats = 3 }));
+        RunCoordinationContracts(Check, Reject);
         await RunCampaignContractsAsync();
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
@@ -1789,6 +1800,67 @@ internal static class VerificationRunnerTests
         public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
     }
 
+    internal static void RunCoordinationContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var wire = new byte[QueueCache.Management.RamCoordination.WireSize];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(wire, (uint)wire.Length);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(wire.AsSpan(4), 1);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(8), 1);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(16), 1_000_000);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(24), 1);
+        var before = QueueCache.Management.RamCoordination.Decode(wire);
+        var after = before with
+        {
+            Started = 64, Completed = 64, PeakActive = 1, DirectBytes = 64UL << 20,
+            DirectSamples = 1, DirectTicks = 100, Splits = 64, SplitBytes = 64UL << 20,
+            CallerBytes = 32UL << 20, HelperBytes = 32UL << 20,
+            Posted = 192, Taken = 160, Withdrawn = 32, SampledSplits = 1, PostTicks = 4,
+            WithdrawTicks = 3, WaitTicks = 2, TakeSamples = 3, TakeTicks = 6, HelperCpuMask = 14
+        };
+        QueueCache.Management.RamCoordination.ValidateWindow(before, after, true, 64UL << 20, 50UL << 20);
+        check(before.Generation == 1 && before.Frequency == 1_000_000 && before.Enabled && before.Started == 0,
+            "coordination wire header/generation/frequency/mode are explicit");
+        reject(() => QueueCache.Management.RamCoordination.Decode(wire[..^8]));
+        var wrongVersion = (byte[])wire.Clone(); wrongVersion[4] = 2;
+        reject(() => QueueCache.Management.RamCoordination.Decode(wrongVersion));
+        var noFrequency = (byte[])wire.Clone(); Array.Clear(noFrequency, 16, 8);
+        reject(() => QueueCache.Management.RamCoordination.Decode(noFrequency));
+        var wrongMode = (byte[])wire.Clone(); wrongMode[24] = 2;
+        reject(() => QueueCache.Management.RamCoordination.Decode(wrongMode));
+        foreach (var invalid in new[] { after with { Generation = 2 }, after with { Active = 1 },
+            after with { Completed = 63 }, after with { Taken = 161 }, after with { HelperBytes = 1 },
+            after with { DirectBytes = 1 }, after with { DirectSamples = 0 }, after with { Enabled = false } })
+            reject(() => QueueCache.Management.RamCoordination.ValidateWindow(before, invalid, true, 64UL << 20, 50UL << 20));
+        var off = after with { Enabled = false };
+        QueueCache.Management.RamCoordination.ValidateWindow(off, off, false, 1, 1);
+        reject(() => QueueCache.Management.RamCoordination.ValidateWindow(off, off with { Posted = 193 }, false, 1, 1));
+        check((uint)QueueCache.Management.RamDiskAction.Coordination == 0x101 &&
+            (uint)QueueCache.Management.RamDiskAction.SetCoordination == 0x102 &&
+            QueueCache.Management.RamDiskSnapshot.Version == 1 && QueueCache.Management.RamDirectState.WireSize == 160,
+            "coordination adds actions without recycling reserved IDs or changing public ABI prefixes");
+
+        var plan = RamReadReferencePlan.CoordinationCases(1);
+        var resource = Guid.NewGuid(); var boot = Guid.NewGuid();
+        var rows = plan.Select(c => new RamCoordinationWindow(c, resource, boot, 1,
+            c.CoordinationEnabled ? before : off, c.CoordinationEnabled ? after : off,
+            new DiskSpdScore(50L << 20, 50, 10, c.CoordinationEnabled ? 90 : 100, 5, 0.1, null, 0.2, 0.3))).ToArray();
+        var directory = Path.Combine(Path.GetTempPath(), "qcache-coordination-contract-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var evidence = Path.Combine(directory, "evidence");
+            RamReadCoordination.Report(evidence, plan, rows);
+            using var report = JsonDocument.Parse(File.ReadAllText(evidence + ".coordination-summary.json"));
+            check(report.RootElement.GetProperty("Rows").GetArrayLength() == 3 &&
+                report.RootElement.GetProperty("Rows")[0].GetProperty("Reliability").GetString() == "PERTURBATION_OR_DRIFT",
+                "diagnostic overhead flags do not masquerade as performance acceptance");
+            reject(() => RamReadCoordination.Report(evidence, plan, rows[..^1]));
+            reject(() => RamReadCoordination.Report(evidence, plan, [.. rows[..^1], rows[0]]));
+            reject(() => RamReadCoordination.Report(evidence, plan, rows.Select((r, i) => i == 1 ? r with { ResourceId = Guid.NewGuid() } : r).ToArray()));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     private static async Task RunCampaignContractsAsync()
     {
         void Check(bool value, string detail) { if (!value) throw new Exception("Campaign contract: " + detail); }
@@ -1825,6 +1897,16 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { SoakSeconds = 120 } }));
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { DeadlineMinutes = -1 } }));
         Reject(() => VerificationCampaignPlan.Create(measured with { Verification = measured.Verification with { BudgetMiB = 1024 } }));
+        var experiment = measured with { Profile = "experiment", FocusSuite = "ram-read-coordination",
+            Verification = measured.Verification with { Repeats = 1 } };
+        var narrow = VerificationCampaignPlan.Create(experiment);
+        Check(narrow.Count == 1 && narrow[0].Role == CampaignTargetRole.Performance &&
+            narrow[0].Options.Suite == "ram-read-coordination" && narrow[0].MeasurementWindows == 9 &&
+            narrow[0].ExpectedCases.Count == 1, "experiment has exactly one RAM phase and nine windows, without hidden 81 checks");
+        Reject(() => VerificationCampaignPlan.Create(experiment with { FocusSuite = null }));
+        Reject(() => VerificationCampaignPlan.Create(experiment with { FocusSuite = "ram-read-reference" }));
+        Reject(() => VerificationCampaignPlan.Create(experiment with { LabRefs = "R:" }));
+        Reject(() => VerificationCampaignPlan.Create(experiment with { Verification = experiment.Verification with { TraceSymbols = "fixture" } }));
         var scheduling = RamReadReferencePlan.SchedulingCases(3);
         var boundary = new RecoverySnapshot(1, new QueueCache.Operations.DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "unchanged", DateTimeOffset.UtcNow, "fixture");

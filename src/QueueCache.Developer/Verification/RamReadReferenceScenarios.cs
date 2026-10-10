@@ -28,6 +28,7 @@ internal static class RamReadReferenceScenarios
         var plan = RamReadReferencePlan.CasesFor(kind, repeats);
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
+        var coordinationWindows = new List<RamCoordinationWindow>();
         var traceJournal = ownership + ".trace.json";
         if (kind == RamReadRunKind.Attribution)
         {
@@ -71,6 +72,17 @@ internal static class RamReadReferenceScenarios
                     var before = await Snapshot();
                     var samples = new List<RamReadReferenceSample>();
                     using var provider = WindowsRamDisk.Connect();
+                    RamCoordination? coordinationBefore = null, coordinationAfter = null;
+                    if (kind == RamReadRunKind.Coordination)
+                    {
+                        var original = provider.Coordination(expectedNative)
+                            ?? throw new NotSupportedException("The loaded provider does not implement RAM coordination diagnostics.");
+                        if (original.Enabled) throw new IOException("Owned RAM fixture unexpectedly has armed coordination diagnostics.");
+                        provider.SetCoordination(expectedNative, scenario.CoordinationEnabled);
+                        coordinationBefore = provider.Coordination(expectedNative)
+                            ?? throw new IOException("RAM coordination readback unavailable after configuration.");
+                        RunStorage.AtomicJson(prefix + ".coordination-before.json", coordinationBefore);
+                    }
                     using var sampledDevice = CacheDevice.OpenVolumeName(current.VolumePath);
                     using var stop = new CancellationTokenSource();
                     var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,11 +122,36 @@ internal static class RamReadReferenceScenarios
                         if (workload is not null)
                             try { await workload; } catch (Exception) when (failure is not null) { }
                         try { await observer; } catch (Exception) when (failure is not null) { }
+                        if (kind == RamReadRunKind.Coordination)
+                        {
+                            try
+                            {
+                                coordinationAfter = provider.Coordination(expectedNative)
+                                    ?? throw new IOException("Final RAM coordination readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".coordination-after.json", coordinationAfter);
+                            }
+                            finally
+                            {
+                                provider.SetCoordination(expectedNative, false);
+                                var restored = provider.Coordination(expectedNative)
+                                    ?? throw new IOException("RAM coordination restore readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".coordination-restored.json", restored);
+                                if (restored.Enabled || restored.Active != 0)
+                                    throw new IOException("RAM coordination disable/rundown failed.");
+                            }
+                        }
                     }
                     var after = await Snapshot();
                     RunStorage.AtomicJson(prefix + ".boundaries.json", new { Before = before, After = after });
                     RunStorage.AtomicJson(prefix + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
                     RamReadReferenceEvidence.Validate(scenario, samples, before, after, score!, start, end);
+                    if (kind == RamReadRunKind.Coordination)
+                    {
+                        RamCoordination.ValidateWindow(coordinationBefore!, coordinationAfter!, scenario.CoordinationEnabled,
+                            checked(after.Direct.ReadBytes - before.Direct.ReadBytes), checked((ulong)score!.Bytes));
+                        coordinationWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
+                            expectedNative.CreationGeneration, coordinationBefore!, coordinationAfter!, score!));
+                    }
                     var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
                     RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, Before = beforeHash, After = afterHash, Bytes = 1L << 30 });
                     if (afterHash != expectedHash) throw new InvalidDataException("RAM reference byte oracle changed after scoring.");
@@ -168,6 +205,8 @@ internal static class RamReadReferenceScenarios
         finally { await VerificationTraceSession.CleanupAsync(traceJournal); }
         if (kind == RamReadRunKind.Attribution)
             await RamReadAttribution.AnalyzeAsync(traceJournal, plan, evidence, traceSymbols!);
+        if (kind == RamReadRunKind.Coordination)
+            RamReadCoordination.Report(evidence, plan, coordinationWindows);
         return checks;
     }
 

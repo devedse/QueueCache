@@ -51,16 +51,50 @@ budget plus 1 GiB, five times for the stream exercises and four times for
 left their folders behind: check the volume root for `QueueCache-Verify-*` folders
 of finished runs before a large matrix.
 
-## Campaigns (introduced in plan 114; current plan 116)
+## Campaigns (introduced in plan 114; current plan 117)
 
 `--campaign` runs maintained suites sequentially in one foreground process, with
 one `QueueCache-Campaign-*` report indexing its exact child runs. `--suite` remains
 available and is mutually exclusive with a campaign. Profiles are `smoke`,
-`focused` (requires `--focus-suite`), `performance` and `release-performance`.
+`focused` (requires `--focus-suite`), `experiment` (one implemented narrow RAM
+suite, requires `--focus-suite`), `performance` and `release-performance`.
 Campaign budgets default to 2048 MiB. An attached developer NTFS lab is required;
 ReFS is optional for caller comparisons. Existing workload, process-ownership,
 readiness and restoration contracts remain enforced. There is no automatic
 disk creation, formatting or reboot.
+
+Plan 117 adds `ram-read-coordination` and the one-phase `experiment` campaign:
+
+```powershell
+qcache developer verify Q: --campaign experiment --focus-suite ram-read-coordination --lab-ntfs W: --budget-mib 2048 --repeats 1 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results
+```
+
+This is nine windows: Direct sequential 1 MiB Q1T1/Q8T1 and Q2T4 separate lanes,
+each diagnostics off/on/off. An explicitly requested second repetition yields
+18 windows; three or more are refused. It uses the same 2 GiB owned RAM fixture,
+1 GiB byte oracle, Normal CPU/memory 5/I/O 3, W3, strict XML/telemetry and zero
+lower-image-attempt guards. It does not add the 81 checks from `focused`.
+The provider must implement actions 0x101/0x102 and a matching filter must support
+the version-2 kernel store tail. Public provider/header and Direct-state prefixes
+remain unchanged; unsupported older-provider replies mean unavailable counters,
+not zero. No production speed optimization or candidate mode is implied.
+
+Per-case `*.coordination-before.json`, `*.coordination-after.json` and
+`*.coordination-restored.json` capture the exact mode/generation. Collection is
+default-off; enabling starts a new generation after rundown; disabling drains
+collection and preserves final counters. At quiescence, started=completed,
+active=0, posted=taken+withdrawn and caller/helper bytes reconcile. Off cases must
+leave all counters unchanged. Counters enclose the process including warmup;
+read-copy active/ticks exclude Direct validation/MDL mapping and IRP completion.
+Provider split counters include read copies through either entry path.
+
+QPC timing is sampled once per 64 read copies/splits, with sample denominators.
+Posting, withdrawal, final helper wait and post-to-take populations are separate;
+do not add them as total latency. The combined `*.coordination-summary.json/.md`
+reports every off/on/off result. A greater-than-2% off drift or on score outside
+both off brackets by more than 2% flags `PERTURBATION_OR_DRIFT`; collection can
+complete while causal attribution remains unreliable. No estimated overhead is
+subtracted, and none of these scores establishes a candidate speedup.
 
 Read [the campaign/completion contract](PERFORMANCE_CAMPAIGN_PLAN.md) for exact
 profiles, defaults and targets. Campaigns refuse competing benchmark/Desktop

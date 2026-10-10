@@ -12,7 +12,15 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 116, "trace buffer contract has a new verification plan version on every host");
+        Check(VerificationPlan.Version == 117, "coordination contract has a new verification plan version on every host");
+        VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
+        var coordination = RamReadReferencePlan.CasesFor(RamReadRunKind.Coordination, 1);
+        Check(coordination.Count == 9 && coordination.Count(c => c.CoordinationEnabled) == 3 &&
+            coordination.All(c => c.SchedulingControl && !c.DisableAffinity), "nine off/on/off coordination windows on every host");
+        var experiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 1,
+            DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "ram-read-coordination"));
+        Check(experiment.Count == 1 && experiment[0].MeasurementWindows == 9 && experiment[0].ExpectedCases.Count == 1,
+            "one-phase experiment excludes retained correctness matrix on every host");
         var cases = RamReadReferencePlan.CasesFor(RamReadRunKind.Attribution, 3);
         Check(cases.Count == 9 && cases.Select(c => c.Id).Distinct().Count() == 9 &&
             cases.GroupBy(c => (c.QueueDepth, c.Threads)).All(g => g.Count() == 3) &&

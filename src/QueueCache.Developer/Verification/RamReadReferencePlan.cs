@@ -2,11 +2,12 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution }
+public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat, int RamReadQueueMode = 0,
-    bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false);
+    bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false,
+    bool CoordinationEnabled = false);
 
 /// <summary>Read-only reference shapes; aggregate queue depth stays eight for the large multi-thread control.</summary>
 public static class RamReadReferencePlan
@@ -19,6 +20,7 @@ public static class RamReadReferencePlan
         "ram-read-queue" => RamReadRunKind.ArchivedQueue,
         "ram-read-scheduling" => RamReadRunKind.Scheduling,
         "ram-read-attribution" => RamReadRunKind.Attribution,
+        "ram-read-coordination" => RamReadRunKind.Coordination,
         _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
     };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
@@ -29,8 +31,22 @@ public static class RamReadReferencePlan
         RamReadRunKind.ArchivedQueue => Cases(repeats, true),
         RamReadRunKind.Scheduling => SchedulingCases(repeats),
         RamReadRunKind.Attribution => AttributionCases(repeats),
+        RamReadRunKind.Coordination => CoordinationCases(repeats),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
+    public static IReadOnlyList<RamReadReferenceCase> CoordinationCases(int repeats)
+    {
+        if (repeats is < 1 or > 2) throw new ArgumentOutOfRangeException(nameof(repeats));
+        var result = new List<RamReadReferenceCase>();
+        var shapes = new[] { (1, 1), (8, 1), (2, 4) };
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+        foreach (var mode in new[] { "off-before", "on", "off-after" })
+            result.Add(new($"{result.Count + 1:D4}-r{repeat}-coordination-q{depth}-t{threads}-{mode}",
+                RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
+                SchedulingControl: true, CoordinationEnabled: mode == "on"));
+        return result;
+    }
     public static IReadOnlyList<RamReadReferenceCase> AttributionCases(int repeats)
     {
         if (repeats is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(repeats));

@@ -1,7 +1,7 @@
 # Single-command performance verification and completion delivery
 
 Status: typed campaigns, sequential execution, combined reports and durable
-completion events were introduced in plan 114; current contract is plan 116.
+completion events were introduced in plan 114; current contract is plan 117.
 Windows/VM qualification is recorded separately in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
 Companion Manager job/delivery code is implemented; live deployment/wake verification
 remains separate. `full` does not include every specialized
@@ -53,6 +53,7 @@ flowchart LR
 |---|---|---|
 | `smoke` | Two maintained NTFS cases: `quick`, `partial-read-accounting` | Short real-run orchestration check, no DiskSpd needed. |
 | `focused` | `--focus-suite` plus partial-read, paging, policy, pressure and final ordering/fault checks | Only the named affected measurement suite; optional ReFS only for caller-backoff. |
+| `experiment` | Exactly one `--focus-suite ram-read-coordination` phase | Nine off/on/off RAM diagnostic windows at one repeat, without the 81 retained checks. Candidate suites remain conditional/unimplemented. Explicit NTFS role, preparation, identities and restoration still required. |
 | `performance` | Retained correctness; cache layout; RAM reference and scheduling controls; NTFS/optional ReFS caller; priority; recall; 120-second sustained accounting; map cost; ordering/faults last | Thirteen phases / 118 outer cases without ReFS at defaults; fourteen / 142 with ReFS. The short sustained phase is a smoke, not 30-minute acceptance. No retired queue, disk-removal or write matrix. |
 | `release-performance` | Performance plus `write-performance`; sustained default 1800 seconds | Fourteen phases / 190 outer cases without ReFS; fifteen / 214 with ReFS. Write suite has 72 cases at three repeats. GUI CrystalDiskMark/README tasks remain separate. |
 

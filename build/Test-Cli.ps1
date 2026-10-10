@@ -148,6 +148,9 @@ if ($verificationHelp -notmatch '--campaign' -or $verificationHelp -notmatch 'ra
 }
 foreach ($arguments in @(
     @('developer', 'verify', 'Q:', '--suite', 'quick', '--campaign', 'smoke', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-reference', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-coordination', '--lab-ntfs', 'W:', '--repeats', '3'),
+    @('developer', 'verify', 'Q:', '--suite', 'ram-read-coordination', '--budget-mib', '2048', '--repeats', '3'),
     @('developer', 'verify', 'Q:', '--lab-ntfs', 'W:'),
     @('developer', 'verify', 'Q:', '--campaign', 'smoke'),
     @('developer', 'verify', 'Q:', '--campaign', 'smoke', '--lab-ntfs', 'C:'),

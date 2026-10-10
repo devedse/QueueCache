@@ -97,6 +97,7 @@ internal static class VerificationCommands
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
               ram-read-attribution Three traced Direct RAM read shapes; diagnostic, not speed acceptance.
+              ram-read-coordination Nine Direct off/on/off request/helper diagnostic windows.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
               ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).
@@ -135,11 +136,11 @@ internal static class VerificationCommands
         var volume = new Argument<string>("volume");
         var suite = new Option<string?>("--suite") { Description = "Single batch; defaults to quick. Mutually exclusive with --campaign." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
-        var campaign = new Option<string?>("--campaign") { Description = "Run maintained suites sequentially: smoke, focused, performance or release-performance." };
+        var campaign = new Option<string?>("--campaign") { Description = "Run maintained suites sequentially: smoke, focused, experiment, performance or release-performance." };
         campaign.AcceptOnlyFromAmong(VerificationCampaignPlan.Profiles);
         var labNtfs = new Option<string?>("--lab-ntfs") { Description = "Campaign only: explicit NTFS volume on an attached qcache developer lab-disk VHDX." };
         var labRefs = new Option<string?>("--lab-refs") { Description = "Campaign only: optional ReFS lab for caller-backoff comparisons." };
-        var focusSuite = new Option<string?>("--focus-suite") { Description = "Focused campaign only: affected maintained suite, with retained correctness checks." };
+        var focusSuite = new Option<string?>("--focus-suite") { Description = "Focused: affected suite plus retained checks; experiment: one implemented narrow RAM suite." };
         focusSuite.AcceptOnlyFromAmong(VerificationCampaignPlan.FocusSuites);
         var pauseBacking = new Option<bool>("--pause-backing-cache") { Description = "Campaign only: allow pausing the explicit performance volume's cache during lab phases and independently restoring it." };
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };

@@ -31,8 +31,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 116;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution";
+    public const int Version = 117;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -80,6 +80,7 @@ public static class VerificationPlan
         "ram-read-reference",
         "ram-read-scheduling",
         "ram-read-attribution",
+        "ram-read-coordination",
         "ram-read-queue",
         "write-performance",
         "sequential-resident",
@@ -438,6 +439,8 @@ public static class VerificationPlan
 
         if (options.Suite == "ram-read-attribution") RamReadAttribution.RequireSymbols(options.TraceSymbols);
         else if (options.TraceSymbols is not null) throw new ArgumentException("--trace-symbols applies only to ram-read-attribution.");
+        if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
+            throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
         if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
             throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
         if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
