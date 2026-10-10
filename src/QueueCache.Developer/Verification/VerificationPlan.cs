@@ -143,7 +143,7 @@ public static class VerificationPlan
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
-        "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" => [new("ram-read-reference", "ram-read-reference")],
+        var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
         "pressure" => [new("pressure-integrity", "pressure")],
