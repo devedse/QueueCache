@@ -31,8 +31,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 113;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue";
+    public const int Version = 114;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -77,6 +77,7 @@ public static class VerificationPlan
         "priority-cost",
         "partial-read-accounting",
         "ram-read-reference",
+        "ram-read-scheduling",
         "ram-read-queue",
         "write-performance",
         "sequential-resident",
@@ -140,7 +141,7 @@ public static class VerificationPlan
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
-        "ram-read-reference" or "ram-read-queue" => [new("ram-read-reference", "ram-read-reference")],
+        "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" => [new("ram-read-reference", "ram-read-reference")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
         "pressure" => [new("pressure-integrity", "pressure")],

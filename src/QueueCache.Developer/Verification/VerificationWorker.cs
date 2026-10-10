@@ -18,7 +18,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
-    string? DiskSpd = null, int ReferenceRepeats = 3, bool ReferenceQueue = false);
+    string? DiskSpd = null, int ReferenceRepeats = 3, bool ReferenceQueue = false, bool ReferenceScheduling = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
@@ -626,6 +626,7 @@ public static class VerificationWorker
                 result = DiskRemovalScenarios.Verify(removalOracle, device);
                 break;
             case "capture":
+            case "campaign-inspect":
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
                 if (inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0)
@@ -640,9 +641,27 @@ public static class VerificationWorker
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
                 if (state.DirtyBytes != 0)
                     throw new IOException("Start with a clean cache; drain your workload first.");
-                result = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
+                var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
                     device.GetDiagnostics().CallerRouting?.Backoff);
+                if (job.Operation == "capture") result = capturedSnapshot;
+                else
+                {
+                    var role = (CampaignTargetRole)job.Value;
+                    if (!Enum.IsDefined(role)) throw new ArgumentException("Unknown campaign target role.");
+                    var volume = (await VolumeCatalog.ListAsync()).Single(v => v.Volume.Equals(target.Device, StringComparison.OrdinalIgnoreCase));
+                    var lab = role == CampaignTargetRole.Performance ? null : await LabDisk.InspectAsync(target.Number, CancellationToken.None);
+                    string? backingVolume = null; bool? backingEnabled = null;
+                    if (lab?.ImagePath is { Length: > 2 } image && char.IsAsciiLetter(image[0]) && image[1] == ':')
+                    {
+                        backingVolume = char.ToUpperInvariant(image[0]) + ":";
+                        using var backing = new CacheDevice(backingVolume);
+                        backingEnabled = backing.GetWriteCacheState().Enabled;
+                    }
+                    result = new CampaignTargetEvidence(role, capturedSnapshot, volume.FileSystem, volume.Label,
+                        volume.DiskName, lab?.ImagePath, lab?.LayoutValid ?? false, backingVolume, backingEnabled,
+                        LoadedDriverInspection.Capture(), device.GetDiagnostics().StagedReads is not null);
+                }
                 break;
             case "restore":
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
@@ -834,10 +853,11 @@ public static class VerificationWorker
                 return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ram-read-reference":
                 var ramChecks = await RamReadReferenceScenarios.RunAsync(device, job.DiskSpd!, job.ReferenceRepeats,
-                    job.Seconds, job.OraclePath!, job.Reply, job.ReferenceQueue);
+                    job.Seconds, job.OraclePath!, job.Reply, job.ReferenceQueue, job.ReferenceScheduling);
                 RunStorage.AtomicJson(job.Reply, ramChecks);
                 ReportFailures(ramChecks, Console.Error);
-                return ramChecks.Count == RamReadReferencePlan.Cases(job.ReferenceRepeats, job.ReferenceQueue).Count && ramChecks.All(c => c.Result == "PASS") ? 0 : 1;
+                return ramChecks.Count == (job.ReferenceScheduling ? RamReadReferencePlan.SchedulingCases(job.ReferenceRepeats) :
+                    RamReadReferencePlan.Cases(job.ReferenceRepeats, job.ReferenceQueue)).Count && ramChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ram-read-cleanup":
                 await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
                 return 0;

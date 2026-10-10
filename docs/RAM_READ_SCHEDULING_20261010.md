@@ -155,6 +155,32 @@ single submitter can recover it by moving whole requests to sleeping workers.
 The exact cause of the queue loss requires copy/completion/wake-up attribution;
 no additional scheduling change or priority boost is justified by these scores.
 
+## Plan-114 controls after review
+
+The rejected queue changed both scheduling and copying granularity: its executors
+copied whole requests without `CopySplit`. Its loss does not isolate which change
+caused the regression. `ram-read-scheduling` keeps the retained Direct/copy path
+fixed and measures two independent controls before another kernel experiment.
+
+At three repetitions the suite has thirty immutable windows: large sequential
+Q1T1/Q8T1 and random 4K Q1T1 compare default versus disabled affinity (`-n`);
+large Q2T4 additionally crosses those affinity modes with overlapping independent
+cursors versus `-s4M -T1M` interleaved lanes. Each thread in the latter starts one
+1 MiB block after the preceding thread and advances 4 MiB, removing shared source
+blocks while preserving four readers, total depth eight, block/file sizes and
+the non-interlocked submission path. Contract reference:
+[Microsoft DiskSpd threading/stride documentation](https://github.com/microsoft/diskspd/wiki/Threading-and-concurrency).
+The actual bundled 2.2 XML is required to match affinity, stride, depth, file size,
+duration and normal I/O settings; a three-second warmup and owned Normal CPU /
+memory-default 5 readbacks precede every score. Existing whole-file byte guards,
+residency/accounting, readiness/gap and ownership checks remain required.
+
+The command can run inside the focused campaign with its retained correctness
+checks, final fault checks and independent restoration. Implementation and VM
+measurements are separate in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md).
+These controls identify benchmark placement/locality effects; they do not by
+themselves measure copy-helper handoff costs or port the disk-cache copy loop.
+
 An earlier attempt, `QueueCache-Verify-20261010-033934-ab5c8b71121448fdaf674d9eb963f978`,
 stopped before any score because the control handle was read-only (Win32 5).
 It restored cleanly; the managed writable-handle fix is in `408e49c`.

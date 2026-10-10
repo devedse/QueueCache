@@ -20,13 +20,14 @@ internal static class VerificationCommands
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("Administrator access required. Open Windows Terminal, Command Prompt or PowerShell with 'Run as administrator', then run this command again. Verification accesses physical disks and changes runtime cache settings. No tests were started. verify-status and --help do not require elevation.");
     }
-    private static VerificationRunner Runner()
+    private static (string Executable, IReadOnlyList<string> Prefix) Invocation()
     {
         var executable = Environment.ProcessPath ?? throw new IOException("Missing executable path.");
         // Also supports dotnet qcache.dll during development.
-        return new(executable, Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
+        return (executable, Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
             ? [typeof(VerificationCommands).Assembly.Location] : []);
     }
+    private static VerificationRunner Runner() { var invocation = Invocation(); return new(invocation.Executable, invocation.Prefix); }
     public static Command Create()
     {
         var command = new Command("verify", """
@@ -94,6 +95,8 @@ internal static class VerificationCommands
               partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
+              ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
+                                 Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
               ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).
                                  Reproduction requires the historical experiment driver; 54 windows, V22 diagnostics.
                                  Owned 2 GiB disks, whole-file byte checks; --budget-mib 2048 and normal priority.
@@ -111,25 +114,38 @@ internal static class VerificationCommands
 
             Examples:
               qcache developer verify Q: --suite quick
+              qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd "C:\Tools\DiskSpd\diskspd.exe" --pause-backing-cache
+              qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd "C:\Tools\DiskSpd\diskspd.exe" --pause-backing-cache
               qcache developer verify Q: --suite full --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output .\results
               qcache developer verify Q: --suite full --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
 
             Output: unique QueueCache-Verify-* subfolder of --output (default: current directory).
             Live timestamped progress is also saved to run.log, including errors and waiting messages.
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
+            Campaigns compose suites sequentially in one QueueCache-Campaign-* folder with child evidence and completion.json.
+            Profiles: smoke (two short NTFS checks), focused, performance, release-performance (adds writes/30-minute soak).
+            Campaigns require an attached developer NTFS lab; ReFS is optional. --campaign and --suite are exclusive.
+            A controller can await process exit and read verify-completion once; automatic Manager wakeup requires integration.
             Run ordinary suites elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             System suites require an existing output directory on a different physical disk and explicit VM/disk identity.
             system-files reports live unbuffered bytes; it does not alone prove persistence under an active Fast cache.
             """);
         var volume = new Argument<string>("volume");
-        var suite = new Option<string>("--suite") { DefaultValueFactory = _ => "quick", Description = "Which batch to run; see suite descriptions above. System suites require explicit guarded options." };
+        var suite = new Option<string?>("--suite") { Description = "Single batch; defaults to quick. Mutually exclusive with --campaign." };
         suite.AcceptOnlyFromAmong(VerificationPlan.Suites);
+        var campaign = new Option<string?>("--campaign") { Description = "Run maintained suites sequentially: smoke, focused, performance or release-performance." };
+        campaign.AcceptOnlyFromAmong(VerificationCampaignPlan.Profiles);
+        var labNtfs = new Option<string?>("--lab-ntfs") { Description = "Campaign only: explicit NTFS volume on an attached qcache developer lab-disk VHDX." };
+        var labRefs = new Option<string?>("--lab-refs") { Description = "Campaign only: optional ReFS lab for caller-backoff comparisons." };
+        var focusSuite = new Option<string?>("--focus-suite") { Description = "Focused campaign only: affected maintained suite, with retained correctness checks." };
+        focusSuite.AcceptOnlyFromAmong(VerificationCampaignPlan.FocusSuites);
+        var pauseBacking = new Option<bool>("--pause-backing-cache") { Description = "Campaign only: allow pausing the explicit performance volume's cache during lab phases and independently restoring it." };
         var output = new Option<string>("--output") { DefaultValueFactory = _ => ".", Description = "Parent directory for a unique run folder; defaults to current directory." };
         var disk = new Option<string?>("--diskspd") { Description = "Executable path: Microsoft amd64\\diskspd.exe or CrystalDiskMark CdmResource\\DiskSpd\\DiskSpd64.exe. Quote paths with spaces." };
-        var budget = new Option<int>("--budget-mib") { DefaultValueFactory = _ => 1024, Description = "Performance cache budget, 256..8192 MiB. Original configuration is restored." };
+        var budget = new Option<int?>("--budget-mib") { Description = "Performance cache budget, 256..8192 MiB. Default 1024 for suites, 2048 for campaigns; original configuration is restored." };
         var repeats = new Option<int>("--repeats") { DefaultValueFactory = _ => 3, Description = "Repetitions per performance case, 1..10; each retains separate evidence." };
         var duration = new Option<int>("--duration-seconds") { DefaultValueFactory = _ => 10, Description = "Measured workload duration, 5..60 seconds; preparation/warmup/draining add time." };
-        var soak = new Option<int?>("--soak-seconds") { Description = "cache-sustained only: 120..3600 seconds, divisible by six. Default 1800; use --repeats 1." };
+        var soak = new Option<int?>("--soak-seconds") { Description = "Sustained suite/campaign phase: 120..3600 seconds divisible by six. Suite/release default 1800; performance campaign default 120 (smoke)." };
         var deadline = new Option<int>("--deadline-minutes") { DefaultValueFactory = _ => 0, Description = "Optional overall limit: 0 = unlimited (default), or 1..1440 minutes. Per-operation and restoration timeouts still apply." };
         var preparationFlush = new Option<int>("--preparation-flush-seconds") { DefaultValueFactory = _ => 180, Description = "Explicit pre-workload flush deadline, 180..3600 seconds. Recorded in manifest; score windows and restoration deadline unchanged." };
         var caseFilter = new Option<string?>("--case-filter") { Description = "Focused performance suite: case-sensitive ID substring. A selected run is not the complete matrix." };
@@ -143,18 +159,27 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
-        foreach (var option in new Option[] { suite, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
+        foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
             systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
             RequireAdministrator();
-            return Runner().RunAsync(new(p.GetValue(volume)!, p.GetValue(suite)!, p.GetValue(output)!,
-            p.GetValue(disk), p.GetValue(budget), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
+            var selectedCampaign = p.GetValue(campaign);
+            if (selectedCampaign is not null && p.GetValue(suite) is not null)
+                throw new ArgumentException("--campaign and --suite are mutually exclusive, including --suite quick.");
+            if (selectedCampaign is null && (p.GetValue(labNtfs) is not null || p.GetValue(labRefs) is not null || p.GetValue(focusSuite) is not null || p.GetValue(pauseBacking)))
+                throw new ArgumentException("Lab/focus/pause options require --campaign.");
+            var selected = new VerificationOptions(p.GetValue(volume)!, p.GetValue(suite) ?? "quick", p.GetValue(output)!,
+            p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads)),
-            new ConsoleProgress(), token);
+            p.GetValue(keepWorkloads));
+            if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
+            var invocation = Invocation();
+            return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))
+                .RunAsync(new(selected, selectedCampaign, p.GetValue(labNtfs) ?? throw new ArgumentException("Campaign requires --lab-ntfs <volume>."),
+                    p.GetValue(labRefs), p.GetValue(focusSuite), p.GetValue(pauseBacking)), new ConsoleProgress(), token);
         });
         return command;
     }
@@ -172,6 +197,14 @@ internal static class VerificationCommands
         var directory = new Argument<string>("run-directory");
         command.Arguments.Add(directory);
         command.SetAction(p => { Console.WriteLine(File.ReadAllText(Path.Combine(Path.GetFullPath(p.GetValue(directory)!), "status.json"))); return 0; });
+        return command;
+    }
+    public static Command CreateCompletion()
+    {
+        var command = new Command("verify-completion", "Read and validate a finalized campaign's durable completion event. Read-only; no elevation or driver access.");
+        var directory = new Argument<string>("campaign-directory"); command.Arguments.Add(directory);
+        command.SetAction(p => { Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
+            VerificationCampaignEvidence.ReadCompletion(p.GetValue(directory)!), RunStorage.Json)); return 0; });
         return command;
     }
 }

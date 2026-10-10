@@ -23,6 +23,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     private readonly object logGate = new();
     private IProgress<string>? progressSink;
     private string progressLabel = "Preflight";
+    public string? DirectoryPath => storage?.DirectoryPath;
+    internal RecoverySnapshot? CampaignBaseline { get; init; }
+    internal bool CampaignOwnsDiskLease { get; init; }
+    internal Action<string>? RunCreated { get; init; }
     private void Log(string message)
     {
         lock (logGate)
@@ -165,6 +169,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     public async Task<int> RunAsync(VerificationOptions selected, IProgress<string>? progress, CancellationToken token)
     {
         VerificationPlan.Validate(selected);
+        var elapsed = Stopwatch.StartNew();
+        double preflightSeconds = 0, preparationSeconds = 0, restorationSeconds = 0;
+        if (CampaignOwnsDiskLease && CampaignBaseline is null)
+            throw new InvalidOperationException("Campaign ownership requires a captured baseline.");
         layoutGeneration = null;
         layoutMeasurements = null;
         if ((VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
@@ -233,7 +241,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
             CacheExerciseCases = exercises,
-            RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue") : [],
+            RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
                 ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost"
                 ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
@@ -246,6 +254,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Started = DateTimeOffset.UtcNow
         });
         storage.Write("results.json", storage.Results);
+        RunCreated?.Invoke(storage.DirectoryPath);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         if (options.DeadlineMinutes > 0)
             deadline.CancelAfter(TimeSpan.FromMinutes(options.DeadlineMinutes));
@@ -298,15 +307,17 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         DisposableInstance = options.DisposableInstance,
                         DisposableBytes = options.DisposableBytes
                     }, deadline.Token);
-                var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json")), deadline.Token);
+                var recovery = await Worker(new("capture", options.Volume, storage.PathFor("recovery.json"), CampaignBaseline?.Target), deadline.Token);
                 original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(recovery, deadline.Token))!;
+                if (CampaignBaseline is not null) VerificationCampaignEvidence.ValidateConfiguration(CampaignBaseline, original);
                 target = original.Target;
             }
             if (!IsSystemSuite(options.Suite))
             {
                 var leases = LeaseDirectory;
                 Directory.CreateDirectory(leases);
-                diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                if (!CampaignOwnsDiskLease)
+                    diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
             if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
@@ -332,6 +343,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 workDirectory = Path.Combine(target.Root, Path.GetFileName(storage.DirectoryPath));
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = true });
             }
+            preflightSeconds = elapsed.Elapsed.TotalSeconds;
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
@@ -473,28 +485,34 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         DiskSpd = test.Operation == "ram-read-reference" ? options.DiskSpd : null,
                         ReferenceRepeats = options.Repeats,
                         ReferenceQueue = options.Suite == "ram-read-queue",
+                        ReferenceScheduling = options.Suite == "ram-read-scheduling",
                         Seconds = options.DurationSeconds,
                         OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") : null,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
-                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue").Count * (options.DurationSeconds + 30) + 300 : 900);
+                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 : 900);
                     if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     if (test.Operation == "ram-read-reference")
-                        RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue"), caseChecks!);
+                        RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.CasesFor(options), caseChecks!);
                     return null;
                 });
             if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
-                await Worker(Job("prepare") with
+                var preparing = Stopwatch.StartNew();
+                try
                 {
-                    WorkDirectory = workDirectory,
-                    BudgetMiB = options.BudgetMiB,
-                    Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" ? 3UL : 1UL
-                }, deadline.Token, 900);
+                    await Worker(Job("prepare") with
+                    {
+                        WorkDirectory = workDirectory,
+                        BudgetMiB = options.BudgetMiB,
+                        Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" ? 3UL : 1UL
+                    }, deadline.Token, 900);
+                }
+                finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -522,6 +540,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
         finally
         {
+            if (preflightSeconds == 0) preflightSeconds = elapsed.Elapsed.TotalSeconds;
+            var restoring = Stopwatch.StartNew();
             if (captured && removalUnresolved)
             {
                 restorationFailure = "Removal outcome or reconnect verification is unresolved. Restoration deferred; preserve the disk and evidence, reconnect the exact original target, then use verify-recover.";
@@ -570,7 +590,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             diskLease?.Dispose();
             if (ownsSystemLease) systemLease!.Release();
             systemLease?.Dispose();
+            restorationSeconds = restoring.Elapsed.TotalSeconds;
         }
+        var finalizing = Stopwatch.StartNew();
         var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: AllowsSkips(options.Suite));
         // A completed run no longer needs its multi-GiB workload files; a failed one keeps them for inspection.
         if (complete && RemovesWorkloads(options) && workDirectory.Length > 0 &&
@@ -672,10 +694,46 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 r.Score?.WriteP99Milliseconds?.ToString("R", CultureInfo.InvariantCulture) ?? "",
                 r.Score is { } score ? (score.Bytes / score.Seconds / 1_000_000).ToString("R", CultureInfo.InvariantCulture) : ""));
         File.WriteAllText(storage.PathFor("results.csv"), csv.ToString());
+        storage.Write("timing.json", new VerificationTiming(elapsed.Elapsed.TotalSeconds, preflightSeconds,
+            preparationSeconds, storage.Results.Sum(r => r.Seconds), restorationSeconds, finalizing.Elapsed.TotalSeconds));
         File.WriteAllText(storage.PathFor("FINISHED.txt"), $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n");
         progressLabel = $"Finished | {storage.Results.Count}/{totalCases} recorded";
         Log($"{status}: {storage.Results.Count}/{expected.Count} cases. " + storage.PathFor("SUMMARY.md"));
         return complete ? 0 : token.IsCancellationRequested ? 130 : 1;
+    }
+
+    /// <summary>Campaign backing-cache actions use the same owned workers, control telemetry and restoration deadline.</summary>
+    internal async Task<string> CampaignMaintenanceAsync(VerificationOptions selected, RecoverySnapshot baseline,
+        string evidenceParent, bool restore, IProgress<string>? progress, CancellationToken token)
+    {
+        options = selected with { Volume = baseline.Target.Device };
+        original = baseline; storage = new RunStorage(evidenceParent); progressSink = progress;
+        progressLabel = restore ? "Restoring campaign backing cache" : "Pausing campaign backing cache";
+        storage.Write("recovery.json", baseline);
+        storage.Write("manifest.json", new { PlanVersion = VerificationPlan.Version, Options = options });
+        try
+        {
+            if (restore)
+            {
+                OwnedProcess.EnsureStopped(evidenceParent);
+                await Worker(Job("restore") with { Recovery = storage.PathFor("recovery.json"), Reply = storage.PathFor("restored.json") }, CancellationToken.None, 300);
+            }
+            else
+            {
+                await Control(WriteCacheAction.Flush, token);
+                await Control(WriteCacheAction.Disable, token);
+            }
+            OwnedProcess.EnsureStopped(storage.DirectoryPath);
+            storage.Write("status.json", new { Status = "COMPLETED", Restoration = restore ? "RESTORED" : "PENDING" });
+            File.WriteAllText(storage.PathFor("FINISHED.txt"), "COMPLETED\n");
+            Log(restore ? "Original campaign backing cache restored." : "Campaign backing cache paused; independent restoration is required.");
+            return storage.DirectoryPath;
+        }
+        catch (Exception ex)
+        {
+            storage.Write("status.json", new { Status = restore ? "RESTORATION_FAILED" : "INCOMPLETE", Failure = ex.ToString() });
+            Log("ERROR: " + ex); throw;
+        }
     }
 
     private int totalCases;

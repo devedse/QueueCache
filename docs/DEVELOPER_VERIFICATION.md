@@ -9,6 +9,8 @@ qcache developer verify Q: --suite quick
 qcache developer verify Q: --suite paging-coherence --output C:\QueueCache-Results
 qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
 # Volume-filter suites on the lab VHDX (see "Volume-filter lab disk" below)
 qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
 qcache developer verify V: --suite volumes --output C:\QueueCache-Results
@@ -49,7 +51,49 @@ budget plus 1 GiB, five times for the stream exercises and four times for
 left their folders behind: check the volume root for `QueueCache-Verify-*` folders
 of finished runs before a large matrix.
 
-## Suites (plan version 91)
+## Campaigns (plan version 114)
+
+`--campaign` runs maintained suites sequentially in one foreground process, with
+one `QueueCache-Campaign-*` report indexing its exact child runs. `--suite` remains
+available and is mutually exclusive with a campaign. Profiles are `smoke`,
+`focused` (requires `--focus-suite`), `performance` and `release-performance`.
+Campaign budgets default to 2048 MiB. An attached developer NTFS lab is required;
+ReFS is optional for caller comparisons. Existing workload, process-ownership,
+readiness and restoration contracts remain enforced. There is no automatic
+disk creation, formatting or reboot.
+
+Read [the campaign/completion contract](PERFORMANCE_CAMPAIGN_PLAN.md) for exact
+profiles, defaults and targets. Campaigns refuse competing benchmark/Desktop
+processes. `--pause-backing-cache` explicitly permits temporarily pausing the
+performance volume when it hosts the active lab backing cache; it is restored
+after each lab phase. A restoration failure stops the campaign.
+
+After process exit, consume the exact campaign once:
+
+```powershell
+qcache developer verify-status C:\QueueCache-Results\QueueCache-Campaign-<run-id>
+qcache developer verify-completion C:\QueueCache-Results\QueueCache-Campaign-<run-id>
+```
+
+The validated event is published as `completion.json` after reports and cleanup,
+with a stable deduplication ID, manifest hash, counts and restoration outcome.
+Manager wakeup is not yet integrated; `completion-delivery.json` honestly records
+`PENDING_CONTROLLER`. Child `timing.json` separates preparation, cases and
+restoration; case time includes warmup/draining, not just score time. Interrupted
+or malformed evidence cannot produce a completed campaign verdict. Recovery
+uses the indexed child/maintenance run directory rather than rerunning phases.
+
+`ram-read-scheduling` is a new opt-in 30-window diagnostic at three repetitions.
+It holds the existing Direct RAM-disk/copy path fixed while comparing default
+versus disabled DiskSpd affinity. Its four-reader control additionally compares
+the existing independent cursors with `-s4M -T1M` interleaved 1 MiB reads, so
+readers access different block lanes without an interlocked submission cursor.
+Single-reader large Q1/Q8 and random 4K Q1 controls remain. Normal owned-child
+CPU/memory settings, three-second warmup, raw XML profile checks, byte oracles,
+native accounting, telemetry coverage and fixture restoration are required.
+This is a diagnostic comparison, not an accepted driver optimization.
+
+## Suites (current plan version 114; earlier additions below)
 
 Plans 105–110 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.

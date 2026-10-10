@@ -46,7 +46,8 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 113, "plan 113 declares independent child CPU/I/O/memory priority controls");
+        Check(VerificationPlan.Version == 114, "plan 114 declares typed campaigns and isolated RAM scheduling controls");
+        await RunCampaignContractsAsync();
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -1723,6 +1724,164 @@ internal static class VerificationRunnerTests
             Directory.Delete(store.DirectoryPath, recursive: true);
         }
         Console.WriteLine("Verification runner contracts passed (no driver or workload-disk access).");
+    }
+
+    private sealed class FakeCampaignHost(string mode) : IVerificationCampaignHost
+    {
+        public int Runs { get; private set; }
+        public bool Cleaned { get; private set; }
+        public bool Disposed { get; private set; }
+        private readonly List<CampaignTargetEvidence> targets = [];
+        public Task<IReadOnlyList<CampaignTargetEvidence>> PreflightAsync(VerificationCampaignOptions options, string directory, IProgress<string> progress, CancellationToken token)
+        {
+            var drivers = new QueueCache.Operations.LoadedDriverObservation(true, null,
+                [new("fixture-filter.sys", "fixture-filter.sys", new string('A', 64), "ignored", null), new("fixture-provider.sys", "fixture-provider.sys", new string('B', 64), "ignored", null)]);
+            foreach (var (role, letter) in new[] { (CampaignTargetRole.Performance, 'Q'), (CampaignTargetRole.NtfsLab, 'W') })
+            {
+                var identity = new QueueCache.Operations.DiskTarget(letter, role == CampaignTargetRole.Performance ? 99990 : 99991, 8L << 30, "fixture-" + letter)
+                    { DiskBytes = 24L << 30, VolumeId = role == CampaignTargetRole.Performance ? "{11111111-1111-1111-1111-111111111111}" : "{22222222-2222-2222-2222-222222222222}" };
+                var recovery = new RecoverySnapshot(1, identity, new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 4 },
+                    false, "fixture unchanged profiles", DateTimeOffset.UtcNow, "fixture-machine", 1, 256);
+                targets.Add(new(role, recovery, "NTFS", role == CampaignTargetRole.Performance ? "fixture" : "QC-Lab-1",
+                    role == CampaignTargetRole.Performance ? "QEMU HARDDISK" : "Msft Virtual Disk",
+                    role == CampaignTargetRole.Performance ? null : @"Q:\QueueCache-Lab\fixture.vhdx", role == CampaignTargetRole.NtfsLab,
+                    role == CampaignTargetRole.Performance ? null : "Q:", role == CampaignTargetRole.Performance ? null : false, drivers, true));
+            }
+            if (mode == "unsafe-target") targets[1] = targets[1] with { LabLayout = false };
+            return Task.FromResult<IReadOnlyList<CampaignTargetEvidence>>(targets);
+        }
+
+        public async Task<CampaignPhaseResult> RunPhaseAsync(VerificationCampaignPhase phase, CampaignTargetEvidence target,
+            IReadOnlyList<CampaignTargetEvidence> allTargets, string directory, string? diskSpdHash, Action<string> created, IProgress<string> progress, CancellationToken token)
+        {
+            Runs++;
+            var storage = new RunStorage(Path.Combine(directory, "phases", phase.Id));
+            storage.Write("manifest.json", new { PlanVersion = VerificationPlan.Version, Options = phase.Options, ExpectedCases = phase.ExpectedCases,
+                DiskSpdSha256 = diskSpdHash, Provenance = new { LoadedDrivers = target.Drivers } });
+            storage.Write("recovery.json", target.Recovery); storage.Write("results.json", Array.Empty<CaseResult>());
+            created(storage.DirectoryPath);
+            if (mode == "cancel") await Task.Delay(Timeout.Infinite, token);
+            var failed = mode is "case-failure" or "restore-failure";
+            var status = mode == "restore-failure" ? "RESTORATION_FAILED" : failed ? "INCOMPLETE" : "COMPLETED";
+            var rows = phase.ExpectedCases.Select(caseId => new CaseResult(caseId, failed ? "FAIL" : "PASS", "fixture", DateTimeOffset.UtcNow, 0.01)).ToArray();
+            storage.Write("results.json", rows);
+            storage.Write("status.json", new { Status = status, Expected = phase.ExpectedCases.Count, Collected = rows.Length,
+                Failure = failed ? "fixture case failure" : null, RestorationFailure = mode == "restore-failure" ? "fixture restoration failure" : null });
+            storage.Write("timing.json", new VerificationTiming(0.05, 0.01, 0.01, 0.01, 0.01, 0.01));
+            if (mode != "restore-failure") storage.Write("restored.json", target.Recovery.State);
+            File.WriteAllText(storage.PathFor("SUMMARY.md"), "fixture summary"); File.WriteAllText(storage.PathFor("run.log"), "fixture log");
+            if (mode != "missing-marker") File.WriteAllText(storage.PathFor("FINISHED.txt"), status + "\n");
+            if (mode == "wrong-counts") storage.Write("status.json", new { Status = status, Expected = 999, Collected = rows.Length, Failure = (string?)null, RestorationFailure = (string?)null });
+            if (mode == "wrong-driver") storage.Write("manifest.json", new { PlanVersion = VerificationPlan.Version, Options = phase.Options, ExpectedCases = phase.ExpectedCases,
+                DiskSpdSha256 = diskSpdHash, Provenance = new { LoadedDrivers = target.Drivers with { Modules = [] } } });
+            if (mode == "baseline-drift") storage.Write("recovery.json", target.Recovery with { CallerBackoff = 0 });
+            progress.Report("Case fixture: " + status);
+            return VerificationCampaignEvidence.ReadPhase(phase, storage.DirectoryPath, failed ? 1 : 0, 0.05, target, diskSpdHash);
+        }
+
+        public Task CleanupAsync(string directory, IProgress<string> progress)
+        {
+            Cleaned = true;
+            if (File.Exists(Path.Combine(directory, "completion.json"))) throw new Exception("Terminal event published before cleanup.");
+            if (mode == "cleanup-failure") throw new IOException("fixture final restoration failed");
+            return Task.CompletedTask;
+        }
+        public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
+    }
+
+    private static async Task RunCampaignContractsAsync()
+    {
+        void Check(bool value, string detail) { if (!value) throw new Exception("Campaign contract: " + detail); }
+        void Reject(Action action)
+        {
+            try { action(); }
+            catch (Exception ex) when (ex is ArgumentException or InvalidDataException or IOException or JsonException) { return; }
+            throw new Exception("Campaign accepted invalid evidence/options.");
+        }
+        var basic = new VerificationCampaignOptions(new("Q:", BudgetMiB: 2048), "smoke", "W:");
+        var smoke = VerificationCampaignPlan.Create(basic);
+        Check(smoke.Count == 2 && smoke.All(p => p.Role == CampaignTargetRole.NtfsLab) && smoke.Sum(p => p.ExpectedCases.Count) == 2,
+            "smoke composes exactly two maintained NTFS cases without DiskSpd");
+        var measured = basic with { Profile = "performance", Verification = basic.Verification with { DiskSpd = Environment.ProcessPath } };
+        var full = VerificationCampaignPlan.Create(measured);
+        Check(full.Count == 13 && full.Sum(p => p.ExpectedCases.Count) == 118 && full[^1].Options.Suite == "ordering-faults",
+            "performance plan uses existing counts and fault injection last");
+        Check(full.All(p => p.Options.Suite is not ("ram-read-queue" or "write-performance" or "disk-removal" or "system-files")) &&
+            full.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 120 &&
+            full.Single(p => p.Options.Suite == "cache-sustained").Options.Repeats == 1, "performance excludes retired/invasive/write suites and labels short sustained accounting");
+        var release = VerificationCampaignPlan.Create(measured with { Profile = "release-performance", LabRefs = "R:" });
+        Check(release.Count == 15 && release.Single(p => p.Options.Suite == "write-performance").ExpectedCases.Count == 72 &&
+            release.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 1800,
+            "release includes explicit complete writes, optional ReFS and thirty-minute sustained contract");
+        var focused = VerificationCampaignPlan.Create(measured with { Profile = "focused", FocusSuite = "ram-read-scheduling" });
+        Check(focused.Count == 6 && focused.Single(p => p.Options.Suite == "ram-read-scheduling").MeasurementWindows == 30,
+            "focused campaign adds only affected measurements and retained checks");
+        Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { Suite = "full" } }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { LabNtfs = "q:" }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { LabNtfs = "C:" }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { FocusSuite = "ram-read-queue" }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { Profile = "focused" }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { CaseFilter = "one" } }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { SoakSeconds = 120 } }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { DeadlineMinutes = -1 } }));
+        Reject(() => VerificationCampaignPlan.Create(measured with { Verification = measured.Verification with { BudgetMiB = 1024 } }));
+        var scheduling = RamReadReferencePlan.SchedulingCases(3);
+        Check(scheduling.Count == 30 && scheduling.Select(c => c.Id).Distinct().Count() == 30 && scheduling.All(c => c.SchedulingControl && c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct),
+            "RAM scheduling freezes the existing Direct/copy path with unique alternating controls");
+        Check(scheduling.Count(c => c.Interleaved) == 6 && scheduling.Where(c => c.Interleaved).All(c => c.Threads == 4 && c.BlockKiB == 1024),
+            "nonoverlap control applies only to four large sequential readers");
+        var interleaved = scheduling.First(c => c.Interleaved && c.DisableAffinity);
+        var args = RamReadReferencePlan.Arguments(interleaved, 10);
+        Check(args.Contains("-n") && args.Contains("-s4M") && args.Contains("-T1M") && args.Contains("-W3") && !args.Contains("-si"),
+            "nonoverlap stride control does not add interlocked submission coordination");
+        const string controlledProfile = "<Results><Profile><TimeSpans><TimeSpan><DisableAffinity>true</DisableAffinity><Duration>10</Duration><Warmup>3</Warmup><Targets><Target><BlockSize>1048576</BlockSize><RequestCount>2</RequestCount><ThreadsPerFile>4</ThreadsPerFile><WriteRatio>0</WriteRatio><IOPriority>3</IOPriority><MaxFileSize>1073741824</MaxFileSize><DisableOSCache>true</DisableOSCache><UseLargePages>false</UseLargePages><StrideSize>4194304</StrideSize><ThreadStride>1048576</ThreadStride><InterlockedSequential>false</InterlockedSequential></Target></Targets></TimeSpan></TimeSpans></Profile></Results>";
+        RamReadReferencePlan.ValidateProfile(interleaved, controlledProfile, 10);
+        foreach (var replacement in new[] {
+            ("<DisableAffinity>true</DisableAffinity>", "<DisableAffinity>false</DisableAffinity>"),
+            ("<Warmup>3</Warmup>", "<Warmup>0</Warmup>"),
+            ("<ThreadStride>1048576</ThreadStride>", "<ThreadStride>0</ThreadStride>"),
+            ("<InterlockedSequential>false</InterlockedSequential>", "<InterlockedSequential>true</InterlockedSequential>"),
+            ("<UseLargePages>false</UseLargePages>", "") })
+            Reject(() => RamReadReferencePlan.ValidateProfile(interleaved, controlledProfile.Replace(replacement.Item1, replacement.Item2), 10));
+        var randomControl = scheduling.First(c => c.Random);
+        var randomProfile = controlledProfile.Replace("<DisableAffinity>true</DisableAffinity>", "<DisableAffinity>false</DisableAffinity>")
+            .Replace("<BlockSize>1048576</BlockSize>", "<BlockSize>4096</BlockSize>")
+            .Replace("<RequestCount>2</RequestCount>", "<RequestCount>1</RequestCount>")
+            .Replace("<ThreadsPerFile>4</ThreadsPerFile>", "<ThreadsPerFile>1</ThreadsPerFile>")
+            .Replace("<StrideSize>4194304</StrideSize>", "<Random>4096</Random>");
+        RamReadReferencePlan.ValidateProfile(randomControl, randomProfile, 10);
+        Reject(() => RamReadReferencePlan.ValidateProfile(randomControl, randomProfile.Replace("<Random>4096</Random>", "<Random>0</Random>"), 10));
+
+        var parent = Path.Combine(Path.GetTempPath(), "QueueCache-CampaignContracts-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(parent);
+        try
+        {
+            foreach (var mode in new[] { "success", "case-failure", "restore-failure", "unsafe-target", "missing-marker", "wrong-counts", "wrong-driver", "baseline-drift", "cleanup-failure", "cancel" })
+            {
+                var host = new FakeCampaignHost(mode);
+                var runner = new VerificationCampaignRunner(host);
+                using var cancellation = new CancellationTokenSource();
+                var messages = new List<string>();
+                var progress = new InlineProgress(message => { messages.Add(message); if (mode == "cancel" && message.Contains("Phase 1 of")) cancellation.CancelAfter(100); });
+                var exit = await runner.RunAsync(basic with { Verification = basic.Verification with { Output = Path.Combine(parent, mode) } }, progress, cancellation.Token);
+                var directory = runner.DirectoryPath!;
+                var completion = VerificationCampaignEvidence.ReadCompletion(directory);
+                Check(host.Cleaned && host.Disposed && File.Exists(Path.Combine(directory, "restoration.json")), "cleanup and ownership release before event: " + mode);
+                Check(completion.Status == (mode == "success" ? "COMPLETED" : mode is "restore-failure" or "cleanup-failure" ? "RESTORATION_FAILED" : mode == "cancel" ? "CANCELLED" : "INCOMPLETE"), "honest terminal status: " + mode);
+                Check((exit == 0) == (mode == "success") && (exit == 130) == (mode == "cancel"), "exit contract: " + mode);
+                Check(host.Runs == (mode == "unsafe-target" ? 0 : mode is "success" or "cleanup-failure" ? 2 : 1), "no phase after failure: " + mode);
+                Check(messages.Last().Contains(completion.Status + ":") && File.ReadAllText(Path.Combine(directory, "run.log")).Contains(messages.Last()), "synchronous final/error progress: " + mode);
+                Check(completion == VerificationCampaignEvidence.ReadCompletion(directory), "stable event identity for controller deduplication: " + mode);
+                if (mode == "success")
+                {
+                    Check(completion.CompletedPhases == 2 && completion.CollectedCases == 2 && completion.Restoration == "RESTORED", "complete counts/restoration");
+                    var manifest = Path.Combine(directory, "manifest.json"); var original = File.ReadAllText(manifest);
+                    File.AppendAllText(manifest, " "); Reject(() => VerificationCampaignEvidence.ReadCompletion(directory)); File.WriteAllText(manifest, original);
+                    File.Delete(Path.Combine(directory, "FINISHED.txt")); Reject(() => VerificationCampaignEvidence.ReadCompletion(directory));
+                }
+            }
+        }
+        finally { Directory.Delete(parent, recursive: true); }
     }
 
     public static async Task<int> FakeWorkerAsync(string mode, string path)

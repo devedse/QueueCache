@@ -3236,6 +3236,15 @@ acceptance result. Temporary owner settings are restored after this check.
 
 ### Post-merge performance follow-up, 2026-10-10
 
+Plan-114 campaign / focused RAM-read follow-up (current work):
+
+| Item | Implementation | Verification |
+|---|---|---|
+| Single-command campaigns | Typed smoke/focused/performance/release profiles reuse maintained factories; one foreground coordinator, all target leases, frozen manifest, sequential phases, fault scenarios last, strict child evidence indexing and fail-fast behavior. Explicit lab backing pause/restoration uses existing bounded workers and telemetry. Combined reports and timing; terminal `completion.json` published after cleanup. | Managed Release build and Linux protocol contracts pass. Windows campaign success/failure/cancellation, digest/count/baseline/driver mismatch contracts added; Windows execution and short real-VM campaign qualification pending. No broad matrix is needed for orchestration. |
+| Agent completion delivery | Read-only `verify-completion` validates the event. Stable event ID permits controller deduplication; delivery honestly starts `PENDING_CONTROLLER`. | Event-before-cleanup and evidence mismatch contracts added. No supported Manager wake API is exposed by `dam-tools`; automatic resume remains an external integration, not a delivered feature. |
+| Precise RAM-disk diagnostic | `ram-read-scheduling` holds native/copy behavior fixed, independently controls affinity and multi-reader source overlap, alternates repetitions and validates bundled DiskSpd XML/settings. Default thirty windows with byte/accounting/coverage/ownership checks. | Managed build passes; profile/plan contracts added. Focused VM comparison pending; no production change or promised speed-up. The earlier rejected queue mixed scheduling and whole-copy changes. |
+| Findings maintenance | AGENTS references the consolidated findings and implemented campaign contract; preserve historical/raw results. | Update consolidated decisions only after the exact focused run and restoration evidence are inspected. |
+
 PR #8 merged as `fb34f878581590123a190b048fdfd23c5d4e9b39` after the full
 72-case matrix, host/Windows CI and real Windows pop-out/100 ms checks.
 The temporary UI preview exited, the owner's original preference state was
@@ -3286,9 +3295,10 @@ merged PR #8, new PR #9 diagnostics and rejected experiments are distinguished.
 Verification: cross-checked against the completed dated reports, including the
 36-window priority retry and completed churn accounting. CPU/wait attribution and
 all 81 retained-driver checks are now complete and recorded below. The
-[single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) is a
-design only, with maintained typed suites, independent restoration and terminal
-events; orchestration and DeveAgentManager wake integration are not implemented.
+[single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) was
+design-only at that checkpoint. Plan 114 implements the typed orchestration,
+independent restoration and durable terminal event described in the current-work
+table above. DeveAgentManager wake integration remains external.
 
 Focused churn accounting completed on signed 0.4.514.1, plan 113, run
 `20261010-075924-c08eff16b204482fb371f9d09265f56e`, 07:59:24–08:09:02 UTC.

@@ -16,7 +16,7 @@ public sealed record RamReadReferenceOwnership(ulong OriginalReservedBytes, Guid
 internal static class RamReadReferenceScenarios
 {
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(CacheDevice host, string diskspd, int repeats,
-        int seconds, string ownership, string evidence, bool includeQueue = false)
+        int seconds, string ownership, string evidence, bool includeQueue = false, bool schedulingControls = false)
     {
         if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("RAM read references require normal CPU priority and a normal I/O/memory-priority launch environment.");
@@ -25,7 +25,7 @@ internal static class RamReadReferenceScenarios
             (await service.ListAsync()).Select(r => r.ResourceId).ToArray(), []);
         if (File.Exists(ownership)) throw new IOException("RAM reference ownership journal already exists.");
         RunStorage.AtomicJson(ownership, journal);
-        var plan = RamReadReferencePlan.Cases(repeats, includeQueue);
+        var plan = schedulingControls ? RamReadReferencePlan.SchedulingCases(repeats) : RamReadReferencePlan.Cases(repeats, includeQueue);
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
         foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access, s.RamReadQueueMode }))
@@ -84,11 +84,13 @@ internal static class RamReadReferenceScenarios
                         RunStorage.AtomicJson(prefix + ".ready.json", new { Ready = true, At = samples[0].Utc });
                         start = DateTimeOffset.UtcNow;
                         workload = OwnedProcess.RunAsync(diskspd, [.. RamReadReferencePlan.Arguments(scenario, seconds), file],
-                            prefix, TimeSpan.FromSeconds(seconds + 120), child.Token);
+                            prefix, TimeSpan.FromSeconds(seconds + 120), child.Token,
+                            scenario.SchedulingControl ? new(ProcessPriorityClass.Normal, 5) : null);
                         if (await Task.WhenAny(workload, observer) == observer) { await observer; throw new IOException("RAM telemetry ended during the workload."); }
                         var result = await workload;
                         if (result.ExitCode != 0) throw new IOException($"RAM reference DiskSpd exit {result.ExitCode}; inspect raw stderr/stdout.");
                         RamReadReferencePlan.ValidateStandardError(scenario, result.Error);
+                        RamReadReferencePlan.ValidateProfile(scenario, result.Output, seconds);
                         score = DiskSpdParser.Parse(result.Output);
                         end = DateTimeOffset.UtcNow;
                     }

@@ -7,8 +7,10 @@
   update it when a result changes a decision. Preserve dated/raw evidence. Do not
   rerun an established experiment merely because its finding was forgotten;
   repeat relevant regressions when code, environment or measurement contracts
-  change. The proposed maintained campaign/completion workflow is in
-  `docs/PERFORMANCE_CAMPAIGN_PLAN.md` (a plan, not an available CLI feature).
+  change. The maintained `--campaign` workflow and durable completion contract are
+  in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Run one foreground campaign and consume
+  its `completion.json` after process exit; automatic agent wakeup still requires
+  an external Manager integration. Use focused campaigns for affected regressions.
 
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
@@ -50,10 +52,13 @@
   qcache developer verify Q: --suite quick --output C:\QueueCache-Results
   qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
   qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+  qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+  qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
   qcache developer lab-disk attach C:\QueueCache-Lab\VolumeLab.vhdx
   qcache developer verify V: --suite volumes --output C:\QueueCache-Results
   qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
   qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
+  qcache developer verify-completion C:\QueueCache-Results\QueueCache-Campaign-<run-id>
   ```
 
 - Both **Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd** are supported in

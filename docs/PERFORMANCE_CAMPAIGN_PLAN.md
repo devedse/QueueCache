@@ -1,21 +1,22 @@
 # Single-command performance verification and completion delivery
 
-Status: implementation plan, not an available command. The existing supported
-command is `qcache developer verify`; `full` does not include every specialized
-performance suite or the separate 72-case write matrix. Findings and priorities
-are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+Status: typed campaigns, sequential execution, combined reports and durable
+completion events are implemented in plan 114. Windows/VM qualification is recorded
+separately in the [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md). Automatic Manager
+wakeup remains an external integration. `full` does not include every specialized
+performance suite or the separate write matrix. Findings and priorities are in
+[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
 ## Intended operator experience
 
 Run one foreground command with explicit targets and an immutable campaign plan.
-For example, a **proposed** interface is:
+For example:
 
 ```powershell
-qcache developer verify Q: --campaign performance --lab-ntfs W: --lab-refs R: --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --campaign performance --lab-ntfs W: --lab-refs R: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
 ```
 
-The final argument names remain an implementation decision. Selecting a campaign
-must be mutually exclusive with selecting a single suite. No `--detach`, new
+Selecting a campaign is mutually exclusive with selecting a single suite. No `--detach`, new
 benchmark executable, installer or private PowerShell scenario loop is needed.
 The CLI binds arguments; typed orchestration owns phases, cases and evidence.
 Existing single-suite commands remain available for focused regressions.
@@ -40,9 +41,31 @@ flowchart LR
 
 | Profile | Phases | Scope |
 |---|---|---|
-| Focused regression | A named affected suite plus its required correctness checks | Small default for an isolated change; preserve existing measurement contracts. |
-| Performance | Retained-driver correctness checks; resident read/copy/layout baseline; RAM-disk reference; NTFS and optional ReFS caller comparison; independent priority comparison; sustained mixed/read-recall recovery; native map cost | Explicit workloads and budgets per phase. Exclude historical retired queue experiments, invasive system/disk-removal suites and unrequested broad writes. |
-| Release performance | Performance profile plus explicitly selected 72-case `write-performance` and a 30-minute sustained phase | Full validation cost is visible before launch. CrystalDiskMark GUI/README screenshots remain a separate explicit operator task with their documented GUI contract. |
+| `smoke` | Two maintained NTFS cases: `quick`, `partial-read-accounting` | Short real-run orchestration check, no DiskSpd needed. |
+| `focused` | `--focus-suite` plus partial-read, paging, policy, pressure and final ordering/fault checks | Only the named affected measurement suite; optional ReFS only for caller-backoff. |
+| `performance` | Retained correctness; cache layout; RAM reference and scheduling controls; NTFS/optional ReFS caller; priority; recall; 120-second sustained accounting; map cost; ordering/faults last | Thirteen phases / 118 outer cases without ReFS at defaults; fourteen / 142 with ReFS. The short sustained phase is a smoke, not 30-minute acceptance. No retired queue, disk-removal or write matrix. |
+| `release-performance` | Performance plus `write-performance`; sustained default 1800 seconds | Fourteen phases / 190 outer cases without ReFS; fifteen / 214 with ReFS. Write suite has 72 cases at three repeats. GUI CrystalDiskMark/README tasks remain separate. |
+
+Campaign budgets default to 2048 MiB; repetitions/duration remain explicit and
+are forwarded to maintained factories. `cache-sustained` always has one repetition;
+`--soak-seconds` overrides its profile default. Counts describe outer runner cases,
+not the separate inner correctness checks or RAM windows. At three repetitions,
+RAM reference/scheduling phases contain 36/30 guarded measurement windows.
+
+For an affected RAM-read regression:
+
+```powershell
+qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+```
+
+Targets must already be attached and prepared. Lab roles require the supported
+developer VHDX layout, matching filesystem/labels, native identity, clean state
+and observed loaded-driver filenames/hashes. Campaign preflight rejects running
+benchmark/Desktop processes and below-normal launches. If a lab image is on the
+active performance volume, `--pause-backing-cache` explicitly permits a runtime
+pause and independent restoration. An active different backing cache is refused.
+The campaign owns all target disk leases between phases. It never creates or
+formats a lab disk automatically.
 
 Every phase declares a target role, filesystem, budget, repetitions, score and
 warmup durations, expected cases, failure policy, driver feature requirements and
@@ -59,7 +82,7 @@ normal run artifacts and independently unique case IDs. A summary indexes those
 exact children rather than searching historical folders. Phase counts and results
 must agree with the frozen manifest before overall completion.
 
-## Runner changes
+## Implemented runner behavior
 
 1. Add typed campaign/profile/phase records beside `VerificationPlan`,
    `CacheExercisePlan` and `RamReadReferencePlan`. Reuse their scenario factories;
@@ -73,10 +96,11 @@ must agree with the frozen manifest before overall completion.
    transient draining and a driver fault remain different states. Run injected
    fault scenarios last if selected. Never reboot/format or kill unowned processes
    as recovery. Preserve `verify-recover` identity/live-process refusal behavior.
-4. Write atomic campaign status after each case/phase. Include time spent scoring,
-   preparing, draining, restoring and waiting for owned children so future status
-   reports explain elapsed time. Report exact counts; do not invent percent
-   estimates for unknown-duration operations.
+4. Write atomic campaign status after case progress and each phase. Child
+   `timing.json` records preflight, common preparation, cases, restoration and
+   finalization; case time includes its warmup/draining and is not scored time.
+   Campaign phase elapsed includes backing maintenance. Unknown evidence counts
+   stay null; no invented progress percentages.
 5. Produce campaign `SUMMARY.md`, machine-readable results, failed-phase location
    and restoration outcome. Performance verdicts use predetermined comparisons
    and controls, separate from collection status. An incomplete phase cannot pass
@@ -93,13 +117,29 @@ own deadline.
 
 ## Completion-driven agent notification
 
-The runner can guarantee a durable local event containing campaign/run ID,
+The runner writes a durable local event containing campaign/run ID,
 manifest digest, exact output path, terminal status, expected/completed counts,
 failure and restoration outcome. It should not hold manager credentials or send
 arbitrary external messages. A controller-owned job watcher can wait on the
 foreground process exit and consume that event; reconnecting controllers can
 recover unsent events from a durable outbox. Deduplicate by campaign ID and
 terminal-event ID. Deliver only after terminal evidence is committed.
+
+After `FINISHED.txt`, finalized status/reports and owned cleanup, `completion.json`
+is published last. It also covers failures/cancellation, with restoration outcome.
+`completion-delivery.json` starts as `PENDING_CONTROLLER`; this is not a claim
+that a notification was delivered. `verify-status` reads campaign progress.
+
+```powershell
+qcache developer verify-completion C:\QueueCache-Results\QueueCache-Campaign-<run-id>
+```
+
+This read-only command validates the manifest digest, terminal counts, required
+reports and marker before returning the event as JSON. The event identity is
+stable across reads, so the controller can deduplicate retries. It has no Manager
+credentials or arbitrary callback command. For failed runs, inspect the indexed
+child/maintenance directory; `verify-recover` still applies to a recorded child
+run, not to restarting or recombining a campaign.
 
 The current exposed `dam-tools` command only supports sharing images; no
 completion notification or agent wake API is available here. Automatic awakening
@@ -125,10 +165,9 @@ credentials, private VM connection data or raw secrets in the event.
 | VM smoke | Two short maintained phases on owned NTFS lab; actual native identity, immutable evidence, process ownership and exact restoration | Validate orchestration, not a broad performance acceptance matrix. |
 | First full campaign | Freeze profile/options, run once on the normal-priority quiet VM, inspect every phase and final restoration | Establish campaign reference and document elapsed phase times and result-driven next steps. |
 
-Implement coordinator/event work first, then integrate the manager, then run the
-full selected campaign. Do not spend another broad matrix merely to validate
-reporting or notification plumbing. Estimated engineering work: roughly one to
-two working days for the maintained coordinator/events/contracts, plus manager
-integration time determined by its available API; the first release profile's
+The coordinator/event implementation is in this PR. Manager delivery/reconnect
+outbox handling is a future controller task, determined by its supported API.
+Use the short smoke and focused checks to qualify orchestration; a broad matrix
+is not needed merely to validate reporting/notification plumbing. A first release profile's
 benchmark time includes about 54 minutes for the current write matrix and at
 least 30 minutes of sustained mixed I/O, before other phases/preparation/drains.

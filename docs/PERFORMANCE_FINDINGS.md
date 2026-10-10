@@ -20,6 +20,13 @@ attribution is complete and points at scheduling/utilization; a priority/affinit
 control is the next diagnostic. All five retained-driver qualification scenarios
 completed with their raw checks and restoration inspected.
 
+Plan 114 now implements the maintained single-command campaign and durable
+completion event; automatic Manager wakeup remains external. A new focused
+RAM-disk comparison holds copying fixed and isolates affinity plus source-stream
+overlap, addressing the earlier queue experiment's combined changes. Windows/VM
+qualification and the resulting measurements are recorded separately in the
+tracker; no new driver speed-up is accepted merely because this diagnostic exists.
+
 ## Which changes belong together
 
 | Stage | Changes retained | Evidence and limits |
