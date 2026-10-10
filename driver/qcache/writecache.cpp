@@ -183,13 +183,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->StagedReadBytes = InterlockedCompareExchange64(&c->StagedReadBytes, 0, 0);
     output->MixedStagedReads = InterlockedCompareExchange64(&c->MixedStagedReads, 0, 0);
     output->StagedReadCachedBytes = InterlockedCompareExchange64(&c->StagedReadCachedBytes, 0, 0);
-    output->RamReadQueueMode = static_cast<ULONG>(InterlockedCompareExchange(&c->RamReadQueueMode, 0, 0));
-    output->RamReadQueued = InterlockedCompareExchange64(&c->RamReadQueued, 0, 0);
-    output->RamReadCompleted = InterlockedCompareExchange64(&c->RamReadCompleted, 0, 0);
-    output->RamReadCancelled = InterlockedCompareExchange64(&c->RamReadCancelled, 0, 0);
-    output->RamReadInline = InterlockedCompareExchange64(&c->RamReadInline, 0, 0);
-    output->RamReadQueueFull = InterlockedCompareExchange64(&c->RamReadQueueFull, 0, 0);
-    output->RamReadFallback = InterlockedCompareExchange64(&c->RamReadFallback, 0, 0);
+    // V22 prefix is retained for ABI compatibility; the rejected queue has no engine.
+    output->RamReadQueueMode = output->RamReadQueued = output->RamReadCompleted = output->RamReadCancelled = 0;
+    output->RamReadInline = output->RamReadQueueFull = output->RamReadFallback = 0;
     output->CallerBackoff = static_cast<ULONG>(InterlockedCompareExchange(&c->CallerBackoff, 0, 0));
     output->CallerCandidates = InterlockedCompareExchange64(&c->CallerCandidates, 0, 0);
     output->CallerControls = InterlockedCompareExchange64(&c->CallerControls, 0, 0);
@@ -1715,16 +1711,10 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         }
         break;
     case QcLabRamReadQueue:
-        if (command.Value > 2 || command.BudgetBytes)
-            status = STATUS_INVALID_PARAMETER;
-        else
-        {
-            KIRQL irql;
-            KeAcquireSpinLock(&c->PagingLock, &irql);
-            InterlockedExchange(&c->RamReadQueueMode, static_cast<LONG>(command.Value));
-            c->RamReadInlineStreak = c->RamReadProbe = 0;
-            KeReleaseSpinLock(&c->PagingLock, irql);
-        }
+        // ABI reservation for the rejected 0.4.503.1 scheduling experiment.
+        // Mode 0 remains a harmless reset; activating either removed strategy is unsupported.
+        if (command.BudgetBytes || command.Value > 2) status = STATUS_INVALID_PARAMETER;
+        else if (command.Value) status = STATUS_NOT_SUPPORTED;
         break;
     case QcLabCallerBackoff:
         if (command.Value > QcCallerPathWorkerWindow || command.BudgetBytes)
@@ -2155,7 +2145,6 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             entry->Started = FALSE;
             entry->Write = TRUE;
             entry->WriteThrough = writeThrough;
-            entry->RamRead = FALSE;
             entry->Source = source;
             RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
         }
@@ -2741,7 +2730,6 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
-        entry->RamRead = FALSE;
         entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
@@ -2757,87 +2745,6 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     else
         InterlockedIncrement64(&c->CopyOffloadReads);
     KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
-    return true;
-}
-void QcCacheBlockRamReads(QC_CACHE* c, bool blocked)
-{
-    KIRQL irql;
-    KeAcquireSpinLock(&c->PagingLock, &irql);
-    c->RamReadBlocked = blocked ? TRUE : FALSE;
-    KeReleaseSpinLock(&c->PagingLock, irql);
-}
-bool QcCacheOffloadRamRead(QC_CACHE* c, QC_RAM_BINDING* binding, PIRP irp)
-{
-    const auto mode = ReadNoFence(&c->RamReadQueueMode);
-    const auto stack = IoGetCurrentIrpStackLocation(irp);
-    const auto bytes = stack->Parameters.Read.Length;
-    if (!mode || stack->MajorFunction != IRP_MJ_READ || (irp->Flags & IRP_PAGING_IO) ||
-        bytes < 512 * 1024 || bytes > 1024 * 1024 || KeGetCurrentIrql() != PASSIVE_LEVEL ||
-        !c->ReadThreads[0].Thread || !c->CompleteRequest)
-        return false;
-    KIRQL irql;
-    KeAcquireSpinLock(&c->PagingLock, &irql);
-    if (c->PagingStop || c->RamReadBlocked)
-    {
-        KeReleaseSpinLock(&c->PagingLock, irql);
-        return false;
-    }
-    // At Q1 the initial queued requests buy no overlap. Keep the fast existing
-    // copy after sixteen isolated admissions, probing every sixty-fourth read.
-    // Concurrent queued reads reset the streak. Only this heuristic uses it;
-    // it never changes validation, store ownership or cancellation semantics.
-    bool inlineCopy = false;
-    if (mode == 2)
-    {
-        if (c->RamReadOutstanding) c->RamReadInlineStreak = 0;
-        else if (c->RamReadInlineStreak < 16) ++c->RamReadInlineStreak;
-        else inlineCopy = ++c->RamReadProbe % 64 != 0;
-    }
-    KeReleaseSpinLock(&c->PagingLock, irql);
-    if (inlineCopy)
-    {
-        InterlockedIncrement64(&c->RamReadInline);
-        return false;
-    }
-    QC_RAM_READ prepared = {};
-    if (!QcRamDirectPrepareRead(binding, irp, &prepared)) return false;
-    QC_PAGING_READ* entry = nullptr;
-    bool full = false;
-    KeAcquireSpinLock(&c->PagingLock, &irql);
-    if (!c->PagingStop && !c->RamReadBlocked && ReadNoFence(&c->RamReadQueueMode) == mode)
-    {
-        for (auto& candidate : c->PagingReads)
-            if (!candidate.Irp) { entry = &candidate; break; }
-        full = entry == nullptr;
-    }
-    if (entry)
-    {
-        // Publish only after marking pending. An executor may complete the IRP
-        // before dispatch returns; neither dispatch nor this function touches it
-        // after releasing this lock.
-        IoMarkIrpPending(irp);
-        entry->Start = stack->Parameters.Read.ByteOffset.QuadPart;
-        entry->End = entry->Start + bytes;
-        entry->Sequence = ++c->PagingSequence;
-        entry->Started = entry->Write = entry->WriteThrough = FALSE;
-        entry->RamRead = TRUE;
-        entry->Ram = prepared;
-        entry->Source = nullptr;
-        entry->Irp = irp;
-        ++c->RamReadOutstanding;
-        ++c->PagingQueued;
-        InterlockedIncrement64(&c->RamReadQueued);
-        // Wake before dropping the publishing lock: completion can release the
-        // final device remove-lock reference as soon as an executor takes it.
-        KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
-    }
-    KeReleaseSpinLock(&c->PagingLock, irql);
-    if (!entry)
-    {
-        QcRamDirectReleaseRead(&prepared);
-        if (full) InterlockedIncrement64(&c->RamReadQueueFull);
-        return false; // Capacity/lifecycle/mode change: retain synchronous fallback.
-    }
     return true;
 }
 // Payload copy of a write admitted by the request worker (Write). Its blocks are
@@ -2904,37 +2811,12 @@ static void PagingReader(PVOID context)
         }
         auto irp = next->Irp;
         const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
-        const bool ramRead = next->RamRead != FALSE;
-        NTSTATUS status;
-        if (ramRead)
-        {
-            status = QcRamDirectFinishRead(&next->Ram, irp);
-            if (status == STATUS_NOT_FOUND)
-            {
-                // The store rundown was released before going lower. A binding
-                // withdrawal must never wait on its own fallback lower read.
-                InterlockedIncrement64(&c->RamReadFallback);
-                status = OriginalIo(c, irp, false);
-            }
-            if (status == STATUS_CANCELLED) InterlockedIncrement64(&c->RamReadCancelled);
-            InterlockedIncrement64(&c->RamReadCompleted);
-        }
-        else
-            status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
-                                 : Read(c, irp, false, false, reader->Pins);
+        auto status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
+                                  : Read(c, irp, false, false, reader->Pins);
         if (pagingIo)
         {
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingRoutedReadCompletions : &c->PagingRoutedReadFailures);
-        }
-        if (ramRead)
-        {
-            // Stop counting the completed copy before waking its submitter.
-            // Otherwise a Q1 successor can mistake completion teardown for
-            // another outstanding read and never reach the inline heuristic.
-            KeAcquireSpinLock(&c->PagingLock, &irql);
-            --c->RamReadOutstanding;
-            KeReleaseSpinLock(&c->PagingLock, irql);
         }
         c->CompleteRequest(c->ServiceContext, irp, status);
         KeAcquireSpinLock(&c->PagingLock, &irql);
@@ -3443,13 +3325,11 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
     AcquireCache(c);
     c->OffloadBlocked = TRUE;
     ReleaseCache(c);
-    QcCacheBlockRamReads(c, true);
     QcCacheWaitPagingReads(c);
     auto status = Process(c, irp, deviceBytes);
     AcquireCache(c);
     c->OffloadBlocked = FALSE;
     ReleaseCache(c);
-    QcCacheBlockRamReads(c, false);
     // A forwarded media-changing control: the lower device completes it.
     *transferred = control && status == QcControlForwarded;
     return status;

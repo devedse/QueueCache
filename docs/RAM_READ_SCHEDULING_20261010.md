@@ -2,7 +2,8 @@
 
 The approximately 26 GB/s single-submitter and 40–42 GB/s four-submitter
 observations motivate this work. Aggregate bandwidth does not establish that
-one submitter can reach the same score. No new scheduling gain is verified yet.
+one submitter can reach the same score. The completed same-build comparison below
+rejects the shared sleeping queue; its kernel implementation is removed.
 
 ## Preliminary CPU attribution
 
@@ -32,7 +33,7 @@ The difference supports an experiment that spends more CPU on copies and less
 on helper coordination. It does not justify another use of the earlier rejected
 per-CPU queued workers, or a claim that the experiment will reach 42 GB/s.
 
-## Opt-in shared sleeping queue
+## Rejected shared sleeping queue (historical implementation)
 
 Diagnostics V22 append mode and queued/completed/cancelled/inline/full/fallback
 counters, retaining all older wire prefixes. `LabRamReadQueue` is runtime-only:
@@ -67,11 +68,13 @@ completed counts must agree. Large adaptive windows must actually queue reads;
 small/synchronous/Standard controls must not. Cancellation, full-capacity and
 fallback activity reject a scored reference window and remain recorded.
 
-Host ABI/plan/traffic/ownership/restoration tests pass. Windows compilation,
-VM collection, speed acceptance and explicit cancellation/binding withdrawal/
-stop/removal/freeze/snapshot/overlapping-write qualification are pending. The
-experiment stays disabled by default. The [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md)
-separates implementation from verification.
+Host ABI/plan/traffic/ownership/restoration tests and Windows compilation pass.
+The complete VM comparison rejected speed acceptance, so the queue engine was
+removed before lifecycle qualification. Current drivers retain the V22 wire
+prefix as zeros and action 19 as a mode-0 no-op; modes 1/2 are unsupported.
+The archived suite can reproduce this evidence against the historical
+experiment driver. The [tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md) separates
+implementation from verification.
 
 
 ## Completed reference on 0.4.497.1
@@ -108,5 +111,47 @@ control measures aggregate throughput and may include source-data locality
 from overlapping streams; it does not promise a 45.94 GB/s single stream.
 Plan 110 makes this stderr rule explicit and rejects every other warning/error,
 including an extra line after the recognized warning. Workload arguments stay
-unchanged. Native queue speed acceptance and lifecycle qualification remain
-pending.
+unchanged. The later comparison below supplies the queue acceptance verdict.
+
+## Completed same-build comparison on 0.4.503.1
+
+Run `QueueCache-Verify-20261010-034755-884b991306b245e7b91b3aea82fa9351`
+completed 54/54 windows, 03:47:55–04:10:32 UTC, plan 110. Clean managed preview
+tools came from `408e49cb3d3395ad73dacdd5189dbf39756d4e09`; the installed signed
+native CI source was `9262493570cb8e437e219b4e0071046d68deca36`.
+Loaded filter SHA-256:
+`537FA897D4C6C0E961327A798CE6AC9C53A46E9F44D9D2C71D317FE9B03C4578`;
+provider `5EFE752DCF8D4D72B4989A6733552836D881B109489117F7082854AFCAFA9427`.
+DiskSpd/hash, resident files, normal priority, timing-off state and native build
+were identical between modes. No CPU trace or UI ran during this comparison.
+All raw XML/trailers/exits/stderr, byte guards and whole-file hashes, mode/counter
+boundaries, native identity/access/traffic, readiness/coverage and independent
+restoration were inspected. Maximum sampling gap: 1.237431 seconds. The original
+enabled 2 GiB Fast/Idle cache, managed resource list and exact global reservation
+were restored; dirty/in-flight bytes and errors were zero.
+
+Each score is a three-repetition median, with minimum–maximum in MiB/s.
+
+| Shape | Synchronous Direct | Adaptive queue Direct | Standard |
+|---|---:|---:|---:|
+| 1M Q1T1 | 24,729.50 (24,725.10–24,939.46) | 23,834.47 (22,959.64–23,898.80) | 23,158.40 (22,963.14–23,308.49) |
+| 1M Q8T1 | 23,977.50 (23,555.30–24,836.33) | 21,268.10 (21,249.95–21,332.37) | 23,058.70 (23,025.37–23,090.90) |
+| 1M Q2T4 | 42,934.37 (41,670.73–43,393.91) | 21,628.17 (21,621.08–21,742.10) | 41,836.40 (40,852.10–43,766.03) |
+| 4K Q1T1 | 1,663.70 (1,625.95–1,670.54) | 1,668.45 (1,653.26–1,669.30) | 888.90 (886.99–893.41) |
+| 4K Q32T1 | 1,481.22 (1,465.89–1,491.21) | 1,487.97 (1,455.27–1,493.78) | 835.88 (831.88–836.27) |
+| 4K Q8T4 | 4,981.01 (4,778.79–4,995.47) | 4,976.31 (4,975.64–4,985.17) | 2,859.61 (2,820.00–2,863.13) |
+
+The adaptive queue loses 3.62% Q1, 11.30% Q8 and 49.62% four-thread throughput
+on large reads. All large-mode ranges are below their synchronous controls.
+Small reads bypass the experiment and stay within measured variation.
+Q8/four-thread Direct medians are 25.14/45.02 decimal GB/s synchronously and
+22.30/22.68 with the queue. **Reject the queue; retain synchronous split copies.**
+The earlier aggregate gap is real, but these results do not establish that a
+single submitter can recover it by moving whole requests to sleeping workers.
+The exact cause of the queue loss requires copy/completion/wake-up attribution;
+no additional scheduling change or priority boost is justified by these scores.
+
+An earlier attempt, `QueueCache-Verify-20261010-033934-ab5c8b71121448fdaf674d9eb963f978`,
+stopped before any score because the control handle was read-only (Win32 5).
+It restored cleanly; the managed writable-handle fix is in `408e49c`.
+That incomplete attempt is preserved separately and contributes no scores.

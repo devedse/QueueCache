@@ -114,66 +114,6 @@ static bool SignatureIntact(const QC_RAM_BINDING* binding, const QC_RAM_STORE* s
     QcRamStoreCopy(store, binding->Offset + 3, now, sizeof(now), false);
     return RtlEqualMemory(now, binding->Signature, sizeof(now));
 }
-bool QcRamDirectPrepareRead(QC_RAM_BINDING* binding, PIRP irp, QC_RAM_READ* read)
-{
-    const auto stack = IoGetCurrentIrpStackLocation(irp);
-    const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
-    const ULONG length = stack->Parameters.Read.Length;
-    const auto mdl = irp->MdlAddress;
-    if (stack->MajorFunction != IRP_MJ_READ || !(ReadNoFence(&binding->Access) & QcRamDirectReads) ||
-        !length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length || offset < 0 ||
-        static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset) ||
-        !ExAcquireRundownProtection(&binding->Rundown))
-        return false;
-    auto store = binding->Store;
-    const auto at = binding->Offset + static_cast<ULONGLONG>(offset);
-    PUCHAR buffer = nullptr;
-    if (!SignatureIntact(binding, store))
-    {
-        InterlockedExchange(&binding->Access, 0);
-        Note(binding, QcRamDirectBitLocker);
-    }
-    else if (QcRamStoreBounds(store, at, length))
-        buffer = static_cast<PUCHAR>(MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority | MdlMappingNoExecute));
-    if (!buffer)
-    {
-        ExReleaseRundownProtection(&binding->Rundown);
-        return false;
-    }
-    *read = {binding, store, buffer, at, QcRamTimingStart(store), length};
-    return true;
-}
-void QcRamDirectReleaseRead(QC_RAM_READ* read)
-{
-    ExReleaseRundownProtection(&read->Binding->Rundown);
-    RtlZeroMemory(read, sizeof(*read));
-}
-NTSTATUS QcRamDirectFinishRead(QC_RAM_READ* read, PIRP irp)
-{
-    NTSTATUS status = STATUS_SUCCESS;
-    irp->IoStatus.Information = 0;
-    if (irp->Cancel)
-        status = STATUS_CANCELLED; // Cancellation is best effort once copying begins.
-    else if (!SignatureIntact(read->Binding, read->Store))
-    {
-        InterlockedExchange(&read->Binding->Access, 0);
-        Note(read->Binding, QcRamDirectBitLocker);
-        InterlockedIncrement64(&read->Binding->Declined);
-        status = STATUS_NOT_FOUND;
-    }
-    else
-    {
-        // One whole read per sleeping executor. Calling the split-copy helper
-        // here would recreate the spin/handoff cost this experiment measures.
-        QcRamStoreCopy(read->Store, read->Offset, read->Buffer, read->Length, false);
-        QcRamTimingEnd(read->Store, false, read->Started);
-        InterlockedIncrement64(&read->Binding->ReadRequests);
-        InterlockedAdd64(&read->Binding->ReadBytes, read->Length);
-        irp->IoStatus.Information = read->Length;
-    }
-    QcRamDirectReleaseRead(read);
-    return status;
-}
 bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
 {
     const auto access = ReadNoFence(&binding->Access);

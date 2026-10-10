@@ -652,7 +652,6 @@ static void RequestWorker(PVOID context)
 #if QCACHE_CACHE_DRIVER
     // Closing stops new caller-thread requests; one already running still owns the cache.
     KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
-    QcCacheBlockRamReads(&ext->Cache, true);
     QcCacheWaitPagingReads(&ext->Cache);
     QcCacheBarrier(&ext->Cache, TRUE, QcRemoveBarrier);
 #endif
@@ -1263,9 +1262,6 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
     // caller's thread. Declined requests continue on the standard path below.
-    if (stack->MajorFunction == IRP_MJ_READ && ReadNoFence(&ext->Cache.RamReadQueueMode) && ReadNoFence(&ext->RamDirect.Access) &&
-        QcCacheOffloadRamRead(&ext->Cache, &ext->RamDirect, irp))
-        return STATUS_PENDING; // Executor owns IRP, store rundown and the remove lock.
     if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
         ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
     {

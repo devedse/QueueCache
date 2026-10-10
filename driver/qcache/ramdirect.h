@@ -71,23 +71,6 @@ struct QC_RAM_BINDING
     volatile LONG64 ReadRequests, WriteRequests, ReadBytes, WriteBytes, Declined;
 };
 
-// An admitted asynchronous read owns binding rundown until copied, cancelled or
-// declined. Its caller's MDL stays locked under the original pending IRP.
-struct QC_RAM_READ
-{
-    QC_RAM_BINDING* Binding;
-    QC_RAM_STORE* Store;
-    PUCHAR Buffer;
-    ULONGLONG Offset;
-    LONG64 Started;
-    ULONG Length;
-};
-bool QcRamDirectPrepareRead(QC_RAM_BINDING* binding, PIRP irp, QC_RAM_READ* read);
-void QcRamDirectReleaseRead(QC_RAM_READ* read);
-// STATUS_NOT_FOUND means the signature changed: rundown is already released,
-// and the owner must use the standard lower path. No store pointer remains live.
-NTSTATUS QcRamDirectFinishRead(QC_RAM_READ* read, PIRP irp);
-
 void QcRamDirectInitialize();                                // DriverEntry
 void QcRamDirectInitialize(QC_RAM_BINDING* binding);        // AddDevice
 NTSTATUS QcRamViewControl(PIRP irp);                         // Budget device, kernel registration

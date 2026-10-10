@@ -2,7 +2,6 @@
 #pragma once
 #include <ntifs.h>
 #include "cachepolicy.h"
-#include "ramdirect.h"
 
 #define IOCTL_QCACHE_STATE_V1 CTL_CODE(0x8844UL, 0xD10UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_CONTROL_V1 CTL_CODE(0x8844UL, 0xD11UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
@@ -139,7 +138,7 @@ struct QC_DIAGNOSTICS
     // sectors pinned before submission, including dirty data later overlaid.
     // Attempts include lower failures; allocation failures submit nothing.
     ULONGLONG StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
-    // V22: runtime-only RAM read scheduling experiment (default 0, synchronous).
+    // V22: reserved prefix for the rejected RAM queue experiment, always zero.
     ULONGLONG RamReadQueueMode, RamReadQueued, RamReadCompleted, RamReadCancelled;
     ULONGLONG RamReadInline, RamReadQueueFull, RamReadFallback;
     // V23: caller-routing candidates and mutually exclusive first-decline reasons.
@@ -282,9 +281,7 @@ enum : ULONG
     // Lab: Value 1 (default) = read recall (readrecall.h), 0 = the earlier bimodal insertion.
     // Changes only where a read miss enters the clean list; clears the history. Runtime only.
     QcLabReadRecall,
-    // Lab RAM reads: 0 synchronous (default); 1 shared sleeping queue;
-    // 2 adaptive queue, retaining synchronous Q1 after 16 isolated completions.
-    // Values 1/2 apply only to ordinary 512 KiB..1 MiB Direct reads. Runtime only.
+    // Reserved action for the rejected RAM queue: 0 no-op; 1/2 unsupported.
     QcLabRamReadQueue,
     // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
     // ownership checks still apply to every request. Runtime only.
@@ -329,8 +326,6 @@ struct QC_PAGING_READ
     ULONGLONG Sequence;
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
-    BOOLEAN RamRead;
-    QC_RAM_READ Ram;
     PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER
@@ -443,18 +438,12 @@ struct QC_CACHE
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
-    // PagingStop. Cache requests enter from the request worker; experimental
-    // RAM Direct reads enter from dispatch. Only ReadThreads execute.
+    // PagingStop. Only the request worker inserts; only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
     // paging thread waits only for Mutex and lower completion, never the worker.
     KSPIN_LOCK PagingLock;
     QC_PAGING_READ PagingReads[QcPagingReadSlots];
     ULONG PagingQueued;
-    ULONG RamReadOutstanding, RamReadInlineStreak, RamReadProbe; // PagingLock.
-    BOOLEAN RamReadBlocked; // PagingLock: a control/lifecycle wait closes queue admission.
-    volatile LONG RamReadQueueMode;
-    volatile LONG64 RamReadQueued, RamReadCompleted, RamReadCancelled;
-    volatile LONG64 RamReadInline, RamReadQueueFull, RamReadFallback;
     volatile LONG CallerBackoff;
     volatile LONG64 CallerCandidates, CallerControls, CallerQueued, CallerWorkerActive;
     volatile LONG64 CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
@@ -534,8 +523,6 @@ bool QcCacheTryCallerPath(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTA
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 // Request worker only. True: an offloaded-read thread now owns and will complete irp.
 bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
-bool QcCacheOffloadRamRead(QC_CACHE* cache, QC_RAM_BINDING* binding, PIRP irp);
-void QcCacheBlockRamReads(QC_CACHE* cache, bool blocked);
 bool QcCachePagingReadsOutstanding(QC_CACHE* cache);
 void QcCacheWaitPagingReads(QC_CACHE* cache);
 // *transferred: the paging thread owns irp; the caller must not complete it.
