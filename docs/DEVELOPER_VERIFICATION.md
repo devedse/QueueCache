@@ -1790,7 +1790,8 @@ Exactly three shapes per repetition: sequential 1 MiB Q1T1, Q8T1 and Q2T4
 with separate source lanes (`-s4M -T1M`). Default affinity, CPU Normal, memory
 priority 5, I/O hint 3, three-second warmup. It is traced and diagnostic, excluded
 from broad profiles. Supply `--trace-symbols <directory>` containing matching
-`qcachelab.pdb` and `qcramdisk.pdb`. WPR must provide CPU sampling, CSwitch and
+`qcachelab.pdb` and `qcramdisk.pdb`. Native PDB GUID/age is checked against the actual loaded PE debug records before
+any diagnostic workload. WPR must provide CPU sampling, CSwitch and
 ReadyThread; another active default recording is refused. Named trace ownership
 is journaled before start, finalized on failure and by parent recovery after
 worker death. Unusable/missing symbols or lost events reject attribution. Raw ETL,

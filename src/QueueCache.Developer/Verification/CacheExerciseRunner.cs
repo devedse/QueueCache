@@ -26,7 +26,7 @@ public sealed partial class VerificationRunner
                 xml.Descendants("Profile").Descendants("Warmup").SingleOrDefault()?.Value != "3")
                 throw new InvalidDataException("Priority profile did not report the requested I/O hint and warmup.");
         }
-        if (options.Suite == "priority-affinity")
+        if (options.Suite == "priority-affinity" && scheduling is not null)
             CachePriorityProfile.Validate(result.Output, arguments, files.Count);
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);

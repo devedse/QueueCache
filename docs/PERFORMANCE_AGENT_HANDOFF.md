@@ -1,8 +1,9 @@
 # Performance continuation: implementation handoff
 
 Prepared 2026-10-10 against `perf/ram-read-followups`, planning commit `4fdb73f`,
-verification plan 114. This document specifies future work; none of its proposed
-suites, diagnostics or optimizations is claimed implemented. The existing
+verification plan 114. This document records the plan at that checkpoint. Implementation has since
+started: consult the tracker for actual suite/delivery/verification status;
+conditional native optimizations remain evidence-gated. The existing
 [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) explains the priorities.
 [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md) owns measured conclusions;
 [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md) owns

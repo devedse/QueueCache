@@ -225,3 +225,24 @@ performance/release profiles and optional ReFS orchestration were not rerun for
 this managed change. Native benchmark findings, timing, raw archive hash and
 next decisions are consolidated in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 Automatic Manager delivery remains external.
+
+### Plan 115 controller integration and final restoration
+
+The companion DeveAgentManager implementation provides owned foreground jobs and
+a durable terminal-delivery outbox (`dam-tools run-job`); integration details:
+[background jobs](https://github.com/devedse/DeveAgentManager/blob/master/docs/background-jobs.md).
+The controller waits for process exit, then runs the same CLI's read-only
+`verify-completion <unique-parent> --output-parent` on the workload machine. The
+reader requires one campaign under that explicit parent and validates its existing
+immutable terminal contract. Manager delivery is keyed, prompt/conversation guarded
+and duplicate-resistant; an ambiguous terminal crash requires inspection rather
+than automatic resubmission. Controller outbox checks consume no agent turns.
+`job-reviewed` suppresses a delayed notification already analyzed in the active turn.
+
+Real controller smoke covers both a valid restoration-failure event and a completed
+retry with exact restoration. Deployment of the updated Manager service/helper and
+live automatic wake are separate verification gaps; an event file alone does not
+close them. The smoke failure found transient backing-cache metadata after resume.
+Final restoration now explicitly uses bounded filesystem/cache preparation before
+the existing strict final capture. Faults are not retried; disabled baseline
+observations do not drain. Detailed evidence is in PERFORMANCE_FINDINGS.md.

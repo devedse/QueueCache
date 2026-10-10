@@ -622,4 +622,8 @@ Recorded backing restoration had completed, the native cache remained healthy,
 and subsequent inspection found zero dirty/in-flight bytes. Finalization now
 uses the existing explicit bounded filesystem/cache preparation on an enabled
 performance baseline before the unchanged strict clean capture. Faults still
-stop restoration; disabled observations do not drain. Regression smoke pending.
+stop restoration; disabled observations do not drain. Regression smoke `QueueCache-Campaign-20261010-174542-93f8175618624be6b93d7d6d73f58100`
+completed 2/2 phases in 67.19 s with exact clean restoration, 28 zero-exit owned
+process records and nine readiness files. The real controller validated success
+and failure events without rerunning work for delivery. Live Manager wake remains
+unverified until the new service/helper is deployed.

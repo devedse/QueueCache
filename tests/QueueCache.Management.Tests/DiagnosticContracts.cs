@@ -82,6 +82,12 @@ internal static class DiagnosticContracts
         var root = Directory.CreateTempSubdirectory("qc-trace-").FullName;
         try
         {
+            File.WriteAllText(Path.Combine(root, "qcachelab.pdb"), "plan-only fixture");
+            File.WriteAllText(Path.Combine(root, "qcramdisk.pdb"), "plan-only fixture");
+            var attribution = VerificationCampaignPlan.Create(new(new("Q:", DiskSpd: Environment.ProcessPath,
+                BudgetMiB: 2048, Repeats: 1, TraceSymbols: root), "focused", "W:", FocusSuite: "ram-read-attribution"));
+            Check(attribution.Count == 6 && attribution.Single(p => p.Options.Suite == "ram-read-attribution").MeasurementWindows == 3 &&
+                attribution.Count(p => p.Options.TraceSymbols is not null) == 1, "attribution symbols reach only the selected phase and do not invalidate campaign base/correctness options");
             var journalPath = Path.Combine(root, "owned.trace.json");
             var journal = new TraceOwnership("QCTrace-" + Guid.NewGuid().ToString("N"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wpr.exe"), journalPath + ".etl", root,

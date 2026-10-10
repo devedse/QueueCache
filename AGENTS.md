@@ -9,8 +9,10 @@
   repeat relevant regressions when code, environment or measurement contracts
   change. The maintained `--campaign` workflow and durable completion contract are
   in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Run one foreground campaign and consume
-  its `completion.json` after process exit; automatic agent wakeup still requires
-  an external Manager integration. Use focused campaigns for affected regressions.
+  its `completion.json` after process exit. The companion Manager owned-job
+  integration is documented in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`; use it once
+  the updated Manager service/helper is deployed. Live wake verification remains
+  separate from controller event validation. Use focused campaigns for affected regressions.
   For the next implementation stages, follow the file-level steps, evidence gates
   and handback checklist in `docs/PERFORMANCE_AGENT_HANDOFF.md`; proposed suites
   there must be implemented before use.

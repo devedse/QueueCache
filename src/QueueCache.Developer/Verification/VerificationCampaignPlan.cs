@@ -54,7 +54,7 @@ public static class VerificationCampaignPlan
             throw new ArgumentException("Performance, NTFS lab and optional ReFS lab targets must be different volumes.");
         if (options.LabRefs is not null && options.Profile is not ("performance" or "release-performance") && options.FocusSuite != "caller-backoff")
             throw new ArgumentException("--lab-refs applies to performance campaigns or a focused caller-backoff campaign.");
-        VerificationPlan.Validate(options.Verification with { DiskSpd = null, SoakSeconds = null });
+        VerificationPlan.Validate(options.Verification with { DiskSpd = null, SoakSeconds = null, TraceSymbols = null });
 
         var phases = new List<VerificationCampaignPhase>();
         void Add(string suite, CampaignTargetRole role, string? filter = null)
