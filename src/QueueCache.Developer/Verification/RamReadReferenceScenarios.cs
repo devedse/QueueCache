@@ -46,7 +46,7 @@ internal static class RamReadReferenceScenarios
                 var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
                 if (includeQueue)
                 {
-                    using var fixture = CacheDevice.OpenVolumeName(current.VolumePath);
+                    using var fixture = CacheDevice.OpenVolumeName(current.VolumePath, writable: true);
                     if (fixture.GetDiagnostics().RamReadQueue is null)
                         throw new IOException("RAM read queue comparison requires V22 scheduling diagnostics.");
                     fixture.Control(WriteCacheAction.LabRamReadQueue, value: (ulong)group.Key.RamReadQueueMode);
