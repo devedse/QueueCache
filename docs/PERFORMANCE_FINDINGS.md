@@ -13,7 +13,7 @@ copy optimizations, synchronous RAM-disk split reads and read recall. The newer
 shared whole-read queue was slower and has been removed. Shortening caller
 backoff benefits mixed Q8 but harms large NTFS reads, so production backoff stays
 256. Partial-read counters are implemented; missing-span reads are conditional.
-The independent 36-window priority comparison is complete: CPU BelowNormal loses
+The independent 36-window `priority-cost` comparison is complete: CPU BelowNormal loses
 34.20% resident Q8 throughput. Focused churn accounting is also complete and finds
 under 1% aggregate overlap in lower traffic for the tested shapes. CPU/wait
 attribution is complete and points at scheduling/utilization. Thirty RAM-disk
@@ -22,7 +22,9 @@ versus multi-submitter gap intact. Plan-116 instruction attribution now confirms
 32–33% of samples in helper polling with one reader versus 7% with four readers.
 It does not establish a throughput fix; request concurrency and resource-scoped
 handoff timing remain unknown, so no new native candidate is justified. Cache
-CPU-priority/affinity interaction is a separate diagnostic now running. All five
+CPU-priority/affinity interaction is now measured: the Q8 BelowNormal penalty
+shrinks from 30.21% at default affinity to 3.14% unbound (overlapping ranges).
+All five
 retained-driver qualification scenarios completed again with raw checks and
 restoration inspected in the attribution campaign.
 
@@ -529,7 +531,7 @@ running again. Private evidence and lab files remain preserved.
 
 ## Recorded verification time
 
-These selected completed runs total approximately **3 hours 5 minutes**. This
+These selected completed runs total approximately **3 hours 39 minutes**. This
 is measured run time, not a reconstruction of all engineering work or every
 earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
 attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
@@ -549,8 +551,11 @@ to 06:55 was not two hours spent executing that benchmark.
 | Five retained-driver scenarios | 3 min 09 s |
 | Plan-114 campaign smoke, two phases | 59 s |
 | Plan-114 focused campaign, 81 correctness checks + 30 RAM windows | 17 min 21 s |
+| Controller/restoration retry smoke, two phases | 1 min 07 s |
+| Plan-116 RAM attribution, 81 correctness checks + 3 traced windows | 7 min 38 s |
+| Plan-116 cached priority/affinity, 81 correctness checks + 36 untraced windows | 25 min 02 s |
 
-The priority run's main scores total about six minutes within its nineteen-minute
+The original priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
 restoration account for the rest. The write matrix includes explicit 45–53
 second drains between some ten-second scores. A single command removes repeated
@@ -559,20 +564,28 @@ checks. The [campaign plan](PERFORMANCE_CAMPAIGN_PLAN.md) records phase times an
 delivers terminal events so those costs become visible without periodic agent
 polling.
 
+The latest two plan-116 campaigns together take **32 min 40 s**. The cache
+priority/affinity phase accounts for 20 min 29 s of its 25 min 02 s campaign;
+the RAM trace phase takes 2 min 40 s of its 7 min 38 s campaign. The surrounding
+policy/pressure checks, preparation and restoration explain much of the remaining
+time. Tool/bootstrap failures and engineering/CI time remain separate from these
+completed measurements.
+
 ## What to do next and when to repeat tests
 
 | Order | Next step | Result-driven action |
 |---|---|---|
-| 1 | Investigate request concurrency and split-helper handoffs with copying held fixed | Thirty normal-priority RAM controls complete: affinity/source overlap leave the 26 versus 38–39 GB/s gap. Profile coordination/completion, then consider an isolated asynchronous experiment retaining `CopySplit`; preserve Q1/small/four-reader and lifecycle checks. Cache CPU-priority × affinity remains separate and untested. |
+| 1 | Gate request-concurrency/helper work on the remaining missing fact | Thirty affinity/source-lane controls and three instruction-attribution shapes complete. Polling is identified, but no throughput fix is justified. If reopened, measure owned-resource request overlap and post/take latency before selecting a copy-preserving candidate. The separate 36-window cache priority/affinity comparison is complete; its scheduling interaction does not authorize a driver boost. |
 | 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
 | 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
-| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); connect Manager delivery separately | Plan 114 composes maintained typed suites and publishes one durable completion event after evidence/restoration. Windows contracts, the 59-second smoke and the 17 min 21 s focused campaign pass. Automatic Manager wakeup needs its external completion API; no delivery is claimed. Complete that integration alongside performance attribution, using a short smoke rather than a broad matrix. |
-| 5 | Gate the next native experiment on RAM attribution | Keep the copy algorithm fixed and change only a demonstrated coordination or request-concurrency cost. Use same-build alternating A/B and qualify new lifecycle paths. Missing-span reads stay deferred; request-size caller policy is a lower-priority conditional candidate. No promised single-reader 42 GB/s. |
+| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); qualify live Manager delivery separately | Current plan 116 composes maintained suites and publishes a validated terminal event after restoration. Runner helper is installed; owned jobs and real completion validation work. Companion service delivery is implemented and host-tested, but live deployment/wake remains unverified. Qualify that integration with one short smoke, not a performance matrix. |
+| 5 | Preserve the native optimization gate | B2 is inconclusive about throughput cause, so C is skipped. Future candidates must change only a demonstrated cost, keep copying fixed and pass same-build A/B plus affected lifetime checks. Missing-span reads stay deferred; request-size caller policy is lower priority and conditional. No promised single-reader 42 GB/s. |
 
 The reviewed [continuation plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review)
 sets the implementation order, proposed acceptance thresholds, completion-integration
 checks and run budget. Cache priority/affinity and optional 100 ms Desktop cost
-remain separate questions. This review adds no new measurements or production changes.
+remain separate questions. The plan-116 results below record actual subsequent
+measurements; no new production optimization is accepted.
 
 For a missing-span experiment, first record how many missing runs each partly
 cached request contains. Start with a runtime default-off implementation using
@@ -686,6 +699,10 @@ DiskSpd remains CDM 9.0.3's x64 2.2,
 The fitting file is 1 GiB on an owned 2 GiB Direct RAM fixture; 256 KiB split
 copies, default affinity, Normal CPU, memory priority 5, I/O hint 3, W3 and timing
 off are unchanged. This is one traced repetition, not speed acceptance.
+Tracing runs alongside these reads and can alter scheduling. There is no same-run
+untraced control, so its effect on the difference from earlier approximately
+26 GB/s scores is unquantified. The earlier untraced matched controls remain the
+performance baseline; these scores do not establish a new-driver regression.
 
 | Exact diagnostic case | CPU samples / resolved native samples | Provider memcpy samples | Helper poll samples at `transfer.cpp:109` | Caller helper-wait samples at `transfer.cpp:173` | Traced score, decimal GB/s |
 |---|---:|---:|---:|---:|---:|
@@ -737,7 +754,7 @@ All five retained correctness phases complete, including fault/ordering last.
 Final restoration succeeds in 8.86 s; the controller validates the durable event
 and records REVIEWED after inspection. Raw evidence remains private and immutable.
 
-The separate priority/affinity campaign
+The first separate priority/affinity campaign
 `QueueCache-Campaign-20261010-181219-edcb92e1d3bd4a49877854b8675108c0`
 stopped before benchmarking: the first sector policy case did not observe a clean
 admission boundary after preparing a new NTFS file. It completed 2/6 phases in
@@ -749,6 +766,90 @@ flush/drop-clean boundary; the unchanged guard also reports dirty/in-flight/erro
 values on failure. The same setup boundary is used for the observed replacement
 case. This is a scoped test-preparation fix; the failed campaign contributes no
 performance samples and the guard is not relaxed.
+
+### Plan 116 cached priority/affinity: most Q8 penalty is affinity-sensitive
+
+The scoped preparation fix passes both focused campaigns. The new, **untraced**
+priority/affinity campaign completes **6/6 phases, 41/41 outer cases** in
+**1501.60 s (25 min 02 s)**, run
+`QueueCache-Campaign-20261010-220615-fac181574f6f4518b1b088547357530f`.
+Its inner checks are 81 retained correctness checks plus **36 score windows**,
+separate from the earlier 36-window CPU/I/O/memory `priority-cost` experiment.
+Managed preview/source, signed native filter/provider and DiskSpd hashes are the
+same as the plan-116 RAM run above. Roles are Q: non-OS physical performance disk
+and W: validated NTFS lab VHDX; Q:'s active backing cache is explicitly paused
+while measuring W:. ReFS is not part of this comparison.
+
+Each shape compares Normal/BelowNormal CPU and default/`-n` benchmark affinity,
+three repetitions with reversed order in repeat 2. File size is 1 GiB in a 2 GiB
+cache, one benchmark thread, memory priority 5, I/O hint 3, W3, duration 10 s,
+read-only unbuffered OS mode, copy flags 3, recall 1, caller backoff 256 and
+detailed timing off. Rows report **MiB/s**; R1–R3 follow repetition identity,
+not execution order. All exact IDs/settings/scores remain in this run's immutable
+manifest/results/raw files.
+
+| Shape | CPU | Benchmark affinity | R1 MiB/s | R2 MiB/s | R3 MiB/s | Median MiB/s | Min–max MiB/s |
+|---|---|---|---:|---:|---:|---:|---:|
+| 1M Q1T1 | Normal | default | 19,465.83 | 17,363.04 | 17,446.05 | 17,446.05 | 17,363.04–19,465.83 |
+| 1M Q1T1 | Normal | unbound | 17,719.28 | 17,663.14 | 17,925.87 | 17,719.28 | 17,663.14–17,925.87 |
+| 1M Q1T1 | BelowNormal | default | 18,641.06 | 17,836.96 | 15,681.42 | 17,836.96 | 15,681.42–18,641.06 |
+| 1M Q1T1 | BelowNormal | unbound | 17,635.86 | 17,360.84 | 16,111.99 | 17,360.84 | 16,111.99–17,635.86 |
+| 1M Q8T1 | Normal | default | 37,995.70 | 30,688.21 | 26,462.74 | 30,688.21 | 26,462.74–37,995.70 |
+| 1M Q8T1 | Normal | unbound | 33,077.42 | 30,007.29 | 25,342.36 | 30,007.29 | 25,342.36–33,077.42 |
+| 1M Q8T1 | BelowNormal | default | 21,418.18 | 22,594.11 | 20,414.39 | 21,418.18 | 20,414.39–22,594.11 |
+| 1M Q8T1 | BelowNormal | unbound | 29,064.04 | 29,173.83 | 26,551.15 | 29,064.04 | 26,551.15–29,173.83 |
+| 4K random Q1T1 | Normal | default | 1,206.06 | 1,152.28 | 1,121.14 | 1,152.28 | 1,121.14–1,206.06 |
+| 4K random Q1T1 | Normal | unbound | 1,208.03 | 1,146.52 | 1,116.65 | 1,146.52 | 1,116.65–1,208.03 |
+| 4K random Q1T1 | BelowNormal | default | 1,178.45 | 1,180.91 | 1,135.63 | 1,178.45 | 1,135.63–1,180.91 |
+| 4K random Q1T1 | BelowNormal | unbound | 1,148.34 | 1,147.47 | 1,105.71 | 1,147.47 | 1,105.71–1,148.34 |
+
+**Finding:** cached Q8 BelowNormal versus Normal changes **−30.21%** at default
+affinity and **−3.14%** unbound. Default-affinity ranges do not overlap; unbound
+ranges overlap substantially. The loss shrinks 27.06 percentage points. Within
+BelowNormal, unbound Q8 improves its median **35.70%**; each paired repetition
+improves by about 29–36%. Normal Q8 unbound changes −2.22% with overlapping
+ranges, so this is not a general recommendation to unbind or boost workloads.
+Q1 CPU changes are +2.24%/−2.02% default/unbound; random Q1 +2.27%/+0.08%, with
+overlapping ranges and no consistent penalty. Normal Q8 spans a wide range and
+drifts downward across repeats; three-repeat medians are diagnostic, not a new
+release comparison or proof that the residual 3.14% is real.
+
+The implicated interaction was reviewed against the **preserved matched-514 CPU
+profiles**, without rerunning the completed priority matrix. The earlier Q8
+Normal/BelowNormal trace (`20261010-075450-78a3c72b51f74c20839c855175eb9f1c`)
+uses the same native PDB hashes as above, rejects lost events, and records ETL
+SHA-256 `26C2F946D8F06DAC5D3321E443D8ED04FBA294C6AA6ACBFBC92465CD5B9C598A`.
+Its default-affinity BelowNormal CPU 0 is 99.3% busy while CPUs 1–3 are 44.0–49.1%
+idle, and enclosing benchmark-thread ready time is 6.358 s versus Normal 1.454 s.
+That evidence supports a scheduling/CPU-placement explanation for the new
+factorial result. It does not identify a specific worker-priority fix: exclusive
+`RequestWorker` contains useful work as well as polling; some readying-process
+attribution is unknown, and summed predecessor waits include startup/termination.
+No new unbound CPU trace was collected, so restored multi-core utilization and
+the exact responsible threads in that cell remain unverified.
+
+**Decision:** preserve Normal priority in benchmark guidance and keep application,
+driver and user-process defaults unchanged. Do not repeat `priority-cost` or this
+36-window factorial just to rediscover the penalty. If pursuing a product fix,
+the next discriminating measurement is a maintained, separate traced Q8-only
+Normal/BelowNormal × default/unbound subset with CPU/thread/source attribution,
+using the owned trace machinery and matching symbols. Keep traced scores separate
+from this completed untraced evidence; do not silently reinterpret the saved
+default-only profiles as an unbound measurement. No priority boost or native
+candidate is accepted from this diagnostic.
+
+Raw inspection: all 36 XML profiles and owned scheduling readbacks match; maximum
+priority-application time is 0.0174825 s. All score boundaries have zero lower
+read/write/flush-attempt, staged-request and read-miss deltas, stable instance/
+generation, timing off and read-hit bytes covering score bytes. The lab cache's
+historical error count stays 3 during scoring, with LastError 0; planned faults
+run afterwards. Maximum telemetry gap is 0.845574 s. All 1004 recorded owned
+process exits are zero, 313 readiness files are present, all 81 retained inner
+correctness checks pass, and restoration completes in 10.43 s. The controller
+validates the immutable terminal event. Subsequent session cleanup detaches the
+task-attached NTFS lab and resumes the original installed tray in session 1;
+Q: returns to its original 2 GiB Fast/Idle state, timing off, dirty/in-flight/
+errors zero and the same native hashes. Saved profiles match the captured bytes.
 
 ### Final campaign restoration gap found by controller smoke
 
