@@ -93,9 +93,50 @@ No application boost or driver-priority/default change is implemented.
 
 ## Focused CPU/wait attribution
 
-A separate WPR CPU trace is running with the supported Q8 subset, one repetition
-per variant, on the same native/binary hashes and W: target. Its traced scores
-are excluded from the untraced comparison above. Matching signed-CI native
-symbols are preserved. Inspect context switches, ready/wait time and copy/helper
-stacks; reject lost events. Until attribution is complete, helper priority and
-handoff are hypotheses rather than proven causes or accepted optimizations.
+The WPR CPU subset completed **4/4**, 07:54:50–07:57:28 UTC, with the same
+native/binary hashes and W: target:
+`QueueCache-Verify-20261010-075450-78a3c72b51f74c20839c855175eb9f1c`
+in `C:\QueueCache-Results\PriorityProfile514-20261010`.
+Raw XML/settings, residency, zero lower/staged I/O, readiness/coverage and
+restoration were inspected; maximum sampling gap was 0.281858 seconds and
+priority application time 0.0102972 seconds. WPR stopped successfully and
+preserved the 1,253,048,320-byte ETL separately. Raw run archive SHA-256:
+`FAF74FC45F5940F734FF86197224F752C37E2CF83543D7C33FDA6F3CF60FB7A7`.
+
+These traced scores are excluded from the untraced comparison above. Offline
+analysis completed after all benchmarks stopped, with lost-event rejection and
+matching signed-CI native PDB hashes verified. ETL SHA-256:
+`26C2F946D8F06DAC5D3321E443D8ED04FBA294C6AA6ACBFBC92465CD5B9C598A`.
+Complete four-window analysis archive SHA-256:
+`A22B6B563DFBA206CE71B61B7012B068C786CC6C98DD629AAD6FC827D992A751`.
+
+| Q8 trace variant | Non-idle CPU share | Cache memcpy, busy samples | Cache RequestWorker, busy samples | Aggregate DiskSpd ready time |
+|---|---:|---:|---:|---:|
+| Normal | 95.9% | 44.2% | 5.5% | 1.454 s |
+| CPU BelowNormal | 65.0% | 37.2% | 8.3% | 6.358 s |
+| I/O low | 96.6% | 42.2% | 5.5% | 1.536 s |
+| Memory default low | 94.8% | 42.6% | 5.1% | 1.517 s |
+
+CPU BelowNormal leaves CPU 0 about 99.3% busy while the other three CPUs are
+44.0%, 46.2% and 49.1% idle. Normal leaves all four CPUs only 2.4–4.8% idle.
+The raw XML records `DisableAffinity=false` in all variants. The lower-priority
+submitter/worker scheduling and enabled benchmark affinity are therefore the
+next interaction to isolate, rather than a disk-miss explanation. The trace
+supports increased scheduler-ready delay and lost parallel utilization; it does
+not identify a safe driver fix or prove helper polling causes the entire loss.
+
+These are enclosing 13.1-second process intervals including warmup/closure.
+Ready time sums all DiskSpd threads, not one thread's latency; total waiting also
+includes long-lived control/termination waits and is not interpreted as I/O
+latency. Many BelowNormal switch-ins have unavailable readying-process/stack
+attribution, so they cannot all be assigned to a specific completion/waker.
+`RequestWorker` samples include request work and polling, not a line-level spin
+measurement. This is the **disk-volume cache**, distinct from the earlier
+RAM-provider `WorkerMain` profile in the RAM-disk investigation.
+
+Next controlled diagnostic: add explicit affinity variants to the maintained
+priority suite, retain current-affinity Normal/BelowNormal controls and check
+the XML/actual placement. Version that workload change and keep scored resident
+traffic/coverage strict. Profile the relevant submitter and copy-worker threads
+before a bounded polling/handoff experiment. No application boost, driver
+priority change or production default change is accepted by this trace.

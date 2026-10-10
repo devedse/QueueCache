@@ -3245,17 +3245,17 @@ restored, and the installed tray application resumed. Branch
 | Item | Implementation | Verification |
 |---|---|---|
 | RAM-disk single-reader Q8 scheduling | Supported reference sampler and archived same-build comparison implemented. The shared sleeping queue engine is rejected and removed; V22 prefix/action reservation preserved. Synchronous split copies retained. See [profile/design/results](RAM_READ_SCHEDULING_20261010.md). | 36/36 plan-108 reference and 54/54 plan-110 same-build windows completed with exact bytes, telemetry and independent restoration. The queue loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput on large reads; small controls remain within variation. No scheduling gain or priority boost justified. Lifecycle qualification of the removed experiment is deliberately not pursued. |
-| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; plan-105 `partial-read-accounting` uses a held unbuffered handle and patterned partial sectors. Lower-read behavior unchanged. | Host ABI/window/runner contracts pass, including rejection of empty and failed worker checks. Windows Debug/Release CI and plan-105 VM run `20261010-020527-79bbee34e94c47faa71b8b062523627a` pass all ten byte/accounting checks on 0.4.495.1. Original settings restored, no errors/pending bytes. Concurrent ordering remains covered by existing scenarios, not this serialized counter window. |
-| ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks and Windows Debug/Release CI pass. Signed 0.4.514.1 quick and both complete 24-window NTFS/ReFS comparisons restore cleanly. Cooldown 0 gains 5.26%/3.79% mixed Q8, but loses 21.18% NTFS large-read Q8; ReFS large-read ranges overlap. Retain 256. [Raw-result summary](CALLER_BACKOFF_20261010.md). Separate default-path ordering/flush/capacity checks remain pending; no shorter production policy is promoted. |
-| Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host and Windows Debug/Release contracts pass at `1788970`. Full W: retry `20261010-073414-2f6dd18225094fc98abc3560ddaca39e` completed 36/36, all 940 process exits zero, maximum gap 0.689031 seconds, zero lower/staged I/O and clean restoration. CPU BelowNormal loses 34.20% Q8; I/O/memory Q8 ranges overlap normal. First attempt remains INCOMPLETE and separate. Focused CPU/wait trace running. [Evidence](PRIORITY_COST_20261010.md). Process memory defaults only, without pressure or locked-page changes. No boost implemented. |
+| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; patterned `partial-read-accounting` and maintained churn exercise collect the evidence. Lower-read behavior unchanged; missing-span reads are not justified for the tested churn shapes. | Original ten checks pass on 0.4.495.1. Signed 0.4.514.1 repeats the accounting scenario successfully; churn run `20261010-075924-c08eff16b204482fb371f9d09265f56e` completes 6/6 with all 18 raw windows inspected, maximum gap 0.752202 seconds, 1,539 concurrent byte checks and all 24 persisted oracle files passing. Weighted cached overlap is 0.788% mixed / 0.449% Q1 recovery; Q8 stages nothing. Clean restoration. This is a 120-second accounting smoke, not a new 30-minute acceptance. [Findings](PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first). |
+| ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks and Windows Debug/Release CI pass. Signed 0.4.514.1 quick and both complete 24-window NTFS/ReFS comparisons restore cleanly. Cooldown 0 gains 5.26%/3.79% mixed Q8, but loses 21.18% NTFS large-read Q8; ReFS large-read ranges overlap. Retain 256. [Raw-result summary](CALLER_BACKOFF_20261010.md). All 81 current retained-driver checks pass at default 256; no shorter production policy is promoted. |
+| Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host and Windows Debug/Release contracts pass at `1788970`. Full W: retry `20261010-073414-2f6dd18225094fc98abc3560ddaca39e` completed 36/36, all 940 process exits zero, maximum gap 0.689031 seconds, zero lower/staged I/O and clean restoration. CPU BelowNormal loses 34.20% Q8; I/O/memory Q8 ranges overlap normal. First attempt remains INCOMPLETE and separate. Focused CPU/wait analysis completed with matching PDBs and lost-event rejection: more ready delay and idle CPUs under BelowNormal; priority/affinity isolation is next. [Evidence](PRIORITY_COST_20261010.md). Process memory defaults only, without pressure or locked-page changes. No boost implemented. |
 
 Plan 112 implements the supported 24-window `caller-backoff` comparison, with
 alternating 256/0 cooldowns, 64 KiB mixed Q1/Q8 and 4K/1M read controls, complete
 residency proofs and independent concurrent/post-drain byte checks after scoring.
-Implementation is complete; host and Windows CI contracts pass. All 24 NTFS
+Implementation is complete; host and Windows CI contracts pass. All 24
 windows for each filesystem completed, independently restored and inspected.
 The mixed boundaries retain the V21 staged-read counters, but none of the fitting
-windows staged disk reads. Real eviction/churn evidence remains separate.
+windows staged disk reads. The completed churn accounting is reported below and in the consolidated findings.
 
 The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance and
 keeps implementation separate from verification. The initial draft PR contains
@@ -3275,15 +3275,53 @@ results/log, all ten raw observation boundaries and independent restoration
 were inspected; original enabled 2 GiB Fast/Idle settings restored with timing
 off, zero dirty/in-flight bytes and no driver error. This validates accounting,
 not a missing-span speed-up. The shaped overlap is 12.55% of the lower traffic;
-real random/mixed windows are still needed before changing lower-read behavior.
+real random/mixed windows were needed before changing lower-read behavior. The
+completed 0.4.514.1 churn follow-up below supplies them and does not justify that
+change for its tested shapes.
 
 2026-10-10 documentation follow-up. Implementation: consolidated performance
 findings and decisions in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md),
 referenced by AGENTS.md and benchmarking guidance. Earlier retained changes,
 merged PR #8, new PR #9 diagnostics and rejected experiments are distinguished.
 Verification: cross-checked against the completed dated reports, including the
-36-window priority retry; CPU/wait attribution, churn and retained-driver
-qualification are explicitly pending. The
+36-window priority retry and completed churn accounting. CPU/wait attribution and
+all 81 retained-driver checks are now complete and recorded below. The
 [single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) is a
 design only, with maintained typed suites, independent restoration and terminal
 events; orchestration and DeveAgentManager wake integration are not implemented.
+
+Focused churn accounting completed on signed 0.4.514.1, plan 113, run
+`20261010-075924-c08eff16b204482fb371f9d09265f56e`, 07:59:24–08:09:02 UTC.
+Implementation: existing `cache-sustained` with a 512 MiB cache and 120 seconds
+mixed activity; new V21 accounting, read recall 1 and copy flags 3. Verification:
+6/6 episodes, all 18 mixed/reread XML/windows inspected, 215 owned process exits
+zero, maximum gap 0.752202 seconds, 1,539 exact concurrent write/read checks and
+24 final disabled-cache oracle files pass. Original lab state/backoff restored
+with no errors/pending data. Mixed lower overlap 26,779,648 / 3,398,303,744 bytes
+(0.788%); Q1 recovery 6,553,600 / 1,459,617,792 (0.449%); Q8 stages zero.
+Decision: do not implement missing-span reads for these shapes; measure other
+representative scatter patterns only if a concrete observation warrants them.
+This is focused accounting, not another sustained performance A/B. Full table,
+limits and raw archive identity are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+
+Final retained-driver qualification on signed 0.4.514.1: five independently
+restored plan-113 runs pass all 81 inner checks (10 partial-read, 8 paging,
+42 policy, 13 pressure, 8 ordering/fault). All 20 process exits are zero.
+Default caller backoff 256 restored in each run; zero pending bytes. Ordering
+fault injection deliberately records three errors, then restores non-faulted
+state/last error zero; other runs have zero errors. Exact IDs, runtimes and raw
+archive hash are in the consolidated findings. Forced shorter production policy
+and the removed queue's lifecycle are not claimed qualified.
+
+CPU/wait analysis of the four-case priority subset completed without lost events,
+using matching 0.4.514.1 PDBs. Normal/BelowNormal non-idle CPU is 95.9%/65.0%;
+aggregate benchmark ready time 1.454/6.358 seconds, with other CPUs more idle in
+BelowNormal and affinity enabled in the XML. Function shares do not prove all
+RequestWorker samples are spin; next diagnostic isolates priority/affinity before
+a driver change. Analysis/trace identities and limits:
+[priority report](PRIORITY_COST_20261010.md).
+
+Final lab restoration: owned processes exited, both NTFS/ReFS VHDX files detached,
+Q: resumed runtime-only with its original active 2 GiB Fast/Idle options, no
+pending bytes or errors. Saved profile text matches the before capture exactly;
+installed tray restarted. Private raw evidence and lab files remain preserved.

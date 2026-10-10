@@ -27,6 +27,15 @@ report. The agent need not wake every five minutes to ask whether a file exists.
 Long runs retain human-readable progress without requiring an agent turn per
 progress line.
 
+```mermaid
+flowchart LR
+    Command["One foreground command"] --> Phases["Maintained typed suites"]
+    Phases --> Evidence["Raw evidence and independent restoration"]
+    Evidence --> Event["Durable terminal event"]
+    Event --> Watcher["Controller job watcher"]
+    Watcher -. "Manager integration required" .-> Agent["Agent resumes analysis"]
+```
+
 ## Typed profiles and safe targets
 
 | Profile | Phases | Scope |

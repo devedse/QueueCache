@@ -115,11 +115,14 @@ its blocks missing read at 1.6-2.5 GB/s instead of about 30 GB/s (2 GiB Fast cac
 Why: when any 4 KiB block of a request is missing, the whole request (up to 16 MiB)
 is read from the disk, then the cached blocks are copied over it.
 
-Proposed change: first count how often this still happens with read recall
-(requests sent to disk that were partly cached, and the bytes re-read that RAM
-already held). Only if that shows real waste, read just the missing runs from disk
-and copy the rest from RAM, keeping today's ordering and error handling. Planned
-after this work is merged.
+Diagnostics V21 now count staged requests/lower bytes and already-cached overlap;
+the patterned timing-off/on scenario passes all ten checks. The 0.4.514.1 focused
+churn run completed 6/6: weighted overlap is only 0.788% of mixed lower traffic
+and 0.449% of Q1 recovery traffic; Q8 recovery stages nothing. No missing-span
+implementation is justified for these shapes. Other scatter patterns remain
+conditional on representative overlap and fragmentation evidence, with ordering
+and error handling preserved. See the consolidated
+[findings](PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first).
 
 ## One program reading a RAM disk tops out at about 26 GB/s (performance)
 
@@ -145,6 +148,12 @@ The possible gain is for one-thread, deep-queue readers. Four readers' aggregate
 40-42 GB/s shows available bandwidth, but does not prove that one reader can reach
 it. Retain a scheduling change only after a controlled Q8 gain, with Q1,
 small-read and multi-threaded controls and byte/lifecycle checks.
+
+The later shared sleeping whole-read queue also loses in a complete 54-window
+same-build comparison: −11.30% single-reader Q8 and −49.62% four-reader throughput.
+Its engine is removed; synchronous split copies remain. Full measurements and
+limits are in [RAM scheduling](RAM_READ_SCHEDULING_20261010.md) and the
+[consolidated findings](PERFORMANCE_FINDINGS.md).
 
 ## Raw disk reads and writes bypass the cache (by design)
 

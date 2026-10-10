@@ -14,8 +14,11 @@ shared whole-read queue was slower and has been removed. Shortening caller
 backoff benefits mixed Q8 but harms large NTFS reads, so production backoff stays
 256. Partial-read counters are implemented; missing-span reads are conditional.
 The independent 36-window priority comparison is complete: CPU BelowNormal loses
-34.20% resident Q8 throughput. Its CPU/wait attribution, focused churn follow-up
-and retained-driver qualification are still being verified.
+34.20% resident Q8 throughput. Focused churn accounting is also complete and finds
+under 1% aggregate overlap in lower traffic for the tested shapes. CPU/wait
+attribution is complete and points at scheduling/utilization; a priority/affinity
+control is the next diagnostic. All five retained-driver qualification scenarios
+completed with their raw checks and restoration inspected.
 
 ## Which changes belong together
 
@@ -83,6 +86,35 @@ with separated three-repeat ranges. Small control differences do not establish
 general improvements. These resident cached-read results do not measure low-I/O
 miss performance or isolate every historical RAM-disk/disk-only difference.
 Full ranges are in the priority report.
+
+The separate WPR Q8 subset completed 4/4, run
+`20261010-075450-78a3c72b51f74c20839c855175eb9f1c`, with clean restoration,
+zero lower/staged I/O and maximum telemetry gap 0.281858 seconds. The trace is
+preserved and stopped; offline CPU/wait attribution is pending. Traced scores
+are excluded from the comparison, so recording overhead cannot be mistaken for
+a release regression. Offline analysis has now completed with lost events
+rejected and matching native PDBs verified:
+
+| Q8 trace variant | Non-idle CPU | Cache memcpy, busy samples | Cache RequestWorker, busy samples | All DiskSpd threads' ready time |
+|---|---:|---:|---:|---:|
+| Normal | 95.9% | 44.2% | 5.5% | 1.454 s |
+| CPU BelowNormal | 65.0% | 37.2% | 8.3% | 6.358 s |
+| I/O low | 96.6% | 42.2% | 5.5% | 1.536 s |
+| Memory default low | 94.8% | 42.6% | 5.1% | 1.517 s |
+
+BelowNormal has CPU 0 99.3% busy while the other three are 44.0–49.1% idle;
+Normal has all four only 2.4–4.8% idle. XML records affinity enabled in every
+variant. This supports scheduler-ready delay and reduced parallel utilization;
+it does not establish a specific helper-polling cause or justify a priority boost.
+The next diagnostic should isolate priority **and affinity** before selecting a
+driver change. Function shares are over enclosing 13.1-second intervals;
+RequestWorker includes request work and polling. Ready time sums all benchmark
+threads; long control/termination waits are not I/O latency. Many BelowNormal
+readying stacks/processes are unavailable, so a specific waker cannot explain
+every delay. These cache-worker samples are distinct from the RAM-provider
+WorkerMain samples below. Traced scores remain excluded from acceptance.
+ETL SHA-256 `26C2F946D8F06DAC5D3321E443D8ED04FBA294C6AA6ACBFBC92465CD5B9C598A`;
+analysis archive `A22B6B563DFBA206CE71B61B7012B068C786CC6C98DD629AAD6FC827D992A751`.
 
 ## Earlier retained request-path improvements
 
@@ -275,8 +307,50 @@ The plan-105 patterned NTFS scenario completed ten byte/accounting checks on
 overwritten hits staged nothing. Every byte matched and restoration completed.
 Exact run `20261010-020527-79bbee34e94c47faa71b8b062523627a`.
 This shaped percentage is not a measured speed-up. All fitting caller-comparison
-windows staged zero bytes, so they do not establish real churn waste. The focused
-eviction/churn follow-up remains pending.
+windows staged zero bytes, so they do not establish real churn waste.
+
+The focused plan-113 `cache-sustained` follow-up completed 6/6 on signed
+0.4.514.1, run `20261010-075924-c08eff16b204482fb371f9d09265f56e`,
+07:59:24–08:09:02 UTC. It uses a 512 MiB Fast/Idle cache, a 1 GiB random 64 KiB
+70/30 mixed file at Q8, six 20-second mixed episodes, twenty seconds natural idle
+per episode, then Q1/Q8 1 MiB rereads of a fitting 256 MiB file. Read recall 1,
+copy flags 3 and timing off; no clears/reallocations between episodes. Q8 follows
+Q1 recovery rather than independently starting from the same churn state.
+
+| Episode | Mixed throughput MiB/s | Mixed lower-byte overlap | Q1 recovery MiB/s | Q1 lower-byte overlap | Q8 recovery MiB/s |
+|---|---:|---:|---:|---:|---:|
+| 1 | 20.43 | 0.000% | 9,803.30 | N/A: no staged reads | 34,511.99 |
+| 2 | 39.20 | 0.000% | 8,842.36 | 0.797% | 35,422.08 |
+| 3 | 54.84 | 0.378% | 8,206.19 | 1.186% | 33,317.88 |
+| 4 | 61.80 | 0.762% | 7,224.88 | 0.562% | 32,282.22 |
+| 5 | 78.92 | 1.162% | 6,924.28 | 0.283% | 31,600.60 |
+| 6 | 85.91 | 1.185% | 6,438.26 | 0.151% | 30,531.77 |
+
+Weighted across all six mixed boundaries: 51,854 staged attempts / 3,398,303,744
+lower bytes, 686 partly cached requests and 26,779,648 already-cached bytes:
+**0.788% of staged lower traffic**. Across Q1 recovery: 1,398 attempts /
+1,459,617,792 bytes, ten partly cached requests and 6,553,600 cached bytes:
+**0.449%**. All Q8 recovery windows staged zero bytes. Percentages use sums of
+bytes, not averages of per-episode percentages. Boundaries enclose process/oracle
+activity, not just DiskSpd's score or a file-attributed trace.
+
+All 18 mixed/reread XML outputs, counter boundaries, readiness/coverage and native
+identity were inspected. Maximum telemetry gap: 0.752202 seconds. All 215 owned
+process exits are zero; 1,539 independent concurrent 1 MiB write/read checks and
+all 24 disabled-cache persisted oracle files passed. Original zero-budget lab
+state and backoff 256 restored with zero errors/dirty/in-flight bytes. Raw archive
+SHA-256: `6C0C5D819CD52F5A16C1FEC035C738F49E03A7A0A70F0C2840E8535F86104BAC`.
+This has 120 seconds of mixed activity and is an accounting smoke, not another
+30-minute sustained-use acceptance or a mode-comparison performance A/B.
+
+**Decision:** do not implement missing-span reads for these measured shapes.
+Even eliminating every overlapping byte would remove under 1% of aggregate
+staged traffic, before extra lower-request/synchronization costs. That byte
+fraction is not an exact throughput bound: storage latency, request count and
+coalescing also matter. Other shapes, especially smaller scattered updates followed
+by larger reads, could differ; reopen only when representative evidence shows
+material overlap. The patterned 12.55% scenario proves counter correctness and
+does not override the natural-churn result.
 
 Missing-span reads should be considered only if real overlap is material.
 Measure run counts and merge slack as well as saved bytes: several fragmented
@@ -331,15 +405,107 @@ misses; clearing clean data prevents this preparation confound. Windows startup
 work and competing tests/UI must finish before scoring. The screenshots are
 actual captures; frontend README images are generated by the desktop tests.
 
+## Current retained-driver correctness qualification
+
+The current signed 0.4.514.1 native driver and managed `1788970` preview completed
+these maintained plan-113 scenarios on the owned NTFS lab V:. Each is an
+independent run with one outer scenario, not a combined performance matrix.
+Every inner check is PASS; no check was skipped. Raw reports, worker replies,
+native hashes, ownership/exits, control/restoration traces and exact original
+settings were inspected. Each has four successful owned-process exit records.
+
+| Suite | Inner checks | Exact run ID suffix | Runtime UTC |
+|---|---:|---|---|
+| `partial-read-accounting` | 10 | `20261010-081109-aad11964b4d8470e9573e64f19b7787a` | 08:11:09–08:11:15 |
+| `paging-coherence` | 8 | `20261010-081454-87a8b7c777be4ea19ccdc2c653758b83` | 08:14:54–08:15:07 |
+| `policies` | 42 | `20261010-081712-d0b3498f7f144372871f769fc7c0ec91` | 08:17:12–08:18:52 |
+| `pressure` | 13 | `20261010-082056-811b8c23b4c4417088273d84fdf83686` | 08:20:56–08:21:42 |
+| `ordering-faults` | 8 | `20261010-082430-0afa9979205a4ea6b2988c9ad7458685` | 08:24:30–08:24:54 |
+
+Coverage includes partial sectors, mapped/cached coherence, observed and gated
+old-write ordering, parallel pinned copies, zero-lower-I/O fitting admission,
+retention/policy variants, capacity backpressure, failed/short drains, cancellation,
+allocation retry/exhaustion, release under load and paging-write failures. The
+fault suite deliberately increments the lab error counter by three; final state
+is non-faulted, with last error zero. Other suites have zero errors. All restore
+disabled/zero-budget state, original options, no pending bytes and backoff 256.
+This qualifies retained behavior at default 256; it does not qualify a new
+request-size policy or the removed queue's lifecycle paths.
+Immutable five-run raw archive SHA-256:
+`3E475F93750E588D0A172DF09F4F5C991384B77027D763AB9CA642E789900DFD`.
+
+Final cleanup detached both owned lab VHDX files and resumed Q: runtime-only on
+its original active 2 GiB Fast/Idle configuration, with no errors or pending bytes.
+Saved profile text matches the before capture exactly; the installed tray is
+running again. Private evidence and lab files remain preserved.
+
+## Recorded verification time
+
+These selected completed runs total approximately **2 hours 46 minutes**. This
+is measured run time, not a reconstruction of all engineering work or every
+earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
+attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
+to 06:55 was not two hours spent executing that benchmark.
+
+| Completed run | Wall time |
+|---|---:|
+| PR #8 write matrix, 72 windows | 54 min 05 s |
+| Original partial-read accounting | 7 s |
+| RAM reference, 36 windows | 15 min 29 s |
+| RAM queue comparison, 54 windows | 22 min 37 s |
+| NTFS caller comparison, 24 windows | 19 min 31 s |
+| ReFS caller comparison, 24 windows | 20 min 08 s |
+| Complete priority retry, 36 windows | 19 min 03 s |
+| Traced priority subset, four windows | 2 min 38 s |
+| Focused churn, six episodes | 9 min 38 s |
+| Five retained-driver scenarios | 3 min 09 s |
+
+The priority run's main scores total about six minutes within its nineteen-minute
+run. Preparation, residency proofs, warmup, worker/process ownership and
+restoration account for the rest. The write matrix includes explicit 45–53
+second drains between some ten-second scores. A single command removes repeated
+agent orchestration; it does not remove required disk preparation or durability
+checks. The [campaign plan](PERFORMANCE_CAMPAIGN_PLAN.md) records phase times and
+delivers terminal events so those costs become visible without periodic agent
+polling.
+
 ## What to do next and when to repeat tests
 
 | Order | Next step | Result-driven action |
 |---|---|---|
-| 1 | Finish focused CPU/wait attribution for the completed priority comparison | CPU class reproduces the large Q8 difference; identify where time is spent. Keep benchmark launch settings documented; propose driver scheduling only if attribution supports a safe specific change. |
-| 2 | Inspect staged-read overlap in real focused churn with read recall on | If overlap is negligible, close missing-span work for these shapes. If material, quantify lower run fragmentation/merge overhead before implementing bounded missing-span reads. |
-| 3 | Finish retained-driver partial-read, paging, policy, pressure and ordering checks | Record completed scenarios and restoration separately from performance acceptance. No lifecycle qualification is needed for the removed queue engine. |
+| 1 | Add a focused priority/affinity control before a scheduling experiment | Completed trace shows more ready delay and idle helper CPUs with BelowNormal. Separate affinity interaction and per-thread coordination first; keep normal benchmark settings and preserve user/driver priorities. |
+| 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
+| 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
 | 4 | Implement the [single-command campaign and completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) | Compose maintained typed suites; send one completion event after evidence and restoration are finalized. Preserve fail-fast behavior and explicit targets. |
 | 5 | Select the next optimization from measured bottlenecks | Most promising candidates are bounded missing-span reads if churn supports them, then targeted copy coordination or request-size caller policy if profiles/controls support them. No promised single-reader 42 GB/s. |
+
+For a missing-span experiment, first record how many missing runs each partly
+cached request contains. Start with a runtime default-off implementation using
+the existing owned staging buffer: copy known pinned sectors, merge short gaps,
+submit bounded missing ranges and fall back to the current whole-range path when
+fragmentation exceeds the bound. Choose the run/merge limits from measured costs,
+not the overlap percentage alone. Preserve allocation-failure fallback, short
+read/error completion, cancellation, concurrent dirty overlays and pin lifetime.
+Version the counter/workload contracts explicitly if a logical staged read can
+submit multiple lower requests. Compare identical whole-range and missing-span
+modes on partial-residency/churn shapes plus full-hit/full-miss controls, then
+run partial-sector, neighboring-write, paging, ordering, drain and capacity checks.
+Promote only for a repeated gain without correctness or control regressions.
+
+For a caller-policy experiment, preserve 256 for large copies and investigate a
+shorter window only for the measured small mixed shape. First separate the lab
+maximum from the production-default constant, retain every owner/queue/control
+gate and append attribution for the new choice. Alternate modes on both NTFS and
+ReFS, including transitions between small mixed and large reads; a gain restricted
+to one shape is insufficient if it damages the next workload. The current global
+zero-backoff experiment is not a qualified request-size policy.
+
+For RAM-disk coordination, use sampled/context-switch attribution to select one
+specific handoff/wake/poll change. Keep existing synchronous split reads as the
+same-build control; the retired queue is evidence to learn from, not a candidate
+to re-enable without a different measured mechanism. Small/Q1/four-reader controls
+and withdrawal/cancellation/stop checks precede acceptance. Priority changes to
+user programs or unconditional driver boosts are not part of these plans.
 
 Do not repeat an established experiment merely because its result was forgotten.
 Repeat a relevant regression when native/runner behavior, hardware, power/CPU
