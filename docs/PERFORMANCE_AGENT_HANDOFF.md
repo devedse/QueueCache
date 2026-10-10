@@ -9,6 +9,18 @@ conditional native optimizations remain evidence-gated. The existing
 [RAM_FIRST_IMPLEMENTATION_TRACKER.md](RAM_FIRST_IMPLEMENTATION_TRACKER.md) owns
 implementation and verification status. Update those sources after each stage.
 
+User scope update, 2026-10-11, supersedes the original execution order below:
+stage D's priority/affinity comparison is complete and further low-priority
+diagnosis is parked. Stage E's dedicated 100 ms UI cost study is removed from the
+active backlog. Prioritize a concrete RAM candidate, using maintained individual
+suites and affected correctness checks during iteration; do not automatically
+attach all 81 retained checks to every diagnostic. Stage G's broad campaign is
+the final qualification of a retained change, launched once and reviewed from its
+combined report. Preserve each selected suite's evidence/restoration contract;
+this instruction does not alter case counts or skip correctness relevant to a
+new request-lifetime/copy path. Completion delivery remains a separate short
+integration check. See the current follow-up plan and tracker for status.
+
 ## 1. Starting instructions for the implementing agent
 
 1. Read [AGENTS.md](../AGENTS.md), the current conclusions and next steps in

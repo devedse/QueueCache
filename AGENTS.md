@@ -17,6 +17,14 @@
   For the next implementation stages, follow the file-level steps, evidence gates
   and handback checklist in `docs/PERFORMANCE_AGENT_HANDOFF.md`; proposed suites
   there must be implemented before use.
+  Current user priority: investigate and compare concrete RAM speedup candidates
+  with the smallest maintained suite and affected correctness checks first.
+  `--campaign focused` also runs 81 retained correctness checks; use an existing
+  `--suite` when that extra scope is unnecessary. Reserve broad regression/write/
+  sustained campaigns for the final retained candidate, launched once with a
+  combined report. Keep byte, identity, telemetry and restoration guards. Further
+  low-priority/affinity diagnosis and dedicated 100 ms UI cost testing are parked;
+  do not reopen them without a relevant observed problem or a new user request.
 
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;

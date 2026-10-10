@@ -63,6 +63,19 @@ are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
 ## Continuation plan after findings review
 
+Current scope after user review, 2026-10-11: prioritize concrete RAM speedup
+experiments and finish automatic completion delivery. The completed cached
+priority/affinity comparison explains a benchmark-launch sensitivity; additional
+low-priority tracing is parked unless a relevant real workload warrants it.
+Dedicated 100 ms UI cost measurement is removed from the active backlog at the
+user's request, without claiming that rendering cost was measured. During
+iteration, use the smallest maintained suite plus correctness checks affected by
+the change. The current `focused` campaign includes 81 retained correctness checks
+and is not mandatory for every experiment. Run broad regression/write/sustained
+qualification once at the end for the retained candidate using one campaign and
+its combined result; repeat affected work only if a failure or later change
+requires it. This scope update does not change existing suite contracts/counts.
+
 The [agent implementation handoff](PERFORMANCE_AGENT_HANDOFF.md) provides exact
 file/entry-point mappings, ordered changes, proposed workload counts, commands,
 tests, dependency handling and acceptance/stop gates for these priorities.
@@ -85,10 +98,10 @@ they do not qualify an asynchronous implementation that has not been built.
 | 1, orchestration track | Connect the campaign terminal event to DeveAgentManager process completion. | One foreground job produces one resumed-agent result after evidence and restoration, with duplicate/reconnect handling and explicit failure/cancellation outcomes. | Close the remaining automation gap. Requires a supported Manager API; do not hold up the performance diagnosis if it is unavailable. |
 | 1, performance track | Attribute RAM-disk request concurrency and split-copy coordination on the current retained code. | A focused comparison explains actual concurrent requests, copy work, helper handoff/withdrawal and completion waits for one versus four submitters. | Choose one demonstrated cost to reduce, or stop native experimentation if no actionable cost is established. |
 | 2, conditional | Implement one default-off RAM experiment selected by that attribution, keeping the copy algorithm and 256 KiB split size fixed. | Same-build alternating A/B shows a repeatable practical gain and passes affected byte, latency and lifecycle controls. | Retain only a qualified improvement; otherwise remove the experiment and preserve its findings. |
-| 3 | Isolate CPU priority versus benchmark affinity for resident disk-cache reads. | Normal/BelowNormal crossed with default/unbound benchmark threads, all other priorities fixed; Q8 plus Q1/small controls. | Determine whether the observed 34.20% low-priority loss is tied to submitter placement. Change driver scheduling only after attribution; retain application priorities. |
-| 4, optional | Measure real Desktop map cost at 100 ms. | Compare closed UI, default cadence and 100 ms pop-out/full-screen using the same map size/workload; record throughput, CPU and responsiveness. | Keep fast refresh as an option; optimize sampling/rendering only for a demonstrated cost. The native 250 ms result does not qualify 100 ms UI rendering. |
+| 3, completed; further work parked | Isolate CPU priority versus benchmark affinity for resident disk-cache reads. | Plan-116 comparison completed: Q8 low-priority penalty shrinks from 30.21% at default placement to 3.14% unbound, with overlapping unbound ranges. | Keep normal-priority benchmark launches. No normal-priority product problem is established; do not pursue more tracing without a relevant observed problem or new user request. |
+| 4, removed from active backlog | Measure real Desktop map cost at 100 ms. | User accepts the current UI behavior and does not want dedicated cost testing. | Keep existing UI functionality. Rendering cost remains unmeasured; reopen only for an observed problem or new request. |
 | 5, conditional | Investigate a request-size-aware caller policy on NTFS and ReFS. | Small mixed gains survive transitions into large reads with the large-copy backoff retained, plus ordering/flush/capacity checks. | Lower priority than RAM diagnosis: global backoff 0 gained only 4–5% mixed throughput and lost 21% NTFS large-read throughput. |
-| Release gate | Qualify the final retained native change with the relevant maintained campaign. | Required phases and restoration complete; compare matched baselines and record regressions separately from collection success. | Use the write matrix when shared write behavior is affected or for release qualification; update README benchmarks only after an accepted performance change. |
+| Release gate, last | Qualify the final retained native change with one relevant maintained campaign. | After focused candidate comparisons, required phases and restoration complete; inspect the combined report and matched baselines. | Broad regression/write/sustained testing belongs at the end, not after every diagnostic. Update README benchmarks only after an accepted performance change. |
 
 ### RAM diagnosis and experiment gate
 

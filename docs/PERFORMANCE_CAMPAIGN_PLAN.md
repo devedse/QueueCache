@@ -22,6 +22,15 @@ benchmark executable, installer or private PowerShell scenario loop is needed.
 The CLI binds arguments; typed orchestration owns phases, cases and evidence.
 Existing single-suite commands remain available for focused regressions.
 
+Current user workflow: use a maintained individual suite and affected correctness
+checks while diagnosing or comparing a concrete speedup. The profile named
+`focused` also adds 81 retained correctness checks; it is not the minimum unit of
+iteration. Reserve the broad `release-performance` campaign for the final
+retained candidate, launch it once, and review the combined report after exit.
+This changes run selection, not suite contracts/counts or evidence guards. More
+priority/affinity diagnosis and a dedicated 100 ms UI study are parked; historical
+measurements remain available without rerunning them.
+
 Launch the foreground process through the controlling application's job
 mechanism. Keep its process/session identity and stream its normal progress/log.
 The controller receives process completion once and then reads the exact campaign

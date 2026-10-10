@@ -3234,6 +3234,14 @@ Headless tests cover page changes, minimization, closure, pending samples and
 unrelated inventory changes. The preview does not establish a 100 ms performance
 acceptance result. Temporary owner settings are restored after this check.
 
+### User scope review, 2026-10-11
+
+| Item | Implementation / plan status | Verification |
+|---|---|---|
+| Low-priority follow-up (user item 4) | Completed priority/affinity findings retained; further tracing is parked. Keep normal-priority benchmark launches. Reopen only for a relevant observed problem or new request. | Existing comparison establishes setup sensitivity, not a normal-priority product regression or its prevalence in real applications. No new run. |
+| UI cost (user item 5) | Dedicated 100 ms rendering-cost investigation removed from the active backlog at the user's request. Existing UI features retained. | Prior functional checks and native map timings retained; actual 100 ms rendering cost remains unmeasured. No new run. |
+| Test scope (user item 6) | Candidate iterations use the smallest maintained suite plus affected correctness checks. Broad regression/write/sustained qualification runs last as one campaign with a combined report. Current `focused` profile adds 81 retained checks and is optional during iteration. | Documentation-only scope update; no case-count/measurement contract changes, no new benchmark and no relaxed byte/identity/telemetry/restoration checks. Live automatic wake remains unverified. |
+
 ### Handoff implementation in progress, 2026-10-10
 
 Started from `f3245d0`, branch `perf/ram-read-followups`. Verification contract

@@ -573,6 +573,20 @@ completed measurements.
 
 ## What to do next and when to repeat tests
 
+User prioritization, 2026-10-11: the measured low-priority/affinity interaction is
+documented and further diagnosis is parked. It explains a benchmark setup
+sensitivity; these results do not establish a normal-priority product regression
+or how often ordinary applications encounter it. Keep normal-priority benchmark
+launches. Dedicated 100 ms Desktop cost measurement is removed from the active
+backlog at the user's request; no new rendering-cost claim follows from that
+decision. Focus on concrete RAM candidates with small maintained comparisons and
+affected correctness checks. Reserve broad regression/write/sustained testing
+for one final campaign after a candidate is retained, then inspect its combined
+report. The existing `focused` campaign includes 81 correctness checks; a direct
+maintained suite avoids that extra scope when it is not relevant. Preserve the
+chosen suite's byte/identity/telemetry/restoration guards and repeat affected
+checks if later code changes or failures require them.
+
 | Order | Next step | Result-driven action |
 |---|---|---|
 | 1 | Gate request-concurrency/helper work on the remaining missing fact | Thirty affinity/source-lane controls and three instruction-attribution shapes complete. Polling is identified, but no throughput fix is justified. If reopened, measure owned-resource request overlap and post/take latency before selecting a copy-preserving candidate. The separate 36-window cache priority/affinity comparison is complete; its scheduling interaction does not authorize a driver boost. |
@@ -583,8 +597,9 @@ completed measurements.
 
 The reviewed [continuation plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review)
 sets the implementation order, proposed acceptance thresholds, completion-integration
-checks and run budget. Cache priority/affinity and optional 100 ms Desktop cost
-remain separate questions. The plan-116 results below record actual subsequent
+checks and run budget. Further cache priority/affinity diagnosis and dedicated
+100 ms Desktop cost testing are parked under the user scope above.
+The plan-116 results below record actual subsequent
 measurements; no new production optimization is accepted.
 
 For a missing-span experiment, first record how many missing runs each partly
