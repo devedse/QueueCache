@@ -32,6 +32,7 @@ internal static class RamReadReferenceScenarios
         if (kind == RamReadRunKind.Attribution)
         {
             RamReadAttribution.RequireSymbols(traceSymbols);
+            RunStorage.AtomicJson(evidence + ".native-symbols.json", NativeTraceSymbols.Capture(traceSymbols!));
             await VerificationTraceSession.StartAsync(traceJournal);
         }
         try

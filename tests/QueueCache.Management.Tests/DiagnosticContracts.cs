@@ -46,6 +46,15 @@ internal static class DiagnosticContracts
         Reject(() => RamReadAttribution.ValidateWindow(identity, DateTimeOffset.UtcNow.AddSeconds(10), 100, 40, 37));
         Reject(() => RamReadAttribution.ValidateWindow(identity, DateTimeOffset.UtcNow.AddSeconds(10), 0, 0, 0));
         Reject(() => RamReadAttribution.ValidateWindow(identity, DateTimeOffset.UtcNow.AddSeconds(-10), 100, 40, 39));
+        var pdb = new byte[512 * 4];
+        "Microsoft C/C++ MSF 7.00\r\n\u001aDS\0\0\0"u8.CopyTo(pdb);
+        void Number(int offset, int value) => System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(pdb.AsSpan(offset, 4), value);
+        Number(32, 512); Number(44, 16); Number(52, 1); Number(512, 2);
+        Number(1024, 2); Number(1028, 0); Number(1032, 28); Number(1036, 3);
+        var signature = Guid.NewGuid(); Number(1536 + 8, 2); signature.TryWriteBytes(pdb.AsSpan(1536 + 12, 16));
+        Check(NativeTraceSymbols.ReadPdbIdentity(pdb) == (signature, 2), "native PDB signature and age come from the information stream");
+        Number(1036, 1000); Reject(() => NativeTraceSymbols.ReadPdbIdentity(pdb));
+        Reject(() => NativeTraceSymbols.ReadPdbIdentity([1, 2, 3]));
         var root = Directory.CreateTempSubdirectory("qc-trace-").FullName;
         try
         {

@@ -59,7 +59,9 @@ public static class RamReadAttribution
             bool InWindow(DateTimeOffset at) => at >= start && at <= end;
             var samples = cpu.Result.Samples.Where(s => InWindow(s.Timestamp.DateTimeOffset)).ToArray();
             if (!samples.Any(s => s.Process?.Id == process.Pid)) throw new InvalidDataException("Owned PID absent from trace.");
-            static bool Native(StackFrame f) => f.Image?.FileName is "qcachelab.sys" or "qcramdisk.sys";
+            static bool Native(StackFrame f) => f.Image?.FileName is { } name &&
+                (name.Equals("qcachelab.sys", StringComparison.OrdinalIgnoreCase) || name.Equals("qcramdisk.sys", StringComparison.OrdinalIgnoreCase) ||
+                 name.StartsWith("QueueCache-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase));
             var native = samples.Where(s => s.Stack?.Frames.Any(Native) == true).ToArray();
             var resolved = native.Count(s => s.Stack!.Frames.Where(Native).All(f => f.Symbol?.FunctionName is { Length: > 0 }));
             ValidateWindow(process, end, samples.Length, native.Length, resolved);
