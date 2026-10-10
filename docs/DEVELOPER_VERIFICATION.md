@@ -51,7 +51,7 @@ of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
-Plan 105 adds the opt-in `partial-read-accounting` suite described below; it does
+Plans 105–106 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.
 
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
@@ -1584,3 +1584,43 @@ live snapshots can straddle an update. Relational accounting is enforced only
 between quiescent boundaries with stable driver identity/health. Exercise raw
 diagnostics also retain these fields, but their enclosing windows include
 startup/warm-up and must not be treated as exact DiskSpd score windows.
+
+
+## RAM-disk read reference (plan 106)
+
+```powershell
+qcache developer verify Q: --suite ram-read-reference --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+The selected clean non-OS physical disk is the runner's ownership/restoration
+anchor. Scores use disposable 2 GiB NTFS RAM disks created through the product
+broker, one at a time; existing managed disks are preserved. Every fixture has a
+1 GiB file with a distinct deterministic pattern per MiB. Full unbuffered byte
+checks before and after every score are outside the score window.
+
+Thirty-six windows at three repetitions compare Direct and Standard access:
+SEQ1M Q1T1, Q8T1 and Q2T4 (the latter two have the same aggregate queue depth),
+plus RND4K Q1T1, Q32T1 and Q8T4. Access and shape order reverse each repetition.
+Timing is off, DiskSpd uses XML, latency, unbuffered reads and no warm-up; workload
+creation and verification are separate. `--budget-mib 2048` and a normal CPU,
+I/O and memory-priority launch environment are required. CPU class is checked;
+the operator must ensure normal I/O and memory priorities. No case filter or
+background-priority experiment is implied. This is opt-in, not part of `full`.
+
+The manifest declares every measurement ID. Raw scores, exact command/PID/exit,
+whole-file hashes, stable resource/boot/creation/write generation, access state,
+provider/Direct traffic and zero image I/O are retained. Telemetry must be ready
+before scoring and cover the enclosing process interval with gaps at most two
+seconds. These enclosing counters include startup/teardown, not just the score.
+The parent rejects missing, duplicated or failed window results. PASS means byte,
+collection and lifecycle checks; it is not a speed acceptance verdict.
+
+`ram-read-reference-owned.json` journals intended definitions before Create.
+Cleanup refuses an existing original resource or changed definition and removes
+only those disposable fixtures. The worker cleans up between variants, and the
+coordinator independently repeats guarded cleanup after confirming owned
+processes stopped. `verify-recover` also uses this journal. Unresolved/faulted
+states fail restoration and preserve evidence. Final resource IDs and shared RAM
+reservation must match the original state. No unrelated disks are formatted or
+removed. Profiling and any scheduling change follow this baseline; this suite
+does not change driver scheduling.

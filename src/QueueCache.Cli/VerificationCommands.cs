@@ -87,6 +87,11 @@ internal static class VerificationCommands
               cache-map-cost     Resident 4K reads with map polling off, every 2 s, and every 250 ms.
               cache-recall       Read recall off/on: a fitting file read again in a cache full of stale data,
                                  and a hot set across a one-off and a repeated scan larger than the cache.
+              partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
+                                 Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
+              ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
+                                 Owned 2 GiB disks, whole-file byte checks; --budget-mib 2048 and normal priority.
+                                 Requires DiskSpd; reference measurements, not speed acceptance.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.

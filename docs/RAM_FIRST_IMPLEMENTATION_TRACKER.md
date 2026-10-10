@@ -3244,8 +3244,8 @@ restored, and the installed tray application resumed. Branch
 
 | Item | Implementation | Verification |
 |---|---|---|
-| RAM-disk single-reader Q8 scheduling | Planned; profile first, accounting for earlier rejected dedicated-worker experiments. | Existing 26 versus 40–42 GB/s observation is motivation; no new speed-up verified. |
-| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; plan-105 `partial-read-accounting` uses a held unbuffered handle and patterned partial sectors. Lower-read behavior unchanged. | Host ABI/window/runner contracts pass, including rejection of empty and failed worker checks. Windows build and focused VM accounting/byte checks pending. Concurrent ordering remains covered by existing scenarios, not this serialized counter window. |
+| RAM-disk single-reader Q8 scheduling | Plan-106 opt-in RAM read reference runner implemented; profile first, accounting for earlier rejected dedicated-worker experiments. | Existing 26 versus 40–42 GB/s observation is motivation; Reference plan/accounting/ownership/failure-restoration host contracts pass; Windows/VM checks pending, no new speed-up verified. |
+| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; plan-105 `partial-read-accounting` uses a held unbuffered handle and patterned partial sectors. Lower-read behavior unchanged. | Host ABI/window/runner contracts pass, including rejection of empty and failed worker checks. Windows Debug/Release CI and plan-105 VM run `20261010-020527-79bbee34e94c47faa71b8b062523627a` pass all ten byte/accounting checks on 0.4.495.1. Original settings restored, no errors/pending bytes. Concurrent ordering remains covered by existing scenarios, not this serialized counter window. |
 | ReFS caller-path backoff | Planned reason attribution and controlled shorter-backoff experiment, preserving exclusive foreground ownership. | ReFS/NTFS reference and ordering/flush/capacity checks pending. |
 | Background priority limits | Planned CPU/I/O/memory and copy-worker wait attribution. | Independent priority controls pending; no boost justified. |
 
@@ -3253,3 +3253,18 @@ The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance a
 keeps implementation separate from verification. The initial draft PR contains
 this plan; the historical Q8 write gap remains unproved. Closed/accepted items
 remain closed, and the 72-case measurement contract is unchanged.
+
+
+Partial-read evidence: exact run `QueueCache-Verify-20261010-020527-79bbee34e94c47faa71b8b062523627a`
+completed in `C:\QueueCache-Results\PartialRead495-20261010`, plan 105,
+commit `6e4d192f7ef81e251e0b862c8a7437c1605c09dc`. Loaded filter SHA-256
+`B9C1AF5DB37000AF905B4A9DCE68BF2AD94796F062F79A322A6BBDBB25585233`,
+provider `804AD65A31B26091841D77D9020A16A8B01B0FC52E66813695675DF331B8697D`.
+Both timing modes recorded one 1 MiB staged attempt containing 131,584 already
+cached bytes; full misses staged 1 MiB with zero overlap, and crossing/full/
+overwritten hits staged nothing. Every byte matched. FINISHED/status/summary/
+results/log, all ten raw observation boundaries and independent restoration
+were inspected; original enabled 2 GiB Fast/Idle settings restored with timing
+off, zero dirty/in-flight bytes and no driver error. This validates accounting,
+not a missing-span speed-up. The shaped overlap is 12.55% of the lower traffic;
+real random/mixed windows are still needed before changing lower-read behavior.

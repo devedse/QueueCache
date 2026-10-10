@@ -46,12 +46,53 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 105, "plan 105 adds focused partial-read accounting without changing performance matrices");
+        Check(VerificationPlan.Version == 106, "plan 106 adds RAM read references without changing performance matrices");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
               "partial-read accounting is an explicit maintained scenario, excluded from full");
         VerificationPlan.Validate(options with { Suite = "partial-read-accounting", DiskSpd = null });
+        var references = RamReadReferencePlan.Cases(3);
+        Check(references.Count == 36 && references.Select(c => c.Id).Distinct().Count() == 36 &&
+              references.First().Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct &&
+              references.First(c => c.Repeat == 2).Access == QueueCache.Operations.ManagedDisks.RamAccess.Standard,
+              "RAM references alternate access and shape order with immutable unique windows");
+        Check(references.Where(c => c.BlockKiB == 1024 && c.QueueDepth * c.Threads == 8).Count() == 12 &&
+              references.Count(c => c.BlockKiB == 4) == 18,
+              "RAM references preserve aggregate large queue depth and separate small-read controls");
+        Check(RamReadReferencePlan.Arguments(references[0], 10).Contains("-W0") &&
+              RamReadReferencePlan.Arguments(references[0], 10).Contains("-Rxml") &&
+              !RamReadReferencePlan.Arguments(references[0], 10).Any(a => a.StartsWith("-c")),
+              "RAM reference scores do not recreate files or hide preparation inside warm-up");
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", DiskSpd = null, BudgetMiB = 2048 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", BudgetMiB = 1024 }));
+        Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "ram-read-reference"),
+              "RAM read references remain opt-in");
+        var referenceChecks = references.Select(c => new QueueCache.Operations.CheckResult(c.Id, "PASS", "fixture")).ToArray();
+        RamReadReferenceEvidence.ValidateChecks(references, referenceChecks);
+        Reject(() => RamReadReferenceEvidence.ValidateChecks(references, referenceChecks[..^1]));
+        Reject(() => RamReadReferenceEvidence.ValidateChecks(references, [.. referenceChecks[..^1], referenceChecks[0]]));
+        Reject(() => RamReadReferenceEvidence.ValidateChecks(references, [.. referenceChecks[..^1], referenceChecks[^1] with { Result = "FAIL" }]));
+        var resource = Guid.NewGuid(); var boot = Guid.NewGuid(); var sampleTime = DateTimeOffset.UtcNow;
+        var direct = new QueueCache.Management.RamDirectState(QueueCache.Management.RamDirectAccess.Reads | QueueCache.Management.RamDirectAccess.Writes,
+            QueueCache.Management.RamDirectReason.None, 0, resource, 0, 2UL << 30, 0, 0, 0, 0, 0, "fixture");
+        var referenceBefore = new RamReadReferenceBoundary(sampleTime, resource, boot, 1, 5,
+            QueueCache.Operations.ManagedDisks.ManagedDiskState.Ready, false, false, direct, 0, 0, 0, null);
+        var referenceAfter = referenceBefore with { Utc = sampleTime.AddSeconds(1), Direct = direct with { ReadRequests = 64, ReadBytes = 64UL << 20 } };
+        var referenceScore = new DiskSpdScore(64L << 20, 64, 1, 64, 64, .1, null, .1, .1);
+        void ValidateReference(RamReadReferenceBoundary after, DiskSpdScore score) =>
+            RamReadReferenceEvidence.Validate(references[0], [referenceBefore, after], referenceBefore, after, score,
+                sampleTime.AddMilliseconds(100), sampleTime.AddMilliseconds(900));
+        ValidateReference(referenceAfter, referenceScore);
+        Reject(() => ValidateReference(referenceAfter with { WriteGeneration = 6 }, referenceScore));
+        Reject(() => ValidateReference(referenceAfter with { ImageReadAttempts = 1 }, referenceScore));
+        Reject(() => ValidateReference(referenceAfter with { Direct = direct }, referenceScore));
+        Reject(() => ValidateReference(referenceAfter, referenceScore with { Bytes = 0, Operations = 0 }));
+        var ownedDefinition = QueueCache.Operations.ManagedDisks.ManagedDiskDefinition.New(QueueCache.Operations.ManagedDisks.ManagedDiskMode.EphemeralRam)
+            with { CapacityBytes = 2UL << 30, Label = "QC-ReadRef-fixture" };
+        RamReadReferenceEvidence.ValidateOwnedDefinition(ownedDefinition, ownedDefinition, []);
+        Reject(() => RamReadReferenceEvidence.ValidateOwnedDefinition(ownedDefinition, ownedDefinition with { Label = "another disk" }, []));
+        Reject(() => RamReadReferenceEvidence.ValidateOwnedDefinition(ownedDefinition, ownedDefinition, [ownedDefinition.ResourceId]));
         var stagedBefore = new QueueCache.Management.CacheStagedReads(10, 4096, 4, 512);
         var stagedAfter = new QueueCache.Management.CacheStagedReads(12, 12288, 5, 1536);
         Check(stagedAfter.Since(stagedBefore) == new QueueCache.Management.CacheStagedReads(2, 8192, 1, 1024),
@@ -1548,6 +1589,20 @@ internal static class VerificationRunnerTests
                         "partial accounting failures retain completion and independent restoration evidence");
                     OwnedProcess.EnsureStopped(directory);
                 }
+                foreach (var mode in new[] { "ram-reference-empty", "ram-reference-failed" })
+                {
+                    var parent = store.PathFor(mode);
+                    var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                    var exit = await runner.RunAsync(new("Q:", Suite: "ram-read-reference", Output: parent,
+                        DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), new InlineProgress(_ => { }), CancellationToken.None);
+                    var directory = Directory.GetDirectories(parent).Single();
+                    using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                    Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
+                        File.Exists(Path.Combine(directory, "ram-read-reference-owned.json.cleanup-requested")) &&
+                        File.Exists(Path.Combine(directory, "restored.json")),
+                        "RAM reference failure invokes independent owned fixture and cache restoration: " + mode);
+                    OwnedProcess.EnsureStopped(directory);
+                }
             }
             finally { hostProcess.PriorityClass = originalPriority; }
             foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
@@ -1643,6 +1698,14 @@ internal static class VerificationRunnerTests
         if (job.Operation == "concurrent-sectors")
             reply = mode == "concurrent-empty-checks" ? Array.Empty<QueueCache.Operations.CheckResult>() :
                 new QueueCache.Operations.CheckResult[] { new("fixture-neighbors", "FAIL", "fixture byte mismatch") };
+        if (job.Operation == "ram-read-reference")
+        {
+            RunStorage.AtomicJson(job.OraclePath!, new { FixtureOwnership = true });
+            reply = mode == "ram-reference-empty" ? Array.Empty<QueueCache.Operations.CheckResult>() :
+                new QueueCache.Operations.CheckResult[] { new("fixture-reference", "FAIL", "fixture accounting mismatch") };
+        }
+        if (job.Operation == "ram-read-cleanup")
+            File.WriteAllText(job.OraclePath! + ".cleanup-requested", "owned cleanup requested");
         if (job.Operation == "partial-read-accounting")
             reply = mode == "partial-empty-checks" ? Array.Empty<QueueCache.Operations.CheckResult>() :
                 new QueueCache.Operations.CheckResult[] { new("fixture-partial", "FAIL", "fixture accounting mismatch") };

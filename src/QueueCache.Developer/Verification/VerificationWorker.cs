@@ -17,7 +17,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string[]? ImageOraclePaths = null, bool AcceptsLabErrors = false,
     string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
-    string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null);
+    string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
+    string? DiskSpd = null, int ReferenceRepeats = 3);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null);
@@ -819,6 +820,15 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, partialChecks);
                 ReportFailures(partialChecks, Console.Error);
                 return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "ram-read-reference":
+                var ramChecks = await RamReadReferenceScenarios.RunAsync(device, job.DiskSpd!, job.ReferenceRepeats,
+                    job.Seconds, job.OraclePath!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, ramChecks);
+                ReportFailures(ramChecks, Console.Error);
+                return ramChecks.Count == RamReadReferencePlan.Cases(job.ReferenceRepeats).Count && ramChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "ram-read-cleanup":
+                await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
+                return 0;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);
