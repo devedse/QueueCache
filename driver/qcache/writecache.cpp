@@ -179,6 +179,10 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->ReadRecall = static_cast<ULONG>(InterlockedCompareExchange(&c->ReadRecall, 0, 0));
     output->RecalledFills = InterlockedCompareExchange64(&c->RecalledFills, 0, 0);
     output->RecallDenied = InterlockedCompareExchange64(&c->RecallDenied, 0, 0);
+    output->StagedReadRequests = InterlockedCompareExchange64(&c->StagedReadRequests, 0, 0);
+    output->StagedReadBytes = InterlockedCompareExchange64(&c->StagedReadBytes, 0, 0);
+    output->MixedStagedReads = InterlockedCompareExchange64(&c->MixedStagedReads, 0, 0);
+    output->StagedReadCachedBytes = InterlockedCompareExchange64(&c->StagedReadCachedBytes, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -725,7 +729,7 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService)
 // its read runs, or map one page twice. Returns null (read nothing) when the
 // buffer or request cannot be allocated; the caller then forwards the original
 // request and keeps nothing. *status: the lower read's result.
-static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, bool allowReadService, NTSTATUS* status)
+static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, ULONGLONG cachedBytes, bool allowReadService, NTSTATUS* status)
 {
     if (length > QcStagedReadMaxBytes)
         return nullptr;
@@ -743,6 +747,15 @@ static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, bool allowR
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
+    // Record attempted traffic only after both allocations succeeded. These live
+    // lifetime counters are independent of opt-in timing and lower completion.
+    InterlockedIncrement64(&c->StagedReadRequests);
+    InterlockedAdd64(&c->StagedReadBytes, length);
+    if (cachedBytes)
+    {
+        InterlockedIncrement64(&c->MixedStagedReads);
+        InterlockedAdd64(&c->StagedReadCachedBytes, cachedBytes);
+    }
     QcCacheRecordLowerAttempt(c, IRP_MJ_READ);
     CallLowerAndWait(c, irp, IRP_MJ_READ, &completed, allowReadService);
     *status = irp->IoStatus.Status;
@@ -2351,13 +2364,28 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     PUCHAR staging = nullptr;
     const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
+    ULONGLONG stagedCachedBytes = 0;
+    if (keepMiss && length <= QcStagedReadMaxBytes)
+    {
+        // Only staging candidates scan for accounting. Fully resident reads and
+        // writes keep their existing hot paths. Mutex and the pins above protect
+        // this pre-submission snapshot; Filling bytes are not known yet.
+        for (auto block = firstBlock; block < end; block += Chunk)
+        {
+            const auto index = FindSlot(c, block);
+            if (index == NoSlot || c->Slots[index].Filling) continue;
+            const auto from = max(start, block), to = min(end, block + Chunk);
+            stagedCachedBytes += QcValidBytes(c->Slots[index].ValidSectors &
+                QcSectorMask(static_cast<ULONG>(from - block), static_cast<ULONG>(to - from)));
+        }
+    }
     if (!full)
     {
         c->Performance.Phase = QcLowerReadPhase;
         Publish(c);
         ReleaseCache(c);
         if (keepMiss)
-            staging = StagedRead(c, start, length, allowReadService, &status);
+            staging = StagedRead(c, start, length, stagedCachedBytes, allowReadService, &status);
         if (staging)
         {
             if (NT_SUCCESS(status))

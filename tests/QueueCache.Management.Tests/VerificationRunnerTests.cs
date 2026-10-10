@@ -46,7 +46,19 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 104, "plan 104 adds cache-recall and exact whole-file warm passes");
+        Check(VerificationPlan.Version == 105, "plan 105 adds focused partial-read accounting without changing performance matrices");
+        Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
+              VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
+              !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
+              "partial-read accounting is an explicit maintained scenario, excluded from full");
+        VerificationPlan.Validate(options with { Suite = "partial-read-accounting", DiskSpd = null });
+        var stagedBefore = new QueueCache.Management.CacheStagedReads(10, 4096, 4, 512);
+        var stagedAfter = new QueueCache.Management.CacheStagedReads(12, 12288, 5, 1536);
+        Check(stagedAfter.Since(stagedBefore) == new QueueCache.Management.CacheStagedReads(2, 8192, 1, 1024),
+              "staged traffic is derived from quiescent window counters");
+        Reject(() => stagedBefore.Since(stagedAfter));
+        Reject(() => new QueueCache.Management.CacheStagedReads(11, 8192, 8, 512).Since(stagedBefore));
+        Reject(() => new QueueCache.Management.CacheStagedReads(11, 8192, 5, 9000).Since(stagedBefore));
         Check(VerificationPlan.ManagedSectorSizes.SequenceEqual(new uint[] { 512, 4096 }), "provider and product suites share the required 512/4Kn fixture contract");
         Check(VerificationPlan.Integrity(options with { Suite = "managed-provider" }).Single().Operation == "managed-provider" &&
             !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "managed-provider"), "native provider proof is opt-in, never a broad-suite side effect");
@@ -1520,6 +1532,22 @@ internal static class VerificationRunnerTests
                         File.Exists(Path.Combine(directory, "FINISHED.txt")), "concurrency failure stops preparation and restores ownership");
                     OwnedProcess.EnsureStopped(directory);
                 }
+                foreach (var mode in new[] { "partial-empty-checks", "partial-failed-checks" })
+                {
+                    var parent = store.PathFor(mode);
+                    var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
+                    var exit = await runner.RunAsync(new("Q:", Suite: "partial-read-accounting", Output: parent,
+                        BudgetMiB: 256), new InlineProgress(_ => { }), CancellationToken.None);
+                    var directory = Directory.GetDirectories(parent).Single();
+                    using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
+                    Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
+                        state.RootElement.GetProperty("Expected").GetInt32() == 1 &&
+                        state.RootElement.GetProperty("Collected").GetInt32() == 1,
+                        "partial accounting rejects empty or failed byte/counter evidence: " + mode);
+                    Check(File.Exists(Path.Combine(directory, "restored.json")) && File.Exists(Path.Combine(directory, "FINISHED.txt")),
+                        "partial accounting failures retain completion and independent restoration evidence");
+                    OwnedProcess.EnsureStopped(directory);
+                }
             }
             finally { hostProcess.PriorityClass = originalPriority; }
             foreach (var mode in new[] { "removal-success", "removal-unobserved", "removal-veto", "removal-stale", "removal-cancel", "removal-worker-failure", "removal-presence-failure", "removal-missing-preparation", "removal-windows-success", "removal-windows-missing-before" })
@@ -1615,6 +1643,9 @@ internal static class VerificationRunnerTests
         if (job.Operation == "concurrent-sectors")
             reply = mode == "concurrent-empty-checks" ? Array.Empty<QueueCache.Operations.CheckResult>() :
                 new QueueCache.Operations.CheckResult[] { new("fixture-neighbors", "FAIL", "fixture byte mismatch") };
+        if (job.Operation == "partial-read-accounting")
+            reply = mode == "partial-empty-checks" ? Array.Empty<QueueCache.Operations.CheckResult>() :
+                new QueueCache.Operations.CheckResult[] { new("fixture-partial", "FAIL", "fixture accounting mismatch") };
         if (job.Operation is "disk-removal-eject" or "disk-removal-eject-windows")
             reply = new QueueCache.Operations.DiskEjectResult(new(99999, "fixture-only", "fixture", ["Q:"], true, null),
                 mode == "removal-veto" ? 23u : 0, mode == "removal-veto" ? 8u : 0, mode == "removal-veto" ? "fixture-device" : "",

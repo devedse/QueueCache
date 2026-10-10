@@ -467,9 +467,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         return null;
                     }
                     var reply = await Worker(Job(test.Operation) with { WorkDirectory = workDirectory,
+                        BudgetMiB = test.Operation == "partial-read-accounting" ? options.BudgetMiB : 1024,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token, 900);
-                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "ordering-faults" or "app-write-profile" or
+                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ordering-faults" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");

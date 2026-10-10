@@ -813,6 +813,12 @@ public static class VerificationWorker
                 var sectorChecks = await ConcurrentSectorOracle.Run(target, device, job.WorkDirectory!, job.Reply + ".evidence");
                 RunStorage.AtomicJson(job.Reply, sectorChecks);
                 return sectorChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "partial-read-accounting":
+                var partialChecks = PartialReadScenarios.Run(target, device, job.WorkDirectory!, job.BudgetMiB,
+                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation));
+                RunStorage.AtomicJson(job.Reply, partialChecks);
+                ReportFailures(partialChecks, Console.Error);
+                return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);

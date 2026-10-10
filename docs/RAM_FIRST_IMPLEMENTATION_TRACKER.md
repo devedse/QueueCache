@@ -3245,7 +3245,7 @@ restored, and the installed tray application resumed. Branch
 | Item | Implementation | Verification |
 |---|---|---|
 | RAM-disk single-reader Q8 scheduling | Planned; profile first, accounting for earlier rejected dedicated-worker experiments. | Existing 26 versus 40–42 GB/s observation is motivation; no new speed-up verified. |
-| Partly cached read diagnostics | Planned after merge; appended counters before conditional missing-span reads. | Focused accounting/byte evidence pending. |
+| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; plan-105 `partial-read-accounting` uses a held unbuffered handle and patterned partial sectors. Lower-read behavior unchanged. | Host ABI/window/runner contracts pass, including rejection of empty and failed worker checks. Windows build and focused VM accounting/byte checks pending. Concurrent ordering remains covered by existing scenarios, not this serialized counter window. |
 | ReFS caller-path backoff | Planned reason attribution and controlled shorter-backoff experiment, preserving exclusive foreground ownership. | ReFS/NTFS reference and ordering/flush/capacity checks pending. |
 | Background priority limits | Planned CPU/I/O/memory and copy-worker wait attribution. | Independent priority controls pending; no boost justified. |
 

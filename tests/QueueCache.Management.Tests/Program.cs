@@ -521,6 +521,24 @@ for (var i = 0; i < 3; i++)
     BinaryPrimitives.WriteUInt64LittleEndian(recallBytes.AsSpan(CacheDiagnostics.CopyFlagsWireSize + i * 8), (ulong)(1 + 50 * i));
 var recallDiagnostics = CacheDiagnostics.Decode(recallBytes);
 Check(recallDiagnostics.ReadRecall == new CacheReadRecall(1, 51, 101) && recallDiagnostics.CopyFlags == 3, "V20 read recall and V19 prefix");
+Check(recallDiagnostics.StagedReads is null, "V20 staged-read accounting is unavailable, not zero");
+var stagedReadBytes = new byte[CacheDiagnostics.StagedReadWireSize];
+recallBytes.CopyTo(stagedReadBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(stagedReadBytes, 21);
+BinaryPrimitives.WriteUInt32LittleEndian(stagedReadBytes.AsSpan(4), CacheDiagnostics.StagedReadWireSize);
+ulong[] stagedValues = [17, 9UL << 20, 11, (3UL << 20) + 512];
+for (var i = 0; i < stagedValues.Length; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(stagedReadBytes.AsSpan(CacheDiagnostics.ReadRecallWireSize + 8 * i), stagedValues[i]);
+var stagedDiagnostics = CacheDiagnostics.Decode(stagedReadBytes);
+Check(stagedDiagnostics.StagedReads == new CacheStagedReads(17, 9UL << 20, 11, (3UL << 20) + 512) &&
+      stagedDiagnostics.ReadRecall == recallDiagnostics.ReadRecall, "V21 staged-read offsets preserve V20 prefix");
+Reject(() => CacheDiagnostics.Decode(stagedReadBytes.AsSpan(0, CacheDiagnostics.StagedReadWireSize - 1)), "short V21 staged-read diagnostics");
+BinaryPrimitives.WriteUInt32LittleEndian(stagedReadBytes, 20);
+Reject(() => CacheDiagnostics.Decode(stagedReadBytes), "V21 size with V20 version rejected");
+BinaryPrimitives.WriteUInt32LittleEndian(stagedReadBytes, 21);
+BinaryPrimitives.WriteUInt64LittleEndian(stagedReadBytes.AsSpan(CacheDiagnostics.ReadRecallWireSize + 24), 10UL << 20);
+Check(CacheDiagnostics.Decode(stagedReadBytes).StagedReads?.CachedBytes == 10UL << 20,
+    "live independently atomic fields may straddle an update; relational checks belong at quiescent boundaries");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

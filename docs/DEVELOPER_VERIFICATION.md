@@ -51,6 +51,9 @@ of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
+Plan 105 adds the opt-in `partial-read-accounting` suite described below; it does
+not change `full` or the 72-case write-performance matrix.
+
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
 reads and writes straight from the provider's memory). `ram-disk` runs once with Standard
 and once with Direct access; `image-in-ram` runs its two variants with Direct and one with
@@ -1543,3 +1546,41 @@ qcache developer verify Q: --suite cache-recall --budget-mib 2048 --repeats 3 --
   disk on the plan-103 4 GiB `cache-map-cost` run, which correctly stopped with
   "the first sequential warm pass did not read the entire fitting file". The
   separate three-second zero-miss residency proof is unchanged.
+
+## Partly cached read accounting (plan 105)
+
+```powershell
+qcache developer verify Q: --suite partial-read-accounting --budget-mib 256 --output C:\QueueCache-Results
+```
+
+This opt-in integrity suite requires diagnostics V21, a clean non-OS NTFS target,
+512-byte logical sectors and clusters aligned to 4 KiB. It creates two owned
+1 MiB files, testing detailed timing off and on. It writes one sector of every
+4 KiB block plus a crossing two-sector overwrite while the cache is Fast Deferred.
+The whole-file partial read must return the exact current bytes and record
+1 MiB of staged lower reads, of which 131,584 bytes were already valid in RAM.
+The crossing fully cached read must stage nothing. After an explicit flush and
+`drop-clean`, the full miss must stage 1 MiB with no cached overlap; the subsequent
+full hit and full-overwrite read must stage nothing. All ten checks must pass.
+Filesystem splitting may change the number of attempts, but not these byte
+totals. Unsupported shapes fail with recorded boundaries rather than weakening
+the accounting contract. This serialized test does not force concurrent writes;
+use `concurrent-sectors`, `parallel-copies` and `paging-coherence` for those paths.
+
+The worker holds its unbuffered file handle across each before/read/after boundary
+and records `<worker reply>.<observation ID>.json` with absolute counters, deltas
+and a SHA-256 of the bytes. Normal runner preflight, owned-process handling,
+independent restoration and successful workload cleanup apply. No DiskSpd is
+needed; this is an accounting/byte oracle, not a speed acceptance result.
+
+Diagnostics V21 appends 32 bytes to the unchanged 976-byte V20 prefix. Its
+`StagedReads` fields are lifetime attempted request count, attempted lower bytes,
+mixed request count and cached-sector overlap bytes pinned before submission.
+They increment only after staging-buffer/IRP allocation succeeds and immediately
+before the lower read, including lower failures. They exclude original/paging
+fallbacks, allocation failures and fully cached reads, and work with timing off.
+Older responses decode this group as null, never zero. Each field is atomic;
+live snapshots can straddle an update. Relational accounting is enforced only
+between quiescent boundaries with stable driver identity/health. Exercise raw
+diagnostics also retain these fields, but their enclosing windows include
+startup/warm-up and must not be treated as exact DiskSpd score windows.

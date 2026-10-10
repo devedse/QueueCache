@@ -134,6 +134,10 @@ struct QC_DIAGNOSTICS
     // V20: QcLabReadRecall in effect (readrecall.h), read misses kept as recent because their
     // block was used more recently than the oldest used block, and history matches not kept.
     ULONGLONG ReadRecall, RecalledFills, RecallDenied;
+    // V21: submitted driver-owned whole-range reads. CachedBytes measures known
+    // sectors pinned before submission, including dirty data later overlaid.
+    // Attempts include lower failures; allocation failures submit nothing.
+    ULONGLONG StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -154,7 +158,9 @@ static constexpr ULONG QcDiagnosticsV16Size = 880;
 static constexpr ULONG QcDiagnosticsV17Size = 896;
 static constexpr ULONG QcDiagnosticsV18Size = 944;
 static constexpr ULONG QcDiagnosticsV19Size = 952;
-static_assert(sizeof(QC_DIAGNOSTICS) == 976);
+static constexpr ULONG QcDiagnosticsV20Size = 976;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1008);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadRecall) == QcDiagnosticsV19Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyFlags) == QcDiagnosticsV18Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LayoutMeasurements) == QcDiagnosticsV17Size);
@@ -412,6 +418,7 @@ struct QC_CACHE
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
+    volatile LONG64 StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
