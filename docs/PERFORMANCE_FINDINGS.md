@@ -633,6 +633,19 @@ Only empty staging directories are removed; unexpected evidence is preserved.
 Host contracts cover deep paths, cross-directory refusal and interrupted finalization.
 This is a verification-tool compatibility fix, not a driver speedup.
 
+The separate priority/affinity campaign
+`QueueCache-Campaign-20261010-181219-edcb92e1d3bd4a49877854b8675108c0`
+stopped before benchmarking: the first sector policy case did not observe a clean
+admission boundary after preparing a new NTFS file. It completed 2/6 phases in
+47.44 s and restored cleanly. The writer/file was not attributed. Source review
+found that the test drained only the cache after the setup write, allowing delayed
+filesystem setup writes to arrive afterwards; this is a plausible preparation race.
+Preparation now explicitly flushes the owned file before the existing cache
+flush/drop-clean boundary; the unchanged guard also reports dirty/in-flight/error
+values on failure. The same setup boundary is used for the observed replacement
+case. This is a scoped test-preparation fix; the failed campaign contributes no
+performance samples and the guard is not relaxed.
+
 ### Final campaign restoration gap found by controller smoke
 
 The first plan-115 controller smoke completed both test phases in about 50 s,
