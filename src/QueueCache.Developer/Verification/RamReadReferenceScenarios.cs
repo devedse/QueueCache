@@ -16,7 +16,7 @@ public sealed record RamReadReferenceOwnership(ulong OriginalReservedBytes, Guid
 internal static class RamReadReferenceScenarios
 {
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(CacheDevice host, string diskspd, int repeats,
-        int seconds, string ownership, string evidence)
+        int seconds, string ownership, string evidence, bool includeQueue = false)
     {
         if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("RAM read references require normal CPU priority and a normal I/O/memory-priority launch environment.");
@@ -25,10 +25,10 @@ internal static class RamReadReferenceScenarios
             (await service.ListAsync()).Select(r => r.ResourceId).ToArray(), []);
         if (File.Exists(ownership)) throw new IOException("RAM reference ownership journal already exists.");
         RunStorage.AtomicJson(ownership, journal);
-        var plan = RamReadReferencePlan.Cases(repeats);
+        var plan = RamReadReferencePlan.Cases(repeats, includeQueue);
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
-        foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access }))
+        foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access, s.RamReadQueueMode }))
         {
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam) with
             {
@@ -44,6 +44,13 @@ internal static class RamReadReferenceScenarios
                 if (current.Runtime?.State != ManagedDiskState.Ready || current.VolumePath is null || current.PhysicalDiskNumber is null)
                     throw new IOException("Owned RAM reference did not become Ready.");
                 var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
+                if (includeQueue)
+                {
+                    using var fixture = CacheDevice.OpenVolumeName(current.VolumePath);
+                    if (fixture.GetDiagnostics().RamReadQueue is null)
+                        throw new IOException("RAM read queue comparison requires V22 scheduling diagnostics.");
+                    fixture.Control(WriteCacheAction.LabRamReadQueue, value: (ulong)group.Key.RamReadQueueMode);
+                }
                 var file = definition.PreferredLetter + @":\ram-read-reference.dat";
                 var expectedHash = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
                 foreach (var scenario in group)
@@ -113,7 +120,8 @@ internal static class RamReadReferenceScenarios
                         return new(DateTimeOffset.UtcNow, record.ResourceId, runtime.BootEpoch, runtime.CreationGeneration,
                             runtime.WriteGeneration, runtime.State, device.GetWriteCacheState().Enabled,
                             (native.Flags & RamDiskFlags.Timing) != 0, device.GetRamDirectState(), statistics.ReadRequests,
-                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes);
+                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes,
+                            device.GetDiagnostics().RamReadQueue);
                     }
                     void Observe()
                     {
@@ -126,7 +134,8 @@ internal static class RamReadReferenceScenarios
                                 ?? throw new IOException("RAM reference provider statistics are unavailable.");
                             var enabled = sampledDevice.GetWriteCacheState().Enabled;
                             var direct = sampledDevice.GetRamDirectState();
-                            var sample = new RamReadReferenceSample(DateTimeOffset.UtcNow, native, statistics, enabled, direct);
+                            var queue = sampledDevice.GetDiagnostics().RamReadQueue;
+                            var sample = new RamReadReferenceSample(DateTimeOffset.UtcNow, native, statistics, enabled, direct, queue);
                             samples.Add(sample);
                             log.WriteLine(JsonSerializer.Serialize(sample)); log.Flush();
                             ready.TrySetResult();
@@ -138,10 +147,10 @@ internal static class RamReadReferenceScenarios
             }
             catch (Exception ex)
             {
-                RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}.failure.json", new { Error = ex.ToString() });
+                RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.failure.json", new { Error = ex.ToString() });
                 throw;
             }
-            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}.cleanup.json"); }
+            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.cleanup.json"); }
         }
         return checks;
     }

@@ -186,5 +186,8 @@ public enum WriteCacheAction : uint
     LabCopyFlags,
     /// <summary>Lab: value 1 (default) = read recall, 0 = the earlier bimodal insertion of read misses.
     /// Changes only which clean data is kept, never what a read returns; clears the recall history.</summary>
-    LabReadRecall
+    LabReadRecall,
+    /// <summary>Lab RAM reads: 0 synchronous (default), 1 shared sleeping queue,
+    /// 2 adaptive queue with the synchronous Q1 path. Ordinary 512 KiB..1 MiB Direct reads only.</summary>
+    LabRamReadQueue
 }

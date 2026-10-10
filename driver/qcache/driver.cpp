@@ -652,6 +652,7 @@ static void RequestWorker(PVOID context)
 #if QCACHE_CACHE_DRIVER
     // Closing stops new caller-thread requests; one already running still owns the cache.
     KeWaitForSingleObject(&ext->DirectIdle, Executive, KernelMode, FALSE, nullptr);
+    QcCacheBlockRamReads(&ext->Cache, true);
     QcCacheWaitPagingReads(&ext->Cache);
     QcCacheBarrier(&ext->Cache, TRUE, QcRemoveBarrier);
 #endif
@@ -1073,6 +1074,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV21Size ? QcDiagnosticsV21Size :
                 outputLength >= QcDiagnosticsV20Size ? QcDiagnosticsV20Size :
                 outputLength >= QcDiagnosticsV19Size ? QcDiagnosticsV19Size :
                 outputLength >= QcDiagnosticsV18Size ? QcDiagnosticsV18Size :
@@ -1101,7 +1103,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV14Size ? 14 : returned == QcDiagnosticsV15Size ? 15 :
                 returned == QcDiagnosticsV16Size ? 16 : returned == QcDiagnosticsV17Size ? 17 :
                 returned == QcDiagnosticsV18Size ? 18 : returned == QcDiagnosticsV19Size ? 19 :
-                returned == QcDiagnosticsV20Size ? 20 : 21;
+                returned == QcDiagnosticsV20Size ? 20 : returned == QcDiagnosticsV21Size ? 21 : 22;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1259,6 +1261,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
     // caller's thread. Declined requests continue on the standard path below.
+    if (stack->MajorFunction == IRP_MJ_READ && ReadNoFence(&ext->Cache.RamReadQueueMode) && ReadNoFence(&ext->RamDirect.Access) &&
+        QcCacheOffloadRamRead(&ext->Cache, &ext->RamDirect, irp))
+        return STATUS_PENDING; // Executor owns IRP, store rundown and the remove lock.
     if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
         ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
     {

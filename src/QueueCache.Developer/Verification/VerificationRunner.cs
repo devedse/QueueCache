@@ -167,7 +167,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         VerificationPlan.Validate(selected);
         layoutGeneration = null;
         layoutMeasurements = null;
-        if ((VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || selected.Suite == "ram-read-reference") && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -233,7 +233,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
             CacheExerciseCases = exercises,
-            RamReadReferenceWindows = options.Suite == "ram-read-reference" ? RamReadReferencePlan.Cases(options.Repeats) : [],
+            RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue") : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
                 ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : CacheExercisePlan.AllTargets(options.BudgetMiB),
             Provenance = VerificationWorker.Provenance(executable),
@@ -471,17 +471,18 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         BudgetMiB = test.Operation == "partial-read-accounting" ? options.BudgetMiB : 1024,
                         DiskSpd = test.Operation == "ram-read-reference" ? options.DiskSpd : null,
                         ReferenceRepeats = options.Repeats,
+                        ReferenceQueue = options.Suite == "ram-read-queue",
                         Seconds = options.DurationSeconds,
                         OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") : null,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
-                        test.Operation == "ram-read-reference" ? options.Repeats * 12 * (options.DurationSeconds + 30) + 300 : 900);
+                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue").Count * (options.DurationSeconds + 30) + 300 : 900);
                     if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     if (test.Operation == "ram-read-reference")
-                        RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.Cases(options.Repeats), caseChecks!);
+                        RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.Cases(options.Repeats, options.Suite == "ram-read-queue"), caseChecks!);
                     return null;
                 });
             if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
@@ -532,7 +533,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
-                    if (options.Suite == "ram-read-reference" && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
+                    if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
                     await Worker(Job("restore") with
                     {

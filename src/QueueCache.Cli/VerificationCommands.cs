@@ -90,6 +90,8 @@ internal static class VerificationCommands
               partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
+              ram-read-queue     Same-build synchronous/adaptive sleeping-queue Direct and Standard controls.
+                                 54 byte-checked windows at three repetitions; requires V22 diagnostics.
                                  Owned 2 GiB disks, whole-file byte checks; --budget-mib 2048 and normal priority.
                                  Requires DiskSpd; reference measurements, not speed acceptance.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.

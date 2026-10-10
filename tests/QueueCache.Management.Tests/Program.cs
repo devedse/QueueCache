@@ -539,6 +539,21 @@ BinaryPrimitives.WriteUInt32LittleEndian(stagedReadBytes, 21);
 BinaryPrimitives.WriteUInt64LittleEndian(stagedReadBytes.AsSpan(CacheDiagnostics.ReadRecallWireSize + 24), 10UL << 20);
 Check(CacheDiagnostics.Decode(stagedReadBytes).StagedReads?.CachedBytes == 10UL << 20,
     "live independently atomic fields may straddle an update; relational checks belong at quiescent boundaries");
+Check(stagedDiagnostics.RamReadQueue is null, "V21 does not synthesize RAM scheduling fields");
+var ramQueueBytes = new byte[CacheDiagnostics.RamReadQueueWireSize];
+stagedReadBytes.CopyTo(ramQueueBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(ramQueueBytes, 22);
+BinaryPrimitives.WriteUInt32LittleEndian(ramQueueBytes.AsSpan(4), CacheDiagnostics.RamReadQueueWireSize);
+ulong[] ramQueueValues = [2, 17, 15, 1, 4, 0, 0];
+for (var i = 0; i < ramQueueValues.Length; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(ramQueueBytes.AsSpan(CacheDiagnostics.StagedReadWireSize + 8 * i), ramQueueValues[i]);
+var ramQueueDiagnostics = CacheDiagnostics.Decode(ramQueueBytes);
+Check(ramQueueDiagnostics.RamReadQueue == new CacheRamReadQueue(2, 17, 15, 1, 4, 0, 0) &&
+      ramQueueDiagnostics.StagedReads == CacheDiagnostics.Decode(stagedReadBytes).StagedReads,
+      "V22 RAM scheduling offsets preserve staged-read and earlier prefixes");
+Reject(() => CacheDiagnostics.Decode(ramQueueBytes.AsSpan(0, CacheDiagnostics.RamReadQueueWireSize - 1)), "short V22 diagnostics");
+BinaryPrimitives.WriteUInt64LittleEndian(ramQueueBytes.AsSpan(CacheDiagnostics.StagedReadWireSize), 3);
+Reject(() => CacheDiagnostics.Decode(ramQueueBytes), "unsupported RAM queue mode");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

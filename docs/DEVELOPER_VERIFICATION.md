@@ -51,7 +51,7 @@ of finished runs before a large matrix.
 
 ## Suites (plan version 91)
 
-Plans 105–108 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
+Plans 105–109 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
 not change `full` or the 72-case write-performance matrix.
 
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
@@ -1663,3 +1663,16 @@ from the sample path; it does not alter RAM-disk scheduling or accept the old
 incomplete run. Host tests reject geometry, access, health, identity and coverage
 failures independently of boundary image-I/O checks. Windows/VM validation of
 this sampler is pending.
+
+
+### Same-build RAM scheduling experiment (plan 109)
+
+`--suite ram-read-queue --budget-mib 2048` adds eighteen adaptive Direct windows
+to the 36-window reference, keeping synchronous Direct and Standard controls.
+It reuses the existing ownership journal, native sampler, byte guard, full
+oracle and independent restoration. The mode is applied only to a newly owned
+RAM fixture and disappears with that fixture; the original anchor and unrelated
+managed disks retain their settings. The manifest declares all 54 immutable
+measurement IDs. V22 diagnostics are required; no missing mode is inferred as
+zero. See [scheduling design and acceptance](RAM_READ_SCHEDULING_20261010.md).
+This opt-in suite is excluded from `full` and changes no existing write matrix.

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 108, "plan 108 samples native RAM state independently of broker inventory and thread-pool scheduling");
+        Check(VerificationPlan.Version == 109, "plan 109 adds an opt-in same-build adaptive RAM queue comparison");
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
               !VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "partial-read-accounting"),
@@ -68,6 +68,26 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", BudgetMiB = 1024 }));
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "ram-read-reference"),
               "RAM read references remain opt-in");
+        var queueReferences = RamReadReferencePlan.Cases(3, includeQueue: true);
+        Check(queueReferences.Count == 54 && queueReferences.Select(c => c.Id).Distinct().Count() == 54 &&
+              queueReferences.Count(c => c.RamReadQueueMode == 2) == 18 &&
+              queueReferences.Where(c => c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Standard).All(c => c.RamReadQueueMode == 0),
+              "queue references retain synchronous and Standard controls and eighteen adaptive windows");
+        Check(VerificationPlan.Integrity(options with { Suite = "ram-read-queue" }).Single().Operation == "ram-read-reference",
+              "RAM queue comparison reuses maintained ownership and restoration orchestration");
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-queue", DiskSpd = null, BudgetMiB = 2048 }));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-queue", BudgetMiB = 1024 }));
+        var queueCase = queueReferences.First(c => c.RamReadQueueMode == 2);
+        var queueBefore = new QueueCache.Management.CacheRamReadQueue(2, 4, 4, 0, 0, 0, 0);
+        var queueAfter = queueBefore with { Queued = 104, Completed = 104 };
+        RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueBefore with { Queued = 54, Completed = 53 }, queueAfter]);
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [null, null]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Mode = 0 }]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Completed = 103 }]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Cancelled = 1 }]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { QueueFull = 1 }]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Fallback = 1 }]));
+        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase with { BlockKiB = 4 }, [queueBefore, queueAfter]));
         var referenceChecks = references.Select(c => new QueueCache.Operations.CheckResult(c.Id, "PASS", "fixture")).ToArray();
         RamReadReferenceEvidence.ValidateChecks(references, referenceChecks);
         Reject(() => RamReadReferenceEvidence.ValidateChecks(references, referenceChecks[..^1]));
@@ -1120,7 +1140,8 @@ internal static class VerificationRunnerTests
             (uint)QueueCache.Management.WriteCacheAction.LabResetFreeOrder == 15 &&
             (uint)QueueCache.Management.WriteCacheAction.LabMeasureLayout == 16 &&
             (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabRamReadQueue == 19, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),
@@ -1615,17 +1636,18 @@ internal static class VerificationRunnerTests
                     OwnedProcess.EnsureStopped(directory);
                 }
                 foreach (var mode in new[] { "ram-reference-empty", "ram-reference-failed" })
+                foreach (var suiteName in new[] { "ram-read-reference", "ram-read-queue" })
                 {
-                    var parent = store.PathFor(mode);
+                    var parent = store.PathFor(mode + "-" + suiteName);
                     var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
-                    var exit = await runner.RunAsync(new("Q:", Suite: "ram-read-reference", Output: parent,
+                    var exit = await runner.RunAsync(new("Q:", Suite: suiteName, Output: parent,
                         DiskSpd: executable, BudgetMiB: 2048, Repeats: 1), new InlineProgress(_ => { }), CancellationToken.None);
                     var directory = Directory.GetDirectories(parent).Single();
                     using var state = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "status.json")));
                     Check(exit != 0 && state.RootElement.GetProperty("Status").GetString() == "INCOMPLETE" &&
                         File.Exists(Path.Combine(directory, "ram-read-reference-owned.json.cleanup-requested")) &&
                         File.Exists(Path.Combine(directory, "restored.json")),
-                        "RAM reference failure invokes independent owned fixture and cache restoration: " + mode);
+                        "RAM reference failure invokes independent owned fixture and cache restoration: " + suiteName + " " + mode);
                     OwnedProcess.EnsureStopped(directory);
                 }
             }

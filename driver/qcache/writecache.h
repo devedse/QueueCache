@@ -2,6 +2,7 @@
 #pragma once
 #include <ntifs.h>
 #include "cachepolicy.h"
+#include "ramdirect.h"
 
 #define IOCTL_QCACHE_STATE_V1 CTL_CODE(0x8844UL, 0xD10UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_QCACHE_CONTROL_V1 CTL_CODE(0x8844UL, 0xD11UL, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
@@ -138,6 +139,9 @@ struct QC_DIAGNOSTICS
     // sectors pinned before submission, including dirty data later overlaid.
     // Attempts include lower failures; allocation failures submit nothing.
     ULONGLONG StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
+    // V22: runtime-only RAM read scheduling experiment (default 0, synchronous).
+    ULONGLONG RamReadQueueMode, RamReadQueued, RamReadCompleted, RamReadCancelled;
+    ULONGLONG RamReadInline, RamReadQueueFull, RamReadFallback;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -159,7 +163,9 @@ static constexpr ULONG QcDiagnosticsV17Size = 896;
 static constexpr ULONG QcDiagnosticsV18Size = 944;
 static constexpr ULONG QcDiagnosticsV19Size = 952;
 static constexpr ULONG QcDiagnosticsV20Size = 976;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1008);
+static constexpr ULONG QcDiagnosticsV21Size = 1008;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1064);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadRecall) == QcDiagnosticsV19Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyFlags) == QcDiagnosticsV18Size);
@@ -270,7 +276,11 @@ enum : ULONG
     QcLabCopyFlags,
     // Lab: Value 1 (default) = read recall (readrecall.h), 0 = the earlier bimodal insertion.
     // Changes only where a read miss enters the clean list; clears the history. Runtime only.
-    QcLabReadRecall
+    QcLabReadRecall,
+    // Lab RAM reads: 0 synchronous (default); 1 shared sleeping queue;
+    // 2 adaptive queue, retaining synchronous Q1 after 16 isolated completions.
+    // Values 1/2 apply only to ordinary 512 KiB..1 MiB Direct reads. Runtime only.
+    QcLabRamReadQueue
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -311,6 +321,8 @@ struct QC_PAGING_READ
     ULONGLONG Sequence;
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
+    BOOLEAN RamRead;
+    QC_RAM_READ Ram;
     PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER
@@ -423,12 +435,18 @@ struct QC_CACHE
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
-    // PagingStop. Only the request worker inserts; only ReadThreads execute.
+    // PagingStop. Cache requests enter from the request worker; experimental
+    // RAM Direct reads enter from dispatch. Only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
     // paging thread waits only for Mutex and lower completion, never the worker.
     KSPIN_LOCK PagingLock;
     QC_PAGING_READ PagingReads[QcPagingReadSlots];
     ULONG PagingQueued;
+    ULONG RamReadOutstanding, RamReadInlineStreak, RamReadProbe; // PagingLock.
+    BOOLEAN RamReadBlocked; // PagingLock: a control/lifecycle wait closes queue admission.
+    volatile LONG RamReadQueueMode;
+    volatile LONG64 RamReadQueued, RamReadCompleted, RamReadCancelled;
+    volatile LONG64 RamReadInline, RamReadQueueFull, RamReadFallback;
     ULONGLONG PagingSequence;
     BOOLEAN PagingStop;
     KEVENT PagingWork, PagingDone;
@@ -505,6 +523,8 @@ bool QcCacheTryCallerPath(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTA
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 // Request worker only. True: an offloaded-read thread now owns and will complete irp.
 bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
+bool QcCacheOffloadRamRead(QC_CACHE* cache, QC_RAM_BINDING* binding, PIRP irp);
+void QcCacheBlockRamReads(QC_CACHE* cache, bool blocked);
 bool QcCachePagingReadsOutstanding(QC_CACHE* cache);
 void QcCacheWaitPagingReads(QC_CACHE* cache);
 // *transferred: the paging thread owns irp; the caller must not complete it.

@@ -18,7 +18,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
-    string? DiskSpd = null, int ReferenceRepeats = 3);
+    string? DiskSpd = null, int ReferenceRepeats = 3, bool ReferenceQueue = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null);
@@ -822,10 +822,10 @@ public static class VerificationWorker
                 return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ram-read-reference":
                 var ramChecks = await RamReadReferenceScenarios.RunAsync(device, job.DiskSpd!, job.ReferenceRepeats,
-                    job.Seconds, job.OraclePath!, job.Reply);
+                    job.Seconds, job.OraclePath!, job.Reply, job.ReferenceQueue);
                 RunStorage.AtomicJson(job.Reply, ramChecks);
                 ReportFailures(ramChecks, Console.Error);
-                return ramChecks.Count == RamReadReferencePlan.Cases(job.ReferenceRepeats).Count && ramChecks.All(c => c.Result == "PASS") ? 0 : 1;
+                return ramChecks.Count == RamReadReferencePlan.Cases(job.ReferenceRepeats, job.ReferenceQueue).Count && ramChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ram-read-cleanup":
                 await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
                 return 0;

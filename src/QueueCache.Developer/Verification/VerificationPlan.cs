@@ -31,7 +31,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 108;
+    public const int Version = 109;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -74,6 +75,7 @@ public static class VerificationPlan
         "cache-recall",
         "partial-read-accounting",
         "ram-read-reference",
+        "ram-read-queue",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -136,7 +138,7 @@ public static class VerificationPlan
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
-        "ram-read-reference" => [new("ram-read-reference", "ram-read-reference")],
+        "ram-read-reference" or "ram-read-queue" => [new("ram-read-reference", "ram-read-reference")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
         "pressure" => [new("pressure-integrity", "pressure")],
@@ -429,9 +431,9 @@ public static class VerificationPlan
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite == "ram-read-reference" && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
-            throw new ArgumentException("ram-read-reference requires --budget-mib 2048 for its owned 2 GiB disks and 1 GiB files.");
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision" or "ram-read-reference") && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
+        if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
+            throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

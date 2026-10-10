@@ -70,8 +70,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int CopyFlagsWireSize = 952;
     public const int ReadRecallWireSize = 976;
     public const int StagedReadWireSize = 1008;
+    public const int RamReadQueueWireSize = 1064;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = StagedReadWireSize;
+    public const int CurrentWireSize = RamReadQueueWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -109,6 +110,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V21: driver-owned lower-read attempts and bytes already known in RAM before submission;
     /// null on older drivers. Live counters are individually atomic, not a transactional snapshot.</summary>
     public CacheStagedReads? StagedReads { get; init; }
+    /// <summary>V22: opt-in shared sleeping RAM read queue and lifetime counters; null on older drivers.</summary>
+    public CacheRamReadQueue? RamReadQueue { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -134,6 +137,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CopyFlagsWireSize => 19u,
             ReadRecallWireSize => 20u,
             StagedReadWireSize => 21u,
+            RamReadQueueWireSize => 22u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -285,6 +289,16 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadRecallWireSize + 16)..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadRecallWireSize + 24)..]))
             : null;
+        var ramReadQueue = bytes.Length >= RamReadQueueWireSize
+            ? new CacheRamReadQueue(BinaryPrimitives.ReadUInt64LittleEndian(bytes[StagedReadWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 24)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 32)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 40)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 48)..]))
+            : null;
+        if (ramReadQueue?.Mode > 2) throw new InvalidDataException("Invalid RAM read queue mode.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -309,7 +323,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             Layout = layout,
             CopyFlags = copyFlags,
             ReadRecall = readRecall,
-            StagedReads = stagedReads
+            StagedReads = stagedReads,
+            RamReadQueue = ramReadQueue
         };
     }
 }
@@ -324,6 +339,11 @@ public sealed record CacheLayout(ulong Measurements, ulong Blocks, ulong Neighbo
 /// the oldest used block still cached is kept as recent (Recalled); history matches that were not are Denied.
 /// Mode 0: the earlier bimodal insertion (one miss in 16 kept as recent); both counters then stay unchanged.</summary>
 public sealed record CacheReadRecall(ulong Mode, ulong Recalled, ulong Denied);
+/// <summary>Runtime RAM read queue mode and individually atomic lifetime counters.
+/// Queued/completed counts include cancelled and standard-path fallback requests.</summary>
+public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed, ulong Cancelled,
+    ulong Inline, ulong QueueFull, ulong Fallback);
+
 /// <summary>Submitted staged reads, including lower failures. CachedBytes is the valid sector overlap
 /// pinned before submission, not bytes subsequently filled, completed traffic, or timing-window data.
 /// Allocation failures, original/paging reads and fully cached reads are outside these counters.</summary>

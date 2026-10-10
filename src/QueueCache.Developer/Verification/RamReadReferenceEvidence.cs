@@ -6,12 +6,12 @@ namespace QueueCache.Developer.Verification;
 public sealed record RamReadReferenceBoundary(DateTimeOffset Utc, Guid ResourceId, Guid BootEpoch,
     ulong CreationGeneration, ulong WriteGeneration, ManagedDiskState State, bool CacheEnabled,
     bool Timing, RamDirectState Direct, ulong ProviderReadRequests, ulong ImageReadAttempts, ulong ImageWriteAttempts,
-    string? Error, ulong? ProviderWriteRequests = null, ulong? ProviderWriteBytes = null);
+    string? Error, ulong? ProviderWriteRequests = null, ulong? ProviderWriteBytes = null, CacheRamReadQueue? Queue = null);
 
 /// <summary>Lightweight native observations; broker state and image counters are
 /// separately required at both boundaries, never synthesized in a sample.</summary>
 public sealed record RamReadReferenceSample(DateTimeOffset Utc, RamDiskSnapshot Native,
-    RamDiskStatistics Statistics, bool CacheEnabled, RamDirectState Direct);
+    RamDiskStatistics Statistics, bool CacheEnabled, RamDirectState Direct, CacheRamReadQueue? Queue = null);
 
 /// <summary>These checks establish collection, residency and lifecycle, never speed acceptance.</summary>
 public static class RamReadReferenceEvidence
@@ -83,5 +83,20 @@ public static class RamReadReferenceEvidence
             (scenario.Access == RamAccess.Direct ? after.Direct.ReadBytes - before.Direct.ReadBytes < (ulong)score.Bytes :
                 after.ProviderReadRequests - before.ProviderReadRequests < (ulong)score.Operations))
             throw new InvalidDataException("RAM reference traffic was not accounted by the selected access path.");
+        ValidateQueue(scenario, samples.Select(s => s.Queue).Prepend(before.Queue).Append(after.Queue).ToArray());
+    }
+    public static void ValidateQueue(RamReadReferenceCase scenario, IReadOnlyList<CacheRamReadQueue?> counters)
+    {
+        if (counters.All(c => c is null) && scenario.RamReadQueueMode == 0) return; // Old reference driver.
+        if (counters.Count < 2 || counters.Any(c => c is null || c.Mode != (ulong)scenario.RamReadQueueMode))
+            throw new InvalidDataException("RAM reference scheduling mode is missing or changed.");
+        var before = counters[0]!; var after = counters[^1]!;
+        if (counters.Zip(counters.Skip(1)).Any(p => p.Second!.Queued < p.First!.Queued || p.Second.Completed < p.First.Completed ||
+            p.Second.Cancelled < p.First.Cancelled || p.Second.Inline < p.First.Inline ||
+            p.Second.QueueFull < p.First.QueueFull || p.Second.Fallback < p.First.Fallback) ||
+            before.Queued != before.Completed || after.Queued != after.Completed ||
+            after.Cancelled != before.Cancelled || after.QueueFull != before.QueueFull || after.Fallback != before.Fallback ||
+            (scenario.RamReadQueueMode != 0 && scenario.BlockKiB >= 512 ? after.Queued <= before.Queued : after.Queued != before.Queued))
+            throw new InvalidDataException("RAM reference queue did not account for clean completed copies without cancellation/fallback.");
     }
 }
