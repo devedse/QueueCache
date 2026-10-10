@@ -14,8 +14,8 @@ public static class VerificationCampaignPlan
     public static readonly string[] Profiles = ["smoke", "focused", "performance", "release-performance"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults",
-     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling",
-     "caller-backoff", "priority-cost", "cache-concurrency", "cache-map-cost", "cache-recall",
+     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution",
+     "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 
     public static IReadOnlyList<string> ExpectedCases(VerificationOptions options)
@@ -35,6 +35,8 @@ public static class VerificationCampaignPlan
             options.Verification.DisposableInstance is not null || options.Verification.DisposableBytes is not null ||
             options.Verification.ManagedOraclePath is not null || options.Verification.ManagedTransition is not null)
             throw new ArgumentException("Campaign selection cannot be combined with a suite, case filter or lifecycle/system options.");
+        if (options.Verification.TraceSymbols is not null && options.FocusSuite != "ram-read-attribution")
+            throw new ArgumentException("--trace-symbols requires focused ram-read-attribution.");
         if ((options.Profile == "focused") != (options.FocusSuite is not null) ||
             options.FocusSuite is { } focus && !FocusSuites.Contains(focus))
             throw new ArgumentException("--focus-suite is required only for the focused campaign and must name a supported performance/correctness suite.");
@@ -62,6 +64,7 @@ public static class VerificationCampaignPlan
             var selected = options.Verification with
             {
                 Volume = volume.ToUpperInvariant(), Suite = suite, CaseFilter = filter,
+                TraceSymbols = suite == "ram-read-attribution" ? options.Verification.TraceSymbols : null,
                 SoakSeconds = suite == "cache-sustained" ? options.Verification.SoakSeconds ??
                     (options.Profile == "release-performance" ? 1800 : 120) : null,
                 Repeats = suite == "cache-sustained" ? 1 : options.Verification.Repeats,
@@ -89,7 +92,7 @@ public static class VerificationCampaignPlan
             if (options.Profile == "focused")
             {
                 if (!phases.Any(p => p.Options.Suite == options.FocusSuite) && options.FocusSuite != "ordering-faults")
-                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
+                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" or "priority-affinity" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
                 if (options.FocusSuite == "caller-backoff" && options.LabRefs is not null)
                     Add("caller-backoff", CampaignTargetRole.RefsLab);
             }

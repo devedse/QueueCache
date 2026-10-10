@@ -243,7 +243,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
-                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost"
+                ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity"
                 ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
             Provenance = VerificationWorker.Provenance(executable),
             DiskSpdSha256 = options.DiskSpd is null ? null : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd)))
@@ -484,8 +484,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         BudgetMiB = test.Operation == "partial-read-accounting" ? options.BudgetMiB : 1024,
                         DiskSpd = test.Operation == "ram-read-reference" ? options.DiskSpd : null,
                         ReferenceRepeats = options.Repeats,
-                        ReferenceQueue = options.Suite == "ram-read-queue",
-                        ReferenceScheduling = options.Suite == "ram-read-scheduling",
+                        TraceSymbols = options.TraceSymbols,
+                        ReferenceKind = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.KindFor(options.Suite) : RamReadRunKind.Reference,
                         Seconds = options.DurationSeconds,
                         OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") : null,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
@@ -509,7 +509,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     {
                         WorkDirectory = workDirectory,
                         BudgetMiB = options.BudgetMiB,
-                        Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" ? 3UL : 1UL
+                        Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity" ? 3UL : 1UL
                     }, deadline.Token, 900);
                 }
                 finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }

@@ -16,7 +16,7 @@ public sealed record RamReadReferenceOwnership(ulong OriginalReservedBytes, Guid
 internal static class RamReadReferenceScenarios
 {
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(CacheDevice host, string diskspd, int repeats,
-        int seconds, string ownership, string evidence, bool includeQueue = false, bool schedulingControls = false)
+        int seconds, string ownership, string evidence, RamReadRunKind kind = RamReadRunKind.Reference, string? traceSymbols = null)
     {
         if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("RAM read references require normal CPU priority and a normal I/O/memory-priority launch environment.");
@@ -25,9 +25,17 @@ internal static class RamReadReferenceScenarios
             (await service.ListAsync()).Select(r => r.ResourceId).ToArray(), []);
         if (File.Exists(ownership)) throw new IOException("RAM reference ownership journal already exists.");
         RunStorage.AtomicJson(ownership, journal);
-        var plan = schedulingControls ? RamReadReferencePlan.SchedulingCases(repeats) : RamReadReferencePlan.Cases(repeats, includeQueue);
+        var plan = RamReadReferencePlan.CasesFor(kind, repeats);
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
+        var traceJournal = ownership + ".trace.json";
+        if (kind == RamReadRunKind.Attribution)
+        {
+            RamReadAttribution.RequireSymbols(traceSymbols);
+            await VerificationTraceSession.StartAsync(traceJournal);
+        }
+        try
+        {
         foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access, s.RamReadQueueMode }))
         {
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam) with
@@ -44,7 +52,7 @@ internal static class RamReadReferenceScenarios
                 if (current.Runtime?.State != ManagedDiskState.Ready || current.VolumePath is null || current.PhysicalDiskNumber is null)
                     throw new IOException("Owned RAM reference did not become Ready.");
                 var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
-                if (includeQueue)
+                if (kind == RamReadRunKind.ArchivedQueue)
                 {
                     using var fixture = CacheDevice.OpenVolumeName(current.VolumePath, writable: true);
                     if (fixture.GetDiagnostics().RamReadQueue is null)
@@ -153,13 +161,18 @@ internal static class RamReadReferenceScenarios
                 RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.failure.json", new { Error = ex.ToString() });
                 throw;
             }
-            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.cleanup.json"); }
+            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.cleanup.json", finalizeTrace: false); }
         }
+        }
+        finally { await VerificationTraceSession.CleanupAsync(traceJournal); }
+        if (kind == RamReadRunKind.Attribution)
+            await RamReadAttribution.AnalyzeAsync(traceJournal, plan, evidence, traceSymbols!);
         return checks;
     }
 
-    public static async Task CleanupAsync(CacheDevice host, string ownership, string evidence)
+    public static async Task CleanupAsync(CacheDevice host, string ownership, string evidence, bool finalizeTrace = true)
     {
+        if (finalizeTrace) await VerificationTraceSession.CleanupAsync(ownership + ".trace.json");
         var journal = JsonSerializer.Deserialize<RamReadReferenceOwnership>(await File.ReadAllTextAsync(ownership))
             ?? throw new InvalidDataException("Missing RAM reference ownership.");
         if (journal.Definitions.Select(d => d.ResourceId).Distinct().Count() != journal.Definitions.Length)

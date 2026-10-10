@@ -598,3 +598,15 @@ contract changes, or when a new observation contradicts the finding. Use the
 smallest maintained discriminating suite first; request a broad matrix only
 when its scope is needed. Keep failures and raw evidence immutable. Update this
 file and the tracker with conclusions, units, identities, limits and decisions.
+
+## Plan 115 attribution hypothesis (implementation in progress)
+
+The unchanged Direct path completes synchronously; provider split copying uses
+256 KiB caller/helper work and helper withdrawal/waits. One submitter may be
+limited by admission or coordination while several submitters keep more useful
+copy work in flight. The maintained three-shape attribution suite samples CPU
+and scheduler behavior with matching symbols, preserving the native copy path.
+A higher WorkerMain share alone does not prove polling overhead: it contains both
+copy and polling. Process intervals include startup/warmup; measured read bytes
+remain separate. Exact request overlap and coordination timing remain unknown
+without instruction mapping or scoped native counters. No new gain is claimed.

@@ -31,6 +31,16 @@ public sealed record CampaignCompletionEvent([property: JsonRequired] int Schema
 [SupportedOSPlatform("windows")]
 public static class VerificationCampaignEvidence
 {
+    public static CampaignCompletionEvent ReadCompletionFromParent(string parent)
+    {
+        parent = Path.GetFullPath(parent);
+        var directories = System.IO.Directory.GetDirectories(parent, "QueueCache-Campaign-*", SearchOption.TopDirectoryOnly);
+        if (directories.Length != 1 || (File.GetAttributes(parent) & FileAttributes.ReparsePoint) != 0 ||
+            (File.GetAttributes(directories[0]) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Job output parent must contain exactly one real campaign directory.");
+        return ReadCompletion(directories[0]);
+    }
+
     public static void ValidateTargets(VerificationCampaignOptions options, IReadOnlyList<CampaignTargetEvidence> targets)
     {
         var roles = new[] { CampaignTargetRole.Performance, CampaignTargetRole.NtfsLab }

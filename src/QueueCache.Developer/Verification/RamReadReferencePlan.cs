@@ -2,6 +2,8 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
+public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution }
+
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat, int RamReadQueueMode = 0,
     bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false);
@@ -11,8 +13,36 @@ public static class RamReadReferencePlan
 {
     public const int DiskMiB = 2048, FileMiB = 1024;
     public const string IndependentSequentialWarning = "WARNING: target access pattern will not be sequential, consider -si";
+    public static RamReadRunKind KindFor(string suite) => suite switch
+    {
+        "ram-read-reference" => RamReadRunKind.Reference,
+        "ram-read-queue" => RamReadRunKind.ArchivedQueue,
+        "ram-read-scheduling" => RamReadRunKind.Scheduling,
+        "ram-read-attribution" => RamReadRunKind.Attribution,
+        _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
+    };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
-        options.Suite == "ram-read-scheduling" ? SchedulingCases(options.Repeats) : Cases(options.Repeats, options.Suite == "ram-read-queue");
+        CasesFor(KindFor(options.Suite), options.Repeats);
+    public static IReadOnlyList<RamReadReferenceCase> CasesFor(RamReadRunKind kind, int repeats) => kind switch
+    {
+        RamReadRunKind.Reference => Cases(repeats),
+        RamReadRunKind.ArchivedQueue => Cases(repeats, true),
+        RamReadRunKind.Scheduling => SchedulingCases(repeats),
+        RamReadRunKind.Attribution => AttributionCases(repeats),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
+    public static IReadOnlyList<RamReadReferenceCase> AttributionCases(int repeats)
+    {
+        if (repeats is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(repeats));
+        var result = new List<RamReadReferenceCase>();
+        var shapes = new[] { (1, 1), (8, 1), (2, 4) };
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+            result.Add(new($"{result.Count + 1:D4}-r{repeat}-attribution-q{depth}-t{threads}",
+                RamAccess.Direct, 1024, false, depth, threads, repeat,
+                Interleaved: threads == 4, SchedulingControl: true));
+        return result;
+    }
 
     /// <summary>Copy/driver path is unchanged. Isolate affinity and overlapping sequential cursors.</summary>
     public static IReadOnlyList<RamReadReferenceCase> SchedulingCases(int repeats)

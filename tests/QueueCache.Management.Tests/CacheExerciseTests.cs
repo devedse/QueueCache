@@ -102,6 +102,18 @@ internal static class CacheExerciseTests
             "priority and shape order reverse in the second repetition");
         Check(CacheExercisePlan.Cases(priorityOptions with { CaseFilter = "read-q8" }).Count == 12,
             "priority Q8 selection keeps every control and repetition");
+        var affinityOptions = options with { Suite = "priority-affinity" };
+        VerificationPlan.Validate(affinityOptions);
+        var affinityCases = CacheExercisePlan.Cases(affinityOptions);
+        Check(affinityCases.Count == 36 && affinityCases.Select(c => c.Id).Distinct().Count() == 36 &&
+            affinityCases.GroupBy(c => (c.Workload, c.QueueDepth, c.Priority, c.DisableAffinity)).All(g => g.Count() == 3),
+            "CPU priority and affinity form an independent 36-window factorial");
+        Check(affinityCases.All(c => c.Priority is ReadPriority.Normal or ReadPriority.CpuBelowNormal &&
+            c.Recall == -1 && c.CallerBackoff == -1 && c.Streams == 1 && !c.BackgroundDrain), "affinity controls preserve policy and memory/I/O hints");
+        var affinityCampaign = VerificationCampaignPlan.Create(new(options with { Suite = "quick" }, "focused", "W:", FocusSuite: "priority-affinity"));
+        Check(affinityCampaign.Single(p => p.Options.Suite == "priority-affinity").Role == CampaignTargetRole.NtfsLab,
+            "cache priority/affinity measurements run on the caller-controlled NTFS lab volume");
+        DiagnosticContracts.Run();
         new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 5).Validate();
         new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.BelowNormal, 2).Validate();
         Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.High, 5).Validate());

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 114, "plan 114 declares typed campaigns and isolated RAM scheduling controls");
+        Check(VerificationPlan.Version == 115, "plan 115 declares attribution and priority/affinity diagnostics");
         await RunCampaignContractsAsync();
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&

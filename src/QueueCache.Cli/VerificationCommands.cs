@@ -90,11 +90,13 @@ internal static class VerificationCommands
                                  and a hot set across a one-off and a repeated scan larger than the cache.
               caller-backoff     256/0 caller cooldown, fitting 64K mixed Q1/Q8 and 4K/1M read controls.
                                  V23 diagnostics, normal priority; byte oracles run after each score.
+              priority-affinity  Cached reads: Normal/BelowNormal CPU crossed with default/unbound affinity.
               priority-cost      Fitting RAM reads: independent Normal/CPU BelowNormal/I/O Low/memory Low.
                                  1M Q1/Q8 and 4K Q1 controls; owned child settings, three-second warmup.
               partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
+              ram-read-attribution Three traced Direct RAM read shapes; diagnostic, not speed acceptance.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
               ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).
@@ -157,10 +159,11 @@ internal static class VerificationCommands
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
         var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
+        var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -174,7 +177,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))
@@ -203,8 +206,11 @@ internal static class VerificationCommands
     {
         var command = new Command("verify-completion", "Read and validate a finalized campaign's durable completion event. Read-only; no elevation or driver access.");
         var directory = new Argument<string>("campaign-directory"); command.Arguments.Add(directory);
+        var parent = new Option<bool>("--output-parent") { Description = "Treat the argument as an explicit unique job output parent; require exactly one campaign and validate it on this machine." };
+        command.Options.Add(parent);
         command.SetAction(p => { Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
-            VerificationCampaignEvidence.ReadCompletion(p.GetValue(directory)!), RunStorage.Json)); return 0; });
+            p.GetValue(parent) ? VerificationCampaignEvidence.ReadCompletionFromParent(p.GetValue(directory)!) :
+                VerificationCampaignEvidence.ReadCompletion(p.GetValue(directory)!), RunStorage.Json)); return 0; });
         return command;
     }
 }

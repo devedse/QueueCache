@@ -26,6 +26,8 @@ public sealed partial class VerificationRunner
                 xml.Descendants("Profile").Descendants("Warmup").SingleOrDefault()?.Value != "3")
                 throw new InvalidDataException("Priority profile did not report the requested I/O hint and warmup.");
         }
+        if (options.Suite == "priority-affinity")
+            CachePriorityProfile.Validate(result.Output, arguments, files.Count);
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);
         return score;
@@ -140,6 +142,7 @@ public sealed partial class VerificationRunner
                 "-Z1M", $"-d{scenario.Seconds}", "-W0" };
             if (!sustained) arguments.Add($"-f{perFileMiB}M");
             if (scenario.Workload is "mixed" or "random-read") arguments.Add(scenario.Workload == "mixed" ? "-r64K" : "-r4K");
+            if (scenario.DisableAffinity) arguments.Add("-n");
             ProcessScheduling? scheduling = null;
             if (scenario.Priority is { } priority)
             {

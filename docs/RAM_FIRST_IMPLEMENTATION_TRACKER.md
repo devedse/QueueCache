@@ -3234,6 +3234,19 @@ Headless tests cover page changes, minimization, closure, pending samples and
 unrelated inventory changes. The preview does not establish a 100 ms performance
 acceptance result. Temporary owner settings are restored after this check.
 
+### Handoff implementation in progress, 2026-10-10
+
+Started from `f3245d0`, branch `perf/ram-read-followups`. Verification contract
+advances to plan 115; the installed signed 514 driver remains the baseline.
+
+| Stage | Implementation | Verification |
+|---|---|---|
+| A: completion delivery | Manager source located; investigating durable job outbox and guarded terminal delivery. No generic foreground-job/wake subsystem currently exists. | Existing completion reader remains valid; end-to-end delivery not yet proven. |
+| B: RAM attribution | Added typed RAM run kinds and `ram-read-attribution` (three Direct shapes per repetition), owned named WPR session, parent cleanup and typed sampled CPU/scheduler analysis. Requires matching native PDB directory via `--trace-symbols`. | Linux host contracts pass, including strict profiles and abrupt-worker trace cleanup. Windows contracts, CI and the first three-window diagnostic are pending. |
+| C: candidate | Evidence gate remains closed. Copy granularity and native behavior unchanged. | No new speedup or release acceptance claimed. |
+| D: priority/affinity | Added separate 36-window factorial at defaults; routed focused campaign to NTFS lab, single fitting-file preparation and strict raw XML validation. Legacy `priority-cost` remains unchanged. | Linux plan/profile/role contracts pass; Windows and focused VM verification pending. |
+| E/F | Optional UI measurement and conditional caller-policy experiment remain lower priority. | No new measurements or production changes. |
+
 ### Post-merge performance follow-up, 2026-10-10
 
 Plan-114 campaign / focused RAM-read follow-up (current work):

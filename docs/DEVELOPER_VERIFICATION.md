@@ -1782,3 +1782,33 @@ The coordinator, user applications and driver thread priorities are untouched.
 ```powershell
 qcache developer verify V: --suite priority-cost --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 ```
+
+### Plan 115: focused attribution and priority/affinity
+
+`ram-read-attribution` uses an owned 2 GiB Direct RAM fixture and 1 GiB file.
+Exactly three shapes per repetition: sequential 1 MiB Q1T1, Q8T1 and Q2T4
+with separate source lanes (`-s4M -T1M`). Default affinity, CPU Normal, memory
+priority 5, I/O hint 3, three-second warmup. It is traced and diagnostic, excluded
+from broad profiles. Supply `--trace-symbols <directory>` containing matching
+`qcachelab.pdb` and `qcramdisk.pdb`. WPR must provide CPU sampling, CSwitch and
+ReadyThread; another active default recording is refused. Named trace ownership
+is journaled before start, finalized on failure and by parent recovery after
+worker death. Unusable/missing symbols or lost events reject attribution. Raw ETL,
+profile/tool/hash records and typed `.attribution.json` stay in the exact run.
+Process lifetime is an enclosing interval, not an exact DiskSpd score window.
+
+`priority-affinity` is a separate cached-volume factorial: sequential 1 MiB
+Q1/Q8 and random 4 KiB Q1, crossed with CPU Normal/BelowNormal and default/`-n`
+affinity. Memory priority 5 and I/O hint 3 are fixed; three-second warmup.
+Default three repeats produce 36 uniquely identified windows, balanced in order.
+It uses one fitting half-budget file and focused campaigns route it to the NTFS
+lab volume. Legacy `priority-cost` still compares its four original priorities.
+Neither diagnostic is added to broad performance/release profiles.
+
+```powershell
+qcache developer verify Q: --campaign focused --focus-suite ram-read-attribution --lab-ntfs W: --budget-mib 2048 --repeats 1 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --trace-symbols C:\Tools\Symbols --pause-backing-cache --output C:\QueueCache-Results\Attribution
+qcache developer verify Q: --campaign focused --focus-suite priority-affinity --lab-ntfs W: --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results\PriorityAffinity
+```
+
+Implementation is undergoing Windows/VM verification; these definitions alone
+do not establish any performance improvement.
