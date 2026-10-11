@@ -29,6 +29,29 @@ public static class StressPattern
         return expected.SequenceEqual(sector) ? version : -1;
     }
 
+    /// <summary>Filled into a read buffer before the read: a sector still holding it was never written.</summary>
+    public const byte Poison = 0xDB;
+
+    /// <summary>Per sector: the version held, -1 for a foreign or torn sector, -2 for an unwritten (poison) one.
+    /// Run-length encoded, e.g. "0-576:133 577-1023:127".</summary>
+    public static string Describe(ReadOnlySpan<byte> buffer, ulong seed, int block)
+    {
+        var runs = new List<string>();
+        int start = 0, current = int.MinValue;
+        var sectors = buffer.Length / Sector;
+        for (var index = 0; index <= sectors; index++)
+        {
+            var version = index == sectors ? int.MaxValue : Classify(buffer.Slice(index * Sector, Sector), seed, block, index);
+            if (version == current) continue;
+            if (index > 0) runs.Add($"{start}-{index - 1}:{(current == -2 ? "poison" : current == -1 ? "foreign" : current.ToString())}");
+            start = index; current = version;
+        }
+        return string.Join(' ', runs);
+    }
+
+    private static int Classify(ReadOnlySpan<byte> sector, ulong seed, int block, int index) =>
+        sector.IndexOfAnyExcept(Poison) < 0 ? -2 : Version(sector, seed, block, index);
+
     /// <summary>Null when every sector holds a whole version within [low, high]; otherwise what is wrong.</summary>
     public static string? Check(ReadOnlySpan<byte> buffer, ulong seed, int block, int low, int high)
     {

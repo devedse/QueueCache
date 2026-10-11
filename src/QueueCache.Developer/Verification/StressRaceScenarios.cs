@@ -126,6 +126,9 @@ internal static class StressRaceScenarios
         stop.Cancel();
         if (!Task.WaitAll([.. tasks], TimeSpan.FromMinutes(10)))
             failures.Add(new IOException("A stress worker did not stop within 10 minutes after the window ended."));
+        foreach (var volume in volumes)
+            if (volume.FailureEvidence is { } failureEvidence)
+                File.WriteAllText(evidence + $".{volume.Target.Letter}-read-failure.json", failureEvidence);
         RunStorage.AtomicJson(evidence + ".busy.json", new
         {
             Seconds = timer.Elapsed.TotalSeconds, Volumes = volumes.Select(v => v.Summary()), RamDiskCycles = churn.Cycles,
@@ -192,7 +195,7 @@ internal static class StressRaceScenarios
         public long Writes, Reads, Cancelled;
     }
 
-    private sealed class StressVolume(DiskTarget target, CacheDevice device, string directory, ulong seed)
+    private sealed unsafe class StressVolume(DiskTarget target, CacheDevice device, string directory, ulong seed)
     {
         public DiskTarget Target { get; } = target;
         public CacheDevice Device { get; } = device;
@@ -200,6 +203,11 @@ internal static class StressRaceScenarios
         public RegionState[] Regions { get; } = StressRegion.All.Select((region, index) =>
             new RegionState(region, System.IO.Path.Combine(directory, $"stress-{region.Name}.bin"), seed * 31 + (ulong)index, index)).ToArray();
         private readonly Dictionary<StressAction, int> actions = [];
+        private readonly List<string> timeline = [];
+        public string? FailureEvidence;
+        private string[] Timeline() { lock (actions) return [.. timeline]; }
+        private void RecordFailure(object evidence) =>
+            FailureEvidence ??= JsonSerializer.Serialize(evidence, RunStorage.Json);
         private long verifiedReads;
         private int[] versionsAtPass = [];
 
@@ -320,9 +328,31 @@ internal static class StressRaceScenarios
                     var index = random.Next(Regions.Length); var region = Regions[index];
                     var block = random.Next(region.Region.Blocks);
                     var low = region.Versions.Done(block);
+                    // Poison the native transfer buffer: a sector the read did not write keeps it.
+                    NativeMemory.Fill((void*)files[index].TransferBuffer, (nuint)region.Region.BlockBytes, StressPattern.Poison);
+                    var started = DateTimeOffset.UtcNow;
                     files[index].Read((long)block * region.Region.BlockBytes, buffers[index]);
-                    var problem = StressPattern.Check(buffers[index], region.Seed, block, low, region.Versions.Started(block));
-                    if (problem is not null) throw new InvalidDataException($"{Target.Device} read: {problem}.");
+                    var high = region.Versions.Started(block);
+                    var problem = StressPattern.Check(buffers[index], region.Seed, block, low, high);
+                    if (problem is not null)
+                    {
+                        // Evidence before failing: what each sector held, and two immediate re-reads.
+                        var reread = new byte[region.Region.BlockBytes];
+                        var rereads = new List<string>();
+                        for (var attempt = 0; attempt < 2; attempt++)
+                        {
+                            NativeMemory.Fill((void*)files[index].TransferBuffer, (nuint)region.Region.BlockBytes, StressPattern.Poison);
+                            files[index].Read((long)block * region.Region.BlockBytes, reread);
+                            rereads.Add($"{DateTimeOffset.UtcNow:O} {StressPattern.Describe(reread, region.Seed, block)} (window {region.Versions.Done(block)}..{region.Versions.Started(block)})");
+                        }
+                        RecordFailure(new
+                        {
+                            Region = region.Region.Name, Block = block, Low = low, High = high, ReadStarted = started, ReadEnded = DateTimeOffset.UtcNow,
+                            Sectors = StressPattern.Describe(buffers[index], region.Seed, block), Rereads = rereads,
+                            State = Device.GetWriteCacheState(), Timeline = Timeline()
+                        });
+                        throw new InvalidDataException($"{Target.Device} read: {problem}. Sectors: {StressPattern.Describe(buffers[index], region.Seed, block)}.");
+                    }
                     Interlocked.Increment(ref region.Reads);
                     Interlocked.Increment(ref verifiedReads);
                 }
@@ -335,8 +365,14 @@ internal static class StressRaceScenarios
             while (!token.IsCancellationRequested)
             {
                 var action = StressPlan.Next(random);
+                var begun = DateTimeOffset.UtcNow;
                 Perform(action, random);
-                lock (actions) actions[action] = actions.GetValueOrDefault(action) + 1;
+                lock (actions)
+                {
+                    actions[action] = actions.GetValueOrDefault(action) + 1;
+                    timeline.Add($"{begun:HH:mm:ss.fff}-{DateTimeOffset.UtcNow:HH:mm:ss.fff} {action}");
+                    if (timeline.Count > 200) timeline.RemoveAt(0);
+                }
                 token.WaitHandle.WaitOne(random.Next(20, 300));
             }
         }

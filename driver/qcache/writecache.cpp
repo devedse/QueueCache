@@ -2382,13 +2382,27 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         return STATUS_NOT_FOUND;
     }
     const auto firstBlock = start / Chunk * Chunk;
+    // Blocks that had a cached version when this read started. A kept miss is filled from the
+    // disk data read below, but for these blocks that data can predate the cached version: its
+    // drain may complete during the read and, unretained, leave the index, so the block would
+    // look missing and get the older disk bytes (found by stress-races). Only blocks without a
+    // cached version are filled; the worker serializes writes, so they cannot change meanwhile.
+    const bool fillCandidate = !full && !pagingIo && !pinned && !hitOnly && length <= QcStagedReadMaxBytes;
+    ULONG64 cachedAtStart[QcStagedReadMaxBytes / Chunk / 64 + 1];
+    if (fillCandidate)
+        RtlZeroMemory(cachedAtStart, ((end - firstBlock) / Chunk / 64 + 1) * sizeof(ULONG64));
     for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto index = batched ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
+        const auto k = static_cast<ULONG>((block - firstBlock) / Chunk);
+        auto index = batched ? pinned[k] : FindSlot(c, block);
         if (pinned)
-            pinned[(block - firstBlock) / Chunk] = index;
+            pinned[k] = index;
         if (index != NoSlot)
+        {
             ++c->Slots[index].Pins;
+            if (fillCandidate)
+                cachedAtStart[k / 64] |= 1ULL << (k % 64);
+        }
     }
     NTSTATUS status = STATUS_SUCCESS;
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
@@ -2584,6 +2598,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             }
             if (!fillable || block < start || block + Chunk > end)
                 continue;
+            if (const auto k = static_cast<ULONG>((block - firstBlock) / Chunk); cachedAtStart[k / 64] & (1ULL << (k % 64)))
+                continue; // See cachedAtStart: the disk bytes may be older than the version it had.
             const bool recalled = RecallReadFill(c, block); // Before ReadRoom evicts its victim.
             if (ReadRoom(c))
             {
