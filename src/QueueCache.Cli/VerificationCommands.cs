@@ -113,8 +113,6 @@ internal static class VerificationCommands
               ram-write-reference Owned RAM-disk 1M writes Q1T1/Q8T1/Q2T4/Q8T4 and user-mode copies into and out
                                  of cold memory (ordinary, explicit, non-temporal stores); 36 windows at --repeats 3.
                                  The disk is rewritten and read back after its write windows.
-              ram-write-streaming Same-build ordinary/streaming stores for large RAM-disk write copies:
-                                 1M Q1T1 target, Q8T1 and Q2T4 controls; 18 windows at --repeats 3.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
                                  All ram-read-* suites: owned 2 GiB disks, whole-file byte checks, --budget-mib 2048,

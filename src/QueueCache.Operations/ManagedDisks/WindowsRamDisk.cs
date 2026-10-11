@@ -124,20 +124,6 @@ public sealed class WindowsRamDisk : IDisposable
     }
     public RamDiskSnapshot SetAsyncReads(RamDiskSnapshot expected, RamAsyncMode mode) =>
         Send(RamDiskSnapshot.Request(RamDiskAction.SetAsyncReads, expected, offset: (ulong)mode));
-    /// <summary>Null only for the explicit unsupported-action response of an older provider.</summary>
-    public RamStreamWrites? StreamWrites(RamDiskSnapshot expected)
-    {
-        var wire = RamDiskSnapshot.Request(RamDiskAction.StreamWrites, expected);
-        Array.Resize(ref wire, RamDiskSnapshot.WireSize + RamStreamWrites.WireSize);
-        int returned;
-        try { returned = Call(wire, RamDiskSnapshot.WireSize, wire.Length); }
-        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87) { return null; }
-        if (returned != wire.Length) throw new InvalidDataException("Incomplete RAM write copy reply.");
-        RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
-        return RamStreamWrites.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
-    }
-    public RamDiskSnapshot SetStreamWrites(RamDiskSnapshot expected, RamStreamMode mode) =>
-        Send(RamDiskSnapshot.Request(RamDiskAction.SetStreamWrites, expected, offset: (ulong)mode));
     public void Remove(RamDiskSnapshot expected)
     {
         var request = RamDiskSnapshot.Request(RamDiskAction.Remove, expected);

@@ -28,11 +28,8 @@ enum QC_RAM_ACTION : ULONG
     QcRamAsyncReads = 0x103,
     // Offset: QC_RAM_ASYNC_MODE for asynchronous large Direct reads (adaptive at creation).
     // A nonzero mode resets the counters and fails with STATUS_DEVICE_BUSY while any is in flight.
-    QcRamSetAsyncReads = 0x104,
-    // Reply is QC_RAM_REQUEST followed by QC_RAM_STREAM_DATA (ramstream.h).
-    QcRamStreamWrites = 0x105,
-    // Offset: QC_RAM_STREAM_MODE for large write copies (off at creation); resets the counters.
-    QcRamSetStreamWrites = 0x106
+    QcRamSetAsyncReads = 0x104
+    // 0x105/0x106: the rejected plan-120 streaming write copy experiment. Not reused.
 };
 enum QC_RAM_FLAGS : ULONG
 {

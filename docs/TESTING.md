@@ -78,7 +78,7 @@ qcache developer verify Q: --suite quick --output C:\QueueCache-Results
 | Campaign | Contains | Typical time |
 |---|---|---:|
 | `smoke` | `quick` and partial-read accounting on the lab NTFS volume | ~1 min |
-| `experiment` | Exactly one narrow suite (`ram-read-async`, `ram-read-async-lifecycle`, `ram-read-coordination`, `ram-write-reference`, `ram-write-streaming`, `cache-read-reference`, `cache-read-bookkeeping`, `stress-races`) | 1-15 min |
+| `experiment` | Exactly one narrow suite (`ram-read-async`, `ram-read-async-lifecycle`, `ram-read-coordination`, `ram-write-reference`, `cache-read-reference`, `cache-read-bookkeeping`, `stress-races`) | 1-15 min |
 | `focused` | One named suite plus the retained correctness checks (partial reads, paging, policies, pressure, ordering/faults) | 10-30 min |
 | `performance` | Product-default regression: correctness checks, RAM reference, RAM lifecycle, recall, 2-minute sustained, map cost, ordering/faults | ~1 h |
 | `release-performance` | `performance` plus the 72-case write matrix and a 30-minute sustained phase | ~2 h |
@@ -118,7 +118,6 @@ ones in use:
 | `ram-read-async` | Same-build off/adaptive comparison of asynchronous split reads, 18 windows | Prints a screen verdict |
 | `ram-read-async-lifecycle` | Verified overlapped reads, the in-flight cap, ending Direct access under load | Correctness only |
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
-| `ram-write-streaming` | Same-build comparison of ordinary and streaming stores for large RAM-disk writes | Prints a screen verdict |
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 3 and 7) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices | Use when the area changes |

@@ -2,12 +2,12 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, Scheduling, Attribution, Coordination, Async, AsyncLifecycle, WriteReference, WriteStreaming }
+public enum RamReadRunKind { Reference, Scheduling, Attribution, Coordination, Async, AsyncLifecycle, WriteReference }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat,
     bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false,
-    bool CoordinationEnabled = false, bool AsyncReads = false, bool Write = false, string? Probe = null, bool StreamWrites = false);
+    bool CoordinationEnabled = false, bool AsyncReads = false, bool Write = false, string? Probe = null);
 
 /// <summary>Reference shapes on owned RAM disks. The read suites are read-only; aggregate queue depth stays
 /// eight for the large multi-thread control. ram-write-reference writes the owned file.</summary>
@@ -24,7 +24,6 @@ public static class RamReadReferencePlan
         "ram-read-async" => RamReadRunKind.Async,
         "ram-read-async-lifecycle" => RamReadRunKind.AsyncLifecycle,
         "ram-write-reference" => RamReadRunKind.WriteReference,
-        "ram-write-streaming" => RamReadRunKind.WriteStreaming,
         _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
     };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
@@ -39,7 +38,6 @@ public static class RamReadReferencePlan
         RamReadRunKind.AsyncLifecycle => repeats == 1 ? [new("0001-r1-async-lifecycle", RamAccess.Direct, 1024, false, 8, 1, 1, AsyncReads: true)]
             : throw new ArgumentOutOfRangeException(nameof(repeats)),
         RamReadRunKind.WriteReference => WriteCases(repeats),
-        RamReadRunKind.WriteStreaming => StreamingCases(repeats),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
     public static IReadOnlyList<RamReadReferenceCase> CoordinationCases(int repeats)
@@ -92,22 +90,6 @@ public static class RamReadReferencePlan
                     RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
                     SchedulingControl: true, Write: true));
         }
-        return result;
-    }
-    /// <summary>Plan 120 candidate. Same build and owned disk per repetition: ordinary and streaming stores for
-    /// large write copies, adjacent per shape, alternating which runs first. One submitter at Q1 (copied inline,
-    /// one processor) is the target; Q8 and four submitters, already at the machine's write bandwidth, are controls.</summary>
-    public static IReadOnlyList<RamReadReferenceCase> StreamingCases(int repeats)
-    {
-        if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats));
-        var result = new List<RamReadReferenceCase>();
-        var shapes = new[] { (1, 1), (8, 1), (2, 4) };
-        for (var repeat = 1; repeat <= repeats; repeat++)
-        foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
-        foreach (var candidate in repeat % 2 == 1 ? new[] { false, true } : [true, false])
-            result.Add(new($"{result.Count + 1:D4}-r{repeat}-stream-q{depth}-t{threads}-{(candidate ? "candidate" : "original")}",
-                RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
-                SchedulingControl: true, Write: true, StreamWrites: candidate));
         return result;
     }
     public static IReadOnlyList<RamReadReferenceCase> AttributionCases(int repeats)

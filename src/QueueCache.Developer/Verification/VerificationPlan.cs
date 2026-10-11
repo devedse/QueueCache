@@ -35,7 +35,7 @@ public static class VerificationPlan
 {
     public const int Version = 120;
     public const int StressDefaultSeconds = 240;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference" or "ram-write-streaming";
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -88,7 +88,6 @@ public static class VerificationPlan
         "ram-read-async",
         "ram-read-async-lifecycle",
         "ram-write-reference",
-        "ram-write-streaming",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -485,7 +484,7 @@ public static class VerificationPlan
             throw new ArgumentException("RAM asynchronous read lifecycle checks run once (--repeats 1).");
         if (options.Suite == "ram-read-async" && options.Repeats is not (1 or 2 or 3))
             throw new ArgumentException("RAM asynchronous read comparison uses --repeats 3 (1..3 permitted; acceptance requires 3).");
-        if (options.Suite is "ram-write-reference" or "ram-write-streaming" or "cache-read-reference" or "cache-read-bookkeeping" && options.Repeats is not (1 or 2 or 3))
+        if (options.Suite is "ram-write-reference" or "cache-read-reference" or "cache-read-bookkeeping" && options.Repeats is not (1 or 2 or 3))
             throw new ArgumentException("Plan 120 reference suites use --repeats 3 (1..3 permitted).");
         if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
             throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");

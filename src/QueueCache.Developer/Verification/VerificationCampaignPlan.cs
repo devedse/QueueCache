@@ -12,10 +12,10 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "ram-write-streaming", "cache-read-reference", "cache-read-bookkeeping", "stress-races"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "stress-races"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults", "stress-races",
-     "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "ram-read-reference", "ram-write-reference", "ram-write-streaming", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
+     "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "ram-read-reference", "ram-write-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 

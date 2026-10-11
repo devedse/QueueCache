@@ -95,15 +95,6 @@ static NTSTATUS Change(ADAPTER* adapter, DISK* disk, const QC_RAM_REQUEST& comma
     case QcRamSetAsyncReads:
         if (command.Flags || command.Offset > static_cast<ULONGLONG>(QcRamAsyncAlways) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
         return QcRamAsyncConfigure(&store.Async, static_cast<LONG>(command.Offset)) ? STATUS_SUCCESS : STATUS_DEVICE_BUSY;
-    case QcRamStreamWrites:
-        if (output < sizeof(*reply) + sizeof(QC_RAM_STREAM_DATA) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
-        QcRamStreamSnapshot(&store.Stream, reinterpret_cast<QC_RAM_STREAM_DATA*>(reply + 1));
-        *returned = sizeof(*reply) + sizeof(QC_RAM_STREAM_DATA);
-        return STATUS_SUCCESS;
-    case QcRamSetStreamWrites:
-        if (command.Flags || command.Offset > static_cast<ULONGLONG>(QcRamStreamLarge) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
-        QcRamStreamConfigure(&store.Stream, static_cast<LONG>(command.Offset));
-        return STATUS_SUCCESS;
     case QcRamPhysicalMap:
     {
         if (output < sizeof(*reply) + sizeof(QC_RAM_PHYSICAL_MAP) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
@@ -165,7 +156,7 @@ void ServiceRequest(PVOID extension, PVOID requestIrp)
     else if (reply && input >= sizeof(*reply) && output >= sizeof(*reply) &&
         reply->Magic == QcRamMagic && reply->Version == QcRamVersion && reply->Size == sizeof(*reply) &&
         ((reply->Action >= QcRamCapabilities && reply->Action <= QcRamPhysicalMap) ||
-         (reply->Action >= QcRamDeveloperCreateAllocationFailure && reply->Action <= QcRamSetStreamWrites)) &&
+         (reply->Action >= QcRamDeveloperCreateAllocationFailure && reply->Action <= QcRamSetAsyncReads)) &&
         input <= sizeof(*reply) + QcRamTransferBytes && output <= sizeof(*reply) + QcRamTransferBytes)
     {
         const auto command = *reply;

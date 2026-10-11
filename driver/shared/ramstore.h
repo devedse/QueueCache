@@ -4,7 +4,6 @@
 #include "ramdiskprotocol.h"
 #include "ramcoordination.h"
 #include "ramasync.h"
-#include "ramstream.h"
 
 // One RAM disk's storage. The provider (qcramdisk) owns it; with Direct access the
 // volume filter reads and writes the same pages, so the data exists once. Both paths
@@ -23,9 +22,8 @@ struct QC_RAM_STORE
     volatile LONG64 TimedReads, TimedWrites, ReadTicks, WriteTicks, MaxReadTicks, MaxWriteTicks;
     QC_RAM_COORDINATION Coordination; // version 2 tail; old prefix unchanged
     QC_RAM_ASYNC Async;               // version 3 tail
-    QC_RAM_STREAM Stream;             // version 4 tail
 };
-constexpr ULONG QcRamStoreVersion = 4;
+constexpr ULONG QcRamStoreVersion = 3;
 
 inline bool QcRamStoreBounds(const QC_RAM_STORE* store, ULONGLONG offset, ULONGLONG bytes)
 {
@@ -37,8 +35,6 @@ inline bool QcRamStoreBounds(const QC_RAM_STORE* store, ULONGLONG offset, ULONGL
 // by the caller. Callable at IRQL <= DISPATCH_LEVEL: every slab is locked and mapped.
 inline void QcRamStoreCopy(const QC_RAM_STORE* store, ULONGLONG offset, PUCHAR buffer, ULONG length, bool write, bool zero = false)
 {
-    const bool stream = write && !zero && length >= QcRamStreamMinBytes && ReadNoFence(&store->Stream.Mode) == QcRamStreamLarge;
-    const auto total = length;
     while (length)
     {
         const auto index = static_cast<ULONG>(offset / QcRamSlabBytes), within = static_cast<ULONG>(offset % QcRamSlabBytes);
@@ -46,17 +42,10 @@ inline void QcRamStoreCopy(const QC_RAM_STORE* store, ULONGLONG offset, PUCHAR b
         const auto bytes = min(length, slab.Length - within);
         auto storage = slab.Bytes + within;
         if (zero) RtlZeroMemory(storage, bytes);
-        else if (stream) QcRamStreamCopy(storage, buffer, bytes);
         else if (write) RtlCopyMemory(storage, buffer, bytes);
         else RtlCopyMemory(buffer, storage, bytes);
         if (buffer) buffer += bytes;
         offset += bytes; length -= bytes;
-    }
-    if (stream)
-    {
-        _mm_sfence(); // Streaming stores are weakly ordered: visible before the request completes.
-        InterlockedIncrement64(&store->Stream.Writes);
-        InterlockedAdd64(&store->Stream.Bytes, total);
     }
 }
 
