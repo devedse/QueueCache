@@ -90,6 +90,30 @@ reads then the standard path, 58,361 MiB verified, rebound. Under Verifier the
 same checks verified 14,452 + 18,690 + 17,558 MiB with no fault. Under Verifier
 submission is slower than a copy, so the adaptive policy correctly stays inline.
 
+**README benchmark.** Real CrystalDiskMark 9.0.3 GUI on a new 4 GiB RAM disk T:
+(0.4.583.1, default adaptive mode, normal priority, Verifier off, Default theme,
+150% zoom, two complete runs, the faster kept): SEQ1M Q8T1 read **47,583 MB/s**
+(README before: 25,353), write 24,434 (23,266); SEQ1M Q1T1 26,649 / 16,463;
+RND4K Q32T1 1,467 / 1,194; RND4K Q1T1 1,657 / 1,310 (1,641 / 1,317). The other
+run: 47,663 / 23,393, 26,206 / 16,830, 1,463 / 1,206, 1,649 / 1,312. Only the RAM
+disk column was re-measured; the Q: columns are unaffected and stay from 0.4.476.1.
+
+**Final regression.** Signed 0.4.583.1 (final source; drivers loaded and
+Verifier off), lean `release-performance`, one command: **COMPLETED 11/11 phases,
+106/106 cases, 1 h 56 min 23 s, restored**, run
+`QueueCache-Campaign-20261011-100402-d4f2fc304e714c708305406f06b93426`. All 118
+retained correctness sub-checks pass; 2,266 owned process exits are zero. The
+RAM reference under the new default measures Direct 1M Q8T1 at a median
+43,590 MiB/s (Q1T1 24,821, Q2T4 36,097; 4K reads never reach the new path). The
+lifecycle checks, recall, 30-minute sustained phase and map cost pass their
+guards. The 72-case write matrix against PR #8's run (0.4.476.1, two days
+earlier, same DiskSpd): cached sequential writes are within noise (Q1 +0.6%, Q8
+−5% to +1% with overlapping ranges), cached RND4K Q32 ±2%, cached RND4K Q1
+1.5–2.7% lower with separated ranges. That last difference is under the 3%
+review threshold and within cross-day variation seen before; PR #9's default-off
+diagnostics add a few counter updates to the cache path and may contribute.
+Uncached results follow the Ceph storage (higher today).
+
 ## Which changes belong together
 
 | Stage | Changes retained | Evidence and limits |
@@ -585,7 +609,7 @@ running again. Private evidence and lab files remain preserved.
 
 ## Recorded verification time
 
-These selected completed runs total approximately **3 hours 39 minutes**. This
+These selected completed runs total approximately **6 hours 2 minutes**. This
 is measured run time, not a reconstruction of all engineering work or every
 earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
 attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
@@ -608,6 +632,13 @@ to 06:55 was not two hours spent executing that benchmark.
 | Controller/restoration retry smoke, two phases | 1 min 07 s |
 | Plan-116 RAM attribution, 81 correctness checks + 3 traced windows | 7 min 38 s |
 | Plan-116 cached priority/affinity, 81 correctness checks + 36 untraced windows | 25 min 02 s |
+| Plan-117 coordination diagnostic, nine windows | 4 min 33 s |
+| Plan-117 controller smoke, two phases | 1 min 18 s |
+| Wake-up smoke (owned job, agent idle), two phases | 1 min 03 s |
+| Plan-118 asynchronous-read comparison, 18 windows | 8 min 50 s |
+| Plan-119 revision comparison, 18 windows | 8 min 52 s |
+| Plan-119 lifecycle checks, with / without Driver Verifier | 1 min 10 s / 55 s |
+| Final `release-performance` regression, 11 phases / 106 cases | 1 h 56 min 23 s |
 
 The original priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
@@ -624,6 +655,15 @@ the RAM trace phase takes 2 min 40 s of its 7 min 38 s campaign. The surrounding
 policy/pressure checks, preparation and restoration explain much of the remaining
 time. Tool/bootstrap failures and engineering/CI time remain separate from these
 completed measurements.
+
+Not counted above (preserved separately; none contributes a result): the Driver
+Verifier run that bugchecked (0x3B, fixed before measurement), a Verifier run and
+a lifecycle run stopped by over-strict activation checks, one comparison refused
+at start because Q: still had unwritten data, and the first final regression,
+which stopped after 33 minutes in the sustained phase: a 197 GB resident reread
+saw six background metadata reads (4.5 KiB) on Q:, most likely the Everything
+file indexer that had restarted at sign-in. Everything and Steam were closed and
+the complete regression rerun passed.
 
 ## Current decisions and when to repeat tests
 

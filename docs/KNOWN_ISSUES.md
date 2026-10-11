@@ -124,36 +124,14 @@ conditional on representative overlap and fragmentation evidence, with ordering
 and error handling preserved. See the consolidated
 [findings](PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first).
 
-## One program reading a RAM disk tops out at about 26 GB/s (performance)
+## One program reading a RAM disk topped out at about 26 GB/s (resolved in PR #9)
 
-What you see: on the 4-vCPU test VM, one DiskSpd thread reads a RAM disk with 1 MiB
-requests at about 26 GB/s whether it keeps 1 or 8 requests outstanding (Q1 or Q8);
-four threads together reach 40-42 GB/s. CrystalDiskMark's SEQ1M Q8T1 row is that
-single-thread case. A cached volume reaches about 39 GB/s from one thread at Q8.
-
-Why: with Direct access the RAM disk copies each read when the request arrives,
-splitting one large copy over its worker threads, so one program's queued requests
-are copied one after another. Four programs (or threads) give four copies at once.
-The cache instead hands queued hits to its own copy threads, so they overlap.
-
-The provider already has dedicated copy workers. A follow-up should profile the
-handoff, wake-up and copying costs before choosing another way to overlap whole
-requests. Earlier system-worker designs gave no gain (25 vs 26 GB/s) or fell to
-13-17 GB/s. Queued Direct copies using the provider's per-processor workers were
-also tried and removed (`3fb9d39`, `e8e31c8`): large reads reached 20.8-22.3 GB/s,
-with 21% of busy CPU samples spinning versus 28% copying. Adding worker threads
-alone therefore is not a demonstrated fix.
-
-The possible gain is for one-thread, deep-queue readers. Four readers' aggregate
-40-42 GB/s shows available bandwidth, but does not prove that one reader can reach
-it. Retain a scheduling change only after a controlled Q8 gain, with Q1,
-small-read and multi-threaded controls and byte/lifecycle checks.
-
-The later shared sleeping whole-read queue also loses in a complete 54-window
-same-build comparison: −11.30% single-reader Q8 and −49.62% four-reader throughput.
-Its engine is removed; synchronous split copies remain. Full measurements and
-limits are in [RAM scheduling](RAM_READ_SCHEDULING_20261010.md) and the
-[consolidated findings](PERFORMANCE_FINDINGS.md).
+One thread with 1 MiB reads got about 26 GB/s whether it queued 1 or 8 requests,
+because each Direct read was copied before the next could be submitted. Since
+0.4.583.1, large queued reads hand their chunks to the RAM disk's helper threads
+and return, so one program's queued reads overlap: CrystalDiskMark SEQ1M Q8T1
+read 25,353 -> 47,583 MB/s on the 4-vCPU test VM; Q1 and multi-threaded reads are
+unchanged. Details: [findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9).
 
 ## Raw disk reads and writes bypass the cache (by design)
 

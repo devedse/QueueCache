@@ -75,7 +75,8 @@ machine's physical RAM.
 ## Performance
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
-default test (1 GiB, 5 passes), the better of two runs per column, QueueCache 0.4.476.1.
+default test (1 GiB, 5 passes), the better of two runs per column. Both Q: columns:
+QueueCache 0.4.476.1; RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|
@@ -90,16 +91,18 @@ default test (1 GiB, 5 passes), the better of two runs per column, QueueCache 0.
 
 | MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 594 | 39,492 | 25,353 |
-| Sequential write (SEQ1M Q8T1) | 112 | 21,504 | 23,266 |
-| Random 4K read (RND4K Q1T1) | 9.0 | 1,292 | 1,641 |
-| Random 4K write (RND4K Q1T1) | 1.2 | 1,031 | 1,317 |
+| Sequential read (SEQ1M Q8T1) | 594 | 39,492 | 47,583 |
+| Sequential write (SEQ1M Q8T1) | 112 | 21,504 | 24,434 |
+| Random 4K read (RND4K Q1T1) | 9.0 | 1,292 | 1,657 |
+| Random 4K write (RND4K Q1T1) | 1.2 | 1,031 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data that is
 in its cache. Work larger than the cache runs at the drive's own speed, which on
 this network storage varies (earlier the same day it wrote 245 MB/s
-sequentially); all three columns were measured the same evening, without a
-restart in between.
+sequentially); both Q: columns were measured the same evening, without a
+restart in between. The RAM disk column was re-measured after RAM-disk reads
+became asynchronous: one program with eight reads queued now keeps every
+processor copying (SEQ1M Q8T1 read was 25,353 MB/s before).
 [How these were measured](docs/BENCHMARKING.md).
 
 ## Getting started

@@ -22,7 +22,7 @@ Run one foreground command with explicit targets and an immutable campaign plan.
 For example:
 
 ```powershell
-qcache developer verify Q: --campaign performance --lab-ntfs W: --lab-refs R: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
 ```
 
 Selecting a campaign is mutually exclusive with selecting a single suite. No `--detach`, new
@@ -34,7 +34,7 @@ Current user workflow: use a maintained individual suite and affected correctnes
 checks while diagnosing or comparing a concrete speedup. The profile named
 `focused` also adds 81 retained correctness checks; it is not the minimum unit of
 iteration. Reserve the broad `release-performance` campaign for the final
-retained candidate, launch it once, and review the combined report after exit.
+build, launch it once, and review the combined report after exit.
 This changes run selection, not suite contracts/counts or evidence guards. More
 priority/affinity diagnosis and a dedicated 100 ms UI study are parked; historical
 measurements remain available without rerunning them.
@@ -61,9 +61,9 @@ flowchart LR
 |---|---|---|
 | `smoke` | Two maintained NTFS cases: `quick`, `partial-read-accounting` | Short real-run orchestration check, no DiskSpd needed. |
 | `focused` | `--focus-suite` plus partial-read, paging, policy, pressure and final ordering/fault checks | Only the named affected measurement suite; optional ReFS only for caller-backoff. |
-| `experiment` | Exactly one `--focus-suite ram-read-coordination` phase | Nine off/on/off RAM diagnostic windows at one repeat, without the 81 retained checks. Candidate suites remain conditional/unimplemented. Explicit NTFS role, preparation, identities and restoration still required. |
-| `performance` | Retained correctness; cache layout; RAM reference and scheduling controls; NTFS/optional ReFS caller; priority; recall; 120-second sustained accounting; map cost; ordering/faults last | Thirteen phases / 118 outer cases without ReFS at defaults; fourteen / 142 with ReFS. The short sustained phase is a smoke, not 30-minute acceptance. No retired queue, disk-removal or write matrix. |
-| `release-performance` | Performance plus `write-performance`; sustained default 1800 seconds | Fourteen phases / 190 outer cases without ReFS; fifteen / 214 with ReFS. Write suite has 72 cases at three repeats. GUI CrystalDiskMark/README tasks remain separate. |
+| `experiment` | Exactly one phase: `ram-read-coordination`, `ram-read-async` or `ram-read-async-lifecycle` | One narrow RAM suite without the 81 retained checks (nine diagnostic windows; 18 off/adaptive comparison windows at three repeats; one lifecycle case). Explicit NTFS role, preparation, identities and restoration still required. |
+| `performance` | Product-default regression: retained correctness; RAM reference; asynchronous read lifecycle; recall; 120-second sustained accounting; map cost; ordering/faults last | Ten phases / 34 outer cases at defaults. Concluded mode comparisons (`cache-layout`, `ram-read-scheduling`, `caller-backoff`, `priority-cost`) are standalone suites only; no ReFS phase. The short sustained phase is a smoke, not 30-minute acceptance. |
+| `release-performance` | Performance plus `write-performance`; sustained default 1800 seconds | Eleven phases / 106 outer cases. Write suite has 72 cases at three repeats. GUI CrystalDiskMark/README tasks remain separate. |
 
 Campaign budgets default to 2048 MiB; repetitions/duration remain explicit and
 are forwarded to maintained factories. `cache-sustained` always has one repetition;
