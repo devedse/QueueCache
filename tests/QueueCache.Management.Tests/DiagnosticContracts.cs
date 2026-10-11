@@ -288,6 +288,83 @@ internal static class DiagnosticContracts
         }), score));
         reject(() => CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 0, 0), Snapshot(1, 0, 0, 0, 0, 0, 0, 0), score with { Bytes = 999 }));
         RunStreamingContracts(check, reject);
+        RunBookkeepingContracts(check, reject);
+        RunStressContracts(check, reject);
+    }
+
+    /// <summary>Plan 120 cached read candidate: copy flags 3 against 7 on one build.</summary>
+    private static void RunBookkeepingContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "cache-read-bookkeeping", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
+        var cases = VerificationPlan.Performance(options);
+        check(cases.Count == 18 && cases.Select(c => c.Id).Distinct().Count() == 18 &&
+            cases.Count(c => c.CopyFlags == CacheReadBookkeeping.CandidateFlags) == 9 && cases.Count(c => c.CopyFlags == CacheReadBookkeeping.DefaultFlags) == 9 &&
+            cases.All(c => !c.Timing && c.WarmResident && c.Workload == "sequential-read") &&
+            cases.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count() == 2 && g.Select(c => c.CopyFlags).Distinct().Count() == 2),
+            "cached read comparison: each shape once per mode per repetition, timing off");
+        check(CacheReadBookkeeping.IsTarget(cases[0]) && CacheReadBookkeeping.CandidateFlags == (CacheReadBookkeeping.DefaultFlags | 4),
+            "the candidate adds only flag 4 to the default flags; Q8T1 is the target");
+        var phase = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "cache-read-bookkeeping"));
+        check(phase.Count == 1 && phase[0].Role == CampaignTargetRole.Performance && phase[0].MeasurementWindows == 18, "one-phase cached read comparison");
+        var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 7UL } });
+        var score = new DiskSpdScore(1000L << 20, 1000, 10, 100, 100, null, null, null, null);
+        var candidate = cases.First(c => c.CopyFlags == 7);
+        check(CacheReadBookkeeping.Window(candidate, before, score).CopyFlags == 7, "the window records the reported copy flags");
+        reject(() => CacheReadBookkeeping.Window(cases.First(c => c.CopyFlags == 3), before, score));
+        reject(() => CacheReadBookkeeping.Window(candidate, JsonSerializer.SerializeToElement(new { Diagnostics = new { } }), score));
+        CacheReadBookkeeping.ComparisonWindow[] Windows(Func<PerformanceCase, double> rate) =>
+            cases.Select(c => new CacheReadBookkeeping.ComparisonWindow(c, c.CopyFlags!.Value, rate(c))).ToArray();
+        double Target(PerformanceCase c, double gain) => CacheReadBookkeeping.IsTarget(c) && c.CopyFlags == 7 ? 36_000 * gain + c.Repeat : 36_000 + c.Repeat;
+        check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10))).Verdict == "ACCEPT_SCREEN", "a clear Q8 gain passes the screen");
+        check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.01))).Verdict == "REJECT", "a 1% gain rejects");
+        check(CacheReadBookkeeping.Evaluate(Windows(c => c.QueueDepth == 1 && c.CopyFlags == 7 ? 34_000 : Target(c, 1.10))).Verdict ==
+            "CONTROL_LOSS_REVISION_OR_REJECT", "a repeatable control loss blocks acceptance");
+        check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10)).Where(w => w.Case.Repeat < 3).ToArray()).Verdict == "INCOMPLETE_FOR_ACCEPTANCE",
+            "two repetitions never pass");
+    }
+
+    /// <summary>Plan 120 busy-day suite: versioned sectors, version windows and the action schedule.</summary>
+    private static void RunStressContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var buffer = new byte[64 << 10];
+        StressPattern.Fill(buffer, 99, 7, 3);
+        check(StressPattern.Check(buffer, 99, 7, 3, 3) is null && StressPattern.Check(buffer, 99, 7, 1, 5) is null, "a whole version inside its window passes");
+        check(StressPattern.Check(buffer, 99, 7, 4, 6) is not null, "a stale version is reported");
+        check(StressPattern.Check(buffer, 99, 8, 3, 3) is not null && StressPattern.Check(buffer, 98, 7, 3, 3) is not null, "a misplaced or foreign block is reported");
+        var torn = (byte[])buffer.Clone();
+        var newer = new byte[64 << 10]; StressPattern.Fill(newer, 99, 7, 4);
+        Array.Copy(newer, StressPattern.Sector, torn, StressPattern.Sector, StressPattern.Sector);
+        check(StressPattern.Check(torn, 99, 7, 3, 4) is null && StressPattern.Check(torn, 99, 7, 3, 3) is not null,
+            "sectors of two allowed versions pass; a newer sector outside the window fails");
+        torn[StressPattern.Sector * 2 + 100] ^= 1;
+        check(StressPattern.Check(torn, 99, 7, 0, 10)?.Contains("not a whole written sector") == true, "a torn sector is detected");
+        var versions = new StressBlockVersions(4);
+        versions.Begin(2, 5); check(versions.Started(2) == 5 && versions.Done(2) == 0, "a started write widens the window");
+        versions.Complete(2, 5); check(versions.Done(2) == 5, "a completed write moves the lower bound");
+        var random = new Random(120);
+        var drawn = Enumerable.Range(0, 2000).Select(_ => StressPlan.Next(random)).ToHashSet();
+        check(drawn.SetEquals(Enum.GetValues<StressAction>()), "every chaos action occurs in a long schedule");
+        for (var i = 0; i < 50; i++)
+        {
+            var configuration = StressPlan.RandomConfiguration(random, [64, 96, 128, 256]);
+            configuration.Validate(true);
+            check(configuration.Options.Parallelism is 1 or 2 or 4 && configuration.BudgetMiB is 64 or 96 or 128 or 256, "random settings stay in the supported set");
+        }
+        check(StressRegion.All.Select(r => r.BlockBytes).Distinct().Count() == 4 && StressRegion.All.Count(r => r.Overlapped) == 1 &&
+            StressRegion.All.Max(r => r.BlockBytes) == 4 << 20 && StressRegion.All.All(r => r.BlockBytes % StressPattern.Sector == 0),
+            "regions cover 4 KiB to 4 MiB requests and one overlapped region");
+        check(VerificationPlan.Integrity(new VerificationOptions("W:", "stress-races")) is [{ Id: "stress-races", Operation: "stress-races" }], "one integrity case");
+        VerificationPlan.Validate(new VerificationOptions("W:", "stress-races", Repeats: 1, SoakSeconds: 600));
+        foreach (var invalid in new[] { new VerificationOptions("W:", "stress-races", Repeats: 1, SoakSeconds: 30), new VerificationOptions("W:", "stress-races", Repeats: 2),
+            new VerificationOptions("W:", "policies", SoakSeconds: 600) })
+            try { VerificationPlan.Validate(invalid); throw new Exception("stress-races accepted invalid options"); }
+            catch (ArgumentException) { }
+        var stress = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, SoakSeconds: 600), "experiment", "W:", FocusSuite: "stress-races"));
+        check(stress.Count == 1 && stress[0].Role == CampaignTargetRole.NtfsLab && stress[0].Options.Volume == "W:" &&
+            stress[0].Options.SoakSeconds == 600 && stress[0].Options.Repeats == 1, "stress-races runs on the NTFS lab volume with its soak length");
+        var focused = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, SoakSeconds: 120), "focused", "W:", FocusSuite: "stress-races"));
+        check(focused.Single(p => p.Options.Suite == "stress-races").Role == CampaignTargetRole.NtfsLab && focused[^1].Options.Suite == "ordering-faults",
+            "a focused stress campaign keeps fault injection last");
     }
 
     /// <summary>Plan 120 candidate: streaming stores for large RAM-disk write copies, compared on one build.</summary>

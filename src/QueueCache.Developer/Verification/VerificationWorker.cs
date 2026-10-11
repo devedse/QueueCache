@@ -923,6 +923,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, faultChecks);
                 ReportFailures(faultChecks, Console.Error);
                 return faultChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "stress-races":
+                var stressChecks = await StressRaceScenarios.RunAsync(target, device, job.WorkDirectory!, job.Seconds, job.OraclePath!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, stressChecks);
+                ReportFailures(stressChecks, Console.Error);
+                return stressChecks.Count > 0 && stressChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
                 var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, pressureChecks);

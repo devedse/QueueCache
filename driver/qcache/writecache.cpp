@@ -1695,7 +1695,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
         break;
     case QcLabCopyFlags:
-        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce) || command.BudgetBytes)
+        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping) || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
@@ -2354,16 +2354,22 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     bool full = true;
+    const auto copyFlags = InterlockedCompareExchange(&c->CopyFlags, 0, 0);
+    // QcCopyBookkeeping: record every block's slot while checking, so pinning needs no second lookup.
+    const bool batched = pinned && (copyFlags & QcCopyBookkeeping);
     for (auto block = start / Chunk * Chunk; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);
+        if (batched)
+            pinned[(block - start / Chunk * Chunk) / Chunk] = index;
         const auto from = max(start, block);
         const auto to = min(end, block + Chunk);
-        if (index == NoSlot || c->Slots[index].Filling ||
-            !QcCovers(c->Slots[index].ValidSectors, static_cast<ULONG>(from - block), static_cast<ULONG>(to - from)))
+        if (full && (index == NoSlot || c->Slots[index].Filling ||
+            !QcCovers(c->Slots[index].ValidSectors, static_cast<ULONG>(from - block), static_cast<ULONG>(to - from))))
         {
             full = false;
-            break;
+            if (!batched || hitOnly)
+                break; // Unbatched pinning looks the blocks up again; a hit-only read declines.
         }
     }
     if (hitOnly && !full)
@@ -2377,7 +2383,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     const auto firstBlock = start / Chunk * Chunk;
     for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto index = FindSlot(c, block);
+        auto index = batched ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
         if (pinned)
             pinned[(block - firstBlock) / Chunk] = index;
         if (index != NoSlot)
@@ -2439,7 +2445,6 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         // mask are stable: copy the whole range with one Mutex release instead of
         // one per 64 blocks, which convoyed parallel offloaded reads on Mutex.
         ULONGLONG hitBytes = 0, missBytes = 0;
-        const auto copyFlags = InterlockedCompareExchange(&c->CopyFlags, 0, 0);
         ReleaseCache(c);
         for (auto block = firstBlock; block < end; block += Chunk)
         {
@@ -2546,6 +2551,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         const bool fillable = staging != nullptr;
         if (!full && pagingIo && !DistinctPages(irp))
             InterlockedIncrement64(&c->PagingReadsRepeatedPages); // Evidence only.
+        ULONG runFirst = NoSlot, runLast = NoSlot; // QcCopyBookkeeping: neighbours in one clean list.
         for (auto block = firstBlock; block < end; block += Chunk)
         {
             auto index = FindSlot(c, block);
@@ -2553,6 +2559,23 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             // read used when it is still the current one.
             if (pinned && index != pinned[(block - firstBlock) / Chunk])
                 continue;
+            if (index != NoSlot && batched && TouchCleanMovesOnly(c, index))
+            {
+                if (runLast != NoSlot && c->Slots[runLast].QueueNext == index)
+                {
+                    runLast = index;
+                    continue;
+                }
+                if (runFirst != NoSlot)
+                    TouchCleanRun(c, runFirst, runLast);
+                runFirst = runLast = index;
+                continue;
+            }
+            if (runFirst != NoSlot)
+            {
+                TouchCleanRun(c, runFirst, runLast);
+                runFirst = runLast = NoSlot;
+            }
             if (index != NoSlot)
             {
                 TouchClean(c, index);
@@ -2575,6 +2598,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 InterlockedIncrement64(&c->ReadFills);
             }
         }
+        if (runFirst != NoSlot)
+            TouchCleanRun(c, runFirst, runLast);
         if (hitOnly && !callerPath)
             ++c->Performance.BypassReads;
     }

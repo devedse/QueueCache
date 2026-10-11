@@ -21,7 +21,8 @@ public static class RamReadReferenceEvidence
     {
         if (expected.ResourceId == Guid.Empty || originalResources.Contains(expected.ResourceId) || expected != current ||
             expected.Mode != ManagedDiskMode.EphemeralRam || expected.CapacityBytes != RamReadReferencePlan.DiskMiB * (1UL << 20) ||
-            expected.StartAtBoot || expected.ImagePath is not null || expected.Cache is not null || !expected.Label.StartsWith("QC-ReadRef-", StringComparison.Ordinal))
+            expected.StartAtBoot || expected.ImagePath is not null || expected.Cache is not null ||
+            !(expected.Label.StartsWith("QC-ReadRef-", StringComparison.Ordinal) || expected.Label.StartsWith("QC-Stress-", StringComparison.Ordinal)))
             throw new InvalidDataException("RAM reference cleanup refuses an ownership/definition mismatch.");
     }
     public static void ValidateChecks(IReadOnlyList<RamReadReferenceCase> expected, IReadOnlyList<QueueCache.Operations.CheckResult> checks)

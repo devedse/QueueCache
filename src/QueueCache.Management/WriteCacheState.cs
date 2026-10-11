@@ -181,8 +181,9 @@ public enum WriteCacheAction : uint
     LabResetFreeOrder,
     /// <summary>Diagnostic only: measure block/memory adjacency into <see cref="CacheDiagnostics.Layout"/>.</summary>
     LabMeasureLayout,
-    /// <summary>Lab: value = 1 prefetch next block | 2 copy runs within a 256 KiB chunk at once, for RAM-hit copies.
-    /// Both are on by default (3); 0 restores the per-block copy for comparisons.</summary>
+    /// <summary>Lab: value = 1 prefetch next block | 2 copy runs within a 256 KiB chunk at once, for RAM-hit copies
+    /// | 4 one lookup per block and run-based recency moves for pinned read hits (plan 120 experiment).
+    /// Prefetch and runs are on by default (3); 0 restores the per-block copy for comparisons.</summary>
     LabCopyFlags,
     /// <summary>Lab: value 1 (default) = read recall, 0 = the earlier bimodal insertion of read misses.
     /// Changes only which clean data is kept, never what a read returns; clears the recall history.</summary>

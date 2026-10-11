@@ -78,7 +78,7 @@ qcache developer verify Q: --suite quick --output C:\QueueCache-Results
 | Campaign | Contains | Typical time |
 |---|---|---:|
 | `smoke` | `quick` and partial-read accounting on the lab NTFS volume | ~1 min |
-| `experiment` | Exactly one narrow suite (`ram-read-async`, `ram-read-async-lifecycle`, `ram-read-coordination`, `ram-write-reference`, `ram-write-streaming`, `cache-read-reference`) | 1-15 min |
+| `experiment` | Exactly one narrow suite (`ram-read-async`, `ram-read-async-lifecycle`, `ram-read-coordination`, `ram-write-reference`, `ram-write-streaming`, `cache-read-reference`, `cache-read-bookkeeping`, `stress-races`) | 1-15 min |
 | `focused` | One named suite plus the retained correctness checks (partial reads, paging, policies, pressure, ordering/faults) | 10-30 min |
 | `performance` | Product-default regression: correctness checks, RAM reference, RAM lifecycle, recall, 2-minute sustained, map cost, ordering/faults | ~1 h |
 | `release-performance` | `performance` plus the 72-case write matrix and a 30-minute sustained phase | ~2 h |
@@ -108,6 +108,7 @@ ones in use:
 | `policies`, `pressure` | Sector edge cases, each policy, drain/age/watermark/backpressure, disk bytes afterwards | No DiskSpd |
 | `paging-coherence`, `partial-read-accounting`, `ordering-faults` | Mapped/paging coherence, partly cached reads, write ordering under injected lower failures | In every campaign; `ordering-faults` runs last |
 | `volumes`, `trim-cache` | Several volumes on one disk; TRIM | Lab VHDX volume |
+| `stress-races` | Both lab NTFS volumes at once under concurrent writers of 4 KiB to 4 MiB, cancelled overlapped I/O, cache flush/resize/teardown/drop/delay/allocation faults, refused settings and RAM disk churn; then fault and Retry at drain parallelism 1, 2 and 4; every byte read back | Lab VHDX; `--soak-seconds` (default 240); run under Driver Verifier and without |
 | `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram`, `managed-cli`, `managed-broker-restart`, `managed-lifecycle-*` | Managed disk creation, checkpoints, broker restart and restart lifecycle | Owned fixtures only |
 | `disk-removal`, `disk-removal-windows` | Eject with pending writes, reconnect | Disposable disk identity required |
 | `system-*` | Guarded checks on the OS disk | Explicit acknowledgement and off-disk output |
@@ -119,6 +120,7 @@ ones in use:
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
 | `ram-write-streaming` | Same-build comparison of ordinary and streaming stores for large RAM-disk writes | Prints a screen verdict |
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
+| `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 3 and 7) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 

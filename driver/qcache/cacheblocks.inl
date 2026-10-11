@@ -407,6 +407,39 @@ static void TouchClean(QC_CACHE* c, ULONG i)
         Link(c, i);
     }
 }
+// TouchClean without a promotion: the slot only moves within its own clean list.
+static bool TouchCleanMovesOnly(QC_CACHE* c, ULONG i)
+{
+    const auto slot = &c->Slots[i];
+    return !slot->Dirty && (slot->ReadClass || !(c->Options.Retention & QcPromoteReads) || !ReadLimit(c));
+}
+// first..last are clean, consecutive and in order in one clean list (TouchCleanMovesOnly): move them
+// to its most recent end with O(1) relinks, the order TouchClean would give one slot at a time.
+static void TouchCleanRun(QC_CACHE* c, ULONG first, ULONG last)
+{
+    const auto pool = c->Slots[first].ReadClass ? 1 : 0;
+    const auto now = NowMs();
+    for (auto i = first;; i = c->Slots[i].QueueNext)
+    {
+        c->Slots[i].DirtySince = now; // As Link sets it for a clean slot.
+        if (i == last)
+            break;
+    }
+    if (c->CleanTail[pool] == last)
+        return;
+    const auto previous = c->Slots[first].QueuePrevious;
+    const auto next = c->Slots[last].QueueNext; // Exists: last is not the tail.
+    if (previous != NoSlot)
+        c->Slots[previous].QueueNext = next;
+    else
+        c->CleanHead[pool] = next;
+    c->Slots[next].QueuePrevious = previous;
+    const auto tail = c->CleanTail[pool]; // Not in the run: next precedes or is it.
+    c->Slots[tail].QueueNext = first;
+    c->Slots[first].QueuePrevious = tail;
+    c->Slots[last].QueueNext = NoSlot;
+    c->CleanTail[pool] = last;
+}
 static ULONG FindOldestSlot(QC_CACHE* c, LONGLONG offset)
 {
     auto oldest = NoSlot;

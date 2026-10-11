@@ -209,7 +209,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -486,12 +486,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ReferenceRepeats = options.Repeats,
                         TraceSymbols = options.TraceSymbols,
                         ReferenceKind = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.KindFor(options.Suite) : RamReadRunKind.Reference,
-                        Seconds = options.DurationSeconds,
-                        OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") : null,
+                        Seconds = test.Operation == "stress-races" ? options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds : options.DurationSeconds,
+                        OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") :
+                            test.Operation == "stress-races" ? storage.PathFor(StressOwnership) : null,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
-                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 : 900);
-                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "app-write-profile" or
+                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 :
+                        test.Operation == "stress-races" ? (options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds) + 1800 : 900);
+                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "stress-races" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
@@ -521,6 +523,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 if (options.Suite == "cache-read-reference" && options.CaseFilter is null)
                     foreach (var row in CacheReadReference.Report(storage, performance))
                         Log("Attribution " + row.Describe());
+                if (options.Suite == "cache-read-bookkeeping")
+                {
+                    await Control(WriteCacheAction.LabCopyFlags, deadline.Token, CacheReadBookkeeping.DefaultFlags);
+                    Log("Comparison verdict (screen only): " + CacheReadBookkeeping.Report(storage, performance));
+                }
                 foreach (var scenario in exercises)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -557,8 +564,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
+                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.DefaultFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
+                    if (options.Suite == "stress-races" && File.Exists(storage.PathFor(StressOwnership)))
+                        await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor(StressOwnership) }, CancellationToken.None, 300);
                     await Worker(Job("restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
@@ -788,6 +799,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         return score;
     }
 
+    private const string StressOwnership = "stress-races-owned.json";
     private ulong? layoutGeneration, layoutMeasurements;
     private async Task<CacheLayoutSnapshot> LayoutSnapshot(string name, CancellationToken token)
     {
@@ -837,6 +849,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         if (scenario.Layout == CacheLayoutStage.None)
             await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
+        if (scenario.CopyFlags is { } copyFlags)
+            await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
         if (scenario.Layout != CacheLayoutStage.None)
         {
             await WaitForQuiet(scenario.Id + "-start", token);

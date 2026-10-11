@@ -57,6 +57,10 @@ internal static class VerificationCommands
                                  Accepts reconciled system usage paths and restores C: disabled/released.
               policies           Sector regressions, sustained foreground/drain proof, six policies and disk-byte verification.
                                  No DiskSpd needed.
+              stress-races       Lab NTFS volume and its sibling at once: versioned 4K..4M writers, cancelled overlapped
+                                 I/O, flush/resize/teardown/drop/delay/allocation-fault/refused-settings chaos and owned
+                                 RAM disk churn; then fault + Retry at drain parallelism 1/2/4 and every byte read back.
+                                 --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads.
@@ -84,6 +88,8 @@ internal static class VerificationCommands
                                  re-read, then ascending reset control. 18 cases; measures layout.
               cache-read-reference Resident 1M reads Q1T1/Q8T1/Q2T4, timing off (scores) and on (lock and queue
                                  time per read); 18 cases at --repeats 3; --budget-mib 2048. Attribution only.
+              cache-read-bookkeeping Same-build copy flags 3/7 (one lookup per block, run-based recency moves):
+                                 1M Q8T1 target, Q1T1 and Q2T4 controls; 18 cases at --repeats 3.
               cache-concurrency  Separate fitting files; 1/2/4 streams at total Q8, Q1 control, RAM-only and background-drain writes.
               cache-sustained    Six mixed read/write episodes with concurrent byte oracles and idle rereads, never clearing.
                                  --repeats 1, --soak-seconds 1800 (default); minimum 120 is a smoke test.
