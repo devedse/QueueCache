@@ -5,12 +5,17 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**PR #9 completion, 2026-10-11 (active):** plan in
-[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). Implementation: planning only;
-asynchronous-split RAM read candidate (plan 118, suite `ram-read-async`), lean
-`release-performance` profile and dead-code removal not yet implemented.
-Verification: none yet; automatic wake has never been exercised (every job was
-acknowledged `REVIEWED` in-turn, so no delivery reached `SENT`).
+**PR #9 completion, 2026-10-11:** plan in [PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md).
+Implementation: asynchronous split RAM-disk reads (`1eab076`, fixes `ef3c6de`,
+revision and default adaptive mode `21f02bf`/`5afcef4`/`87cc65e`), plans 118
+(`ram-read-async`) and 119 (`ram-read-async-lifecycle`), lean `performance` /
+`release-performance` profiles, and removal of the rejected queue's runner code
+(native ABI slots kept). Verification: Driver Verifier caught bugcheck 0x3B in
+the first build (fixed); accepted same-build comparison on signed 0.4.579.1:
+1M Q8T1 24,234 -> 43,583 MiB/s (+79.84%), Q1T1 −0.52%, Q2T4 +0.46%; lifecycle
+checks pass with and without Verifier. Automatic Manager wake was tested and does
+not deliver to this Claude Code conversation (DeveAgentManager issue #5). Final
+release regression on the final build and README benchmarks: see the findings.
 
 **Current performance finalization, 2026-10-11:** source `0575e97`, signed native
 0.4.568.1, plan 117. Nine coordination windows pass with exact restoration;

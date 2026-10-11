@@ -8,42 +8,87 @@ execution/status source of truth; implementation and verification are separate.
 The dated reports preserve detailed methods and historical evidence. Their
 findings are consolidated here, including negative results and limits.
 
-**Current conclusion:** retain the ordered chunk allocator, bounded RAM-hit
-copy optimizations, synchronous RAM-disk split reads and read recall. The newer
-shared whole-read queue was slower and has been removed. Shortening caller
-backoff benefits mixed Q8 but harms large NTFS reads, so production backoff stays
-256. Partial-read counters are implemented; missing-span reads are conditional.
-The independent 36-window `priority-cost` comparison is complete: CPU BelowNormal loses
-34.20% resident Q8 throughput. Focused churn accounting is also complete and finds
-under 1% aggregate overlap in lower traffic for the tested shapes. CPU/wait
-attribution is complete and points at scheduling/utilization. Thirty RAM-disk
-affinity/source-lane controls are now complete: they leave most of the single-
-versus multi-submitter gap intact. Plan-116 instruction attribution now confirms
-32–33% of samples in helper polling with one reader versus 7% with four readers.
-It does not establish a throughput fix. The final plan-117 coordination diagnostic
-now measures one active Direct copy with Q8T1, versus four with Q2T4. Q8 helpers
-copy 74.60% of split bytes; only 0.64% of their posts are withdrawn unused.
-The bounded investigation closed with no candidate selected. **Review,
-2026-10-11: that closure is reopened for exactly one candidate.** About 18 of
-every 41 µs per Q8T1 read is spent outside the copy while helpers idle, and no
-earlier asynchronous design kept split copies (all gave whole 1 MiB reads to one
-worker). The asynchronous-split candidate, its prediction and stop rules are in
-[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). Cache
-CPU-priority/affinity interaction is now measured: the Q8 BelowNormal penalty
-shrinks from 30.21% at default affinity to 3.14% unbound (overlapping ranges).
-All five
-retained-driver qualification scenarios completed again with raw checks and
-restoration inspected in the attribution campaign.
+**Current conclusion (2026-10-11): one new RAM-disk speedup is accepted.**
+Asynchronous split reads raise single-thread queued 1 MiB RAM-disk reads (the
+CrystalDiskMark SEQ1M Q8T1 shape) from a median **24,234 to 43,583 MiB/s
+(+79.8%)** in a same-build comparison, with Q1T1 (−0.52%) and four readers
+(+0.46%) unchanged. It is the default for new RAM disks from plan 119. Details
+and evidence: [Asynchronous split reads](#ram-disk-asynchronous-split-reads-accepted-pr-9).
+Everything else retained earlier stays: the ordered chunk allocator, bounded
+RAM-hit copy optimizations, read recall and caller backoff 256. The shared
+whole-read queue stays removed. Partial-read counters are implemented and
+missing-span reads stay conditional (under 1% overlap measured). Low-priority
+cache slowdowns are a benchmark-setup effect (launch at normal priority); the
+selective NTFS/ReFS caller policy was closed without an experiment (best measured
+gain +5.26%, at the acceptance bar). Dedicated 100 ms map-refresh cost testing was
+dropped by the owner.
 
-The maintained single-command campaign and durable completion event are implemented
-(current plan 117, including a one-phase `experiment` profile). The installed Manager helper runs owned jobs and validates
-completion; live service delivery/automatic wake remains unverified. A focused
-RAM-disk comparison holds copying fixed and isolates affinity plus source-stream
-overlap, addressing the earlier queue experiment's combined changes. Windows contracts, Debug/Release CI and the six-phase focused VM campaign pass.
-The controls do not establish a production speed-up. Default-off native research
-counters are retained and VM-qualified; copying, scheduling, priorities and
-production defaults remain as before. The tracker records implementation and
-verification separately. See the finalization record at the end of this file.
+The maintained single-command campaign and durable completion event are
+implemented (plan 119, including the one-phase `experiment` profile). The Manager
+helper runs owned jobs and validates completion, but automatic agent wake does
+not yet work for this Claude Code conversation (DeveAgentManager issue #5).
+The tracker records implementation and verification separately.
+
+## RAM-disk asynchronous split reads: accepted (PR #9)
+
+**Why reads were slow.** A Direct RAM-disk read of 1 MiB is split into four
+256 KiB chunks copied by four processors, but the submitting thread waited until
+all were copied before it could submit its next read, so queue depth 8 behaved
+like depth 1. Plan 117 measured one active Direct read at Q8T1; of each ~41 µs
+read, ~23 µs was the copy and ~18 µs submission/completion while the helpers
+idled. The disk cache already completes queued reads from its own threads and
+reached 39,492 MB/s in the README's CrystalDiskMark run versus the RAM disk's
+25,353 MB/s.
+
+**Change.** A large, asynchronous, non-paging Direct read posts all of its chunks
+to the other processors' existing helpers (same chunk size, copy code and posting)
+and returns; the helper that copies the last chunk completes the request. Helpers
+receive work on every read, so they stay awake (post-to-take ~1.2 µs). The three
+earlier asynchronous designs (`3fb9d39`/`e8e31c8`, `c5d32a8`, `9262493`) instead
+gave each whole 1 MiB read to one worker: a 4× slower copy, and round-robin
+workers that went to sleep between reads (21% spin versus 28% copy); they lost.
+Admission reuses the provider's write policy (asynchronous while another read is
+in flight; inline after 16 that found none, probing every 64th), stays inline
+while more than one thread submitted a large read within 1 ms, and caps 16 in
+flight. The adapter now withdraws Direct views before stopping its workers.
+Modes per RAM disk: off, adaptive (default), always (lab correctness checks).
+
+**Same-build comparisons** (owned 2 GiB RAM disk, 1 GiB file, DiskSpd 2.2 from
+CDM 9.0.3, 10 s windows with 3 s warmup, normal priority, three alternating pairs,
+diagnostics off; MiB/s medians and ranges):
+
+| Run | Shape | Original | Candidate | Change |
+|---|---|---:|---:|---:|
+| Plan 118, build 575 | 1M Q8T1 target | 24,268 (23,986–24,591) | 44,766 (42,485–44,950) | +84.47% |
+| | 1M Q1T1 | 24,441 (24,389–24,978) | 24,249 (24,218–24,536) | −0.79% |
+| | 1M Q2T4 | 36,327 (36,202–36,886) | 34,223 (34,144–35,307) | **−5.79%, every pair lower** |
+| Plan 119 revision, build 579 | 1M Q8T1 target | 24,234 (23,927–24,548) | **43,583 (43,295–43,696)** | **+79.84%** |
+| | 1M Q1T1 | 24,975 (24,881–25,109) | 24,844 (24,600–24,953) | −0.52% |
+| | 1M Q2T4 | 36,412 (36,168–37,887) | 36,578 (36,474–36,693) | +0.46% |
+
+The first run lost four-reader throughput because every thread handed off; the
+pre-declared revision (inline while several threads submit) kept ~473k of their
+reads inline and removed the loss. Candidate target windows completed 99.7–99.9%
+of Direct reads asynchronously (the runner fails a run below 50%). Q8T1 p99 read
+latency rises from ~0.07 to ~0.3 ms because queued reads now really overlap; the
+old figure was each read completing synchronously before the next was submitted.
+Both runs: all 18 whole-file hashes identical, 33 owned exits zero, zero image
+I/O, maximum telemetry gap 1.157/1.112 s, mode restored after every window.
+Runs `QueueCache-Campaign-20261011-080905-c70ad40ec31c42548c7a91415a73afd6` and
+`QueueCache-Campaign-20261011-084408-58e5284403004b94a02d67dac82dee06` (PR9-AsyncCompare1/3, private evidence).
+
+**Correctness.** Driver Verifier (special pool, IRQL, I/O verification, deadlock
+detection, DDI compliance) first caught a bugcheck 0x3B: the eligibility check
+used `IoIsOperationSynchronous`, which dereferences a file object that an NTFS
+request to the volume does not carry; it was replaced before any measurement.
+`ram-read-async-lifecycle` then passed under Verifier and without it: a
+single-thread overlapped reader checks every 32 KiB of each 1 MiB block (poisoned
+before each read). Without Verifier: adaptive Q8 59,469 MiB verified (99.8%
+asynchronous); forced Q32 60,952 MiB with the in-flight cap reached at exactly 16;
+forced Q8 while an unrecognized control ended Direct access: 31,367 asynchronous
+reads then the standard path, 58,361 MiB verified, rebound. Under Verifier the
+same checks verified 14,452 + 18,690 + 17,558 MiB with no fault. Under Verifier
+submission is slower than a copy, so the adaptive policy correctly stays inline.
 
 ## Which changes belong together
 
@@ -51,7 +96,7 @@ verification separately. See the finalization record at the end of this file.
 |---|---|---|
 | Already on master before PR #8 | Direct RAM-disk access; large RAM-disk writes use the Standard provider path; provider split-copy helpers; 256 KiB chunk allocator; prefetch and bounded in-chunk RAM-cache hit copies | These earlier optimizations were measured separately. They were not introduced by PR #8 or rejected by PR #9. |
 | Merged [PR #8](https://github.com/devedse/QueueCache/pull/8), merge `fb34f878581590123a190b048fdfd23c5d4e9b39` | Read recall; maintained concurrency, sustained-use and map-cost scenarios; neighboring-sector checks; map lifecycle/grouping; map pop-out/full-screen; 100 ms refresh preference and occupancy legend; runner cleanup; regenerated README benchmarks/screenshots | Read recall has controlled positive results and a documented temporary hit-rate trade-off. Full write matrix completed 72/72. Real Windows UI behavior was checked; 100 ms rendering cost was not benchmarked. |
-| Draft [PR #9](https://github.com/devedse/QueueCache/pull/9), `perf/ram-read-followups` | Partial-read diagnostics/scenario; caller dispatch attribution and bounded runtime lab control; RAM-reference verification and robust sampling; independent owned-child priority comparison; restoration, ownership and parser contracts; consolidated findings | 10 partial-read checks, 36 RAM-reference windows, 54 RAM-queue comparison windows, 24 windows per NTFS/ReFS caller comparison and 36 priority windows complete. CPU attribution/churn/correctness remain separate. No new RAM-disk read speed-up has been accepted. |
+| Draft [PR #9](https://github.com/devedse/QueueCache/pull/9), `perf/ram-read-followups` | **Asynchronous split RAM-disk reads (default adaptive)**; partial-read diagnostics/scenario; caller dispatch attribution and bounded runtime lab control; RAM-reference verification and robust sampling; independent owned-child priority comparison; single-command campaigns; restoration, ownership and parser contracts; consolidated findings | 1M Q8T1 RAM-disk reads +79.84% in the accepted same-build comparison; lifecycle checks pass with and without Driver Verifier. Earlier PR #9 measurements: 10 partial-read checks, 36 RAM-reference windows, 54 RAM-queue comparison windows, 24 windows per NTFS/ReFS caller comparison and 36 priority windows. |
 | PR #9 experiment removed | Shared sleeping queue for whole large Direct RAM-disk reads | Same-build comparison loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput. The native engine is removed; wire reservations remain for compatibility. |
 
 ## Measurement rules

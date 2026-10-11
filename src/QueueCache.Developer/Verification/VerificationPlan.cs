@@ -32,7 +32,7 @@ public sealed record DrainDecisionCase(
 public static class VerificationPlan
 {
     public const int Version = 119;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle";
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -83,7 +83,6 @@ public static class VerificationPlan
         "ram-read-coordination",
         "ram-read-async",
         "ram-read-async-lifecycle",
-        "ram-read-queue",
         "write-performance",
         "sequential-resident",
         "cache-layout",

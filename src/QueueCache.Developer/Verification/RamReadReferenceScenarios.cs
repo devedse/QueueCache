@@ -39,7 +39,7 @@ internal static class RamReadReferenceScenarios
         }
         try
         {
-        foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access, s.RamReadQueueMode }))
+        foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access }))
         {
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam) with
             {
@@ -55,13 +55,6 @@ internal static class RamReadReferenceScenarios
                 if (current.Runtime?.State != ManagedDiskState.Ready || current.VolumePath is null || current.PhysicalDiskNumber is null)
                     throw new IOException("Owned RAM reference did not become Ready.");
                 var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
-                if (kind == RamReadRunKind.ArchivedQueue)
-                {
-                    using var fixture = CacheDevice.OpenVolumeName(current.VolumePath, writable: true);
-                    if (fixture.GetDiagnostics().RamReadQueue is null)
-                        throw new IOException("RAM read queue comparison requires V22 scheduling diagnostics.");
-                    fixture.Control(WriteCacheAction.LabRamReadQueue, value: (ulong)group.Key.RamReadQueueMode);
-                }
                 var file = definition.PreferredLetter + @":\ram-read-reference.dat";
                 var expectedHash = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
                 if (kind is RamReadRunKind.Async or RamReadRunKind.Coordination)
@@ -229,8 +222,7 @@ internal static class RamReadReferenceScenarios
                         return new(DateTimeOffset.UtcNow, record.ResourceId, runtime.BootEpoch, runtime.CreationGeneration,
                             runtime.WriteGeneration, runtime.State, device.GetWriteCacheState().Enabled,
                             (native.Flags & RamDiskFlags.Timing) != 0, device.GetRamDirectState(), statistics.ReadRequests,
-                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes,
-                            device.GetDiagnostics().RamReadQueue);
+                            io.ReadAttempts, io.WriteAttempts, record.LastError ?? runtime.LastError, statistics.WriteRequests, native.WriteBytes);
                     }
                     void Observe()
                     {
@@ -243,8 +235,7 @@ internal static class RamReadReferenceScenarios
                                 ?? throw new IOException("RAM reference provider statistics are unavailable.");
                             var enabled = sampledDevice.GetWriteCacheState().Enabled;
                             var direct = sampledDevice.GetRamDirectState();
-                            var queue = sampledDevice.GetDiagnostics().RamReadQueue;
-                            var sample = new RamReadReferenceSample(DateTimeOffset.UtcNow, native, statistics, enabled, direct, queue);
+                            var sample = new RamReadReferenceSample(DateTimeOffset.UtcNow, native, statistics, enabled, direct);
                             samples.Add(sample);
                             log.WriteLine(JsonSerializer.Serialize(sample)); log.Flush();
                             ready.TrySetResult();
@@ -256,10 +247,10 @@ internal static class RamReadReferenceScenarios
             }
             catch (Exception ex)
             {
-                RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.failure.json", new { Error = ex.ToString() });
+                RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}.failure.json", new { Error = ex.ToString() });
                 throw;
             }
-            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}-queue{group.Key.RamReadQueueMode}.cleanup.json", finalizeTrace: false); }
+            finally { await CleanupAsync(host, ownership, evidence + $".r{group.Key.Repeat}-{group.Key.Access}.cleanup.json", finalizeTrace: false); }
         }
         }
         finally { await VerificationTraceSession.CleanupAsync(traceJournal); }

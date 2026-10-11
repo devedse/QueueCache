@@ -16,10 +16,10 @@
   from controller event validation. Select the smallest maintained suite/profile
   for affected regressions.
   **Active plan: `docs/PR9_COMPLETION_PLAN.md`** (owner request, 2026-10-11).
-  Follow its steps and stop rules exactly: verify automatic wake by launching an
-  owned job and ending the turn (do not poll or mark it reviewed); build and
-  compare the single asynchronous-split RAM read candidate; then one lean final
-  regression and PR close-out. It supersedes the execution order in
+  Asynchronous split RAM reads are accepted and default (1M Q8T1 +79.84%);
+  `ram-read-async` compares off/adaptive per window and `ram-read-async-lifecycle`
+  (in both regression profiles) checks bytes, the cap and Direct end under load.
+  Automatic Manager wake does not yet reach Claude Code (DeveAgentManager #5). It supersedes the execution order in
   `PERFORMANCE_FINALIZATION_HANDOFF.md`, `PERFORMANCE_AGENT_HANDOFF.md` and
   `PERFORMANCE_FOLLOWUP_PLAN_20261010.md` (technical reference only). Plan 117
   measured one active Direct read at Q8T1; do not rerun the coordination,

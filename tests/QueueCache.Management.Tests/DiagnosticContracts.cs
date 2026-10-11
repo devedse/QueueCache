@@ -36,11 +36,10 @@ internal static class DiagnosticContracts
         var cases = RamReadReferencePlan.CasesFor(RamReadRunKind.Attribution, 3);
         Check(cases.Count == 9 && cases.Select(c => c.Id).Distinct().Count() == 9 &&
             cases.GroupBy(c => (c.QueueDepth, c.Threads)).All(g => g.Count() == 3) &&
-            cases.All(c => c.SchedulingControl && !c.DisableAffinity && c.RamReadQueueMode == 0), "three immutable traced shapes with balanced repetitions");
+            cases.All(c => c.SchedulingControl && !c.DisableAffinity), "three immutable traced shapes with balanced repetitions");
         Check(cases[2].Interleaved && RamReadReferencePlan.Arguments(cases[2], 10).Contains("-s4M") &&
             RamReadReferencePlan.Arguments(cases[2], 10).Contains("-T1M") && !RamReadReferencePlan.Arguments(cases[2], 10).Contains("-si"), "separate source lanes");
         Check(RamReadReferencePlan.CasesFor(RamReadRunKind.Reference, 3).Count == 36 &&
-            RamReadReferencePlan.CasesFor(RamReadRunKind.ArchivedQueue, 3).Count == 54 &&
             RamReadReferencePlan.CasesFor(RamReadRunKind.Scheduling, 3).Count == 30, "legacy run kinds retain their meanings");
         var forwarded = JsonSerializer.Deserialize<WorkerJob>(JsonSerializer.Serialize(new WorkerJob("ram-read-reference", "Q:", "reply", ReferenceKind: RamReadRunKind.Attribution)))!;
         Check(forwarded.ReferenceKind == RamReadRunKind.Attribution, "typed attribution crosses the worker boundary");

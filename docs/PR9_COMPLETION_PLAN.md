@@ -6,6 +6,12 @@ supersedes the execution order in `PERFORMANCE_FINALIZATION_HANDOFF.md`,
 `PERFORMANCE_AGENT_HANDOFF.md` and `PERFORMANCE_FOLLOWUP_PLAN_20261010.md`; those
 remain technical reference until step 6 folds them into the findings.
 
+**Status (2026-10-11):** step 1 done: wake-up does not deliver (DeveAgentManager
+issue #5). Steps 2–4A done: the asynchronous-split candidate is **accepted**
+(1M Q8T1 +79.84% after the pre-declared four-reader revision; lifecycle checks
+pass with and without Driver Verifier; default adaptive). Steps 5–6 in progress.
+Results: [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9).
+
 The goal is a mergeable PR with every discussed item closed: either **one
 accepted RAM-disk speedup** or **a final "no speedup" decision**, never another
 open research state. Every step has a fixed stop rule.

@@ -62,7 +62,7 @@ foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 
 foreach ($arguments in @(
         @('developer', 'verify', 'Q:', '--suite', 'not-a-suite'),
         @('developer', 'verify', 'Q:', '--campaign', 'not-a-campaign'),
-        @('developer', 'verify', 'Q:', '--campaign', 'focused', '--focus-suite', 'ram-read-queue'),
+        @('developer', 'verify', 'Q:', '--suite', 'ram-read-queue'),
         @('developer', 'verify', 'Q:', '--detach'),
         @('developer', 'verify', 'Q:', '--suite', 'managed-lifecycle-verify', '--managed-transition', 'not-a-transition'),
         @('developer', 'write-tests', 'X:', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'unknown-mode'),

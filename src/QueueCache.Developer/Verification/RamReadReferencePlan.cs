@@ -2,10 +2,10 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination, Async, AsyncLifecycle }
+public enum RamReadRunKind { Reference, Scheduling, Attribution, Coordination, Async, AsyncLifecycle }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
-    int QueueDepth, int Threads, int Repeat, int RamReadQueueMode = 0,
+    int QueueDepth, int Threads, int Repeat,
     bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false,
     bool CoordinationEnabled = false, bool AsyncReads = false);
 
@@ -17,7 +17,6 @@ public static class RamReadReferencePlan
     public static RamReadRunKind KindFor(string suite) => suite switch
     {
         "ram-read-reference" => RamReadRunKind.Reference,
-        "ram-read-queue" => RamReadRunKind.ArchivedQueue,
         "ram-read-scheduling" => RamReadRunKind.Scheduling,
         "ram-read-attribution" => RamReadRunKind.Attribution,
         "ram-read-coordination" => RamReadRunKind.Coordination,
@@ -30,7 +29,6 @@ public static class RamReadReferencePlan
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(RamReadRunKind kind, int repeats) => kind switch
     {
         RamReadRunKind.Reference => Cases(repeats),
-        RamReadRunKind.ArchivedQueue => Cases(repeats, true),
         RamReadRunKind.Scheduling => SchedulingCases(repeats),
         RamReadRunKind.Attribution => AttributionCases(repeats),
         RamReadRunKind.Coordination => CoordinationCases(repeats),
@@ -132,19 +130,18 @@ public static class RamReadReferencePlan
         if (text.Length == 0 || (!scenario.Random && scenario.Threads > 1 && text == IndependentSequentialWarning)) return;
         throw new InvalidDataException("Unexpected RAM reference DiskSpd stderr; inspect the preserved raw output.");
     }
-    public static IReadOnlyList<RamReadReferenceCase> Cases(int repeats, bool includeQueue = false)
+    public static IReadOnlyList<RamReadReferenceCase> Cases(int repeats)
     {
         if (repeats is < 1 or > 10) throw new ArgumentOutOfRangeException(nameof(repeats));
         var result = new List<RamReadReferenceCase>();
         var shapes = new[] { (1024, false, 1, 1), (1024, false, 8, 1), (1024, false, 2, 4),
             (4, true, 1, 1), (4, true, 32, 1), (4, true, 8, 4) };
-        var variants = includeQueue ? new[] { (RamAccess.Direct, 0), (RamAccess.Direct, 2), (RamAccess.Standard, 0) }
-            : new[] { (RamAccess.Direct, 0), (RamAccess.Standard, 0) };
+        var variants = new[] { RamAccess.Direct, RamAccess.Standard };
         for (var repeat = 1; repeat <= repeats; repeat++)
-        foreach (var (access, mode) in repeat % 2 == 1 ? variants : variants.Reverse())
+        foreach (var access in repeat % 2 == 1 ? variants : variants.Reverse())
         foreach (var (block, random, depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
-            result.Add(new($"{result.Count + 1:D4}-r{repeat}-{access}{(mode == 0 ? "" : "-queue" + mode)}-{(random ? "random" : "sequential")}-{block}k-q{depth}-t{threads}",
-                access, block, random, depth, threads, repeat, mode));
+            result.Add(new($"{result.Count + 1:D4}-r{repeat}-{access}-{(random ? "random" : "sequential")}-{block}k-q{depth}-t{threads}",
+                access, block, random, depth, threads, repeat));
         return result;
     }
     public static string[] Arguments(RamReadReferenceCase scenario, int seconds) =>

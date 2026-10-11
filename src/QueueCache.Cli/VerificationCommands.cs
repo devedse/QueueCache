@@ -104,7 +104,6 @@ internal static class VerificationCommands
                                  for asynchronous split reads; correctness only; --repeats 1.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
-              ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).
                                  Reproduction requires the historical experiment driver; 54 windows, V22 diagnostics.
                                  Owned 2 GiB disks, whole-file byte checks; --budget-mib 2048 and normal priority.
                                  Requires DiskSpd; reference measurements, not speed acceptance.

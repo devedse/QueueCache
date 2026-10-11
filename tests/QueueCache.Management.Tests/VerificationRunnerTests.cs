@@ -91,26 +91,6 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-reference", BudgetMiB = 1024 }));
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(c => c.Operation == "ram-read-reference"),
               "RAM read references remain opt-in");
-        var queueReferences = RamReadReferencePlan.Cases(3, includeQueue: true);
-        Check(queueReferences.Count == 54 && queueReferences.Select(c => c.Id).Distinct().Count() == 54 &&
-              queueReferences.Count(c => c.RamReadQueueMode == 2) == 18 &&
-              queueReferences.Where(c => c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Standard).All(c => c.RamReadQueueMode == 0),
-              "queue references retain synchronous and Standard controls and eighteen adaptive windows");
-        Check(VerificationPlan.Integrity(options with { Suite = "ram-read-queue" }).Single().Operation == "ram-read-reference",
-              "RAM queue comparison reuses maintained ownership and restoration orchestration");
-        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-queue", DiskSpd = null, BudgetMiB = 2048 }));
-        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-queue", BudgetMiB = 1024 }));
-        var queueCase = queueReferences.First(c => c.RamReadQueueMode == 2);
-        var queueBefore = new QueueCache.Management.CacheRamReadQueue(2, 4, 4, 0, 0, 0, 0);
-        var queueAfter = queueBefore with { Queued = 104, Completed = 104 };
-        RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueBefore with { Queued = 54, Completed = 53 }, queueAfter]);
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [null, null]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Mode = 0 }]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Completed = 103 }]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Cancelled = 1 }]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { QueueFull = 1 }]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase, [queueBefore, queueAfter with { Fallback = 1 }]));
-        Reject(() => RamReadReferenceEvidence.ValidateQueue(queueCase with { BlockKiB = 4 }, [queueBefore, queueAfter]));
         var referenceChecks = references.Select(c => new QueueCache.Operations.CheckResult(c.Id, "PASS", "fixture")).ToArray();
         RamReadReferenceEvidence.ValidateChecks(references, referenceChecks);
         Reject(() => RamReadReferenceEvidence.ValidateChecks(references, referenceChecks[..^1]));
@@ -1687,7 +1667,7 @@ internal static class VerificationRunnerTests
                     OwnedProcess.EnsureStopped(directory);
                 }
                 foreach (var mode in new[] { "ram-reference-empty", "ram-reference-failed" })
-                foreach (var suiteName in new[] { "ram-read-reference", "ram-read-queue" })
+                foreach (var suiteName in new[] { "ram-read-reference" })
                 {
                     var parent = store.PathFor(mode + "-" + suiteName);
                     var runner = new VerificationRunner(executable, [.. prefix, "--fake-verification", mode], store.PathFor("leases"));
@@ -1956,7 +1936,7 @@ internal static class VerificationRunnerTests
         Check(full.Count == 10 && full.Sum(p => p.ExpectedCases.Count) == 34 && full[^1].Options.Suite == "ordering-faults" &&
               full.Any(p => p.Options.Suite == "ram-read-async-lifecycle"),
             "performance plan is product-default regression with existing counts and fault injection last");
-        Check(full.All(p => p.Options.Suite is not ("ram-read-queue" or "write-performance" or "disk-removal" or "system-files" or
+        Check(full.All(p => p.Options.Suite is not ("write-performance" or "disk-removal" or "system-files" or
                 "cache-layout" or "ram-read-scheduling" or "caller-backoff" or "priority-cost")) &&
             full.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 120 &&
             full.Single(p => p.Options.Suite == "cache-sustained").Options.Repeats == 1, "performance excludes retired/invasive/write suites and labels short sustained accounting");
@@ -1971,7 +1951,7 @@ internal static class VerificationRunnerTests
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { Suite = "full" } }));
         Reject(() => VerificationCampaignPlan.Create(basic with { LabNtfs = "q:" }));
         Reject(() => VerificationCampaignPlan.Create(basic with { LabNtfs = "C:" }));
-        Reject(() => VerificationCampaignPlan.Create(basic with { FocusSuite = "ram-read-queue" }));
+        Reject(() => VerificationCampaignPlan.Create(basic with { FocusSuite = "not-a-suite" }));
         Reject(() => VerificationCampaignPlan.Create(basic with { Profile = "focused" }));
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { CaseFilter = "one" } }));
         Reject(() => VerificationCampaignPlan.Create(basic with { Verification = basic.Verification with { SoakSeconds = 120 } }));
