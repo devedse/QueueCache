@@ -57,6 +57,9 @@ internal static class StressRaceScenarios
             checks.Add(await BusyDay(volumes, seconds, ownership, evidence));
             checks.AddRange(FaultRetry(volumes[0], evidence));
             foreach (var volume in volumes) volume.ReleaseAndVerify("final");
+            // Push the lab file systems' lazy metadata through to the lab disk now, so the backing volume
+            // that holds the lab image is clean again when the campaign checks it.
+            foreach (var volume in volumes) FlushVolume(volume.Target);
             var reserved = device.GetWriteCacheState().GlobalReservedBytes;
             RunStorage.AtomicJson(evidence + ".reservation.json", new { Baseline = baselineReserved, Final = reserved });
             if (reserved != baselineReserved)
@@ -71,7 +74,8 @@ internal static class StressRaceScenarios
                 try { volume.Device.Control(WriteCacheAction.LabFault); volume.Device.Control(WriteCacheAction.LabDelay); } catch (Win32Exception) { }
             // The sibling is left as found (no cache task); the runner restores the target's captured state.
             foreach (var volume in volumes)
-                try { volume.Device.Control(WriteCacheAction.Disable); volume.Device.Control(WriteCacheAction.Release); } catch (Win32Exception) { }
+                try { volume.Device.Control(WriteCacheAction.Disable); volume.Device.Control(WriteCacheAction.Release); FlushVolume(volume.Target); }
+                catch (Win32Exception) { }
             try { await RamReadReferenceScenarios.CleanupAsync(device, ownership, evidence + ".ram-cleanup.json", finalizeTrace: false); }
             catch (Exception cleanup) when (failure is not null)
             {
@@ -534,6 +538,9 @@ internal static class StressRaceScenarios
                 var expected = RamReadFileOracle.Prepare(file, 64);
                 if (RamReadFileOracle.Verify(file, 64) != expected) throw new InvalidDataException("Owned stress RAM disk lost bytes.");
                 Interlocked.Add(ref VerifiedBytes, 64L << 20);
+                // The writes advanced the disk's generation: stop exactly the current one.
+                record = service.ListAsync().GetAwaiter().GetResult().Single(r => r.ResourceId == definition.ResourceId);
+                if (record.Runtime?.State != ManagedDiskState.Ready) throw new IOException("Owned stress RAM disk left Ready before its stop.");
                 service.ExecuteAsync(new(record.ResourceId, ManagedDiskAction.Stop, ManagedDiskExpected.From(record.Runtime),
                     ManagedDiskStopIntent.DiscardThenStop, AcceptDiscard: true), null).GetAwaiter().GetResult();
                 record = service.ListAsync().GetAwaiter().GetResult().Single(r => r.ResourceId == definition.ResourceId);
@@ -546,6 +553,15 @@ internal static class StressRaceScenarios
             .FirstOrDefault(c => !Directory.Exists(c + @":\") && DriveInfo.GetDrives().All(d => char.ToUpperInvariant(d.Name[0]) != c)) is var letter && letter != '\0'
             ? letter : throw new IOException("No free drive letter for an owned stress RAM disk.");
     }
+
+    private static void FlushVolume(DiskTarget target)
+    {
+        using var handle = File.OpenHandle(@"\\.\" + target.Device, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlushFileBuffers(SafeFileHandle handle);
 
     /// <summary>Page-aligned native memory for unbuffered overlapped I/O.</summary>
     private sealed unsafe class AlignedMemory : System.Buffers.MemoryManager<byte>

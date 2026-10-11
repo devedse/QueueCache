@@ -297,12 +297,12 @@ internal static class DiagnosticContracts
         var options = new VerificationOptions("Q:", "cache-read-bookkeeping", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
         var cases = VerificationPlan.Performance(options);
         check(cases.Count == 18 && cases.Select(c => c.Id).Distinct().Count() == 18 &&
-            cases.Count(c => c.CopyFlags == CacheReadBookkeeping.CandidateFlags) == 9 && cases.Count(c => c.CopyFlags == CacheReadBookkeeping.DefaultFlags) == 9 &&
+            cases.Count(c => c.CopyFlags == CacheReadBookkeeping.CandidateFlags) == 9 && cases.Count(c => c.CopyFlags == CacheReadBookkeeping.OriginalFlags) == 9 &&
             cases.All(c => !c.Timing && c.WarmResident && c.Workload == "sequential-read") &&
             cases.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count() == 2 && g.Select(c => c.CopyFlags).Distinct().Count() == 2),
             "cached read comparison: each shape once per mode per repetition, timing off");
-        check(CacheReadBookkeeping.IsTarget(cases[0]) && CacheReadBookkeeping.CandidateFlags == (CacheReadBookkeeping.DefaultFlags | 4),
-            "the candidate adds only flag 4 to the default flags; Q8T1 is the target");
+        check(CacheReadBookkeeping.IsTarget(cases[0]) && CacheReadBookkeeping.CandidateFlags == (CacheReadBookkeeping.OriginalFlags | 4) &&
+            CacheReadBookkeeping.ProductFlags == CacheReadBookkeeping.CandidateFlags, "the candidate adds only flag 4 and is the product default; Q8T1 is the target");
         var phase = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "cache-read-bookkeeping"));
         check(phase.Count == 1 && phase[0].Role == CampaignTargetRole.Performance && phase[0].MeasurementWindows == 18, "one-phase cached read comparison");
         var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 7UL } });

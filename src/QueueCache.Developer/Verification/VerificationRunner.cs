@@ -525,7 +525,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         Log("Attribution " + row.Describe());
                 if (options.Suite == "cache-read-bookkeeping")
                 {
-                    await Control(WriteCacheAction.LabCopyFlags, deadline.Token, CacheReadBookkeeping.DefaultFlags);
+                    await Control(WriteCacheAction.LabCopyFlags, deadline.Token, CacheReadBookkeeping.ProductFlags);
                     Log("Comparison verdict (screen only): " + CacheReadBookkeeping.Report(storage, performance));
                 }
                 foreach (var scenario in exercises)
@@ -565,7 +565,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
                     if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
-                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.DefaultFlags);
+                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.ProductFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
                     if (options.Suite == "stress-races" && File.Exists(storage.PathFor(StressOwnership)))

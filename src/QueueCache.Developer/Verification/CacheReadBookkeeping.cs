@@ -2,11 +2,12 @@ using System.Text.Json;
 
 namespace QueueCache.Developer.Verification;
 
-/// <summary>Plan 120 same-build comparison of cached read bookkeeping (copy flags 3 against 7) with the
-/// plan-118 screen. Built only from this run's snapshots and scores; raw evidence remains authoritative.</summary>
+/// <summary>Plan 120 same-build comparison of cached read bookkeeping: copy flags 3 (before) against 7 (the
+/// product default since plan 120) with the plan-118 screen. Built only from this run's snapshots and scores;
+/// raw evidence remains authoritative.</summary>
 public static class CacheReadBookkeeping
 {
-    public const ulong DefaultFlags = 3, CandidateFlags = 7;
+    public const ulong OriginalFlags = 3, CandidateFlags = 7, ProductFlags = 7;
     public const double TargetGainPercent = 5, ControlLossPercent = -3;
     public static bool IsTarget(PerformanceCase c) => c.QueueDepth == 8 && c.Threads == 1;
 
@@ -53,7 +54,7 @@ public static class CacheReadBookkeeping
         {
             var pairs = g.GroupBy(w => w.Case.Repeat).OrderBy(p => p.Key).Select(p =>
             {
-                var original = p.SingleOrDefault(w => w.CopyFlags == DefaultFlags) ?? throw new InvalidDataException("Missing original window.");
+                var original = p.SingleOrDefault(w => w.CopyFlags == OriginalFlags) ?? throw new InvalidDataException("Missing original window.");
                 var candidate = p.SingleOrDefault(w => w.CopyFlags == CandidateFlags) ?? throw new InvalidDataException("Missing candidate window.");
                 return (Original: original.MiBPerSecond, Candidate: candidate.MiBPerSecond);
             }).ToArray();

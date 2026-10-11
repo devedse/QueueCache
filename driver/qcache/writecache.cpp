@@ -1238,8 +1238,9 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->ChunkHead[0] = c->ChunkHead[1] = NoSlot;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     // Measured (plan 96, 1 MiB sequential RAM hits): prefetch +19-21% Q1; coalescing within a chunk
-    // +33% Q1 and up to +11% Q8; together no loss. QcLabCopyFlags can still turn them off for A/B.
-    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce;
+    // +33% Q1 and up to +11% Q8; together no loss. Bookkeeping (plan 120): 1M Q8T1 +7.9%, Q1T1 +4.5%,
+    // four readers +3.5% in a same-build comparison. QcLabCopyFlags can still turn them off for A/B.
+    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping;
     // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
     c->ReadRecall = 1;
     LARGE_INTEGER frequency;

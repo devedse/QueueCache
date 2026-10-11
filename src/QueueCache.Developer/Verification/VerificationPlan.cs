@@ -219,8 +219,8 @@ public static class VerificationPlan
 
         if (options.Suite == "cache-read-bookkeeping")
         {
-            // Plan 120 candidate, same build: copy flags 3 (default) against 7 (+ one lookup per block and
-            // run-based recency moves). Q8T1 is the target; Q1T1 (caller thread) and Q2T4 are controls.
+            // Plan 120, same build: copy flags 3 (before) against 7 (product default: + one lookup per block
+            // and run-based recency moves). Q8T1 is the target; Q1T1 (caller thread) and Q2T4 are controls.
             var shapes = new[] { (8, 1), (1, 1), (2, 4) };
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
@@ -228,7 +228,7 @@ public static class VerificationPlan
                 cases.Add(new($"{NextNumber(cases)}-r{repeat}-sequential-read-q{depth}-t{threads}-{(candidate ? "candidate" : "original")}",
                     "Automatic", "Idle", 0, depth, false, repeat, Workload: "sequential-read",
                     Resident: true, Timing: false, WarmResident: true, Threads: threads,
-                    CopyFlags: candidate ? CacheReadBookkeeping.CandidateFlags : CacheReadBookkeeping.DefaultFlags));
+                    CopyFlags: candidate ? CacheReadBookkeeping.CandidateFlags : CacheReadBookkeeping.OriginalFlags));
             return cases;
         }
 

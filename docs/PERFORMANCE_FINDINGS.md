@@ -112,6 +112,52 @@ review threshold and within cross-day variation seen before; PR #9's default-off
 diagnostics add a few counter updates to the cache path and may contribute.
 Uncached results follow the Ceph storage (higher today).
 
+## RAM-disk writes: no speedup available on this machine (plan 120)
+
+**Question.** CrystalDiskMark wrote SEQ1M Q8T1 at 24,434 MB/s to the RAM disk
+against 47,583 MB/s read. Queued large writes already return at once and are
+copied by the provider's per-processor workers, so the read fix (overlapping one
+submitter's requests) was already in place for writes.
+
+**Measurement** (`ram-write-reference`, signed 0.4.596.1, owned 2 GiB RAM disk,
+1 GiB file, DiskSpd 2.2 with a fixed 1 MiB source buffer `-Z1M`, 10 s windows with
+3 s warmup, three alternating repetitions; medians, MiB/s). The memory rows copy
+1 MiB blocks between a hot buffer and a cold 1 GiB region in user mode, with no
+driver involved:
+
+| Shape | One thread / submitter | Four threads / submitters |
+|---|---:|---:|
+| Copy into cold memory, runtime copy | 19,271 | 22,110 |
+| Copy into cold memory, explicit SSE2 stores | 18,030 | 22,114 |
+| Copy into cold memory, non-temporal (streaming) stores | 23,621 | 24,161 |
+| Copy out of cold memory (read), runtime copy | 40,091 | 47,099 |
+| RAM-disk 1M writes, Q1 / four submitters at Q2 | 15,791 | 23,101 |
+| RAM-disk 1M writes, Q8 / four submitters at Q8 | 23,190 | 24,293 |
+
+Four submitters write 0 to 5% faster than one, and queued writes already exceed
+the machine's four-thread ordinary-store copy rate. Writing into memory the
+processor has not cached costs about twice a read on this VM (22 against 47 GiB/s),
+so the RAM disk's write rate is the machine's, not the driver's. Splitting writes
+across processors (as reads now are) cannot help; the September tuning had also
+measured split writes slower than worker writes (16.2 against 24.7 GB/s).
+
+**Candidate rejected: streaming stores.** The only lever left was non-temporal
+stores, which skip reading each destination line (one user-mode thread: 23.6
+against 18.0 GiB/s). A default-off per-disk mode streamed every large write copy;
+the same-build comparison (`ram-write-streaming`, 18 windows, 100% of candidate
+bytes streamed) found 1M Q1T1 **−0.59%** (target), Q8T1 −0.09%, four submitters
+−2.17%: verdict REJECT. The mode, its provider actions (0x105/0x106, reserved)
+and the comparison suite were removed; `ram-write-reference` stays. The Q1 write
+time is not dominated by the copy's memory traffic.
+
+Runs: `QueueCache-Campaign-20261011-180850-8b826f60a1b041e6a900421e6f25e7f8`
+(reference, COMPLETED 36/36, all three disks rewritten and read back) and
+`QueueCache-Campaign-20261011-181541-df9636018eab4518b202118baa8f8954`
+(comparison, COMPLETED 18/18). An earlier reference run on 0.4.595.1 stopped after
+its first repetition on a runner bug (rewriting the oracle over the existing file)
+and is preserved but not used. The VM's virtual processor hides some copy
+features (ERMS is not reported), so a physical PC may reach a different limit.
+
 ## Which changes belong together
 
 | Stage | Changes retained | Evidence and limits |
