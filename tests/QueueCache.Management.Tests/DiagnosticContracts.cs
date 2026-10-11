@@ -341,8 +341,10 @@ internal static class DiagnosticContracts
         versions.Begin(2, 5); check(versions.Started(2) == 5 && versions.Done(2) == 0, "a started write widens the window");
         versions.Complete(2, 5); check(versions.Done(2) == 5, "a completed write moves the lower bound");
         var random = new Random(120);
-        var drawn = Enumerable.Range(0, 2000).Select(_ => StressPlan.Next(random)).ToHashSet();
-        check(drawn.SetEquals(Enum.GetValues<StressAction>()), "every chaos action occurs in a long schedule");
+        var first = StressPlan.Round(random); var second = StressPlan.Round(random);
+        check(first.ToHashSet().SetEquals(Enum.GetValues<StressAction>()) && first.Length == Enum.GetValues<StressAction>().Length + 2 &&
+            first.Count(a => a == StressAction.Resize) == 2 && first.Count(a => a == StressAction.Flush) == 2 && !first.SequenceEqual(second),
+            "every round performs every chaos action, in a different order each round");
         for (var i = 0; i < 50; i++)
         {
             var configuration = StressPlan.RandomConfiguration(random, [64, 96, 128, 256]);

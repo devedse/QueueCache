@@ -363,8 +363,9 @@ internal static class StressRaceScenarios
         public void Chaos(Random random, CancellationToken token)
         {
             while (!token.IsCancellationRequested)
+            foreach (var action in StressPlan.Round(random))
             {
-                var action = StressPlan.Next(random);
+                if (token.IsCancellationRequested) break;
                 var begun = DateTimeOffset.UtcNow;
                 Perform(action, random);
                 lock (actions)
@@ -522,7 +523,7 @@ internal static class StressRaceScenarios
             lock (actions)
                 foreach (var action in Enum.GetValues<StressAction>())
                     if (actions.GetValueOrDefault(action) == 0)
-                        throw new IOException($"{Target.Device}: the busy window never performed {action}; extend --soak-seconds.");
+                        throw new IOException($"{Target.Device}: the busy window never performed {action}; it ended before one round of actions completed (extend --soak-seconds).");
             if (Regions.Any(r => Interlocked.Read(ref r.Writes) == 0 || Interlocked.Read(ref r.Reads) == 0))
                 throw new IOException($"{Target.Device}: a region was never written or read during the busy window.");
             if (Interlocked.Read(ref Regions.Single(r => r.Region.Overlapped).Cancelled) == 0)

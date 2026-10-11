@@ -121,23 +121,14 @@ public enum StressAction
 
 public static class StressPlan
 {
-    /// <summary>Weighted, seeded choice; every action has a non-zero chance in any long run.</summary>
-    public static StressAction Next(Random random)
+    /// <summary>One seeded round: every action once, plus a second resize and flush, in shuffled order.
+    /// Rounds guarantee coverage however slowly actions run (under Driver Verifier a settings change
+    /// takes seconds, and rare weighted choices did not occur within five minutes).</summary>
+    public static StressAction[] Round(Random random)
     {
-        var roll = random.Next(100);
-        return roll switch
-        {
-            < 18 => StressAction.Flush,
-            < 40 => StressAction.Resize,
-            < 50 => StressAction.DropClean,
-            < 58 => StressAction.Teardown,
-            < 68 => StressAction.LowerDelay,
-            < 78 => StressAction.TransientAllocation,
-            < 83 => StressAction.OversizeRefused,
-            < 88 => StressAction.OversizeKernel,
-            < 94 => StressAction.AllocationRollback,
-            _ => StressAction.Strict
-        };
+        StressAction[] round = [.. Enum.GetValues<StressAction>(), StressAction.Resize, StressAction.Flush];
+        random.Shuffle(round);
+        return round;
     }
 
     public static QueueCache.Operations.CacheConfiguration RandomConfiguration(Random random, int[] budgets) =>
