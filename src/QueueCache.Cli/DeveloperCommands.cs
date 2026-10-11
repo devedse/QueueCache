@@ -15,6 +15,8 @@ internal static class DeveloperCommands
         root.Subcommands.Add(VerificationCommands.Create());
         root.Subcommands.Add(VerificationCommands.CreateRecovery());
         root.Subcommands.Add(VerificationCommands.CreateStatus());
+        root.Subcommands.Add(VerificationCommands.CreateCompletion());
+        root.Subcommands.Add(VerificationCommands.CreateAttributionAnalysis());
         var performance = new Command("performance", "Read queue/phase and lifetime performance counters as JSON. Detailed timing is opt-in.");
         var perfDevice = new Argument<string>("device");
         var timing = new Option<bool?>("--timing") { Description = "Enable/disable detailed driver timing; omitted leaves it unchanged." };

@@ -93,6 +93,23 @@ public sealed class WindowsRamDisk : IDisposable
     private bool? physicalMapSupported;
     public RamDiskSnapshot SetTiming(RamDiskSnapshot expected, bool enabled) =>
         Send(RamDiskSnapshot.Request(RamDiskAction.SetTiming, expected, flags: enabled ? RamDiskFlags.Timing : RamDiskFlags.None));
+    /// <summary>Null only for the explicit unsupported-action response of an older provider.</summary>
+    public RamCoordination? Coordination(RamDiskSnapshot expected)
+    {
+        var wire = RamDiskSnapshot.Request(RamDiskAction.Coordination, expected);
+        Array.Resize(ref wire, RamDiskSnapshot.WireSize + RamCoordination.WireSize);
+        int returned;
+        try { returned = Call(wire, RamDiskSnapshot.WireSize, wire.Length); }
+        // Earlier providers reject unknown actions with INVALID_PARAMETER (87).
+        // This request has a fixed validated shape; identity/transport faults are
+        // distinct errors and must propagate rather than become missing counters.
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87) { return null; }
+        if (returned != wire.Length) throw new InvalidDataException("Incomplete RAM coordination reply.");
+        RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
+        return RamCoordination.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
+    }
+    public RamDiskSnapshot SetCoordination(RamDiskSnapshot expected, bool enabled) =>
+        Send(RamDiskSnapshot.Request(RamDiskAction.SetCoordination, expected, offset: enabled ? 1UL : 0));
     public void Remove(RamDiskSnapshot expected)
     {
         var request = RamDiskSnapshot.Request(RamDiskAction.Remove, expected);

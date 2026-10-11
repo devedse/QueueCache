@@ -2,6 +2,45 @@
 
 ## Keep verification maintainable
 
+- Performance conclusions and decisions are consolidated in
+  `docs/PERFORMANCE_FINDINGS.md`; read it before starting an investigation and
+  update it when a result changes a decision. Preserve dated/raw evidence. Do not
+  rerun an established experiment merely because its finding was forgotten;
+  repeat relevant regressions when code, environment or measurement contracts
+  change. The maintained `--campaign` workflow and durable completion contract are
+  in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Run one foreground campaign and consume
+  its `completion.json` after process exit. The companion Manager owned-job
+  integration is documented in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. The updated
+  Runner helper can launch owned jobs now; automatic notifications additionally
+  require the updated Manager service. Live wake verification remains separate
+  from controller event validation. Select the smallest maintained suite/profile
+  for affected regressions.
+  `docs/PERFORMANCE_FINALIZATION_HANDOFF.md` records the bounded investigation
+  and final acceptance/stop gates. Plan 117's executed outcome is closed: no
+  additional acceptable speedup found; Q8 helpers copy 74.60% of bytes and only
+  0.64% of posts are withdrawn unused, with one active Direct copy. Do not rerun
+  the coordination/priority/affinity investigations merely to rediscover these
+  results. Reopen for new evidence, relevant code/contract changes or a new user
+  request. Live Manager idle wake remains a separate unverified integration gap.
+  The finalization record supersedes the execution
+  order in `docs/PERFORMANCE_AGENT_HANDOFF.md`, which remains technical reference.
+  Proposed suites/profiles must be implemented before use. Close with a verified
+  speedup or no acceptable speedup found within that scope; record verification
+  blockers separately. Do not expand failed research into unrelated work.
+  For any newly authorized investigation, compare concrete RAM speedup candidates
+  with the smallest maintained suite and affected correctness checks first.
+  `--campaign focused` also runs 81 retained correctness checks; use an existing
+  `--suite` when that extra scope is unnecessary. Plan 117 also provides
+  `--campaign experiment --focus-suite ram-read-coordination`: one phase, nine
+  off/on/off windows, without those 81 checks. Candidate comparison suites remain
+  gated on actionable diagnostic evidence; no candidate was selected and they
+  are not implemented.
+  Reserve broad regression/write/
+  sustained campaigns for the final retained candidate, launched once with a
+  combined report. Keep byte, identity, telemetry and restoration guards. Further
+  low-priority/affinity diagnosis and dedicated 100 ms UI cost testing are parked;
+  do not reopen them without a relevant observed problem or a new user request.
+
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
   update implementation and verification separately for each item changed.
@@ -42,10 +81,13 @@
   qcache developer verify Q: --suite quick --output C:\QueueCache-Results
   qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
   qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+  qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+  qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
   qcache developer lab-disk attach C:\QueueCache-Lab\VolumeLab.vhdx
   qcache developer verify V: --suite volumes --output C:\QueueCache-Results
   qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
   qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
+  qcache developer verify-completion C:\QueueCache-Results\QueueCache-Campaign-<run-id>
   ```
 
 - Both **Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd** are supported in

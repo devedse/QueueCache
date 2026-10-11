@@ -95,11 +95,14 @@ internal static class SectorScenarios
             using var file = new AlignedFile(Path.Combine(directory, $"sectors-{parallelism}-{retain}.bin"),
                 expected.Length, true, alignment: 512);
             file.Write(0, expected);
+            // Complete this new file's NTFS data/metadata setup before draining the cache.
+            // A cache-only flush can race filesystem setup writes arriving afterwards.
+            file.Flush();
             device.Control(WriteCacheAction.Flush);
             device.Control(WriteCacheAction.DropClean);
             var before = device.GetWriteCacheState();
             if (before.DirtyBytes != 0 || before.InFlightBytes != 0)
-                throw new IOException(label + ": admission requires a clean, idle lower-data boundary");
+                throw new IOException(label + $": admission requires a clean, idle lower-data boundary; dirty={before.DirtyBytes}, in-flight={before.InFlightBytes}, errors={before.Errors}, last-error=0x{before.LastError:X}");
             var diagnosticsBefore = device.GetDiagnostics();
             var attemptsBefore = diagnosticsBefore.Attribution;
             if (attemptsBefore is null)
@@ -181,6 +184,7 @@ internal static class SectorScenarios
         var baseline = new byte[4096];
         new Random(719).NextBytes(baseline);
         file.Write(0, baseline);
+        file.Flush();
         device.Control(WriteCacheAction.Flush);
         device.Control(WriteCacheAction.DropClean);
         device.Control(WriteCacheAction.LabDelay, value: 2000);

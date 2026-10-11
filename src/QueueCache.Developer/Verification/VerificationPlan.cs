@@ -31,7 +31,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 104;
+    public const int Version = 117;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -72,6 +73,15 @@ public static class VerificationPlan
         "cache-sustained",
         "cache-map-cost",
         "cache-recall",
+        "caller-backoff",
+        "priority-cost",
+        "priority-affinity",
+        "partial-read-accounting",
+        "ram-read-reference",
+        "ram-read-scheduling",
+        "ram-read-attribution",
+        "ram-read-coordination",
+        "ram-read-queue",
         "write-performance",
         "sequential-resident",
         "cache-layout",
@@ -133,6 +143,8 @@ public static class VerificationPlan
         "policies" => [new("policy-integrity", "policies")],
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
+        "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
+        var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
         "pressure" => [new("pressure-integrity", "pressure")],
@@ -399,8 +411,8 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall") || string.IsNullOrWhiteSpace(options.CaseFilter)))
-            throw new ArgumentException("--case-filter requires write-performance, sequential-resident, drain-decision, cache-concurrency, cache-map-cost or cache-recall and a nonempty case-sensitive ID substring.");
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            throw new ArgumentException("--case-filter requires a focused performance suite and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
         // repeated work, individual sample duration, and unattended run duration.
@@ -425,7 +437,13 @@ public static class VerificationPlan
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
             throw new ArgumentException("drain-decision requires --budget-mib 256..4096 so its deterministic 25% dirty set remains bounded.");
 
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
+        if (options.Suite == "ram-read-attribution") RamReadAttribution.RequireSymbols(options.TraceSymbols);
+        else if (options.TraceSymbols is not null) throw new ArgumentException("--trace-symbols applies only to ram-read-attribution.");
+        if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
+            throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
+        if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
+            throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

@@ -186,5 +186,11 @@ public enum WriteCacheAction : uint
     LabCopyFlags,
     /// <summary>Lab: value 1 (default) = read recall, 0 = the earlier bimodal insertion of read misses.
     /// Changes only which clean data is kept, never what a read returns; clears the recall history.</summary>
-    LabReadRecall
+    LabReadRecall,
+    /// <summary>Reserved rejected RAM queue experiment. Current drivers accept 0;
+    /// 1/2 are supported only by historical experiment builds such as 0.4.503.1.</summary>
+    LabRamReadQueue,
+    /// <summary>Lab post-overlap caller backoff, 0..256 (default 256). Exclusive
+    /// foreground ownership and every busy/queued/control check remain mandatory.</summary>
+    LabCallerBackoff
 }

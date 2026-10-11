@@ -69,8 +69,11 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int LayoutWireSize = 944;
     public const int CopyFlagsWireSize = 952;
     public const int ReadRecallWireSize = 976;
+    public const int StagedReadWireSize = 1008;
+    public const int RamReadQueueWireSize = 1064;
+    public const int CallerRoutingWireSize = 1136;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = ReadRecallWireSize;
+    public const int CurrentWireSize = CallerRoutingWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -105,6 +108,13 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public ulong? CopyFlags { get; init; }
     /// <summary>V20: read-recall mode and how often a read miss was kept as recent or not; null on older drivers.</summary>
     public CacheReadRecall? ReadRecall { get; init; }
+    /// <summary>V21: driver-owned lower-read attempts and bytes already known in RAM before submission;
+    /// null on older drivers. Live counters are individually atomic, not a transactional snapshot.</summary>
+    public CacheStagedReads? StagedReads { get; init; }
+    /// <summary>V22: opt-in shared sleeping RAM read queue and lifetime counters; null on older drivers.</summary>
+    public CacheRamReadQueue? RamReadQueue { get; init; }
+    /// <summary>V23: configured post-overlap backoff and first-decline dispatch attribution.</summary>
+    public CacheCallerRouting? CallerRouting { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -129,6 +139,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             LayoutWireSize => 18u,
             CopyFlagsWireSize => 19u,
             ReadRecallWireSize => 20u,
+            StagedReadWireSize => 21u,
+            RamReadQueueWireSize => 22u,
+            CallerRoutingWireSize => 23u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -274,6 +287,34 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CopyFlagsWireSize + 8)..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CopyFlagsWireSize + 16)..]))
             : null;
+        var stagedReads = bytes.Length >= StagedReadWireSize
+            ? new CacheStagedReads(BinaryPrimitives.ReadUInt64LittleEndian(bytes[ReadRecallWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadRecallWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadRecallWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(ReadRecallWireSize + 24)..]))
+            : null;
+        var ramReadQueue = bytes.Length >= RamReadQueueWireSize
+            ? new CacheRamReadQueue(BinaryPrimitives.ReadUInt64LittleEndian(bytes[StagedReadWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 24)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 32)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 40)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StagedReadWireSize + 48)..]))
+            : null;
+        if (ramReadQueue?.Mode > 2) throw new InvalidDataException("Invalid RAM read queue mode.");
+        var callerRouting = bytes.Length >= CallerRoutingWireSize
+            ? new CacheCallerRouting(BinaryPrimitives.ReadUInt64LittleEndian(bytes[RamReadQueueWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 24)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 32)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 40)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 48)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 56)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 64)..]))
+            : null;
+        if (callerRouting?.Backoff > 256) throw new InvalidDataException("Invalid caller routing backoff.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -297,7 +338,10 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             ReadFillsSkippedRepeatedPages = fillsSkippedRepeated,
             Layout = layout,
             CopyFlags = copyFlags,
-            ReadRecall = readRecall
+            ReadRecall = readRecall,
+            StagedReads = stagedReads,
+            RamReadQueue = ramReadQueue,
+            CallerRouting = callerRouting
         };
     }
 }
@@ -312,5 +356,50 @@ public sealed record CacheLayout(ulong Measurements, ulong Blocks, ulong Neighbo
 /// the oldest used block still cached is kept as recent (Recalled); history matches that were not are Denied.
 /// Mode 0: the earlier bimodal insertion (one miss in 16 kept as recent); both counters then stay unchanged.</summary>
 public sealed record CacheReadRecall(ulong Mode, ulong Recalled, ulong Denied);
+/// <summary>Runtime RAM read queue mode and individually atomic lifetime counters.
+/// Queued/completed counts include cancelled and standard-path fallback requests.</summary>
+public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed, ulong Cancelled,
+    ulong Inline, ulong QueueFull, ulong Fallback);
+
+/// <summary>Dispatch candidates only (eligible buffer/IRQL/stack, active routing). Each
+/// declined candidate has one first reason; later cache-service declines are in CallerPath.
+/// Snapshots are individually atomic. Backoff is configured length, not requests remaining.</summary>
+public sealed record CacheCallerRouting(ulong Backoff, ulong Candidates, ulong Controls, ulong Queued,
+    ulong WorkerActive, ulong OwnerActive, ulong Offloaded, ulong BackoffRequests, ulong Probes)
+{
+    public CacheCallerRouting Since(CacheCallerRouting before)
+    {
+        if (Backoff != before.Backoff || Candidates < before.Candidates || Controls < before.Controls ||
+            Queued < before.Queued || WorkerActive < before.WorkerActive || OwnerActive < before.OwnerActive ||
+            Offloaded < before.Offloaded || BackoffRequests < before.BackoffRequests || Probes < before.Probes)
+            throw new InvalidDataException("Caller routing mode changed or counters decreased.");
+        var delta = new CacheCallerRouting(Backoff, Candidates - before.Candidates, Controls - before.Controls,
+            Queued - before.Queued, WorkerActive - before.WorkerActive, OwnerActive - before.OwnerActive,
+            Offloaded - before.Offloaded, BackoffRequests - before.BackoffRequests, Probes - before.Probes);
+        if (checked(delta.Controls + delta.Queued + delta.WorkerActive + delta.OwnerActive + delta.Offloaded +
+            delta.BackoffRequests + delta.Probes) > delta.Candidates)
+            throw new InvalidDataException("Caller routing declines exceed quiescent candidates.");
+        return delta;
+    }
+}
+
+/// <summary>Submitted staged reads, including lower failures. CachedBytes is the valid sector overlap
+/// pinned before submission, not bytes subsequently filled, completed traffic, or timing-window data.
+/// Allocation failures, original/paging reads and fully cached reads are outside these counters.</summary>
+public sealed record CacheStagedReads(ulong Requests, ulong Bytes, ulong MixedRequests, ulong CachedBytes)
+{
+    /// <summary>Difference between quiescent boundaries. Live snapshots can straddle an update;
+    /// only a completed scenario window may enforce relationships between counters.</summary>
+    public CacheStagedReads Since(CacheStagedReads before)
+    {
+        if (Requests < before.Requests || Bytes < before.Bytes || MixedRequests < before.MixedRequests || CachedBytes < before.CachedBytes)
+            throw new InvalidDataException("Staged-read counters decreased; the driver/window identity changed.");
+        var result = new CacheStagedReads(Requests - before.Requests, Bytes - before.Bytes,
+            MixedRequests - before.MixedRequests, CachedBytes - before.CachedBytes);
+        if (result.MixedRequests > result.Requests || result.CachedBytes > result.Bytes)
+            throw new InvalidDataException("Staged-read boundaries do not describe a quiescent window.");
+        return result;
+    }
+}
 /// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
 public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);

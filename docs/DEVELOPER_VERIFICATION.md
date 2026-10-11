@@ -9,6 +9,8 @@ qcache developer verify Q: --suite quick
 qcache developer verify Q: --suite paging-coherence --output C:\QueueCache-Results
 qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
 qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
+qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd C:\Tools\DiskSpd\diskspd.exe --pause-backing-cache --output C:\QueueCache-Results
 # Volume-filter suites on the lab VHDX (see "Volume-filter lab disk" below)
 qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
 qcache developer verify V: --suite volumes --output C:\QueueCache-Results
@@ -49,7 +51,86 @@ budget plus 1 GiB, five times for the stream exercises and four times for
 left their folders behind: check the volume root for `QueueCache-Verify-*` folders
 of finished runs before a large matrix.
 
-## Suites (plan version 91)
+## Campaigns (introduced in plan 114; current plan 117)
+
+`--campaign` runs maintained suites sequentially in one foreground process, with
+one `QueueCache-Campaign-*` report indexing its exact child runs. `--suite` remains
+available and is mutually exclusive with a campaign. Profiles are `smoke`,
+`focused` (requires `--focus-suite`), `experiment` (one implemented narrow RAM
+suite, requires `--focus-suite`), `performance` and `release-performance`.
+Campaign budgets default to 2048 MiB. An attached developer NTFS lab is required;
+ReFS is optional for caller comparisons. Existing workload, process-ownership,
+readiness and restoration contracts remain enforced. There is no automatic
+disk creation, formatting or reboot.
+
+Plan 117 adds `ram-read-coordination` and the one-phase `experiment` campaign:
+
+```powershell
+qcache developer verify Q: --campaign experiment --focus-suite ram-read-coordination --lab-ntfs W: --budget-mib 2048 --repeats 1 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results
+```
+
+This is nine windows: Direct sequential 1 MiB Q1T1/Q8T1 and Q2T4 separate lanes,
+each diagnostics off/on/off. An explicitly requested second repetition yields
+18 windows; three or more are refused. It uses the same 2 GiB owned RAM fixture,
+1 GiB byte oracle, Normal CPU/memory 5/I/O 3, W3, strict XML/telemetry and zero
+lower-image-attempt guards. It does not add the 81 checks from `focused`.
+The provider must implement actions 0x101/0x102 and a matching filter must support
+the version-2 kernel store tail. Public provider/header and Direct-state prefixes
+remain unchanged; unsupported older-provider replies mean unavailable counters,
+not zero. No production speed optimization or candidate mode is implied.
+
+Per-case `*.coordination-before.json`, `*.coordination-after.json` and
+`*.coordination-restored.json` capture the exact mode/generation. Collection is
+default-off; enabling starts a new generation after rundown; disabling drains
+collection and preserves final counters. At quiescence, started=completed,
+active=0, posted=taken+withdrawn and caller/helper bytes reconcile. Off cases must
+leave all counters unchanged. Counters enclose the process including warmup;
+read-copy active/ticks exclude Direct validation/MDL mapping and IRP completion.
+Provider split counters include read copies through either entry path.
+
+QPC timing is sampled once per 64 read copies/splits, with sample denominators.
+Posting, withdrawal, final helper wait and post-to-take populations are separate;
+do not add them as total latency. The combined `*.coordination-summary.json/.md`
+reports every off/on/off result. A greater-than-2% off drift or on score outside
+both off brackets by more than 2% flags `PERTURBATION_OR_DRIFT`; collection can
+complete while causal attribution remains unreliable. No estimated overhead is
+subtracted, and none of these scores establishes a candidate speedup.
+
+Read [the campaign/completion contract](PERFORMANCE_CAMPAIGN_PLAN.md) for exact
+profiles, defaults and targets. Campaigns refuse competing benchmark/Desktop
+processes. `--pause-backing-cache` explicitly permits temporarily pausing the
+performance volume when it hosts the active lab backing cache; it is restored
+after each lab phase. A restoration failure stops the campaign.
+
+After process exit, consume the exact campaign once:
+
+```powershell
+qcache developer verify-status C:\QueueCache-Results\QueueCache-Campaign-<run-id>
+qcache developer verify-completion C:\QueueCache-Results\QueueCache-Campaign-<run-id>
+```
+
+The validated event is published as `completion.json` after reports and cleanup,
+with a stable deduplication ID, manifest hash, counts and restoration outcome.
+Manager wakeup is not yet integrated; `completion-delivery.json` honestly records
+`PENDING_CONTROLLER`. Child `timing.json` separates preparation, cases and
+restoration; case time includes warmup/draining, not just score time. Interrupted
+or malformed evidence cannot produce a completed campaign verdict. Recovery
+uses the indexed child/maintenance run directory rather than rerunning phases.
+
+`ram-read-scheduling` is a new opt-in 30-window diagnostic at three repetitions.
+It holds the existing Direct RAM-disk/copy path fixed while comparing default
+versus disabled DiskSpd affinity. Its four-reader control additionally compares
+the existing independent cursors with `-s4M -T1M` interleaved 1 MiB reads, so
+readers access different block lanes without an interlocked submission cursor.
+Single-reader large Q1/Q8 and random 4K Q1 controls remain. Normal owned-child
+CPU/memory settings, three-second warmup, raw XML profile checks, byte oracles,
+native accounting, telemetry coverage and fixture restoration are required.
+This is a diagnostic comparison, not an accepted driver optimization.
+
+## Suites (current plan version 116; earlier additions below)
+
+Plans 105–110 add the opt-in `partial-read-accounting` and `ram-read-reference` suites described below; this does
+not change `full` or the 72-case write-performance matrix.
 
 Plan 91 adds Direct access for RAM-backed disks (the volume filter serves a RAM disk's
 reads and writes straight from the provider's memory). `ram-disk` runs once with Standard
@@ -1543,3 +1624,266 @@ qcache developer verify Q: --suite cache-recall --budget-mib 2048 --repeats 3 --
   disk on the plan-103 4 GiB `cache-map-cost` run, which correctly stopped with
   "the first sequential warm pass did not read the entire fitting file". The
   separate three-second zero-miss residency proof is unchanged.
+
+## Partly cached read accounting (plan 105)
+
+```powershell
+qcache developer verify Q: --suite partial-read-accounting --budget-mib 256 --output C:\QueueCache-Results
+```
+
+This opt-in integrity suite requires diagnostics V21, a clean non-OS NTFS target,
+512-byte logical sectors and clusters aligned to 4 KiB. It creates two owned
+1 MiB files, testing detailed timing off and on. It writes one sector of every
+4 KiB block plus a crossing two-sector overwrite while the cache is Fast Deferred.
+The whole-file partial read must return the exact current bytes and record
+1 MiB of staged lower reads, of which 131,584 bytes were already valid in RAM.
+The crossing fully cached read must stage nothing. After an explicit flush and
+`drop-clean`, the full miss must stage 1 MiB with no cached overlap; the subsequent
+full hit and full-overwrite read must stage nothing. All ten checks must pass.
+Filesystem splitting may change the number of attempts, but not these byte
+totals. Unsupported shapes fail with recorded boundaries rather than weakening
+the accounting contract. This serialized test does not force concurrent writes;
+use `concurrent-sectors`, `parallel-copies` and `paging-coherence` for those paths.
+
+The worker holds its unbuffered file handle across each before/read/after boundary
+and records `<worker reply>.<observation ID>.json` with absolute counters, deltas
+and a SHA-256 of the bytes. Normal runner preflight, owned-process handling,
+independent restoration and successful workload cleanup apply. No DiskSpd is
+needed; this is an accounting/byte oracle, not a speed acceptance result.
+
+Diagnostics V21 appends 32 bytes to the unchanged 976-byte V20 prefix. Its
+`StagedReads` fields are lifetime attempted request count, attempted lower bytes,
+mixed request count and cached-sector overlap bytes pinned before submission.
+They increment only after staging-buffer/IRP allocation succeeds and immediately
+before the lower read, including lower failures. They exclude original/paging
+fallbacks, allocation failures and fully cached reads, and work with timing off.
+Older responses decode this group as null, never zero. Each field is atomic;
+live snapshots can straddle an update. Relational accounting is enforced only
+between quiescent boundaries with stable driver identity/health. Exercise raw
+diagnostics also retain these fields, but their enclosing windows include
+startup/warm-up and must not be treated as exact DiskSpd score windows.
+
+
+## RAM-disk read reference (plans 106–108)
+
+```powershell
+qcache developer verify Q: --suite ram-read-reference --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+The selected clean non-OS physical disk is the runner's ownership/restoration
+anchor. Scores use disposable 2 GiB NTFS RAM disks created through the product
+broker, one at a time; existing managed disks are preserved. Every fixture has a
+1 GiB file with a distinct deterministic pattern per MiB. Full unbuffered byte
+checks before and after every score are outside the score window.
+
+Thirty-six windows at three repetitions compare Direct and Standard access:
+SEQ1M Q1T1, Q8T1 and Q2T4 (the latter two have the same aggregate queue depth),
+plus RND4K Q1T1, Q32T1 and Q8T4. Access and shape order reverse each repetition.
+Timing is off, DiskSpd uses XML, latency, unbuffered reads and no warm-up; workload
+creation and verification are separate. `--budget-mib 2048` and a normal CPU,
+I/O and memory-priority launch environment are required. CPU class is checked;
+the operator must ensure normal I/O and memory priorities. No case filter or
+background-priority experiment is implied. This is opt-in, not part of `full`.
+
+The manifest declares every measurement ID. Raw scores, exact command/PID/exit,
+whole-file hashes, stable resource/boot/creation identity, monotonic content counters, access state,
+provider/Direct traffic and zero image I/O are retained. Telemetry must be ready
+before scoring and cover the enclosing process interval with gaps at most two
+seconds. These enclosing counters include startup/teardown, not just the score.
+The parent rejects missing, duplicated or failed window results. PASS means byte,
+collection and lifecycle checks; it is not a speed acceptance verdict.
+
+`ram-read-reference-owned.json` journals intended definitions before Create.
+Cleanup refuses an existing original resource or changed definition and removes
+only those disposable fixtures. The worker cleans up between variants, and the
+coordinator independently repeats guarded cleanup after confirming owned
+processes stopped. `verify-recover` also uses this journal. Unresolved/faulted
+states fail restoration and preserve evidence. Final resource IDs and shared RAM
+reservation must match the original state. No unrelated disks are formatted or
+removed. Profiling and any scheduling change follow this baseline; this suite
+does not change driver scheduling.
+
+
+Plan 107 corrects the reference's whole-volume write-generation assumption. The
+first plan-106 run (`QueueCache-Verify-20261010-023141-a4da217566994afbb6b70d71287a3e86`,
+0.4.497.1) stopped INCOMPLETE in the first read-only window: content generation
+advanced from 3,149 to 3,164 and Direct volume writes by 104,448 bytes, despite
+DiskSpd's read-only workload and disabled NTFS last-access updates. Ownership,
+Direct access and health stayed stable; independent fixture/cache restoration
+succeeded. Original raw output remains preserved; it is not a completed baseline.
+
+A read-only file workload does not imply a filesystem writes nothing elsewhere
+on its mounted volume. Plan 107 holds a read-only, read-shared payload handle
+across every score to deny file writes, and still checks all 1 GiB before/after.
+Volume write-generation and Direct/provider write counters remain mandatory and
+must never decrease; their activity is retained separately, rather than assumed
+zero. Creation/boot identity, access, no-image-I/O, readiness/coverage and traffic
+checks remain strict. A byte mismatch records the exact offending expected and
+actual MiB off-target before cleanup. This contract change does not change the
+72-case write suite or driver scheduling.
+
+
+Plan 108 separates live native sampling from the full broker inventory. The
+plan-107 run (`QueueCache-Verify-20261010-024925-e957193997ef4dd7a415ed233edf97d5`)
+passed the first two Direct windows, including the payload guard and byte
+oracles, then stopped INCOMPLETE on a 2.084-second telemetry gap during the
+four-thread window. Independent fixture/cache restoration succeeded. The raw
+output remains preserved; these windows do not form a completed baseline.
+
+A dedicated sleeping sampling thread now retains provider and volume handles
+and queries native identity/geometry, published/frozen/timing state, error and
+traffic counters and filter access/cache state once per second. The full broker
+identity, lifecycle, definition, volume and image-I/O checks remain mandatory at
+both boundaries. Native samples do not synthesize image counters or broker
+states. Readiness, final sampling, full byte checks and the two-second coverage
+limit are unchanged. This removes broker round trips and thread-pool scheduling
+from the sample path; it does not alter RAM-disk scheduling or accept the old
+incomplete run. Host tests reject geometry, access, health, identity and coverage
+failures independently of boundary image-I/O checks. Windows CI and the complete plan-108 VM reference now pass;
+[results and limits](RAM_READ_SCHEDULING_20261010.md).
+
+
+### Same-build RAM scheduling experiment (plan 109)
+
+`--suite ram-read-queue --budget-mib 2048` adds eighteen adaptive Direct windows
+to the 36-window reference, keeping synchronous Direct and Standard controls.
+It reuses the existing ownership journal, native sampler, byte guard, full
+oracle and independent restoration. The mode is applied only to a newly owned
+RAM fixture and disappears with that fixture; the original anchor and unrelated
+managed disks retain their settings. The manifest declares all 54 immutable
+measurement IDs. V22 diagnostics are required; no missing mode is inferred as
+zero. See [scheduling design and acceptance](RAM_READ_SCHEDULING_20261010.md).
+This opt-in suite is excluded from `full` and changes no existing write matrix.
+
+
+Plan 110 explicitly validates DiskSpd stderr. Four-thread sequential controls
+use independent per-thread cursors and may emit only the exact known warning
+about a non-global sequential pattern (`consider -si`). Other cases require
+empty stderr; any additional warning/error is rejected. Raw output is retained.
+No workload arguments or scoring windows change. This is aggregate resident
+read throughput, with potentially overlapping source data, not a single global
+sequential stream. The completed plan-108 raw output satisfies this rule.
+
+Plan 111 captures and restores the runtime caller backoff, including a separate
+expected/actual restoration artifact. Diagnostics V23 append eligible dispatch
+candidates and mutually exclusive first-decline reasons: queued control, queued
+request, active worker, active caller owner, offloaded copy, cooldown and periodic
+probe. Later cache-service declines remain in `CallerPath.Declined`. The lab-only
+action accepts 0..256 requests; the default remains 256, and busy/ownership/control
+checks always apply. Live fields are individually atomic; quiescent deltas reject
+resets, changed configuration and more declines than candidates. Older drivers
+report unavailable attribution and keep their existing restoration contract.
+ReFS/NTFS measurements and native ordering qualification are pending.
+
+Plan 112 adds the opt-in `caller-backoff` suite (excluded from `full`). At three
+repetitions its 24 unique windows alternate cooldown 256/0 and shape order:
+64 KiB random 70/30 read/write Q1/Q8, random 4 KiB read Q1, sequential 1 MiB read
+Q8, one submitting thread. A half-budget fitting file is prepared and residency
+proved before each timing-off Fast/Deferred score; no competing byte oracle runs
+during scoring. The read controls require zero lower attempts. Mixed windows
+record lower attempts and staged-read overlap rather than claiming RAM-only I/O.
+Routing snapshots cover process startup/close as well as the score. After each
+score, four independent deterministic files are overwritten/read concurrently for
+five seconds, drained, and checked again with the cache disabled. They validate
+those files, not DiskSpd's random payload. The original cooldown is restored by
+plan 111's contract. `--case-filter mixed` selects all 12 mixed windows without
+claiming the complete suite. Use owned NTFS/ReFS lab volumes and the same binary:
+
+```powershell
+qcache developer verify V: --suite caller-backoff --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+Plan 113 adds `priority-cost`, excluded from `full`: 36 windows at three
+alternating repetitions, fully resident 1 MiB Q1/Q8 and random 4 KiB Q1 reads.
+Four variants change one owned DiskSpd child setting at a time: Normal CPU /
+normal I/O / normal memory; BelowNormal CPU only; low I/O hint only (`-I2`);
+low process memory priority only (2 versus normal 5). Every variant has a
+three-second warmup; CPU/memory settings are applied and read back within two
+seconds of process launch, before scoring, or the owned child is stopped and
+the case fails. Expected/actual settings and elapsed application time are raw
+artifacts. XML must report the requested I/O hint and warmup. All read controls
+require resident hit accounting and zero lower attempts, with normal-priority
+telemetry and the existing readiness/two-second coverage contract.
+
+This tests process default memory priority after launch, not a claim that every
+previously allocated page has that priority. No memory pressure is injected and
+the cache's locked payload pages are unchanged. CPU, I/O and memory controls
+follow [DiskSpd's documented hints](https://github.com/microsoft/diskspd/wiki/Command-line-and-parameters)
+and [Windows process memory priority](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-setprocessinformation).
+The coordinator, user applications and driver thread priorities are untouched.
+`--case-filter read-q8` selects all twelve Q8 controls; it is not the full suite.
+
+```powershell
+qcache developer verify V: --suite priority-cost --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
+```
+
+### Plans 115–116: focused attribution and priority/affinity
+
+`ram-read-attribution` uses an owned 2 GiB Direct RAM fixture and 1 GiB file.
+Exactly three shapes per repetition: sequential 1 MiB Q1T1, Q8T1 and Q2T4
+with separate source lanes (`-s4M -T1M`). Default affinity, CPU Normal, memory
+priority 5, I/O hint 3, three-second warmup. It is traced and diagnostic, excluded
+from broad profiles. Supply `--trace-symbols <directory>` containing matching
+`qcachelab.pdb` and `qcramdisk.pdb`. Native PDB GUID/age is checked against the actual loaded PE debug records before
+any diagnostic workload. WPR must provide CPU sampling, CSwitch and
+ReadyThread; another active default recording is refused. Named trace ownership
+is journaled before start, finalized on failure and by parent recovery after
+worker death. Unusable/missing symbols or lost events reject attribution. Raw ETL,
+profile/tool/hash records and typed `.attribution.json` stay in the exact run.
+WPR itself uses a short unique temporary directory recorded in the ownership
+journal because its native path handling rejects deeply nested campaign paths.
+The profile and finalized ETL are retained in the original evidence directory;
+parent cleanup also resumes publication after an interrupted stop. No global
+WPR stop/cancel or system path configuration change is used.
+Schema-2 attribution also retains native instruction RVAs and available source
+lines to distinguish regions inside helper functions. Sampled instructions and
+stack return-address context are labeled separately; the latter is not exclusive
+CPU time. Missing lines remain null and unidentified process samples are counted
+as unknown, not busy. Counts are statistical attribution, not measured utilization.
+CPU samples cover the machine within each owned process lifetime, including
+helper threads and unrelated activity; helper stacks have no resource-ID tag.
+Submitter scheduler sums cover predecessor waits for observed switch-ins and are
+not complete blocked/ready totals. These limits remain explicit in each window.
+For improved analysis or an analyzer failure, reuse the finalized ETL without
+repeating workloads:
+
+```powershell
+qcache developer verify-attribution C:\QueueCache-Results\QueueCache-Verify-<run-id> --trace-symbols C:\Tools\Symbols
+```
+
+Pass the exact attribution child directory, not its campaign parent. This verifies
+the recorded worker/plan binding, ETL digest and original PDB GUID/age/hashes,
+then writes a unique `attribution-analysis-*` folder. It reads no driver state,
+does not start tracing or benchmarks, and preserves the original collection verdict.
+An optional installed-tool smoke runs through the same host-test executable on
+an elevated quiet Windows machine. Set `QCACHE_TEST_WPR=1` and
+`QCACHE_TEST_WPR_OUTPUT` to an existing absolute evidence directory. It records
+the owned test process briefly, finalizes only its named trace, and checks CPU and
+scheduler parsing through a deeply nested path before a longer diagnostic. It
+accesses no driver or workload disk and retains its unique raw evidence folder.
+Plan 116 derives the installed `CPU.Verbose` file profile with fixed 128 buffers
+of 1 MiB per collector (one/two collectors, configured maximum 128/256 MiB).
+Both the original and derived definitions/hashes and actual collector status are
+retained. Collector names are unique to the journal, and startup requires the
+declared buffer count/size and zero loss. This diagnostic-only change follows a rejected 45,918-lost-event smoke;
+`AllowLostEvents` remains false. Native trace readers use a short hash-verified
+ETL clone and preserve the original. Buffer capacity affects the recording pool
+and must be recorded alongside traced results; see Microsoft's
+[profile/collector explanation](https://devblogs.microsoft.com/performance-diagnostics/authoring-custom-profiles-part-1/).
+Process lifetime is an enclosing interval, not an exact DiskSpd score window.
+
+`priority-affinity` is a separate cached-volume factorial: sequential 1 MiB
+Q1/Q8 and random 4 KiB Q1, crossed with CPU Normal/BelowNormal and default/`-n`
+affinity. Memory priority 5 and I/O hint 3 are fixed; three-second warmup.
+Default three repeats produce 36 uniquely identified windows, balanced in order.
+It uses one fitting half-budget file and focused campaigns route it to the NTFS
+lab volume. Legacy `priority-cost` still compares its four original priorities.
+Neither diagnostic is added to broad performance/release profiles.
+
+```powershell
+qcache developer verify Q: --campaign focused --focus-suite ram-read-attribution --lab-ntfs W: --budget-mib 2048 --repeats 1 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --trace-symbols C:\Tools\Symbols --pause-backing-cache --output C:\QueueCache-Results\Attribution
+qcache developer verify Q: --campaign focused --focus-suite priority-affinity --lab-ntfs W: --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results\PriorityAffinity
+```
+
+Implementation is undergoing Windows/VM verification; these definitions alone
+do not establish any performance improvement.

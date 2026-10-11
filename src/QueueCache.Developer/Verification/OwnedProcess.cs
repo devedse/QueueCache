@@ -9,8 +9,11 @@ public sealed record ProcessIdentity(int Pid, DateTime StartedUtc);
 public static class OwnedProcess
 {
     public static async Task<ProcessResult> RunAsync(string executable, IReadOnlyList<string> arguments,
-        string prefix, TimeSpan timeout, CancellationToken token)
+        string prefix, TimeSpan timeout, CancellationToken token, ProcessScheduling? scheduling = null)
     {
+        scheduling?.Validate();
+        if (scheduling is not null && !arguments.Contains("-W3"))
+            throw new ArgumentException("Owned measurement priorities require the declared three-second DiskSpd warmup.");
         var start = new ProcessStartInfo(executable)
         {
             UseShellExecute = false,
@@ -25,9 +28,11 @@ public static class OwnedProcess
             Executable = executable,
             Arguments = arguments,
             Started = DateTimeOffset.UtcNow,
-            TimeoutSeconds = timeout.TotalSeconds
+            TimeoutSeconds = timeout.TotalSeconds,
+            Scheduling = scheduling
         });
         using var process = new Process { StartInfo = start };
+        var launch = Stopwatch.StartNew();
         if (!process.Start())
             throw new IOException("Could not start " + executable);
         RunStorage.AtomicJson(prefix + ".process.json", new ProcessIdentity(process.Id, process.StartTime.ToUniversalTime()));
@@ -40,6 +45,15 @@ public static class OwnedProcess
         Exception? terminationFailure = null;
         try
         {
+            if (scheduling is not null)
+            {
+                var actual = scheduling.Apply(process);
+                RunStorage.AtomicJson(prefix + ".scheduling.json", new { Expected = scheduling, Actual = actual, AppliedSeconds = launch.Elapsed.TotalSeconds });
+                // priority-cost requires a three-second warmup. Refuse a late application
+                // instead of allowing priority configuration to overlap its score window.
+                if (launch.Elapsed >= TimeSpan.FromSeconds(2))
+                    throw new IOException("Measurement scheduling was not applied before the three-second warmup.");
+            }
             await process.WaitForExitAsync(deadline.Token);
         }
         catch (OperationCanceledException)
@@ -59,6 +73,19 @@ public static class OwnedProcess
             terminationFailure ??= token.IsCancellationRequested
                 ? new OperationCanceledException(token)
                 : new TimeoutException($"Process deadline exceeded: {executable}; evidence: {prefix}");
+        }
+        catch (Exception configurationError) when (scheduling is not null)
+        {
+            terminationFailure = configurationError;
+            try
+            {
+                if (!process.HasExited) process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (Exception cleanupError)
+            {
+                terminationFailure.Data["OwnedProcessCleanupFailure"] = cleanupError.ToString();
+            }
         }
         finally
         {

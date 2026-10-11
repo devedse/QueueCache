@@ -1073,6 +1073,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV22Size ? QcDiagnosticsV22Size :
+                outputLength >= QcDiagnosticsV21Size ? QcDiagnosticsV21Size :
+                outputLength >= QcDiagnosticsV20Size ? QcDiagnosticsV20Size :
                 outputLength >= QcDiagnosticsV19Size ? QcDiagnosticsV19Size :
                 outputLength >= QcDiagnosticsV18Size ? QcDiagnosticsV18Size :
                 outputLength >= QcDiagnosticsV17Size ? QcDiagnosticsV17Size :
@@ -1099,7 +1102,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV12Size ? 12 : returned == QcDiagnosticsV13Size ? 13 :
                 returned == QcDiagnosticsV14Size ? 14 : returned == QcDiagnosticsV15Size ? 15 :
                 returned == QcDiagnosticsV16Size ? 16 : returned == QcDiagnosticsV17Size ? 17 :
-                returned == QcDiagnosticsV18Size ? 18 : returned == QcDiagnosticsV19Size ? 19 : 20;
+                returned == QcDiagnosticsV18Size ? 18 : returned == QcDiagnosticsV19Size ? 19 :
+                returned == QcDiagnosticsV20Size ? 20 : returned == QcDiagnosticsV21Size ? 21 :
+                returned == QcDiagnosticsV22Size ? 22 : 23;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1303,22 +1308,32 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         bool caller = !direct && !ext->Closing && callerCandidate;
         if (caller)
         {
+            InterlockedIncrement64(&ext->Cache.CallerCandidates);
+            const auto backoff = static_cast<ULONG>(ReadNoFence(&ext->Cache.CallerBackoff));
+            if (ext->WorkerWindow > backoff) ext->WorkerWindow = backoff;
             // Offloaded reads still copying also mean several requests are outstanding
             // (a heuristic, so the unlocked read of PagingQueued is sufficient).
-            if (ext->PendingControls || !IsListEmpty(&ext->Pending) || ext->ActiveSince || ext->CallerActive ||
-                ReadNoFence(reinterpret_cast<volatile LONG*>(&ext->Cache.PagingQueued)))
+            volatile LONG64* reason = ext->PendingControls ? &ext->Cache.CallerControls :
+                !IsListEmpty(&ext->Pending) ? &ext->Cache.CallerQueued :
+                ext->ActiveSince ? &ext->Cache.CallerWorkerActive :
+                ext->CallerActive ? &ext->Cache.CallerOwnerActive :
+                ReadNoFence(reinterpret_cast<volatile LONG*>(&ext->Cache.PagingQueued)) ? &ext->Cache.CallerOffloaded : nullptr;
+            if (reason)
             {
-                ext->WorkerWindow = QcCallerPathWorkerWindow;
+                InterlockedIncrement64(reason);
+                ext->WorkerWindow = backoff;
                 caller = false;
             }
             else if (ext->WorkerWindow)
             {
                 --ext->WorkerWindow;
+                InterlockedIncrement64(&ext->Cache.CallerBackoffRequests);
                 caller = false;
             }
             else if (++ext->CallerStreak >= QcCallerPathProbeInterval)
             {
                 ext->CallerStreak = 0;
+                InterlockedIncrement64(&ext->Cache.CallerProbes);
                 caller = false; // Probe: see QcCallerPathProbeInterval.
             }
         }

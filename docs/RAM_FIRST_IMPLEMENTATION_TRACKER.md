@@ -1,11 +1,20 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-10-09. This is the authoritative execution tracker. Detailed
+Last updated: 2026-10-11. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**Current status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
+**Current performance finalization, 2026-10-11:** source `0575e97`, signed native
+0.4.568.1, plan 117. Nine coordination windows pass with exact restoration;
+the bounded investigation closes with no additional acceptable speedup found.
+Default-off diagnostics and the one-phase experiment profile are retained, with
+no new copying/scheduling/default optimization. Live Manager automatic wake is
+still unverified. Detailed implementation/verification and scope closure are in
+"User scope review, 2026-10-11" below and
+[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#finalization-request-overlap-and-helper-coordination-2026-10-11).
+
+**Historical status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
 Fast mode is the product focus. On 2026-09-26/27: the saved-profile shutdown
 deadlock was fixed and soaked under Driver Verifier; Driver Verifier passes found no
 other violation; a failed lower IRP allocation no longer faults the cache; settings
@@ -3233,3 +3242,199 @@ persisted `UpdateSeconds: 0.1`. The shared fuller/partly-used legend is visible.
 Headless tests cover page changes, minimization, closure, pending samples and
 unrelated inventory changes. The preview does not establish a 100 ms performance
 acceptance result. Temporary owner settings are restored after this check.
+
+### User scope review, 2026-10-11
+
+Finalization implementation checkpoint (plan 117): default-off per-store Direct
+copy overlap/helper counters and 1/64 sampled handoff timings, versioned research
+query/settings with unchanged public prefixes, nine-window off/on/off typed suite
+and one-phase `experiment` campaign. Implementation: source `0575e97`, plan 117.
+Verification: Linux host contracts and Windows Debug/Release native, managed and
+CLI checks pass in CI run `38096468882` (6 min 46 s). The signed 0.4.568.1 package
+records synthetic PR merge `12771e5`; its tree is identical to source `0575e97`.
+VM verification completes in exact campaign
+`QueueCache-Campaign-20261011-030244-6c5d802829a74dad95f82656a87be700`: 1/1 phases,
+nine windows PASS, 273.019 s total, 8.209 s final restoration, 24 zero-exit owned
+records, 12 readiness files, 135 native samples, maximum native gap 1.023141 s.
+Nine full 1 GiB hashes, XML/scheduling, diagnostic generations/bytes and disabled
+restore readbacks checked; image attempts zero and native errors zero. Q8 copy
+peak 1, helpers 74.60% of bytes, unused posts 0.644%; off drift +0.847% and on
+versus off mean −1.654%, within the 2% diagnostic guard. Q1/four-reader drift
+is +7.977%/−4.216%; do not use their timing comparisons causally. Q1's first
+window has 116,736 bytes of ancillary in-memory Direct writes/19 generation
+increments, with unchanged full payload hash and zero image attempts; their
+effect on drift is unproved. Actual loaded 568 filter/provider hashes and strict
+registration are recorded in the consolidated findings.
+
+Final performance disposition: **no additional acceptable speedup found within
+the bounded investigation**. No candidate selected: reducing posts does not
+target a demonstrated Q8 cost, while asynchronous admission requires a new safe
+lifetime/progress design. Candidate screen/control suites remain unimplemented;
+their matrices, new asynchronous lifecycle tests and final broad release campaign
+were not run or marked passed. Useful default-off diagnostics retained; copying,
+scheduling, chunk size and production defaults remain unchanged. Automatic live Manager delivery
+remains separate from helper/event validation.
+
+Automation smoke: exact campaign
+`QueueCache-Campaign-20261010-235349-9ea2613ab5264e8ea7c29eadad2f5de3`, unchanged
+native 0.4.514.1 / managed plan 116. Verification: 2/2 phases and cases completed,
+all checks pass, restoration RESTORED in 8.571 s, total 78.181 s, 28 owned
+zero-exit records and nine readiness files. Raw archive SHA-256
+`94448EA39B3A1A6C4A7F2CA4C2114897C861DC57BB2B1C5EEBB634C80BDC68CB`.
+Manager job `9ee931b7-8e73-435b-a8ca-5418b9119ca4` is VALIDATED with delivery
+PENDING while the agent is busy; no automatic wake has been observed. This is
+controller qualification, not proof of live Manager service delivery.
+
+Final diagnostic Manager job `76c44478-8c58-41b3-8fa7-1c53b812ee42` is also
+VALIDATED; no idle wake was observed. Already inspected results are acknowledged
+with `job-reviewed`. Preliminary job `e2a61b95-2c0c-4554-a155-819cabf5c748` stopped
+before qcache launched (binary-search long path); record preserved, no samples
+combined. Successful raw archive SHA-256
+`9EE925A1B1246387E6A5EEAC6EEFDB89292A9D30CCA53BA21250B093B7ECF861`.
+At 03:10:20 UTC session cleanup restored original Q: active 2 GiB Fast/Idle,
+dirty/in-flight/errors zero, saved profiles unchanged, original resource IDs,
+detached owned NTFS lab and installed session-1 tray PID 7624. Intended signed
+568 remains loaded. No README benchmark rerun or PR merge; PR #9 remains draft.
+
+Historical plan checkpoint: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
+was the execution plan; its completed status table and closure now take precedence.
+Original implementation: documentation only; proposed one
+missing-fact diagnostic, one candidate plus at most one justified revision, narrow
+campaign composition and final qualification/negative closure. Verification:
+source entry points and current suite/campaign contracts reviewed; no proposed
+suite/profile implemented and no VM tests or new performance findings. Automatic
+Manager wake remains unverified. Original handoff is historical technical reference.
+
+| Item | Implementation / plan status | Verification |
+|---|---|---|
+| Low-priority follow-up (user item 4) | Completed priority/affinity findings retained; further tracing is parked. Keep normal-priority benchmark launches. Reopen only for a relevant observed problem or new request. | Existing comparison establishes setup sensitivity, not a normal-priority product regression or its prevalence in real applications. No new run. |
+| UI cost (user item 5) | Dedicated 100 ms rendering-cost investigation removed from the active backlog at the user's request. Existing UI features retained. | Prior functional checks and native map timings retained; actual 100 ms rendering cost remains unmeasured. No new run. |
+| Test scope (user item 6) | Candidate iterations use the smallest maintained suite plus affected correctness checks. Broad regression/write/sustained qualification runs last as one campaign with a combined report. Current `focused` profile adds 81 retained checks and is optional during iteration. | Documentation-only scope update; no case-count/measurement contract changes, no new benchmark and no relaxed byte/identity/telemetry/restoration checks. Live automatic wake remains unverified. |
+
+### Handoff implementation in progress, 2026-10-10
+
+Started from `f3245d0`, branch `perf/ram-read-followups`. Verification contract
+advanced to plan 115, then 116 for the bounded trace-buffer contract; the installed
+signed 514 driver remains the baseline.
+
+| Stage | Implementation | Verification |
+|---|---|---|
+| A: completion delivery | Implemented in DeveAgentManager (`b90d5aa`, `a8cd79c`, `65e6281`): durable owned jobs, process-exit validation, private launch evidence, guarded terminal outbox, reconnect without workload replay and reviewed-result acknowledgement. Delivery deduplicates the same event across job registrations for the same runner/conversation. QueueCache supports strict `verify-completion --output-parent`. Updated Runner helper is installed and used for the plan-116 diagnostic. | All 526 Manager host tests and build/security CI pass at the main checkpoint; 15 targeted tests and build/security CI pass after stable event-key deduplication. Real controller captures failed/successful Windows events; automatic wake remains pending deployment/qualification of the updated Manager service. No exactly-once analysis guarantee is claimed for ambiguous terminal crashes. |
+| B: RAM attribution | Typed RAM kinds, three traced shapes, named collectors/parent cleanup, PDB identity gate, instruction/source and CPU/scheduler analysis; `verify-attribution` reuses immutable traces. Short native paths preserve deep evidence. Plan 116 fixes 128 × 1 MiB buffers per collector (max two), enforcing startup readbacks. | Windows contracts/Debug and Release build + CLI checks pass at `78ecfb2` (CI #552); final tool smoke passes with zero loss. Campaign `20261010-215743-5ce1b38bf4c747a0868bf6eab778c43d` completes 6/6 in 458.47 s, restored: three valid traces, 100% native-symbol coverage, zero image attempts/errors, whole-file hashes and 75 successful owned exits. Instruction mapping finds polling at 33.12/32.10/7.03% of all samples for Q1/Q8/four readers; no traced speed acceptance. Bootstrap/deep-path/lost-event failures remain preserved. |
+| C: candidate | B exit gate: inconclusive/no justified throughput optimization, so C is skipped. Copy granularity and native behavior unchanged. | Polling CPU cost is established, but shortening it has not been shown to improve throughput; prior 50/200 us duration tuning found no gain. Request overlap and resource-scoped post/take timing remain unknown. A future B3 needs only those missing counters with off/on/off overhead evidence before selecting a candidate. No new speedup or release acceptance claimed. |
+| D: priority/affinity | Added separate 36-window factorial at defaults; NTFS role, single fitting-file preparation and strict raw XML validation. Legacy `priority-cost` remains unchanged. Sector setup now flushes the owned file before the existing cache flush, preserving the clean admission guard. | Linux/Windows contracts and CI pass at `78ecfb2`. Retry campaign `20261010-220615-fac181574f6f4518b1b088547357530f` completes 6/6 phases, 41/41 outer cases, 36 score windows plus 81 inner checks in 1501.60 s, restored. Q8 BelowNormal loss shrinks from 30.21% default to 3.14% unbound (overlapping ranges); Q1/random show no consistent penalty. Raw XML/readbacks, zero lower/staged/miss deltas, 0.845574 s maximum score telemetry gap and 1004 successful owned exits inspected. Preserved matched-514 default CPU profiles support CPU-0 contention/ready-delay inference; no new unbound trace or driver boost is claimed. All repeats/ranges are in PERFORMANCE_FINDINGS.md. First failed 47.44 s attempt remains separate. |
+| Final backing restoration | Scoped fix: use existing explicit bounded preparation after restoring an enabled backing task, before unchanged strict final capture. No preparation for disabled baseline observations. | Linux/Windows regressions pass; retry smoke completes 2/2 phases with clean restoration in 67.19 s, 28 zero-exit owned processes and nine readiness files. Failed 50.11 s attempt preserved separately. |
+| E/F | Optional UI measurement and conditional caller-policy experiment remain lower priority. | No new measurements or production changes. |
+| G: handback/qualification | Consolidated findings, current tracker and AGENTS guidance updated; existing draft PR #9 carries implementation, evidence and remaining gates. Companion Manager code/docs pushed to its master. | Code checkpoint `78ecfb2` passes Linux/Windows host contracts, Windows Debug/Release build/CLI CI #552 and installed trace-tool smoke. Both focused campaigns restore exactly; session cleanup detaches only the task-attached NTFS lab and restarts the original installed tray (session 1, PID 6196). Q: is active 2 GiB Fast/Idle, timing off, dirty/in-flight/errors zero, native hashes unchanged. No retained native candidate or UI change in this handoff, so the historical 72-write/sustained matrices were not repeated. Live Manager service wake, optional UI cost and future resource-scoped/Q8 traced attribution gaps remain explicit. PR #9 stays draft and unmerged. |
+
+### Post-merge performance follow-up, 2026-10-10
+
+Plan-114 campaign / focused RAM-read follow-up checkpoint (historical; the handoff
+table above records current plan-116 implementation and verification):
+
+| Item | Implementation | Verification |
+|---|---|---|
+| Single-command campaigns | Typed smoke/focused/performance/release profiles reuse maintained factories; one foreground coordinator, all target leases, frozen manifest, sequential phases, fault scenarios last, strict child evidence indexing and fail-fast behavior. Explicit lab backing pause/restoration uses existing bounded workers and telemetry. Combined reports and timing; terminal `completion.json` published after cleanup. | Windows Release host contracts and Debug/Release CI pass at `4307679`. Strict success/failure/cancellation, digest/count/baseline/driver mismatch and preparation/fault/deadline contracts are covered. Real signed-514 smoke completes 2/2 in 59.15 s, with eight readiness handshakes, 26 zero-exit owned processes and exact restoration inspected. A failed 4/6 focused attempt exposed transient writes after backing-cache restoration; explicit bounded preparation now handles that without relaxing clean capture or retrying faults. Focused retry completes 6/6 phases and 111 inner checks in 17 min 21 s, with all 93 owned exits zero, 22 readiness handshakes and exact final restoration. Failed attempts preserved separately. No broad matrix is needed for orchestration. |
+| Agent completion delivery | Read-only `verify-completion` validates the event. Stable event ID permits controller deduplication; delivery honestly starts `PENDING_CONTROLLER`. | Event-before-cleanup and evidence mismatch contracts added. No supported Manager wake API is exposed by `dam-tools`; automatic resume remains an external integration, not a delivered feature. |
+| Precise RAM-disk diagnostic | `ram-read-scheduling` holds native/copy behavior fixed, independently controls affinity and multi-reader source overlap, alternates repetitions and validates bundled DiskSpd XML/settings. Default thirty windows with byte/accounting/coverage/ownership checks. | Windows plan/profile/priority/traffic/ownership contracts and Debug/Release CI pass. All 30 focused VM windows complete on unchanged signed 514 with zero backing attempts, exact whole-file hashes and maximum native gap 1.021481 s. Default/unbound Q8 medians 25.84/26.30 GB/s (+1.77%, overlapping ranges); four readers retain 38–39 GB/s with separate source lanes. Affinity/locality do not explain most of the gap; coordination and request concurrency remain candidates. No production change or promised speed-up. The earlier rejected queue mixed scheduling and whole-copy changes. |
+| Findings maintenance | AGENTS references the consolidated findings and implemented campaign contract; preserve historical/raw results. | Complete: consolidated matched medians/ranges, rejected-queue confound, provenance, timing, contract limits and result-driven follow-up in PERFORMANCE_FINDINGS.md. Exact child/raw evidence and restoration inspected; NTFS lab detached, original Q: runtime/profiles restored and installed tray resumed. |
+
+Continuation review, 2026-10-10:
+
+| Item | Implementation | Verification |
+|---|---|---|
+| Findings review and ordered continuation plan | Updated [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review): finish external completion delivery alongside focused RAM attribution; gate one copy-preserving experiment on evidence; keep priority/affinity, UI cost and caller policy separate. Corrected the stale statement that campaign commands were unavailable. Missing-span reads remain deferred. | Reviewed recorded matched comparisons and current Direct completion/provider helper source. DiskSpd affinity controls did not vary provider helper CPU assignments. Documentation-only review; no new benchmark or native implementation is claimed. |
+| Next RAM attribution and conditional experiment | Planned; actual concurrency, useful copy work and helper handoff/withdrawal costs need isolation before choosing a change. | Not run. Existing 30 RAM windows and 81 retained-behavior checks are preserved; new scheduling/lifetime code requires its own performance and lifecycle qualification. |
+| External Manager delivery | Planned outside the runner; requires supported process-completion/wake integration with durable deduplication and reconnect handling. | Not delivered. Qualify controller outcomes with fixtures and one short VM smoke; runner completion alone does not prove agent wake-up. |
+| Implementation handoff for the next agent | Added [PERFORMANCE_AGENT_HANDOFF.md](PERFORMANCE_AGENT_HANDOFF.md), linked from AGENTS and the follow-up plan. Specifies exact component changes, proposed suite counts, commands, tests, conditional optimization gates, external Manager dependency and final reporting. | Cross-checked against current runner/worker forwarding, suite/filter/role validation, native copy/caller paths and Desktop sampling. `dam-tools --help` still exposes only image sharing. Documentation/link/count checks only; no proposed suite, notification integration or new native optimization is claimed implemented. |
+
+PR #8 merged as `fb34f878581590123a190b048fdfd23c5d4e9b39` after the full
+72-case matrix, host/Windows CI and real Windows pop-out/100 ms checks.
+The temporary UI preview exited, the owner's original preference state was
+restored, and the installed tray application resumed. Branch
+`perf/ram-read-followups` starts from the merged master.
+
+| Item | Implementation | Verification |
+|---|---|---|
+| RAM-disk single-reader Q8 scheduling | Supported reference sampler and archived same-build comparison implemented. The shared sleeping queue engine is rejected and removed; V22 prefix/action reservation preserved. Synchronous split copies retained. See [profile/design/results](RAM_READ_SCHEDULING_20261010.md). | 36/36 plan-108 reference and 54/54 plan-110 same-build windows completed with exact bytes, telemetry and independent restoration. The queue loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput on large reads; small controls remain within variation. No scheduling gain or priority boost justified. Lifecycle qualification of the removed experiment is deliberately not pursued. |
+| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; patterned `partial-read-accounting` and maintained churn exercise collect the evidence. Lower-read behavior unchanged; missing-span reads are not justified for the tested churn shapes. | Original ten checks pass on 0.4.495.1. Signed 0.4.514.1 repeats the accounting scenario successfully; churn run `20261010-075924-c08eff16b204482fb371f9d09265f56e` completes 6/6 with all 18 raw windows inspected, maximum gap 0.752202 seconds, 1,539 concurrent byte checks and all 24 persisted oracle files passing. Weighted cached overlap is 0.788% mixed / 0.449% Q1 recovery; Q8 stages nothing. Clean restoration. This is a 120-second accounting smoke, not a new 30-minute acceptance. [Findings](PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first). |
+| ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks and Windows Debug/Release CI pass. Signed 0.4.514.1 quick and both complete 24-window NTFS/ReFS comparisons restore cleanly. Cooldown 0 gains 5.26%/3.79% mixed Q8, but loses 21.18% NTFS large-read Q8; ReFS large-read ranges overlap. Retain 256. [Raw-result summary](CALLER_BACKOFF_20261010.md). All 81 current retained-driver checks pass at default 256; no shorter production policy is promoted. |
+| Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host and Windows Debug/Release contracts pass at `1788970`. Full W: retry `20261010-073414-2f6dd18225094fc98abc3560ddaca39e` completed 36/36, all 940 process exits zero, maximum gap 0.689031 seconds, zero lower/staged I/O and clean restoration. CPU BelowNormal loses 34.20% Q8; I/O/memory Q8 ranges overlap normal. First attempt remains INCOMPLETE and separate. Focused CPU/wait analysis completed with matching PDBs and lost-event rejection: more ready delay and idle CPUs under BelowNormal; priority/affinity isolation is next. [Evidence](PRIORITY_COST_20261010.md). Process memory defaults only, without pressure or locked-page changes. No boost implemented. |
+
+Plan 112 implements the supported 24-window `caller-backoff` comparison, with
+alternating 256/0 cooldowns, 64 KiB mixed Q1/Q8 and 4K/1M read controls, complete
+residency proofs and independent concurrent/post-drain byte checks after scoring.
+Implementation is complete; host and Windows CI contracts pass. All 24
+windows for each filesystem completed, independently restored and inspected.
+The mixed boundaries retain the V21 staged-read counters, but none of the fitting
+windows staged disk reads. The completed churn accounting is reported below and in the consolidated findings.
+
+The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance and
+keeps implementation separate from verification. The initial draft PR contains
+this plan; the historical Q8 write gap remains unproved. Closed/accepted items
+remain closed, and the 72-case measurement contract is unchanged.
+
+
+Partial-read evidence: exact run `QueueCache-Verify-20261010-020527-79bbee34e94c47faa71b8b062523627a`
+completed in `C:\QueueCache-Results\PartialRead495-20261010`, plan 105,
+commit `6e4d192f7ef81e251e0b862c8a7437c1605c09dc`. Loaded filter SHA-256
+`B9C1AF5DB37000AF905B4A9DCE68BF2AD94796F062F79A322A6BBDBB25585233`,
+provider `804AD65A31B26091841D77D9020A16A8B01B0FC52E66813695675DF331B8697D`.
+Both timing modes recorded one 1 MiB staged attempt containing 131,584 already
+cached bytes; full misses staged 1 MiB with zero overlap, and crossing/full/
+overwritten hits staged nothing. Every byte matched. FINISHED/status/summary/
+results/log, all ten raw observation boundaries and independent restoration
+were inspected; original enabled 2 GiB Fast/Idle settings restored with timing
+off, zero dirty/in-flight bytes and no driver error. This validates accounting,
+not a missing-span speed-up. The shaped overlap is 12.55% of the lower traffic;
+real random/mixed windows were needed before changing lower-read behavior. The
+completed 0.4.514.1 churn follow-up below supplies them and does not justify that
+change for its tested shapes.
+
+2026-10-10 documentation follow-up. Implementation: consolidated performance
+findings and decisions in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md),
+referenced by AGENTS.md and benchmarking guidance. Earlier retained changes,
+merged PR #8, new PR #9 diagnostics and rejected experiments are distinguished.
+Verification: cross-checked against the completed dated reports, including the
+36-window priority retry and completed churn accounting. CPU/wait attribution and
+all 81 retained-driver checks are now complete and recorded below. The
+[single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) was
+design-only at that checkpoint. Plan 114 implements the typed orchestration,
+independent restoration and durable terminal event described in the current-work
+table above. DeveAgentManager wake integration remains external.
+
+Focused churn accounting completed on signed 0.4.514.1, plan 113, run
+`20261010-075924-c08eff16b204482fb371f9d09265f56e`, 07:59:24–08:09:02 UTC.
+Implementation: existing `cache-sustained` with a 512 MiB cache and 120 seconds
+mixed activity; new V21 accounting, read recall 1 and copy flags 3. Verification:
+6/6 episodes, all 18 mixed/reread XML/windows inspected, 215 owned process exits
+zero, maximum gap 0.752202 seconds, 1,539 exact concurrent write/read checks and
+24 final disabled-cache oracle files pass. Original lab state/backoff restored
+with no errors/pending data. Mixed lower overlap 26,779,648 / 3,398,303,744 bytes
+(0.788%); Q1 recovery 6,553,600 / 1,459,617,792 (0.449%); Q8 stages zero.
+Decision: do not implement missing-span reads for these shapes; measure other
+representative scatter patterns only if a concrete observation warrants them.
+This is focused accounting, not another sustained performance A/B. Full table,
+limits and raw archive identity are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+
+Final retained-driver qualification on signed 0.4.514.1: five independently
+restored plan-113 runs pass all 81 inner checks (10 partial-read, 8 paging,
+42 policy, 13 pressure, 8 ordering/fault). All 20 process exits are zero.
+Default caller backoff 256 restored in each run; zero pending bytes. Ordering
+fault injection deliberately records three errors, then restores non-faulted
+state/last error zero; other runs have zero errors. Exact IDs, runtimes and raw
+archive hash are in the consolidated findings. Forced shorter production policy
+and the removed queue's lifecycle are not claimed qualified.
+
+CPU/wait analysis of the four-case priority subset completed without lost events,
+using matching 0.4.514.1 PDBs. Normal/BelowNormal non-idle CPU is 95.9%/65.0%;
+aggregate benchmark ready time 1.454/6.358 seconds, with other CPUs more idle in
+BelowNormal and affinity enabled in the XML. Function shares do not prove all
+RequestWorker samples are spin; next diagnostic isolates priority/affinity before
+a driver change. Analysis/trace identities and limits:
+[priority report](PRIORITY_COST_20261010.md).
+
+Final lab restoration: owned processes exited, both NTFS/ReFS VHDX files detached,
+Q: resumed runtime-only with its original active 2 GiB Fast/Idle options, no
+pending bytes or errors. Saved profile text matches the before capture exactly;
+installed tray restarted. Private raw evidence and lab files remain preserved.

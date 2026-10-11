@@ -51,7 +51,7 @@ foreach ($name in @('pause', 'resume', 'remove'))
     }
 }
 Write-Host 'CLI contract checks passed. No disk handle opened.'
-foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
+foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 'verify-status'), @('developer', 'verify-completion'), @('developer', 'verify-attribution'), @('developer', 'verify-recover'), @('developer', 'test'), @('developer', 'write-tests'), @('developer', 'file-tests'), @('developer', 'driver'), @('developer', 'driver', 'delay'), @('developer', 'driver', 'fault'), @('developer', 'driver', 'registration'), @('developer', 'lab-disk'), @('developer', 'lab-disk', 'create'), @('developer', 'lab-disk', 'attach'), @('developer', 'lab-disk', 'detach')))
 {
     & $cli @command --help
     if ($LASTEXITCODE)
@@ -61,6 +61,8 @@ foreach ($command in @(@('developer'), @('developer', 'verify'), @('developer', 
 }
 foreach ($arguments in @(
         @('developer', 'verify', 'Q:', '--suite', 'not-a-suite'),
+        @('developer', 'verify', 'Q:', '--campaign', 'not-a-campaign'),
+        @('developer', 'verify', 'Q:', '--campaign', 'focused', '--focus-suite', 'ram-read-queue'),
         @('developer', 'verify', 'Q:', '--detach'),
         @('developer', 'verify', 'Q:', '--suite', 'managed-lifecycle-verify', '--managed-transition', 'not-a-transition'),
         @('developer', 'write-tests', 'X:', '4294967296', '{00000000-0000-0000-0000-000000000001}', 'unknown-mode'),
@@ -139,6 +141,26 @@ if ($LASTEXITCODE -ne 1)
 if ($verificationHelp -notmatch 'run.log')
 {
     throw 'Verification help must describe persistent logging.'
+}
+if ($verificationHelp -notmatch '--campaign' -or $verificationHelp -notmatch 'ram-read-scheduling' -or $verificationHelp -notmatch 'completion.json')
+{
+    throw 'Verification help must describe campaigns, isolated RAM controls and durable completion evidence.'
+}
+foreach ($arguments in @(
+    @('developer', 'verify', 'Q:', '--suite', 'quick', '--campaign', 'smoke', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-reference', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-coordination', '--lab-ntfs', 'W:', '--repeats', '3'),
+    @('developer', 'verify', 'Q:', '--suite', 'ram-read-coordination', '--budget-mib', '2048', '--repeats', '3'),
+    @('developer', 'verify', 'Q:', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'smoke'),
+    @('developer', 'verify', 'Q:', '--campaign', 'smoke', '--lab-ntfs', 'C:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'smoke', '--lab-ntfs', 'W:', '--case-filter', 'one'),
+    @('developer', 'verify', 'Q:', '--campaign', 'focused', '--lab-ntfs', 'W:'),
+    @('developer', 'verify', 'Q:', '--campaign', 'smoke', '--lab-ntfs', 'W:', '--deadline-minutes', '-1')
+))
+{
+    & $cli @arguments 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 1) { throw "Campaign binding/validation must fail before device access: $arguments" }
 }
 $testIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 try
