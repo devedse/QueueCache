@@ -26,12 +26,13 @@ internal static class RamReadReferenceScenarios
         if (File.Exists(ownership)) throw new IOException("RAM reference ownership journal already exists.");
         RunStorage.AtomicJson(ownership, journal);
         var plan = RamReadReferencePlan.CasesFor(kind, repeats);
-        var write = kind == RamReadRunKind.WriteReference;
+        var write = kind is RamReadRunKind.WriteReference or RamReadRunKind.WriteStreaming;
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds,
             Measurement = write ? "Write reference and user-mode memory copies; no speed acceptance verdict" : "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
         var coordinationWindows = new List<RamCoordinationWindow>();
         var asyncWindows = new List<RamAsyncWindow>();
+        var streamWindows = new List<RamStreamWindow>();
         var traceJournal = ownership + ".trace.json";
         if (kind == RamReadRunKind.Attribution)
         {
@@ -68,6 +69,14 @@ internal static class RamReadReferenceScenarios
                 var expectedNative = current.Native ?? throw new IOException("Owned RAM reference has no native identity.");
                 var file = definition.PreferredLetter + @":\ram-read-reference.dat";
                 var expectedHash = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
+                if (kind == RamReadRunKind.WriteStreaming)
+                {
+                    // The comparison chooses the write copy mode per window; it starts from ordinary stores.
+                    using var configure = WindowsRamDisk.Connect();
+                    var initial = configure.StreamWrites(expectedNative)
+                        ?? throw new NotSupportedException("The loaded provider does not implement RAM write copy modes.");
+                    if (initial.Mode != RamStreamMode.Off) configure.SetStreamWrites(expectedNative, RamStreamMode.Off);
+                }
                 if (kind is RamReadRunKind.Async or RamReadRunKind.Coordination)
                 {
                     // These suites choose the read mode per window; coordination measures the inline copy only.
@@ -107,6 +116,18 @@ internal static class RamReadReferenceScenarios
                         coordinationBefore = provider.Coordination(expectedNative)
                             ?? throw new IOException("RAM coordination readback unavailable after configuration.");
                         RunStorage.AtomicJson(prefix + ".coordination-before.json", coordinationBefore);
+                    }
+                    RamStreamWrites? streamBefore = null, streamAfter = null;
+                    if (kind == RamReadRunKind.WriteStreaming)
+                    {
+                        var original = provider.StreamWrites(expectedNative)
+                            ?? throw new NotSupportedException("The loaded provider does not implement RAM write copy modes.");
+                        if (original.Mode != RamStreamMode.Off)
+                            throw new IOException("Owned RAM fixture unexpectedly streams writes before the window.");
+                        provider.SetStreamWrites(expectedNative, scenario.StreamWrites ? RamStreamMode.Large : RamStreamMode.Off);
+                        streamBefore = provider.StreamWrites(expectedNative)
+                            ?? throw new IOException("RAM write copy readback unavailable after configuration.");
+                        RunStorage.AtomicJson(prefix + ".stream-before.json", streamBefore);
                     }
                     RamAsyncReads? asyncBefore = null, asyncAfter = null;
                     if (kind == RamReadRunKind.Async)
@@ -177,6 +198,24 @@ internal static class RamReadReferenceScenarios
                                     throw new IOException("RAM coordination disable/rundown failed.");
                             }
                         }
+                        if (kind == RamReadRunKind.WriteStreaming)
+                        {
+                            try
+                            {
+                                streamAfter = provider.StreamWrites(expectedNative)
+                                    ?? throw new IOException("Final RAM write copy readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".stream-after.json", streamAfter);
+                            }
+                            finally
+                            {
+                                provider.SetStreamWrites(expectedNative, RamStreamMode.Off);
+                                var restored = provider.StreamWrites(expectedNative)
+                                    ?? throw new IOException("RAM write copy restore readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".stream-restored.json", restored);
+                                if (restored.Mode != RamStreamMode.Off)
+                                    throw new IOException("RAM write streaming stayed on after the window.");
+                            }
+                        }
                         if (kind == RamReadRunKind.Async)
                         {
                             try
@@ -206,6 +245,16 @@ internal static class RamReadReferenceScenarios
                             checked(after.Direct.ReadBytes - before.Direct.ReadBytes), checked((ulong)score!.Bytes));
                         coordinationWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
                             expectedNative.CreationGeneration, coordinationBefore!, coordinationAfter!, score!));
+                    }
+                    if (kind == RamReadRunKind.WriteStreaming)
+                    {
+                        var written = checked(after.ProviderWriteBytes!.Value - before.ProviderWriteBytes!.Value + (after.Direct.WriteBytes - before.Direct.WriteBytes));
+                        var share = RamStreamWrites.ValidateWindow(streamBefore!, streamAfter!, scenario.StreamWrites ? RamStreamMode.Large : RamStreamMode.Off, written);
+                        // A candidate window that did not stream its 1 MiB writes would make the comparison meaningless.
+                        if (scenario.StreamWrites && share < RamWriteStreaming.MinimumCandidateShare)
+                            throw new InvalidDataException($"Candidate window streamed only {share:P1} of its written bytes; the candidate was not exercised.");
+                        streamWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
+                            expectedNative.CreationGeneration, streamBefore!, streamAfter!, share, score!));
                     }
                     if (kind == RamReadRunKind.Async)
                     {
@@ -264,7 +313,7 @@ internal static class RamReadReferenceScenarios
                 if (write)
                 {
                     // The write windows replaced the payload: rewrite the oracle and read every byte back.
-                    var rewritten = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
+                    var rewritten = RamReadFileOracle.Rewrite(file, RamReadReferencePlan.FileMiB);
                     var readBack = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, evidence + $".r{group.Key.Repeat}-{group.Key.Access}.readback");
                     RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}.readback.json",
                         new { Expected = expectedHash, Rewritten = rewritten, ReadBack = readBack, Bytes = 1L << 30 });
@@ -287,6 +336,8 @@ internal static class RamReadReferenceScenarios
             RamReadCoordination.Report(evidence, plan, coordinationWindows);
         if (kind == RamReadRunKind.Async)
             RamReadAsync.Report(evidence, plan, asyncWindows);
+        if (kind == RamReadRunKind.WriteStreaming)
+            RamWriteStreaming.Report(evidence, plan, streamWindows);
         return checks;
     }
 

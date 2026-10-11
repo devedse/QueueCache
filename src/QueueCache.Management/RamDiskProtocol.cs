@@ -14,7 +14,11 @@ public enum RamDiskAction : uint
     /// <summary>Reply followed by <see cref="RamAsyncReads"/>.</summary>
     AsyncReads = 0x103,
     /// <summary>Offset: <see cref="RamAsyncMode"/> (adaptive at creation); a nonzero mode resets counters and fails while any is in flight.</summary>
-    SetAsyncReads = 0x104
+    SetAsyncReads = 0x104,
+    /// <summary>Reply followed by <see cref="RamStreamWrites"/>.</summary>
+    StreamWrites = 0x105,
+    /// <summary>Offset: <see cref="RamStreamMode"/> for large write copies (off at creation); resets the counters.</summary>
+    SetStreamWrites = 0x106
 }
 [Flags]
 public enum RamDiskFlags : uint

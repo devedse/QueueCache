@@ -287,5 +287,62 @@ internal static class DiagnosticContracts
             Diagnostics = new { CallerPath = new { Reads = 1UL }, CopyOffloadReads = (ulong?)null }
         }), score));
         reject(() => CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 0, 0), Snapshot(1, 0, 0, 0, 0, 0, 0, 0), score with { Bytes = 999 }));
+        RunStreamingContracts(check, reject);
+    }
+
+    /// <summary>Plan 120 candidate: streaming stores for large RAM-disk write copies, compared on one build.</summary>
+    private static void RunStreamingContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        check((uint)QueueCache.Management.RamDiskAction.StreamWrites == 0x105 && (uint)QueueCache.Management.RamDiskAction.SetStreamWrites == 0x106 &&
+            (uint)QueueCache.Management.RamDiskAction.SetAsyncReads == 0x104, "write copy modes add actions without recycling IDs");
+        var plan = RamReadReferencePlan.CasesFor(RamReadRunKind.WriteStreaming, 3);
+        check(RamReadReferencePlan.KindFor("ram-write-streaming") == RamReadRunKind.WriteStreaming && plan.Count == 18 &&
+            plan.Select(c => c.Id).Distinct().Count() == 18 && plan.Count(c => c.StreamWrites) == 9 &&
+            plan.All(c => c.Write && c.SchedulingControl && c.Probe is null) &&
+            plan.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count(c => c.StreamWrites) == 1 && g.Count() == 2) &&
+            RamWriteStreaming.IsTarget(plan.First(c => c.QueueDepth == 1)), "18 same-build windows: each shape once per mode per repetition, Q1T1 target");
+        check(plan[0].Repeat == 1 && !plan[0].StreamWrites && plan.First(c => c.Repeat == 2).StreamWrites, "the first mode alternates between repetitions");
+        static byte[] Wire(ulong generation, ulong mode, ulong writes, ulong bytes)
+        {
+            var data = new byte[QueueCache.Management.RamStreamWrites.WireSize];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data, (uint)data.Length);
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), 1);
+            foreach (var (value, index) in new[] { generation, mode, writes, bytes }.Select((v, i) => (v, i)))
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(data.AsSpan(8 + index * 8), value);
+            return data;
+        }
+        var on = QueueCache.Management.RamStreamWrites.Decode(Wire(4, 1, 0, 0));
+        check(on.Mode == QueueCache.Management.RamStreamMode.Large && on.Generation == 4, "write copy payload decodes");
+        foreach (var invalid in new[] { Wire(4, 2, 0, 0), Wire(4, 1, 10, 1 << 16) })
+            reject(() => QueueCache.Management.RamStreamWrites.Decode(invalid));
+        var ran = on with { Writes = 1000, Bytes = 1000UL << 20 };
+        check(Math.Abs(QueueCache.Management.RamStreamWrites.ValidateWindow(on, ran, QueueCache.Management.RamStreamMode.Large, 1001UL << 20) - 1000.0 / 1001) < 1e-9,
+            "streamed share is streamed bytes over written bytes");
+        foreach (var invalid in new[] { ran with { Generation = 5 }, ran with { Mode = QueueCache.Management.RamStreamMode.Off } })
+            reject(() => QueueCache.Management.RamStreamWrites.ValidateWindow(on, invalid, QueueCache.Management.RamStreamMode.Large, 1001UL << 20));
+        reject(() => QueueCache.Management.RamStreamWrites.ValidateWindow(on, ran, QueueCache.Management.RamStreamMode.Large, 999UL << 20));
+        var off = on with { Mode = QueueCache.Management.RamStreamMode.Off };
+        check(QueueCache.Management.RamStreamWrites.ValidateWindow(off, off, QueueCache.Management.RamStreamMode.Off, 1UL << 30) == 0, "ordinary windows stream nothing");
+        reject(() => QueueCache.Management.RamStreamWrites.ValidateWindow(off, off with { Writes = 1, Bytes = 1 << 20 }, QueueCache.Management.RamStreamMode.Off, 1UL << 30));
+
+        var resource = Guid.NewGuid(); var boot = Guid.NewGuid();
+        RamStreamWindow[] Windows(Func<RamReadReferenceCase, double> score) => plan.Select(c => new RamStreamWindow(c, resource, boot, 1,
+            c.StreamWrites ? on : off, c.StreamWrites ? ran : off, c.StreamWrites ? 0.99 : 0,
+            new DiskSpdScore(50L << 20, 50, 10, score(c), 5, null, 0.1, null, null))).ToArray();
+        var directory = Path.Combine(Path.GetTempPath(), "qcache-stream-contract-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var evidence = Path.Combine(directory, "evidence");
+            double Target(RamReadReferenceCase c, double gain) => RamWriteStreaming.IsTarget(c) && c.StreamWrites ? 16_000 * gain + c.Repeat : 16_000 + c.Repeat;
+            check(RamWriteStreaming.Report(evidence, plan, Windows(c => Target(c, 1.20))) == "ACCEPT_SCREEN", "a clear Q1 gain with flat controls passes the screen");
+            check(RamWriteStreaming.Report(evidence, plan, Windows(c => Target(c, 1.02))) == "REJECT", "a gain under 5% rejects the candidate");
+            check(RamWriteStreaming.Report(evidence, plan, Windows(c => c.QueueDepth == 8 && c.StreamWrites ? 15_000 : Target(c, 1.20))) ==
+                "CONTROL_LOSS_REVISION_OR_REJECT", "a repeatable control loss blocks acceptance");
+            check(RamWriteStreaming.Report(evidence, plan.Take(12).ToArray(), Windows(c => Target(c, 1.20))[..12]) == "INCOMPLETE_FOR_ACCEPTANCE",
+                "fewer than three repetitions never pass the screen");
+            reject(() => RamWriteStreaming.Report(evidence, plan, Windows(c => 1)[..^1]));
+        }
+        finally { Directory.Delete(directory, true); }
     }
 }

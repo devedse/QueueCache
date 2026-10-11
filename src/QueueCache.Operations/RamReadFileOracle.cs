@@ -9,12 +9,14 @@ namespace QueueCache.Operations;
 public static class RamReadFileOracle
 {
     public static string Prepare(string path, int mebibytes) => Pass(path, mebibytes, true);
+    /// <summary>Writes the same oracle over an existing file (after workloads replaced its content).</summary>
+    public static string Rewrite(string path, int mebibytes) => Pass(path, mebibytes, true, existing: true);
     public static string Verify(string path, int mebibytes, string? mismatchEvidence = null) => Pass(path, mebibytes, false, mismatchEvidence);
-    private static string Pass(string path, int mebibytes, bool create, string? mismatchEvidence = null)
+    private static string Pass(string path, int mebibytes, bool create, string? mismatchEvidence = null, bool existing = false)
     {
         if (mebibytes is < 1 or > 1024) throw new ArgumentOutOfRangeException(nameof(mebibytes));
         const int block = 1 << 20;
-        using var file = new AlignedFile(path, block, create, sharedReadOnly: !create);
+        using var file = new AlignedFile(path, block, create && !existing, sharedReadOnly: !create);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         var expected = new byte[block]; var actual = new byte[block];
         for (var index = 0; index < mebibytes; index++)
