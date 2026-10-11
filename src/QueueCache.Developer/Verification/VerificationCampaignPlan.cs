@@ -56,8 +56,8 @@ public static class VerificationCampaignPlan
         var letters = new[] { options.Verification.Volume, options.LabNtfs, options.LabRefs }.Where(v => v is not null).ToArray();
         if (letters.Distinct(StringComparer.OrdinalIgnoreCase).Count() != letters.Length)
             throw new ArgumentException("Performance, NTFS lab and optional ReFS lab targets must be different volumes.");
-        if (options.LabRefs is not null && options.Profile is not ("performance" or "release-performance") && options.FocusSuite != "caller-backoff")
-            throw new ArgumentException("--lab-refs applies to performance campaigns or a focused caller-backoff campaign.");
+        if (options.LabRefs is not null && options.FocusSuite != "caller-backoff")
+            throw new ArgumentException("--lab-refs applies only to a focused caller-backoff campaign.");
         VerificationPlan.Validate(options.Verification with { DiskSpd = null, SoakSeconds = null, TraceSymbols = null });
 
         var phases = new List<VerificationCampaignPhase>();
@@ -104,12 +104,9 @@ public static class VerificationCampaignPlan
             }
             else
             {
-                Add("cache-layout", CampaignTargetRole.Performance);
+                // Product-default regression only. Concluded mode comparisons (cache-layout,
+                // ram-read-scheduling, caller-backoff, priority-cost) stay standalone suites.
                 Add("ram-read-reference", CampaignTargetRole.Performance);
-                Add("ram-read-scheduling", CampaignTargetRole.Performance);
-                Add("caller-backoff", CampaignTargetRole.NtfsLab);
-                if (options.LabRefs is not null) Add("caller-backoff", CampaignTargetRole.RefsLab);
-                Add("priority-cost", CampaignTargetRole.NtfsLab);
                 Add("cache-recall", CampaignTargetRole.Performance);
                 Add("cache-sustained", CampaignTargetRole.Performance);
                 Add("cache-map-cost", CampaignTargetRole.Performance);

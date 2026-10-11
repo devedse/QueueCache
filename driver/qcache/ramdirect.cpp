@@ -133,6 +133,15 @@ static void FinishPendingRead(PIRP irp)
     IoReleaseRemoveLock(binding->RemoveLock, irp);
     IoCompleteRequest(irp, IO_NO_INCREMENT);
 }
+// Whether the caller waits for this request anyway, so an early return buys nothing. Not
+// IoIsOperationSynchronous: it dereferences the stack location's file object, which a file
+// system's request to the volume does not carry (found under Driver Verifier).
+static bool CallerWaits(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    if (irp->Flags & (IRP_PAGING_IO | IRP_SYNCHRONOUS_PAGING_IO | IRP_SYNCHRONOUS_API))
+        return true;
+    return stack->FileObject && (stack->FileObject->Flags & FO_SYNCHRONOUS_IO);
+}
 // QC_RAM_READ_DONE: the provider's helper copied the last chunk.
 static void CompleteAsyncRead(PVOID context)
 {
@@ -177,7 +186,7 @@ QcRamDirectResult QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
                 // can return before its copy. Admission comes last because it counts the read.
                 auto& async = store->Async;
                 const bool asyncOn = length >= LargeCopyBytes && ReadNoFence(&async.Enabled);
-                if (asyncOn && binding->LargeReadAsync && !(irp->Flags & IRP_PAGING_IO) && !IoIsOperationSynchronous(irp) &&
+                if (asyncOn && binding->LargeReadAsync && !CallerWaits(irp, stack) &&
                     KeGetCurrentIrql() == PASSIVE_LEVEL && !ReadNoFence(&store->Coordination.Enabled) && QcRamAsyncAdmit(&async))
                 {
                     irp->Tail.Overlay.DriverContext[0] = binding;

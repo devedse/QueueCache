@@ -1947,15 +1947,17 @@ internal static class VerificationRunnerTests
             "smoke composes exactly two maintained NTFS cases without DiskSpd");
         var measured = basic with { Profile = "performance", Verification = basic.Verification with { DiskSpd = Environment.ProcessPath } };
         var full = VerificationCampaignPlan.Create(measured);
-        Check(full.Count == 13 && full.Sum(p => p.ExpectedCases.Count) == 118 && full[^1].Options.Suite == "ordering-faults",
-            "performance plan uses existing counts and fault injection last");
-        Check(full.All(p => p.Options.Suite is not ("ram-read-queue" or "write-performance" or "disk-removal" or "system-files")) &&
+        Check(full.Count == 9 && full.Sum(p => p.ExpectedCases.Count) == 33 && full[^1].Options.Suite == "ordering-faults",
+            "performance plan is product-default regression with existing counts and fault injection last");
+        Check(full.All(p => p.Options.Suite is not ("ram-read-queue" or "write-performance" or "disk-removal" or "system-files" or
+                "cache-layout" or "ram-read-scheduling" or "caller-backoff" or "priority-cost")) &&
             full.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 120 &&
             full.Single(p => p.Options.Suite == "cache-sustained").Options.Repeats == 1, "performance excludes retired/invasive/write suites and labels short sustained accounting");
-        var release = VerificationCampaignPlan.Create(measured with { Profile = "release-performance", LabRefs = "R:" });
-        Check(release.Count == 15 && release.Single(p => p.Options.Suite == "write-performance").ExpectedCases.Count == 72 &&
+        Reject(() => VerificationCampaignPlan.Create(measured with { LabRefs = "R:" }));
+        var release = VerificationCampaignPlan.Create(measured with { Profile = "release-performance" });
+        Check(release.Count == 10 && release.Sum(p => p.ExpectedCases.Count) == 105 && release.Single(p => p.Options.Suite == "write-performance").ExpectedCases.Count == 72 &&
             release.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 1800,
-            "release includes explicit complete writes, optional ReFS and thirty-minute sustained contract");
+            "release adds the complete writes and thirty-minute sustained contract to the product-default regression");
         var focused = VerificationCampaignPlan.Create(measured with { Profile = "focused", FocusSuite = "ram-read-scheduling" });
         Check(focused.Count == 6 && focused.Single(p => p.Options.Suite == "ram-read-scheduling").MeasurementWindows == 30,
             "focused campaign adds only affected measurements and retained checks");

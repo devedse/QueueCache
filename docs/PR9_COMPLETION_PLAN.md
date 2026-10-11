@@ -144,7 +144,7 @@ and reset when a disk is created, set through the provider control like
 - Toggle on for this store; Direct reads enabled; same validation, BitLocker
   signature check and MDL mapping as today, done before handoff.
 - Read only, non-paging (`IRP_PAGING_IO` clear), asynchronous
-  (`IoIsOperationSynchronous` false), length ≥ 512 KiB, at least two other-CPU
+  (no synchronous-API flag or synchronous file object; not `IoIsOperationSynchronous`, which faults without a file object), length ≥ 512 KiB, at least two other-CPU
   helpers, provider not closing.
 - **Queue-depth detection**, reusing the provider's existing write rule
   (`UseWorker`: `InlineAfter = 16`, `ProbeEvery = 64`): go asynchronous while

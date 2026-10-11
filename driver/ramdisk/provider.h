@@ -80,8 +80,9 @@ struct ADAPTER
     ULONG WorkerCount;
     volatile LONG NextWorker;
     volatile BOOLEAN Closing;
-    LOOKASIDE_LIST_EX AsyncSplits; // Asynchronous Direct reads (ramasync.h).
-    BOOLEAN AsyncSplitsReady;
+    // Asynchronous Direct reads (ramasync.h). Allocated separately: its SLIST header needs
+    // 16-byte alignment, which Storport's device extension does not guarantee.
+    PLOOKASIDE_LIST_EX AsyncSplits;
 };
 
 // Storport callbacks defined outside ramdisk.cpp.

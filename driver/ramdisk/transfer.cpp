@@ -87,7 +87,7 @@ static void CopyAsyncChunks(SPLIT* split)
 }
 static void ReleaseAsync(SPLIT* split)
 {
-    if (InterlockedDecrement(&split->References) == 0) ExFreeToLookasideListEx(&split->Adapter->AsyncSplits, split);
+    if (InterlockedDecrement(&split->References) == 0) ExFreeToLookasideListEx(split->Adapter->AsyncSplits, split);
 }
 static void WorkerMain(PVOID context)
 {
@@ -173,12 +173,22 @@ void StopWorkers(ADAPTER* adapter)
     }
     adapter->WorkerCount = 0;
     // Every posted help was processed before its worker exited; no split remains.
-    if (adapter->AsyncSplitsReady) { ExDeleteLookasideListEx(&adapter->AsyncSplits); adapter->AsyncSplitsReady = FALSE; }
+    if (adapter->AsyncSplits)
+    {
+        ExDeleteLookasideListEx(adapter->AsyncSplits);
+        ExFreePoolWithTag(adapter->AsyncSplits, Tag);
+        adapter->AsyncSplits = nullptr;
+    }
 }
 void StartWorkers(ADAPTER* adapter)
 {
-    adapter->AsyncSplitsReady = NT_SUCCESS(ExInitializeLookasideListEx(&adapter->AsyncSplits, nullptr, nullptr,
-        NonPagedPoolNx, 0, sizeof(SPLIT), Tag, 0)) ? TRUE : FALSE;
+    auto splits = static_cast<PLOOKASIDE_LIST_EX>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(LOOKASIDE_LIST_EX), Tag));
+    if (splits && !NT_SUCCESS(ExInitializeLookasideListEx(splits, nullptr, nullptr, NonPagedPoolNx, 0, sizeof(SPLIT), Tag, 0)))
+    {
+        ExFreePoolWithTag(splits, Tag);
+        splits = nullptr;
+    }
+    adapter->AsyncSplits = splits; // Null disables asynchronous reads.
     const auto processors = KeQueryActiveProcessorCountEx(0);
     const auto wanted = min(processors, MaxWorkers);
     for (ULONG i = 0; i < wanted; ++i)
@@ -263,8 +273,8 @@ BOOLEAN LargeReadAsync(PVOID context, QC_RAM_STORE* store, ULONGLONG offset, PUC
 {
     auto adapter = static_cast<ADAPTER*>(context);
     // At least two helpers on other processors, or splitting buys nothing over inline.
-    if (!adapter->AsyncSplitsReady || adapter->Closing || adapter->WorkerCount < 3 || bytes < 2 * SplitChunk) return FALSE;
-    auto split = static_cast<SPLIT*>(ExAllocateFromLookasideListEx(&adapter->AsyncSplits));
+    if (!adapter->AsyncSplits || adapter->Closing || adapter->WorkerCount < 3 || bytes < 2 * SplitChunk) return FALSE;
+    auto split = static_cast<SPLIT*>(ExAllocateFromLookasideListEx(adapter->AsyncSplits));
     if (!split) return FALSE;
     RtlZeroMemory(split, sizeof(*split));
     split->Store = store; split->Buffer = buffer; split->Offset = offset; split->Bytes = bytes;
