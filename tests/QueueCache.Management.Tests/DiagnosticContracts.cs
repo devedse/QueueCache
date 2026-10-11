@@ -19,6 +19,13 @@ internal static class DiagnosticContracts
             DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "ram-read-async"));
         Check(asyncExperiment.Count == 1 && asyncExperiment[0].MeasurementWindows == 18 && asyncExperiment[0].ExpectedCases.Count == 1,
             "asynchronous read experiment is one phase of 18 windows on every host");
+        foreach (var profile in new[] { "performance", "release-performance" })
+        {
+            var regression = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), profile, "W:"));
+            Check(regression.Single(p => p.Options.Suite == "ram-read-async-lifecycle").Options.Repeats == 1 &&
+                regression.Sum(p => p.ExpectedCases.Count) == (profile == "performance" ? 34 : 106),
+                "regression campaigns compose on every host, with lifecycle checks run once");
+        }
         var coordination = RamReadReferencePlan.CasesFor(RamReadRunKind.Coordination, 1);
         Check(coordination.Count == 9 && coordination.Count(c => c.CoordinationEnabled) == 3 &&
             coordination.All(c => c.SchedulingControl && !c.DisableAffinity), "nine off/on/off coordination windows on every host");

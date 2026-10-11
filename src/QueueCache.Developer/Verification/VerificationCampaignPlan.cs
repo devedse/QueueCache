@@ -71,7 +71,7 @@ public static class VerificationCampaignPlan
                 TraceSymbols = suite == "ram-read-attribution" ? options.Verification.TraceSymbols : null,
                 SoakSeconds = suite == "cache-sustained" ? options.Verification.SoakSeconds ??
                     (options.Profile == "release-performance" ? 1800 : 120) : null,
-                Repeats = suite == "cache-sustained" ? 1 : options.Verification.Repeats,
+                Repeats = suite is "cache-sustained" or "ram-read-async-lifecycle" ? 1 : options.Verification.Repeats,
                 // The optional overall deadline belongs to the campaign, not a fresh timer per phase.
                 DeadlineMinutes = 0
             };
