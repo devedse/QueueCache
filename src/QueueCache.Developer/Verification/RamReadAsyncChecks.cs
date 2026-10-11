@@ -33,14 +33,15 @@ internal static class RamReadAsyncChecks
         if (RamDirectChecks.State(volume) is { Full: false } notFull)
             throw new IOException($"Direct access is not fully active before the checks: {notFull.Describe()}.");
 
-        // 1. Product default, one thread at queue depth 8: correct bytes, mostly asynchronous.
+        // 1. Product default, one thread at queue depth 8: correct bytes on whichever path the policy
+        // picks. The share is recorded, not required: when submission is slower than a copy (for
+        // example under Driver Verifier) the policy correctly stays inline. ram-read-async enforces
+        // activation where speed is measured.
         provider.SetAsyncReads(native, RamAsyncMode.Adaptive);
         var adaptive = await Reader(file, fingerprints, 8, 2);
         var adaptiveState = Read();
         RunStorage.AtomicJson(prefix + ".async-adaptive.json", new { Load = adaptive, State = adaptiveState });
         Balanced(adaptiveState, RamAsyncMode.Adaptive, "Adaptive queue depth 8");
-        if (adaptiveState.Completed * 2 < (ulong)adaptive.Blocks)
-            throw new InvalidDataException($"Adaptive mode completed only {adaptiveState.Completed} of {adaptive.Blocks} verified reads asynchronously.");
 
         // 2. Forced, queue depth 32: the in-flight cap is never exceeded; reads past it are copied inline.
         provider.SetAsyncReads(native, RamAsyncMode.Always);
