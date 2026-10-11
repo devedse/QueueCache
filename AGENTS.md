@@ -69,11 +69,8 @@ with lower-I/O-attempt counters.
 - Host tests: `dotnet run --project tests/QueueCache.Management.Tests -c Release`
   (and `tests/QueueCache.Desktop.Tests` for frontend changes). Local success is
   not VM driver verification; record gaps honestly, including unexercised paths.
-- Long runs from the agent runner: launch with `dam-tools run-job` (it owns the
-  run and validates its completion), then start a background command that waits
-  for that job's record to finish; Claude Code wakes the agent when it exits. The
-  Manager's own wake message does not reach Claude Code yet (DeveAgentManager
-  issue #5), so never rely on it.
+- Long runs from the agent runner: start the campaign command as the harness's
+  own background task, then read the run folder and `verify-completion`.
 
 ## README benchmarks and screenshots
 

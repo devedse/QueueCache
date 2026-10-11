@@ -92,10 +92,9 @@ Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
 
-**Long runs from an agent.** On the agent's Linux runner, `dam-tools run-job`
-launches the command as an owned job, waits for it and validates its completion
-event. Automatic wake of an idle Claude Code conversation does not work yet
-(DeveAgentManager issue #5), so wait on the job instead of assuming a message.
+**Long runs from an agent.** Start the foreground campaign command with the
+harness's built-in background-task mechanism. Wait for completion, then read that
+run's evidence and use `verify-completion`.
 
 ## 4. Suites
 
