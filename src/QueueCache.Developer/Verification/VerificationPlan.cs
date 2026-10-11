@@ -16,7 +16,8 @@ public sealed record PerformanceCase(
     bool Timing = true,
     bool WarmResident = false,
     bool PrecomputedWriteBuffer = false,
-    CacheLayoutStage Layout = CacheLayoutStage.None)
+    CacheLayoutStage Layout = CacheLayoutStage.None,
+    int Threads = 1)
 {
     public string WriteBufferArgument => PrecomputedWriteBuffer ? "-Z1M" : "-Zr";
 }
@@ -31,8 +32,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 119;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle";
+    public const int Version = 120;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -83,12 +84,14 @@ public static class VerificationPlan
         "ram-read-coordination",
         "ram-read-async",
         "ram-read-async-lifecycle",
+        "ram-write-reference",
         "write-performance",
         "sequential-resident",
         "cache-layout",
         "cache-layout-reset",
         "cache-layout-steady",
         "cache-layout-full",
+        "cache-read-reference",
         "flush-interference",
         "performance",
         "full"
@@ -192,6 +195,21 @@ public static class VerificationPlan
                     "Automatic", "Idle", 0, depth, false, repeat, Workload: "sequential-read",
                     Resident: true, Timing: false, WarmResident: true, Layout: stage));
             return cases; // Each group is ordered; partial groups are not supported.
+        }
+
+        if (options.Suite == "cache-read-reference")
+        {
+            // Plan 120: where a resident 1 MiB read's time goes. One submitter at Q1 (served on the caller)
+            // and Q8 (copy threads), and four submitters at aggregate Q8. Timing-off windows give the
+            // scores; timing-on windows add lock and queue time from the native counters.
+            var shapes = new[] { (1, 1), (8, 1), (2, 4) };
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+            foreach (var timing in repeat % 2 == 1 ? new[] { false, true } : [true, false])
+                cases.Add(new($"{NextNumber(cases)}-r{repeat}-sequential-read-q{depth}-t{threads}-timing{timing}",
+                    "Automatic", "Idle", 0, depth, false, repeat, Workload: "sequential-read",
+                    Resident: true, Timing: timing, WarmResident: true, Threads: threads));
+            return cases;
         }
 
         if (options.Suite == "sequential-resident")
@@ -396,7 +414,7 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
@@ -444,11 +462,13 @@ public static class VerificationPlan
             throw new ArgumentException("RAM asynchronous read lifecycle checks run once (--repeats 1).");
         if (options.Suite == "ram-read-async" && options.Repeats is not (1 or 2 or 3))
             throw new ArgumentException("RAM asynchronous read comparison uses --repeats 3 (1..3 permitted; acceptance requires 3).");
+        if (options.Suite is "ram-write-reference" or "cache-read-reference" && options.Repeats is not (1 or 2 or 3))
+            throw new ArgumentException("Plan 120 reference suites use --repeats 3 (1..3 permitted).");
         if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
             throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
         if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
             throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

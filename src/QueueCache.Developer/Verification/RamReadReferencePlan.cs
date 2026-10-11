@@ -2,14 +2,15 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, Scheduling, Attribution, Coordination, Async, AsyncLifecycle }
+public enum RamReadRunKind { Reference, Scheduling, Attribution, Coordination, Async, AsyncLifecycle, WriteReference }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat,
     bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false,
-    bool CoordinationEnabled = false, bool AsyncReads = false);
+    bool CoordinationEnabled = false, bool AsyncReads = false, bool Write = false, string? Probe = null);
 
-/// <summary>Read-only reference shapes; aggregate queue depth stays eight for the large multi-thread control.</summary>
+/// <summary>Reference shapes on owned RAM disks. The read suites are read-only; aggregate queue depth stays
+/// eight for the large multi-thread control. ram-write-reference writes the owned file.</summary>
 public static class RamReadReferencePlan
 {
     public const int DiskMiB = 2048, FileMiB = 1024;
@@ -22,6 +23,7 @@ public static class RamReadReferencePlan
         "ram-read-coordination" => RamReadRunKind.Coordination,
         "ram-read-async" => RamReadRunKind.Async,
         "ram-read-async-lifecycle" => RamReadRunKind.AsyncLifecycle,
+        "ram-write-reference" => RamReadRunKind.WriteReference,
         _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
     };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
@@ -35,6 +37,7 @@ public static class RamReadReferencePlan
         RamReadRunKind.Async => AsyncCases(repeats),
         RamReadRunKind.AsyncLifecycle => repeats == 1 ? [new("0001-r1-async-lifecycle", RamAccess.Direct, 1024, false, 8, 1, 1, AsyncReads: true)]
             : throw new ArgumentOutOfRangeException(nameof(repeats)),
+        RamReadRunKind.WriteReference => WriteCases(repeats),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
     public static IReadOnlyList<RamReadReferenceCase> CoordinationCases(int repeats)
@@ -63,6 +66,30 @@ public static class RamReadReferencePlan
             result.Add(new($"{result.Count + 1:D4}-r{repeat}-async-q{depth}-t{threads}-{(candidate ? "candidate" : "original")}",
                 RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
                 SchedulingControl: true, AsyncReads: candidate));
+        return result;
+    }
+    /// <summary>Plan 120. Large RAM-disk writes reach about half the read rate although queued writes already
+    /// overlap on the provider's workers. Per repetition: user-mode copies into cold memory (ordinary,
+    /// explicit and non-temporal stores) and out of it, one and four threads, then owned-disk 1 MiB sequential
+    /// writes from one submitter (Q1/Q8) and four (aggregate Q8/Q32). If four writers stay at one writer's rate
+    /// and ordinary copies into cold memory stop there too, the limit is the machine, not request handling.</summary>
+    public static IReadOnlyList<RamReadReferenceCase> WriteCases(int repeats)
+    {
+        if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats));
+        var result = new List<RamReadReferenceCase>();
+        var probes = new[] { (true, "runtime"), (true, "temporal"), (true, "streaming"), (false, "runtime") };
+        var shapes = new[] { (1, 1), (8, 1), (2, 4), (8, 4) };
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        {
+            foreach (var (write, method) in repeat % 2 == 1 ? probes : probes.Reverse())
+            foreach (var threads in repeat % 2 == 1 ? new[] { 1, 4 } : [4, 1])
+                result.Add(new($"{result.Count + 1:D4}-r{repeat}-memory-{(write ? "write" : "read")}-{method}-t{threads}",
+                    RamAccess.Direct, 1024, false, 1, threads, repeat, Write: write, Probe: method));
+            foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+                result.Add(new($"{result.Count + 1:D4}-r{repeat}-write-q{depth}-t{threads}",
+                    RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
+                    SchedulingControl: true, Write: true));
+        }
         return result;
     }
     public static IReadOnlyList<RamReadReferenceCase> AttributionCases(int repeats)
@@ -111,7 +138,7 @@ public static class RamReadReferencePlan
         Expect(span, "Duration", Number(seconds)); Expect(span, "Warmup", "3");
         Expect(target, "BlockSize", Number(scenario.BlockKiB * 1024L));
         Expect(target, "RequestCount", Number(scenario.QueueDepth)); Expect(target, "ThreadsPerFile", Number(scenario.Threads));
-        Expect(target, "WriteRatio", "0"); Expect(target, "IOPriority", "3");
+        Expect(target, "WriteRatio", scenario.Write ? "100" : "0"); Expect(target, "IOPriority", "3");
         Expect(target, "MaxFileSize", Number(FileMiB * (1L << 20)));
         Expect(target, "DisableOSCache", "true"); Expect(target, "UseLargePages", "false");
         if (!scenario.Random)
@@ -145,7 +172,9 @@ public static class RamReadReferencePlan
         return result;
     }
     public static string[] Arguments(RamReadReferenceCase scenario, int seconds) =>
-        [ $"-b{scenario.BlockKiB}K", $"-o{scenario.QueueDepth}", $"-t{scenario.Threads}", "-w0", "-f1024M",
+        [ $"-b{scenario.BlockKiB}K", $"-o{scenario.QueueDepth}", $"-t{scenario.Threads}", scenario.Write ? "-w100" : "-w0", "-f1024M",
+          // One fixed 1 MiB random source buffer: the application side of the copy stays cache-hot.
+          .. scenario.Write ? new[] { "-Z1M" } : [],
           $"-d{seconds}", scenario.SchedulingControl ? "-W3" : "-W0", "-Rxml", "-L", "-S",
           .. scenario.DisableAffinity ? new[] { "-n" } : [],
           .. scenario.Interleaved ? new[] { "-s4M", "-T1M" } : [],

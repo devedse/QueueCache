@@ -209,7 +209,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -518,6 +518,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => Measure(scenario, deadline.Token));
                 }
+                if (options.Suite == "cache-read-reference" && options.CaseFilter is null)
+                    foreach (var row in CacheReadReference.Report(storage, performance))
+                        Log("Attribution " + row.Describe());
                 foreach (var scenario in exercises)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -940,10 +943,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     }, children.Token, options.DurationSeconds + 120);
             }
             var arguments = scenario.Workload == "interference" ? new List<string> { "-b4K", "-r4K", "-o8", "-t2", "-w0" } :
-                new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", "-t1",
+                new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", $"-t{scenario.Threads}",
                     scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", scenario.WriteBufferArgument };
             if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
                 arguments.Add("-r4K");
+            else if (scenario.Threads > 1)
+                arguments.AddRange(["-s4M", "-T1M"]); // Interleaved 1 MiB blocks, as the RAM-disk four-reader control.
             // A fixed five-second warmup exercises the fitting working set before scoring.
             // Unlike interference, this is not a promise that every block is resident.
             arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident && !scenario.WarmResident ? "-W5" : "-W0"]);

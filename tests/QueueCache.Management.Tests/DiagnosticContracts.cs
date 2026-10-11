@@ -12,7 +12,8 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 119, "asynchronous read lifecycle checks have a new verification plan version on every host");
+        Check(VerificationPlan.Version == 120, "plan 120 reference suites have a new verification plan version on every host");
+        RunPlan120Contracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -208,5 +209,83 @@ internal static class DiagnosticContracts
         finally { Directory.Delete(root, true); }
         Console.WriteLine("Attribution and priority/affinity contracts passed (no driver access).");
         TraceToolSmoke.RunOptional();
+    }
+
+    /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>
+    private static void RunPlan120Contracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var writes = RamReadReferencePlan.CasesFor(RamReadRunKind.WriteReference, 3);
+        check(RamReadReferencePlan.KindFor("ram-write-reference") == RamReadRunKind.WriteReference && VerificationPlan.IsRamReadSuite("ram-write-reference"),
+            "the write reference runs on owned RAM disks");
+        check(writes.Count == 36 && writes.Select(c => c.Id).Distinct().Count() == 36 && writes.All(c => c.Write || c.Probe == "runtime"),
+            "36 immutable write-reference windows; the only read is the runtime copy out of cold memory");
+        var probes = writes.Where(c => c.Probe is not null).ToArray();
+        var disk = writes.Where(c => c.Probe is null).ToArray();
+        check(probes.Length == 24 && probes.GroupBy(c => (c.Write, c.Probe, c.Threads)).All(g => g.Count() == 3) &&
+            probes.All(c => c.Threads is 1 or 4 && (c.Write || c.Probe != "streaming")), "eight balanced memory-copy probes per repetition");
+        check(disk.Length == 12 && disk.GroupBy(c => (c.QueueDepth, c.Threads)).All(g => g.Count() == 3) &&
+            disk.All(c => c.Write && c.SchedulingControl && c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct && c.Interleaved == (c.Threads == 4)),
+            "one- and four-submitter Direct-disk write shapes, each repeated three times");
+        check(writes.GroupBy(c => c.Repeat).All(g => g.TakeWhile(c => c.Probe is not null).Count() == 8),
+            "each repetition copies memory before its owned disk exists");
+        var arguments = RamReadReferencePlan.Arguments(disk.First(c => c.Threads == 4), 10);
+        check(arguments.Contains("-w100") && arguments.Contains("-Z1M") && arguments.Contains("-s4M") && arguments.Contains("-T1M") &&
+            !arguments.Contains("-w0") && !RamReadReferencePlan.Arguments(RamReadReferencePlan.CasesFor(RamReadRunKind.Reference, 1)[0], 10).Contains("-Z1M"),
+            "write windows use a hot fixed source buffer; read windows are unchanged");
+        var span = new XElement("TimeSpan", new XElement("DisableAffinity", "false"), new XElement("Duration", 10), new XElement("Warmup", 3),
+            new XElement("Targets", new XElement("Target", new XElement("BlockSize", 1048576), new XElement("RequestCount", 8),
+                new XElement("ThreadsPerFile", 1), new XElement("WriteRatio", 100), new XElement("MaxFileSize", 1073741824),
+                new XElement("IOPriority", 3), new XElement("DisableOSCache", "true"), new XElement("UseLargePages", "false"),
+                new XElement("StrideSize", 1048576), new XElement("ThreadStride", 0), new XElement("InterlockedSequential", "false"))));
+        var xml = new XElement("Results", new XElement("Profile", new XElement("TimeSpans", span))).ToString();
+        var q8 = disk.First(c => c.QueueDepth == 8 && c.Threads == 1);
+        RamReadReferencePlan.ValidateProfile(q8, xml, 10);
+        reject(() => RamReadReferencePlan.ValidateProfile(q8 with { Write = false }, xml, 10));
+        MemoryCopyProbe.Validate(new("streaming", true, 4, 100L << 20, 5.01, 19.96));
+        foreach (var invalid in new MemoryCopyResult[] { new("streaming", true, 4, 0, 5, 0), new("temporal", true, 1, (1L << 20) + 1, 5, 1),
+            new("runtime", false, 1, 1L << 20, 3, 1), new("unknown", true, 1, 1L << 20, 5, 1) })
+            reject(() => MemoryCopyProbe.Validate(invalid));
+
+        var options = new VerificationOptions("Q:", "cache-read-reference", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
+        var reads = VerificationPlan.Performance(options);
+        check(reads.Count == 18 && reads.Select(c => c.Id).Distinct().Count() == 18 &&
+            reads.GroupBy(c => (c.QueueDepth, c.Threads, c.Timing)).All(g => g.Count() == 3) &&
+            reads.All(c => c.Workload == "sequential-read" && c.Resident && c.WarmResident && c.Layout == CacheLayoutStage.None),
+            "cached read reference: three resident shapes, timing off and on, three repetitions");
+        foreach (var suite in new[] { "ram-write-reference", "cache-read-reference" })
+        {
+            var phase = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: suite));
+            check(phase.Count == 1 && phase[0].Role == CampaignTargetRole.Performance &&
+                phase[0].MeasurementWindows == (suite == "ram-write-reference" ? 36 : 18), "plan 120 suites run as one-phase experiments");
+            VerificationPlan.Validate(options with { Suite = suite, Repeats = 1 });
+            foreach (var invalid in new[] { options with { Suite = suite, Repeats = 4 }, options with { Suite = suite, BudgetMiB = 1024 } })
+                try { VerificationPlan.Validate(invalid); throw new Exception("plan 120 suite accepted invalid options: " + suite); }
+                catch (ArgumentException) { }
+        }
+
+        static JsonElement Snapshot(ulong timing, ulong acquires, ulong wait, ulong hold, ulong queue, ulong queued, ulong caller, ulong offload) =>
+            JsonSerializer.SerializeToElement(new
+            {
+                Performance = new { Frequency = 10_000_000UL, TimingEnabled = timing, LockAcquires = acquires, LockWaitTicks = wait,
+                    LockHoldTicks = hold, QueueWaitTicks = queue, QueuedRequests = queued },
+                Diagnostics = new { CallerPath = new { Reads = caller }, CopyOffloadReads = (ulong?)offload }
+            });
+        var timed = reads.First(c => c.Timing && c.QueueDepth == 8);
+        var score = new DiskSpdScore(1000L << 20, 1000, 10, 100, 100, null, null, null, null);
+        var row = CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 5, 7), Snapshot(1, 3000, 20_000, 10_000, 50_000, 900, 5, 907), score);
+        check(Math.Abs(row.LockAcquiresPerRead!.Value - 3) < 1e-9 && Math.Abs(row.LockWaitMicrosecondsPerRead!.Value - 2) < 1e-9 &&
+            Math.Abs(row.LockHoldMicrosecondsPerRead!.Value - 1) < 1e-9 && Math.Abs(row.QueueWaitMicrosecondsPerRead!.Value - 5) < 1e-9 &&
+            Math.Abs(row.CopyOffloadShare - 0.9) < 1e-9 && row.CallerPathShare == 0, "attribution divides counter deltas by completed reads");
+        var untimed = reads.First(c => !c.Timing && c.QueueDepth == 1);
+        check(CacheReadReference.Row(untimed, Snapshot(0, 0, 0, 0, 0, 0, 0, 0), Snapshot(0, 0, 0, 0, 0, 0, 990, 0), score) is
+            { LockWaitMicrosecondsPerRead: null, CallerPathShare: 0.99 }, "timing-off windows carry no timing values");
+        reject(() => CacheReadReference.Row(timed, Snapshot(0, 0, 0, 0, 0, 0, 0, 0), Snapshot(0, 0, 0, 0, 0, 0, 0, 0), score));
+        reject(() => CacheReadReference.Row(timed, Snapshot(1, 5, 0, 0, 0, 0, 0, 0), Snapshot(1, 4, 0, 0, 0, 0, 0, 0), score));
+        reject(() => CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 0, 0), JsonSerializer.SerializeToElement(new
+        {
+            Performance = new { Frequency = 10_000_000UL, TimingEnabled = 1UL, LockAcquires = 1UL, LockWaitTicks = 1UL, LockHoldTicks = 1UL, QueueWaitTicks = 1UL, QueuedRequests = 1UL },
+            Diagnostics = new { CallerPath = new { Reads = 1UL }, CopyOffloadReads = (ulong?)null }
+        }), score));
+        reject(() => CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 0, 0), Snapshot(1, 0, 0, 0, 0, 0, 0, 0), score with { Bytes = 999 }));
     }
 }

@@ -79,6 +79,14 @@ public static class RamReadReferenceEvidence
             throw new InvalidDataException("RAM reference content counters decreased during the workload.");
         if (score.Bytes <= 0 || score.Operations <= 0 || score.Bytes != checked(score.Operations * scenario.BlockKiB * 1024L))
             throw new InvalidDataException("RAM reference has missing completions or wrong transfer size.");
+        if (scenario.Write)
+        {
+            // Large writes on a Direct disk take the provider's queued path; smaller ones stay Direct.
+            var written = checked(after.ProviderWriteBytes!.Value - before.ProviderWriteBytes!.Value + (after.Direct.WriteBytes - before.Direct.WriteBytes));
+            if (written < (ulong)score.Bytes)
+                throw new InvalidDataException("RAM write reference traffic was not accounted by the provider and Direct write counters.");
+            return;
+        }
         if (after.Direct.ReadBytes < before.Direct.ReadBytes || after.ProviderReadRequests < before.ProviderReadRequests ||
             (scenario.Access == RamAccess.Direct ? after.Direct.ReadBytes - before.Direct.ReadBytes < (ulong)score.Bytes :
                 after.ProviderReadRequests - before.ProviderReadRequests < (ulong)score.Operations))

@@ -1,4 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- MemoryCopyProbe uses pointer-based SSE2 loads and non-temporal stores. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../QueueCache.Management/QueueCache.Management.csproj" />
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />
