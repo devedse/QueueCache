@@ -9,23 +9,25 @@ with byte-exact integrity checks. Installer upgrade refusal while a managed disk
 a desktop UI walkthrough, and a matched 72-case write-performance run (no regression for
 ordinary caches) were also observed. Not yet covered: sleep, hibernate and Fast Startup
 (postponed; the test VM has no sleep states), a crash during checkpoint commit and
-physical hardware. The per-item record is in [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md);
-remaining platform gates are in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md).
+physical hardware (see [known issues](KNOWN_ISSUES.md)). Since 0.4.583.1 (PR #9),
+large queued Direct reads are asynchronous; their lifecycle checks pass with and
+without Driver Verifier.
 
-Performance on the 4-core test VM (CrystalDiskMark-style rows, 1 GiB, Verifier off):
+Performance on the 4-core test VM (CrystalDiskMark 9.0.3 rows, 1 GiB, Verifier off):
 
-| Disk | SEQ1M Q8 read/write | SEQ1M Q1 read/write | RND4K Q32 read/write | RND4K Q1 read/write |
-|---|---|---|---|---|
-| RAM disk / image-in-RAM, Direct | 27 / 24 GB/s | 27 / 17 GB/s | 434k / 330k IOPS | 453k / 334k IOPS |
-| RAM disk, Standard | 24 / 25 GB/s | 25 / 17 GB/s | 227k / 193k IOPS | 232k / 194k IOPS |
-| Cached VHDX (2 GiB Fast cache) | 37 / 21 GB/s | 14 / 13 GB/s | 412k / 386k IOPS | 319k / 255k IOPS |
+| Disk | Build | SEQ1M Q8 read/write | SEQ1M Q1 read/write | RND4K Q32 read/write | RND4K Q1 read/write |
+|---|---|---|---|---|---|
+| RAM disk, Direct | 0.4.583.1 | 47.6 / 24.4 GB/s | 26.6 / 16.5 GB/s | 358k / 292k IOPS | 404k / 320k IOPS |
+| RAM disk, Standard | 0.4.362.1 | 24 / 25 GB/s | 25 / 17 GB/s | 227k / 193k IOPS | 232k / 194k IOPS |
+| Cached VHDX (2 GiB Fast cache) | 0.4.362.1 | 37 / 21 GB/s | 14 / 13 GB/s | 412k / 386k IOPS | 319k / 255k IOPS |
 
 A RAM disk is a real Windows disk, so on the Standard path each request passes the volume,
 partition, class and Storport layers. Direct access answers normal reads and writes above
-them, which roughly doubles small random I/O and makes a RAM disk the fastest choice for
-one request at a time. A cached disk can still lead at deep queues: it hands queued
-requests to worker threads, so the submitting thread keeps issuing while other processors
-copy.
+them, which roughly doubles small random I/O. A large read (512 KiB or more) is split
+into 256 KiB pieces copied by several processors; when a program queues several, Direct
+access hands all pieces to the RAM disk's helper threads and returns, so the program
+keeps issuing while other processors copy (adaptive; single reads and several
+submitting threads stay on the inline path).
 
 RAM-backed disks (pure RAM and image-in-RAM) have an **access path**. *Direct* (the
 default) lets QueueCache's volume filter copy normal file reads and writes straight from
@@ -162,8 +164,9 @@ replacing files. Explicitly stop/reconcile resources and retry; the installer
 does not discard RAM or delete image data. Native provider/budget ABI mismatches
 or a stopped/missing broker make activation unavailable with an error.
 
-Use the maintained opt-in [verification suites](DEVELOPER_VERIFICATION.md):
-`managed-provider`, `ram-disk`, `vhdx-backed` and `image-in-ram`. The legacy
+Use the maintained opt-in verification suites ([testing](TESTING.md)):
+`managed-provider`, `ram-disk`, `vhdx-backed` and `image-in-ram`, plus
+`ram-read-reference`, `ram-read-async` and `ram-read-async-lifecycle` for reads. The legacy
 `developer lab-disk` helper remains for the multi-volume/raw legacy verification
 fixtures; product managed disks do not replace those test layouts.
 

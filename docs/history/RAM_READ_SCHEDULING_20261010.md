@@ -219,4 +219,4 @@ are not a matched release comparison with the new warmup/driver/launch contract.
 
 Provenance, complete raw checks, sampling/priority bounds, restoration, private
 archive hash and result-driven decisions are consolidated in
-[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#ram-disk-affinity-and-source-lane-controls-gap-remains).
+[PERFORMANCE_FINDINGS.md](../PERFORMANCE_FINDINGS.md#ram-disk-affinity-and-source-lane-controls-before-asynchronous-reads).

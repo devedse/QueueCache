@@ -103,7 +103,7 @@ sequentially); both Q: columns were measured the same evening, without a
 restart in between. The RAM disk column was re-measured after RAM-disk reads
 became asynchronous: one program with eight reads queued now keeps every
 processor copying (SEQ1M Q8T1 read was 25,353 MB/s before).
-[How these were measured](docs/BENCHMARKING.md).
+[How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
 
 ## Getting started
 

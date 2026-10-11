@@ -3,14 +3,31 @@
 How QueueCache works in detail, its command line, the verification runner and
 the build. For what QueueCache is and how to use it, see the [README](../README.md).
 
-## Project status
+## Project status and documents
 
-Current execution status lives in the
-[private-alpha handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md) and
-[RAM-first tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md). Confirmed gaps are
-listed in [known issues](KNOWN_ISSUES.md). Remaining work is ordered in the
-[next phase plan](NEXT_PHASE_PLAN.md). Development testing uses recoverable VMs;
-synthetic delay/fault experiments use a separate disposable non-OS disk.
+QueueCache is a private-alpha product tested on recoverable VMs: volume caching
+(Fast and Strict), RAM disks, disk images in RAM and VHDX files with a RAM cache.
+Confirmed gaps are in [known issues](KNOWN_ISSUES.md); performance results and
+keep/reject decisions in [performance findings](PERFORMANCE_FINDINGS.md).
+
+| Document | Contents |
+|---|---|
+| [TESTING.md](TESTING.md) | Host tests, the test VM, one-command verification runs, comparing performance, the README benchmark |
+| [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md) | What made QueueCache faster, what was rejected, current decisions |
+| [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Current limitations and verification gaps |
+| [CACHE_POLICIES.md](CACHE_POLICIES.md) | The cache contract: Fast/Strict, admission, draining |
+| [VOLUME_FILTER.md](VOLUME_FILTER.md) | Where the filter sits and why |
+| [MANAGED_DISKS.md](MANAGED_DISKS.md) | RAM disks, images in RAM and cached VHDX files |
+| [DESKTOP_UI.md](DESKTOP_UI.md) | The desktop app's structure |
+| [LICENSING_REVIEW.md](LICENSING_REVIEW.md) | Licensing and provenance |
+| [history/](history/README.md) | Dated investigation reports, the former implementation tracker and design records; not maintained |
+
+Product decisions that still hold: Fast mode is the default and the optimized
+mode; Strict is supported for correctness but not tuned for speed. C: is a normal
+target with the same activation path as other disks. Fast mode's volatility (loss
+of acknowledged writes and possible file-system damage after a crash or power
+loss) is accepted and must be explained, but silent corruption, stale reads or
+wrong write ordering during normal operation are defects.
 
 ## Product model
 
@@ -88,37 +105,15 @@ driver or change a task.
 
 ## Verification
 
-The supported current-boot runner is `qcache developer verify`. Use an elevated
-terminal, stop competing storage workloads and select a volume on a clean non-OS
-physical disk. Do not substitute private scripts for maintained scenarios. The
-volume-filter suites (`volumes`, `trim-cache`) and the raw `write-tests` use the lab
-VHDX from `qcache developer lab-disk create` (see developer verification).
+`qcache developer verify` is the supported runner; one command runs a whole
+campaign and restores the machine. How to prepare the test VM, which suite to run,
+how to read results and how to judge a performance change are in
+[TESTING.md](TESTING.md).
 
 ```powershell
 qcache developer verify Q: --suite quick --output C:\QueueCache-Results
-qcache developer verify Q: --suite policies --output C:\QueueCache-Results
-qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-qcache developer lab-disk create C:\QueueCache-Lab\VolumeLab.vhdx
-qcache developer verify V: --suite volumes --output C:\QueueCache-Results
-qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
-qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
+qcache developer verify Q: --campaign release-performance --lab-ntfs W: --budget-mib 2048 --repeats 3 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results
 ```
-
-Wait for `FINISHED.txt`, then inspect `status.json`, `SUMMARY.md`, `results.json`,
-`run.log`, interval telemetry and raw case evidence. A missing completion marker is
-not success. If restoration fails, stop and inspect the recorded identity, owned
-PIDs, control trace and recovery snapshot before using the guarded
-`verify-recover` command.
-
-The separate 72-case small-write matrix is:
-
-```powershell
-qcache developer verify Q: --suite write-performance --budget-mib 2048 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-```
-
-Microsoft DiskSpd and CrystalDiskMark's bundled `DiskSpd64.exe` are supported in
-XML mode. Keep the same executable and hash for comparisons. Full suite scope and
-safety rules are in [developer verification](DEVELOPER_VERIFICATION.md).
 
 ## Build
 
@@ -174,9 +169,8 @@ It works on any OS with the .NET SDK, in dark mode, at 1280×860 (the RAM disk
 page 1280×960). Change the example in that file, not by editing images.
 
 **CrystalDiskMark screenshots** (`cdm-cache.png`, `cdm-ram-disk.png`) are real
-runs, and the README's performance table copies their numbers. How to redo them,
-and the pitfalls that lowered earlier runs (priority, cache leftovers), are in
-[benchmarking](BENCHMARKING.md).
+runs; the README's performance table copies their numbers. How to redo them is in
+[TESTING.md](TESTING.md#7-readme-benchmark-crystaldiskmark).
 
 ## Repository layout
 

@@ -1,7 +1,7 @@
 # Volume-level filtering
 
-Status: implemented on branch `volume-filter` (PR #2), 2026-09-28; VM results are
-below and in the tracker. QueueCache caches volumes: the filter is the topmost
+Status: implemented (PR #2, merged 2026-09-28). The VM results below are the record
+from that time; current gaps are in [known issues](KNOWN_ISSUES.md). QueueCache caches volumes: the filter is the topmost
 volume filter and every volume has its own cache.
 
 ## Why
@@ -16,7 +16,7 @@ cache is no longer part of. Comparable caching products work per volume.
 
 ## What changes
 
-| Area | Disk filter (master) | Volume filter (this branch) |
+| Area | Disk filter (before) | Volume filter (now) |
 |---|---|---|
 | Registration | Disk class `{4d36e967-...}` UpperFilters, directly below `partmgr` | Volume class `{71a27cdd-...}` UpperFilters, last entry (topmost, directly below the file system); the disk-class entry is removed |
 | What it sees | Disk offsets, every request to the disk | Volume offsets, requests to one volume (from the file system, or a volume handle such as `\\.\Q:`) |
@@ -40,7 +40,7 @@ removes the Volume class entry, and `Recover-Registration.ps1` that restores tha
 backup. There is no migration from the disk filter (owner decision, 2026-09-28: no
 other users); the lab VM was converted by hand.
 
-## Boot reset on C:'s volume (found and fixed on the branch)
+## Boot reset on C:'s volume (found and fixed before merge)
 
 0.4.183.1 booted with the filter on Q:'s volume only, but with it on C:'s volume
 the VM reset silently a few seconds into boot (no stop screen, no dump, no event),
@@ -116,7 +116,7 @@ bring-up); the installer always sets `ClassCoverage` 1.
 ## Known limitations
 
 - Surprise hot-unplug containment, external Windows-eject routing, and reconnect
-  are not yet VM-qualified on this branch. Sleep/hibernate and offline recovery
+  are not yet VM-qualified. Sleep/hibernate and offline recovery
   remain separate work.
 - Raw reads and writes sent to the physical disk bypass the cache (above).
 - Crash durability of Fast data is unchanged: pending data is lost on a crash.

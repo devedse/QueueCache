@@ -3,7 +3,7 @@
 Initial decisions: 2026-09-20. Scope clarified in the owner's production-readiness
 planning review on 2026-09-22. This records product direction and accepted risks,
 not a completed implementation or release certification. The
-execution plan is [PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md).
+execution plan is PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md.
 
 ## Audience and release meaning
 
@@ -103,7 +103,7 @@ applied (no shrinking under memory pressure); sleep/resume, hibernate, offline
 recovery and disk hot-unplug testing are postponed in favour of normal-use
 correctness and speed.
 
-Planning revision 5 and the [implementation review](IMPLEMENTATION_REVIEW_20260924.md)
+Planning revision 5 and the implementation review
 set the immediate order. A successful normal app save/open is valuable evidence;
 it does not establish RAM admission or complete C: lifecycle support. All paging-
 marked traffic currently avoids new admission/retention, including some ordinary

@@ -5,7 +5,7 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**PR #9 completion, 2026-10-11:** results in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9); the completion plan and earlier handoffs were folded into it and removed (git history keeps them).
+**PR #9 completion, 2026-10-11:** results in [PERFORMANCE_FINDINGS.md](../PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9); the completion plan and earlier handoffs were folded into it and removed (git history keeps them).
 Implementation: asynchronous split RAM-disk reads (`1eab076`, fixes `ef3c6de`,
 revision and default adaptive mode `21f02bf`/`5afcef4`/`87cc65e`), plans 118
 (`ram-read-async`) and 119 (`ram-read-async-lifecycle`), lean `performance` /
@@ -24,7 +24,7 @@ Default-off diagnostics and the one-phase experiment profile are retained, with
 no new copying/scheduling/default optimization. Live Manager automatic wake is
 still unverified. Detailed implementation/verification and scope closure are in
 "User scope review, 2026-10-11" below and
-[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#finalization-request-overlap-and-helper-coordination-2026-10-11).
+[PERFORMANCE_FINDINGS.md](RAM_READ_DIAGNOSTICS_20261010.md#finalization-diagnostic-request-overlap-and-helper-coordination-2026-10-11-historical).
 
 **Historical status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
 Fast mode is the product focus. On 2026-09-26/27: the saved-profile shutdown
@@ -52,7 +52,7 @@ and a paging read queued behind it. The first fix (0.4.125.1) passed a 20-cycle
 soak but was insufficient: Driver Verifier reproduced the hang on its first
 restart. The second fix (0.4.128.1, lower call from a work item) passed 20/20
 cycles under Driver Verifier. The
-next phase is planned in [NEXT_PHASE_PLAN.md](NEXT_PHASE_PLAN.md). At the owner's
+next phase is planned in NEXT_PHASE_PLAN.md. At the owner's
 request the VM's raw run directories, workloads and old builds were deleted on
 2026-09-25; run IDs cited below remain as references, their summaries recorded here
 are the retained evidence. Older dated notes
@@ -140,7 +140,7 @@ memory pressure and fault/cancellation/dependency proof remain; the historical
 BSOD cause is unknown.
 
 Planning revision 5 review at `30dd36e`: see
-[findings and repair instructions](IMPLEMENTATION_REVIEW_20260924.md).
+findings and repair instructions.
 The owner successfully edited the same `baseline.bmp` twice (uncached red,
 cached yellow), then opened it in Photos; the second save is 15:22:29 UTC.
 C: remained active and error-free at review. This is an ordinary application
@@ -216,7 +216,7 @@ neither a forced dependency nor Paint/Photos was exercised.
 The end goal is production readiness. A01-A12 are the private VM alpha milestone;
 A13-A16 cover production qualification and release. The detailed task definitions,
 benefits and dependencies are in
-[PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md).
+PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md.
 This tracker owns current status and evidence. TRUE means complete for the named
 scope; PARTIAL means some deliverables exist but the gate remains open; FALSE means
 not delivered. Completion of an A-step does not complete every original optimization
@@ -282,7 +282,7 @@ pagefile saved-startup regression without the earlier process corruption.
 
 ### Volume filter batch, 2026-09-28 (branch `volume-filter`, PR #2)
 
-QueueCache caches volumes instead of disks ([VOLUME_FILTER.md](VOLUME_FILTER.md)).
+QueueCache caches volumes instead of disks ([VOLUME_FILTER.md](../VOLUME_FILTER.md)).
 Verification on the VM (16 GB since 2026-09-28) with standard Driver Verifier on
 0.4.219.1 (`7a18a57`) unless stated. Lab disk: `qcache developer lab-disk` VHDX with
 V: and W: (NTFS) and X: (unformatted).
@@ -342,7 +342,7 @@ in-flight versions. Foreground request ordering alone does not order the drainer
 This is a source-level defect finding, not proof of the historical BSOD cause.
 
 The implementation instructions and acceptance cases are in
-[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081),
+handover revision 4,
 completed through revision 5's T082-T086 and the review above.
 That sequence supersedes historical next-step instructions below. Plan 39 is the
 current source contract; installed VM driver 0.4.92.1 ran plan 34-37 tools. The Q: case
@@ -400,7 +400,7 @@ Planning revision 3, 2026-09-23: the owner prioritizes reproducing and fixing th
 reported large-BMP/Paint/Photos BSOD. Recent iterations mostly advanced the
 verification framework. The earlier 64 MiB uncached C: file baseline is useful
 and complete for its scope, but has not reproduced or diagnosed T067. The detailed immediate sequence
-in the [handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081)
+in the handover
 now governs execution. Existing A/T IDs and release gates remain. Plan 21 advances
 only the A08 reproduction contract; it does not promote A08 or resolve T067.
 
@@ -1787,7 +1787,7 @@ justify investigation, not a complete before/after performance claim.
 ### Drive disconnection handoff, 2026-09-29
 
 Owner reopened orderly eject and unexpected removal for implementation planning.
-[Detailed implementation handoff](DRIVE_DISCONNECT_IMPLEMENTATION_PLAN.md) defines
+Detailed implementation handoff defines
 driver lifecycle/ownership work, CLI and desktop eject, reconnect identity, and a
 maintained removal verification suite. Fast-mode unflushed data survival after an
 unexpected unplug is explicitly not promised.
@@ -2126,9 +2126,9 @@ RAM cache, and complete VHDX image loaded into RAM. Pure RAM with startup enable
 must create/partition/format a new empty disk at each new Windows startup;
 image-backed and full-image modes preserve their existing filesystem/data.
 
-Planning: [RAM_DISK_UI_PLAN.md](RAM_DISK_UI_PLAN.md) revision 3 contains the
+Planning: RAM_DISK_UI_PLAN.md revision 3 contains the
 three-mode UI contract and S01–S64 scenario matrix.
-[RAM_DISK_IMPLEMENTATION_PLAN.md](RAM_DISK_IMPLEMENTATION_PLAN.md) defines the
+RAM_DISK_IMPLEMENTATION_PLAN.md defines the
 native provider, shared kernel RAM budget, broker/ownership, complete logical
 image transfer, consistent versioned image saves, startup/recovery, installer
 changes and maintained verification handoff for Luna or Sol. Full-image saves
@@ -2987,7 +2987,7 @@ claimed; writes, RAM disks and hardware cache/TLB causes were not measured here.
 Full [results and limitations](CACHE_LAYOUT_INVESTIGATION_20261008.md); repeatable
 [method](DEVELOPER_VERIFICATION.md#cache-allocation-history-comparison-plan-92).
 
-Follow-up design, 2026-10-08: [UI preparation and reset semantics](BENCHMARKING.md#ui-preparation-clearing-contents-versus-recreating-the-allocation)
+Follow-up design, 2026-10-08: [UI preparation and reset semantics](../TESTING.md#7-readme-benchmark-crystaldiskmark)
 are documented. [Optimization options](CACHE_LAYOUT_INVESTIGATION_20261008.md#what-was-built-and-measured-plans-95-96)
 prioritize isolating free-slot order with unchanged buffers, then improving
 ordinary placement before considering idle compaction. Implementation: none of
@@ -3054,7 +3054,7 @@ copy per run for writes (+1.5% Q1, noise at Q8). Verification: quick, policies a
 pressure passed with write runs on; RAM disk round trips identical with offload on;
 memory map polling at 8x the app rate only moved p99.99. Open: Q8 sequential write gap
 (3-14%), RAM disk Q8 reads (needs a different design). Details:
-[investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-04391-04401).
+[investigation](CACHE_LAYOUT_INVESTIGATION_20261008.md#follow-up-experiments-044391-044401).
 
 ### Concurrent and sustained cache validation (plan 98), 2026-10-09
 
@@ -3369,7 +3369,7 @@ restored, and the installed tray application resumed. Branch
 | Item | Implementation | Verification |
 |---|---|---|
 | RAM-disk single-reader Q8 scheduling | Supported reference sampler and archived same-build comparison implemented. The shared sleeping queue engine is rejected and removed; V22 prefix/action reservation preserved. Synchronous split copies retained. See [profile/design/results](RAM_READ_SCHEDULING_20261010.md). | 36/36 plan-108 reference and 54/54 plan-110 same-build windows completed with exact bytes, telemetry and independent restoration. The queue loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput on large reads; small controls remain within variation. No scheduling gain or priority boost justified. Lifecycle qualification of the removed experiment is deliberately not pursued. |
-| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; patterned `partial-read-accounting` and maintained churn exercise collect the evidence. Lower-read behavior unchanged; missing-span reads are not justified for the tested churn shapes. | Original ten checks pass on 0.4.495.1. Signed 0.4.514.1 repeats the accounting scenario successfully; churn run `20261010-075924-c08eff16b204482fb371f9d09265f56e` completes 6/6 with all 18 raw windows inspected, maximum gap 0.752202 seconds, 1,539 concurrent byte checks and all 24 persisted oracle files passing. Weighted cached overlap is 0.788% mixed / 0.449% Q1 recovery; Q8 stages nothing. Clean restoration. This is a 120-second accounting smoke, not a new 30-minute acceptance. [Findings](PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first). |
+| Partly cached read diagnostics | Implemented after merge: diagnostics V21 append four counters; patterned `partial-read-accounting` and maintained churn exercise collect the evidence. Lower-read behavior unchanged; missing-span reads are not justified for the tested churn shapes. | Original ten checks pass on 0.4.495.1. Signed 0.4.514.1 repeats the accounting scenario successfully; churn run `20261010-075924-c08eff16b204482fb371f9d09265f56e` completes 6/6 with all 18 raw windows inspected, maximum gap 0.752202 seconds, 1,539 concurrent byte checks and all 24 persisted oracle files passing. Weighted cached overlap is 0.788% mixed / 0.449% Q1 recovery; Q8 stages nothing. Clean restoration. This is a 120-second accounting smoke, not a new 30-minute acceptance. [Findings](../PERFORMANCE_FINDINGS.md#partly-cached-requests-accounting-first). |
 | ReFS caller-path backoff | V23 appends candidate counts and mutually exclusive first-decline reasons (control, queue, worker, owner, offload, cooldown, probe). Runtime lab action 20 bounds the cooldown at 0..256; default remains 256, and every ownership/control check still applies. Plan 111 captures, restores and verifies the setting. | ABI/delta/restoration host checks and Windows Debug/Release CI pass. Signed 0.4.514.1 quick and both complete 24-window NTFS/ReFS comparisons restore cleanly. Cooldown 0 gains 5.26%/3.79% mixed Q8, but loses 21.18% NTFS large-read Q8; ReFS large-read ranges overlap. Retain 256. [Raw-result summary](CALLER_BACKOFF_20261010.md). All 81 current retained-driver checks pass at default 256; no shorter production policy is promoted. |
 | Background priority limits | Plan-113 supported `priority-cost` compares independent CPU BelowNormal, low I/O and low process memory priority against explicit normal controls; resident 1M Q1/Q8 and 4K Q1, alternating repetitions. Applies/readbacks owned child settings before a three-second warmup and validates raw XML hints. | Host and Windows Debug/Release contracts pass at `1788970`. Full W: retry `20261010-073414-2f6dd18225094fc98abc3560ddaca39e` completed 36/36, all 940 process exits zero, maximum gap 0.689031 seconds, zero lower/staged I/O and clean restoration. CPU BelowNormal loses 34.20% Q8; I/O/memory Q8 ranges overlap normal. First attempt remains INCOMPLETE and separate. Focused CPU/wait analysis completed with matching PDBs and lost-event rejection: more ready delay and idle CPUs under BelowNormal; priority/affinity isolation is next. [Evidence](PRIORITY_COST_20261010.md). Process memory defaults only, without pressure or locked-page changes. No boost implemented. |
 
@@ -3404,13 +3404,13 @@ completed 0.4.514.1 churn follow-up below supplies them and does not justify tha
 change for its tested shapes.
 
 2026-10-10 documentation follow-up. Implementation: consolidated performance
-findings and decisions in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md),
+findings and decisions in [PERFORMANCE_FINDINGS.md](../PERFORMANCE_FINDINGS.md),
 referenced by AGENTS.md and benchmarking guidance. Earlier retained changes,
 merged PR #8, new PR #9 diagnostics and rejected experiments are distinguished.
 Verification: cross-checked against the completed dated reports, including the
 36-window priority retry and completed churn accounting. CPU/wait attribution and
 all 81 retained-driver checks are now complete and recorded below. The
-[single-command campaign/completion plan](PERFORMANCE_CAMPAIGN_PLAN.md) was
+[single-command campaign/completion plan](../TESTING.md#3-running-tests-one-command) was
 design-only at that checkpoint. Plan 114 implements the typed orchestration,
 independent restoration and durable terminal event described in the current-work
 table above. DeveAgentManager wake integration remains external.
@@ -3427,7 +3427,7 @@ with no errors/pending data. Mixed lower overlap 26,779,648 / 3,398,303,744 byte
 Decision: do not implement missing-span reads for these shapes; measure other
 representative scatter patterns only if a concrete observation warrants them.
 This is focused accounting, not another sustained performance A/B. Full table,
-limits and raw archive identity are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
+limits and raw archive identity are in [PERFORMANCE_FINDINGS.md](../PERFORMANCE_FINDINGS.md).
 
 Final retained-driver qualification on signed 0.4.514.1: five independently
 restored plan-113 runs pass all 81 inner checks (10 partial-read, 8 paging,

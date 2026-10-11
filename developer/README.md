@@ -8,7 +8,7 @@ The `tests/` projects run on the build host/CI and are not installed.
 For repeatable batches, start with `qcache developer verify Q: --suite quick`.
 Use `--suite full --diskspd C:\Tools\DiskSpd\diskspd.exe` for the longer matrix.
 Output defaults to a unique subfolder of the current directory (`--output` overrides
-the parent). See [verification suites and recovery](../docs/DEVELOPER_VERIFICATION.md)
+the parent). See [testing](../docs/TESTING.md)
 before running; use the shared runner instead of copying private harness scripts.
 
 | Command | Purpose / effects |
@@ -40,14 +40,14 @@ prove crash durability or complete kernel coverage.
 ## Retired-script replacement map
 
 The old PowerShell workload wrappers were removed after their modes were compared
-with the maintained executable. Historical results remain in Git history and the
-secondary documentation; do not recreate those wrappers as another runner.
+with the maintained executable. Historical results remain in Git history; do not
+recreate those wrappers as another runner.
 
 | Retired source/mode | Maintained replacement or disposition |
 |---|---|
 | `Measure-Performance`: small-request reads/writes | `verify --suite performance` scaling cells plus the separate `write-performance` matrix |
 | interference and controlled slow storage | `verify --suite performance`, with hot-reader alone/loaded, delay 0/25 ms, QD8/32/128 and Automatic/Fixed allocation |
-| capacity pressure | Performance writer cells record capacity waits; plan-11 `policies` separately proves fitting traffic has zero waits. A dedicated forced-exhaustion acceptance case remains deferred in the tracker. |
+| capacity pressure | Performance writer cells record capacity waits; plan-11 `policies` separately proves fitting traffic has zero waits. A dedicated forced-exhaustion acceptance case remains deferred ([known issues](../docs/KNOWN_ISSUES.md)). |
 | random drain | Random-write performance cells plus recorded explicit preparation/restoration drains |
 | drain-parallelism throughput comparison | Deferred until residual evidence justifies multi-worker tuning. Correctness at parallelism 1/2/4 remains in `policies`. |
 | flush under load | `verify --suite flush-interference` |
@@ -55,7 +55,7 @@ secondary documentation; do not recreate those wrappers as another runner.
 | `Test-CacheFaults` lower completion error/retry | `file-tests ... test-coalescing` uses fault 4, retains dirty data, retries and verifies an independent file hash |
 | `Test-CacheFaults` lower flush error/retry | `file-tests ... test-flush-policy` uses fault 3, requires visible failure, retries and verifies the file hash |
 | raw pre-submission/short-completion faults 1/2/5 | Deferred raw-only variants. They are not needed to claim the A06 minimum fault paths and remain an explicit gap. |
-| allocation faults 6/7 | Deferred until allocation-path work is touched; the gap remains in the tracker. |
+| allocation faults 6/7 | Deferred until allocation-path work is touched; listed in [known issues](../docs/KNOWN_ISSUES.md). |
 | `Manage-Lab` install/reattach/upgrade/uninstall | The single installer and `packaging/Install-Driver.ps1`; no per-device legacy installation path remains. |
 
 Registration backups and logs are stored under `%ProgramData%\QueueCache` before

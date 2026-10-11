@@ -144,6 +144,6 @@ memory-leak, global-limit contention, cancellation or power-state qualification.
 There was no CrystalDiskMark/DiskSpd benchmark, matched older-driver comparison,
 72-case write-performance matrix, or new FAT32/ReFS run. Correctness diagnostics
 from policy workloads do not establish performance acceptance. RD02–RD11 gates
-in [the implementation plan](RAM_DISK_IMPLEMENTATION_PLAN.md) still govern real
+in the implementation plan still govern real
 managed-disk activation; [the tracker](RAM_FIRST_IMPLEMENTATION_TRACKER.md)
 records implementation and verification independently.

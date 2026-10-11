@@ -104,9 +104,8 @@ internal static class VerificationCommands
                                  for asynchronous split reads; correctness only; --repeats 1.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
-                                 Reproduction requires the historical experiment driver; 54 windows, V22 diagnostics.
-                                 Owned 2 GiB disks, whole-file byte checks; --budget-mib 2048 and normal priority.
-                                 Requires DiskSpd; reference measurements, not speed acceptance.
+                                 All ram-read-* suites: owned 2 GiB disks, whole-file byte checks, --budget-mib 2048,
+                                 normal priority and DiskSpd; reference measurements, not speed acceptance.
               write-performance  Fitting-file random 4K Q1/32 and sequential 1M Q1/8 writes.
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
@@ -121,7 +120,7 @@ internal static class VerificationCommands
             Examples:
               qcache developer verify Q: --suite quick
               qcache developer verify Q: --campaign performance --lab-ntfs W: --diskspd "C:\Tools\DiskSpd\diskspd.exe" --pause-backing-cache
-              qcache developer verify Q: --campaign focused --focus-suite ram-read-scheduling --lab-ntfs W: --diskspd "C:\Tools\DiskSpd\diskspd.exe" --pause-backing-cache
+              qcache developer verify Q: --campaign experiment --focus-suite ram-read-async --lab-ntfs W: --budget-mib 2048 --repeats 3 --diskspd "C:\Tools\DiskSpd\diskspd.exe" --pause-backing-cache
               qcache developer verify Q: --suite full --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output .\results
               qcache developer verify Q: --suite full --diskspd "C:\Tools\CrystalDiskMark9_0_3\CdmResource\DiskSpd\DiskSpd64.exe" --output .\results
 
@@ -129,9 +128,10 @@ internal static class VerificationCommands
             Live timestamped progress is also saved to run.log, including errors and waiting messages.
             Read FINISHED.txt and SUMMARY.md there. MEASURED is not a performance acceptance verdict.
             Campaigns compose suites sequentially in one QueueCache-Campaign-* folder with child evidence and completion.json.
-            Profiles: smoke (two short NTFS checks), focused, performance, release-performance (adds writes/30-minute soak).
-            Campaigns require an attached developer NTFS lab; ReFS is optional. --campaign and --suite are exclusive.
-            A controller can await process exit and read verify-completion once; automatic Manager wakeup requires integration.
+            Profiles: smoke (two short NTFS checks), experiment (one narrow RAM suite), focused (one suite plus retained
+            correctness checks), performance (product-default regression), release-performance (adds writes/30-minute soak).
+            Campaigns require an attached developer NTFS lab; ReFS only for focused caller-backoff. --campaign and --suite are exclusive.
+            A controller can await process exit and read verify-completion once. Guide: docs/TESTING.md.
             Run ordinary suites elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             System suites require an existing output directory on a different physical disk and explicit VM/disk identity.
             system-files reports live unbuffered bytes; it does not alone prove persistence under an active Fast cache.

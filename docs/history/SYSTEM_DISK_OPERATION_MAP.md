@@ -3,7 +3,7 @@
 Updated: 2026-09-24 (volume filter note 2026-09-28). This is the A07/T023 map of
 paths that can reach the filter. It records implemented behavior and gaps.
 
-Since the volume filter ([volume filtering](VOLUME_FILTER.md)) the filter sits on
+Since the volume filter ([volume filtering](../VOLUME_FILTER.md)) the filter sits on
 C:'s volume stack, directly below NTFS and above `volsnap`, BitLocker (`fvevol`),
 `iorate`, ReadyBoost (`rdyboost`) and `volmgr`; offsets are volume offsets and
 page-file ranges are the target volume's own. Requests to the physical disk
@@ -17,14 +17,14 @@ correctness. Source references name the owning function rather than a historical
 test wrapper.
 
 Revision-4 review: T075-T077 in the
-[handover](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081)
+handover
 own the paging-read/write coherence and progress source candidate. `IRP_PAGING_IO`
 is not pagefile-only classification. The prior driver bypassed all such requests,
 including ordinary mapped/file-cache traffic. Plan-32 source uses a range fence
 against the separate drainer and retains a pinned sector overlay for reads. Only
 this source behavior is described below. Loaded 0.4.92.1 and CI-built plan-37
 tooling now have focused byte/policy evidence. The
-[revision-5 review](IMPLEMENTATION_REVIEW_20260924.md) identifies remaining
+revision-5 review identifies remaining
 progress/scheduling and admission gaps; T082-T086 supersede stale pending gates.
 
 This remains an incomplete resource-lifetime/system-disk audit. T068's source

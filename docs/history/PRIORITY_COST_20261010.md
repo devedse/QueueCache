@@ -20,7 +20,7 @@ DiskSpd `-I2` instead of normal `-I3`. These are requested process defaults and
 I/O hints, not a claim to control every thread/page or to inject memory pressure.
 Locked cache pages, the coordinator, driver priorities and user applications are
 unchanged. The historical combined scheduled-task result remains in
-[BENCHMARKING.md](BENCHMARKING.md); it cannot identify an individual cause.
+[BENCHMARKING.md](../TESTING.md#7-readme-benchmark-crystaldiskmark); it cannot identify an individual cause.
 
 The signed native driver is 0.4.514.1, source `0b450a2`; clean managed preview
 tools are from `1788970`. Actual loaded filter/provider paths and hashes are

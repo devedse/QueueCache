@@ -64,7 +64,7 @@ readiness and restoration contracts remain enforced. There is no automatic
 disk creation, formatting or reboot.
 
 Plan 118 adds `ram-read-async`, the same-build comparison for the asynchronous
-split reads ([findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)):
+split reads ([findings](../PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)):
 
 ```powershell
 qcache developer verify Q: --campaign experiment --focus-suite ram-read-async --lab-ntfs W: --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results
@@ -137,7 +137,7 @@ both off brackets by more than 2% flags `PERTURBATION_OR_DRIFT`; collection can
 complete while causal attribution remains unreliable. No estimated overhead is
 subtracted, and none of these scores establishes a candidate speedup.
 
-Read [the campaign/completion contract](PERFORMANCE_CAMPAIGN_PLAN.md) for exact
+Read [the campaign/completion contract](../TESTING.md#3-running-tests-one-command) for exact
 profiles, defaults and targets. Campaigns refuse competing benchmark/Desktop
 processes. `--pause-backing-cache` explicitly permits temporarily pausing the
 performance volume when it hosts the active lab backing cache; it is restored
@@ -683,7 +683,7 @@ race. Equal lower-write/paging-request counts also cannot establish owned-reques
 admission causally. Preserve existing byte/policy results, but do not upgrade
 them to those stronger proofs. V7/cache counters are device-wide across processes,
 despite current messages saying process-wide. T083/T084 in the
-[implementation review](IMPLEMENTATION_REVIEW_20260924.md) define the correction;
+implementation review define the correction;
 bump the executable plan only when implementing the changed measurement/verdict.
 
 Plan 37 adds an observed in-flight mapped-overwrite stage to `paging-coherence`.
@@ -739,7 +739,7 @@ unbuffered I/O, not Paint/Photos; Fast lacked a separate post-release byte check
 and scenario-worker identity equality still rejected a paging-role change accepted
 by preflight. Existing zero paging counters do not establish bypass completion.
 The new source still needs forced T079 ordering and T080-T081 installed checks in
-[handover revision 4](PRIVATE_ALPHA_IMPLEMENTATION_HANDOVER.md#revision-4-implementation-first-correction-t075-t081).
+handover revision 4.
 Preserve prior raw results and their scope.
 
 | Suite | Scope |
@@ -1526,14 +1526,14 @@ and requires two snapshots 2 s apart with nothing pending, written or read from 
 disk (`IsQuiet`); up to 5 attempts, each saved as `*-start-quietNa/b.json` and
 `*-score-quietNa/b.json`. It only waits: the score checks are unchanged, and a
 window that still sees disk I/O fails as before. On the test VM also turn
-last-access timestamps off ([benchmarking](BENCHMARKING.md#setup)).
+last-access timestamps off ([benchmarking](../TESTING.md#7-readme-benchmark-crystaldiskmark)).
 
 ## Concurrent, sustained and memory-map exercises (plans 98–103)
 
 These opt-in suites extend `qcache developer verify`; they never run as part of
 `full` or change the existing 72-case write-performance matrix. Use the same
 DiskSpd executable/hash and a normal-priority elevated process, with NTFS
-last-access timestamps disabled as described in [benchmark setup](BENCHMARKING.md#setup).
+last-access timestamps disabled as described in [benchmark setup](../TESTING.md#7-readme-benchmark-crystaldiskmark).
 Each run records immutable case IDs, the complete exercise plan, loaded-module
 provenance, raw XML, before/after snapshots and telemetry covering process startup
 through completion. Restoration uses the existing independent deadline.

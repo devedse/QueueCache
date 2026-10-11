@@ -71,9 +71,9 @@ Evidence checked in the completed run:
 
 The driver allocates 4 KiB slots in 256 KiB slabs and initially links free slots
 in ascending slot order
-([writecache.cpp](../driver/qcache/writecache.cpp)). `AllocateSlot` pops the free
+([writecache.cpp](../../driver/qcache/writecache.cpp)). `AllocateSlot` pops the free
 list, while `RetireSlot` pushes onto its head. `ClearClean` evicts in clean LRU
-order ([cacheblocks.inl](../driver/qcache/cacheblocks.inl)). Consequently,
+order ([cacheblocks.inl](../../driver/qcache/cacheblocks.inl)). Consequently,
 drop-clean empties the data but does not restore the initial free-slot order.
 Random access before clearing further changes that order. Reapplying an unchanged
 budget also preserves the allocation.
@@ -187,7 +187,7 @@ random 4K Q1/Q32 unchanged (-1.4% / +2.7%), sequential 1 MiB Q1 **+28%**
 (7.0 to 9.0 GB/s), sequential 1 MiB Q8 with write-back running **-8% to -14%**
 (within 5% with write-back off). The drain rate was about the same (155 vs 171
 MB/s, no capacity waits), so the Q8 drop is not explained yet; it is recorded in
-[known issues](KNOWN_ISSUES.md).
+[known issues](../KNOWN_ISSUES.md).
 
 **2. Copy experiments for RAM hits (kept, default on in 0.4.434.1).** Lab flags,
 A/B tested within one boot:
@@ -211,7 +211,7 @@ Q1 +19% after steady and full-cache churn (16.42 and 17.01 GB/s). `quick`,
 **3. Memory views (kept).** A read-only layout map per 256 KiB chunk drives the
 app's memory map (in-disk-order share, free chunks), and the RAM provider's
 physical map shows where a RAM disk's locked pages sit. See
-[desktop UI](DESKTOP_UI.md#memory-views).
+[desktop UI](../DESKTOP_UI.md#memory-views).
 
 **Not built, with reasons:**
 
@@ -304,7 +304,7 @@ This investigation covers resident **cache sequential reads**. It does not expla
 the older write scores, measure RAM-disk throughput, or prove all host scheduling
 effects absent. No README result was changed. The earlier scheduled-task priority
 penalty is a separate finding; CPU, I/O and memory priorities changed together,
-so its internal cause remains unisolated (see [benchmarking](BENCHMARKING.md)).
+so its internal cause remains unisolated (see [benchmarking](../TESTING.md#7-readme-benchmark-crystaldiskmark)).
 
 The loaded native module was enumerated and its file hash matched the CI package,
 rather than inferring loaded identity from a version string:
