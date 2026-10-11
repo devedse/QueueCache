@@ -5,6 +5,13 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
+**PR #9 completion, 2026-10-11 (active):** plan in
+[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). Implementation: planning only;
+asynchronous-split RAM read candidate (plan 118, suite `ram-read-async`), lean
+`release-performance` profile and dead-code removal not yet implemented.
+Verification: none yet; automatic wake has never been exercised (every job was
+acknowledged `REVIEWED` in-turn, so no delivery reached `SENT`).
+
 **Current performance finalization, 2026-10-11:** source `0575e97`, signed native
 0.4.568.1, plan 117. Nine coordination windows pass with exact restoration;
 the bounded investigation closes with no additional acceptable speedup found.

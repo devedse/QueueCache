@@ -1,7 +1,7 @@
 # Performance continuation: implementation handoff
 
 **Superseded execution plan:** use
-[PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md).
+[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md).
 It bounds the remaining diagnosis/candidate work and defines final acceptance or
 closure. This document retains historical design detail; its old stage order,
 proposed names and broad intermediate test commands are not the current backlog.

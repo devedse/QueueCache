@@ -1,5 +1,8 @@
 # Performance follow-up after sustained cache validation
 
+**Superseded execution plan (2026-10-11):** the active plan is
+[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). This file is technical reference.
+
 [PR #8](https://github.com/devedse/QueueCache/pull/8) is merged. It establishes read recall, complete sustained/concurrent/map measurements,
 README benchmarks and the map pop-out / 100 ms refresh controls. This follow-up
 works on remaining measured limits. The tracker separates implementation from

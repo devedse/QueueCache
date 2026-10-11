@@ -1,5 +1,8 @@
 # Final performance investigation: bounded agent handoff
 
+**Superseded execution plan (2026-10-11):** the active plan is
+[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). This file is technical reference.
+
 Prepared 2026-10-11 against `perf/ram-read-followups`, source checkpoint
 `6c52ce4`, verification plan 116. This records the **executed plan**, replacing
 the order and scope of the older [implementation handoff](PERFORMANCE_AGENT_HANDOFF.md).

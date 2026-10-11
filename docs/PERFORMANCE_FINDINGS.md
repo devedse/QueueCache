@@ -23,10 +23,12 @@ versus multi-submitter gap intact. Plan-116 instruction attribution now confirms
 It does not establish a throughput fix. The final plan-117 coordination diagnostic
 now measures one active Direct copy with Q8T1, versus four with Q2T4. Q8 helpers
 copy 74.60% of split bytes; only 0.64% of their posts are withdrawn unused.
-The bounded investigation is **closed: no additional acceptable speedup found**.
-No candidate is selected: reducing helper posts has no demonstrated target, and
-asynchronous admission would require a new, qualified lifetime/progress design.
-This does not prove that future optimization is impossible. Cache
+The bounded investigation closed with no candidate selected. **Review,
+2026-10-11: that closure is reopened for exactly one candidate.** About 18 of
+every 41 µs per Q8T1 read is spent outside the copy while helpers idle, and no
+earlier asynchronous design kept split copies (all gave whole 1 MiB reads to one
+worker). The asynchronous-split candidate, its prediction and stop rules are in
+[PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md). Cache
 CPU-priority/affinity interaction is now measured: the Q8 BelowNormal penalty
 shrinks from 30.21% at default affinity to 3.14% unbound (overlapping ranges).
 All five

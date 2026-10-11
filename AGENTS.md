@@ -15,29 +15,21 @@
   require the updated Manager service. Live wake verification remains separate
   from controller event validation. Select the smallest maintained suite/profile
   for affected regressions.
-  `docs/PERFORMANCE_FINALIZATION_HANDOFF.md` records the bounded investigation
-  and final acceptance/stop gates. Plan 117's executed outcome is closed: no
-  additional acceptable speedup found; Q8 helpers copy 74.60% of bytes and only
-  0.64% of posts are withdrawn unused, with one active Direct copy. Do not rerun
-  the coordination/priority/affinity investigations merely to rediscover these
-  results. Reopen for new evidence, relevant code/contract changes or a new user
-  request. Live Manager idle wake remains a separate unverified integration gap.
-  The finalization record supersedes the execution
-  order in `docs/PERFORMANCE_AGENT_HANDOFF.md`, which remains technical reference.
-  Proposed suites/profiles must be implemented before use. Close with a verified
-  speedup or no acceptable speedup found within that scope; record verification
-  blockers separately. Do not expand failed research into unrelated work.
-  For any newly authorized investigation, compare concrete RAM speedup candidates
-  with the smallest maintained suite and affected correctness checks first.
-  `--campaign focused` also runs 81 retained correctness checks; use an existing
-  `--suite` when that extra scope is unnecessary. Plan 117 also provides
-  `--campaign experiment --focus-suite ram-read-coordination`: one phase, nine
-  off/on/off windows, without those 81 checks. Candidate comparison suites remain
-  gated on actionable diagnostic evidence; no candidate was selected and they
-  are not implemented.
-  Reserve broad regression/write/
-  sustained campaigns for the final retained candidate, launched once with a
-  combined report. Keep byte, identity, telemetry and restoration guards. Further
+  **Active plan: `docs/PR9_COMPLETION_PLAN.md`** (owner request, 2026-10-11).
+  Follow its steps and stop rules exactly: verify automatic wake by launching an
+  owned job and ending the turn (do not poll or mark it reviewed); build and
+  compare the single asynchronous-split RAM read candidate; then one lean final
+  regression and PR close-out. It supersedes the execution order in
+  `PERFORMANCE_FINALIZATION_HANDOFF.md`, `PERFORMANCE_AGENT_HANDOFF.md` and
+  `PERFORMANCE_FOLLOWUP_PLAN_20261010.md` (technical reference only). Plan 117
+  measured one active Direct read at Q8T1; do not rerun the coordination,
+  priority/affinity or caller-backoff investigations to rediscover results.
+  `--campaign focused` also runs 81 retained correctness checks; prefer
+  `--campaign experiment --focus-suite <suite>` for candidate comparisons.
+  Proposed suites/profiles must be implemented before use. Do not expand a
+  failed candidate into unrelated research.
+  Reserve broad regression/write/sustained campaigns for the final build (plan
+  step 5), launched once with a combined report. Keep byte, identity, telemetry and restoration guards. Further
   low-priority/affinity diagnosis and dedicated 100 ms UI cost testing are parked;
   do not reopen them without a relevant observed problem or a new user request.
 
