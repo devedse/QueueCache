@@ -28,6 +28,7 @@ public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 [SupportedOSPlatform("windows")]
 public static class VerificationWorker
 {
+    public const string NotCleanMessage = "Start with a clean cache; drain your workload first.";
     public static void ValidateFileTarget(DiskTarget target, DiskDescription inventory)
     {
         if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
@@ -669,7 +670,7 @@ public static class VerificationWorker
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
                 if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
-                    throw new IOException("Start with a clean cache; drain your workload first.");
+                    throw new IOException(NotCleanMessage);
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
                     device.GetDiagnostics().CallerRouting?.Backoff);

@@ -87,6 +87,28 @@ internal static class DiagnosticContracts
             t => { finalOrder.Add("inspect"); return Task.FromResult(finalClean ? t : t with { Recovery = t.Recovery with { State = t.Recovery.State with { DirtyBytes = 4096 } } }); })
             .GetAwaiter().GetResult();
         Check(finalOrder.SequenceEqual(["prepare", "inspect"]), "final backing restoration prepares before strict clean capture");
+        finalOrder.Clear(); var lateWrites = 1;
+        VerificationCampaignHost.FinalizeTargetsAsync([finalTarget],
+            _ => { finalOrder.Add("prepare"); return Task.CompletedTask; },
+            t => { finalOrder.Add("inspect"); return lateWrites-- > 0 ? Task.FromException<CampaignTargetEvidence>(new IOException("worker: " + VerificationWorker.NotCleanMessage)) : Task.FromResult(t); })
+            .GetAwaiter().GetResult();
+        Check(finalOrder.SequenceEqual(["prepare", "inspect", "prepare", "inspect"]), "late lab-image writes are drained again before the strict capture");
+        var attempts = 0;
+        try
+        {
+            VerificationCampaignHost.FinalizeTargetsAsync([finalTarget], _ => Task.CompletedTask,
+                t => { attempts++; return Task.FromException<CampaignTargetEvidence>(new IOException(VerificationWorker.NotCleanMessage)); }).GetAwaiter().GetResult();
+            throw new Exception("Final restoration accepted a cache that never stayed clean.");
+        }
+        catch (IOException) { Check(attempts == VerificationCampaignHost.FinalCleanAttempts, "a cache that never stays clean fails after the bounded attempts"); }
+        attempts = 0;
+        try
+        {
+            VerificationCampaignHost.FinalizeTargetsAsync([finalTarget], _ => Task.CompletedTask,
+                t => { attempts++; return Task.FromException<CampaignTargetEvidence>(new IOException("identity changed")); }).GetAwaiter().GetResult();
+            throw new Exception("Final restoration retried a non-drain failure.");
+        }
+        catch (IOException) { Check(attempts == 1, "other capture failures are never retried"); }
         finalOrder.Clear();
         var disabledTarget = finalTarget with { Recovery = recovery with { State = recovery.State with { Flags = 0 } } };
         VerificationCampaignHost.FinalizeTargetsAsync([disabledTarget],
