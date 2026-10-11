@@ -52,7 +52,7 @@ struct DISK
 // help copy before StartIo completes them.
 constexpr ULONG MaxWorkers = 16, WorkerSpinMicroseconds = 50, WorkerMinBytes = 128 * 1024, SplitChunk = 256 * 1024;
 struct ADAPTER;
-enum WORK_KIND : UCHAR { WorkRequest, WorkHelp };
+enum WORK_KIND : UCHAR { WorkRequest, WorkHelp, WorkAsyncHelp };
 struct WORK { LIST_ENTRY Link; WORK_KIND Kind; };
 // A transfer admitted by StartIo and completed by a worker thread (lives in the SRB extension).
 struct REQUEST { WORK Work; PSCSI_REQUEST_BLOCK Srb; DISK* Disk; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes; BOOLEAN Write; LONG64 Started; };
@@ -80,6 +80,9 @@ struct ADAPTER
     ULONG WorkerCount;
     volatile LONG NextWorker;
     volatile BOOLEAN Closing;
+    // Asynchronous Direct reads (ramasync.h). Allocated separately: its SLIST header needs
+    // 16-byte alignment, which Storport's device extension does not guarantee.
+    PLOOKASIDE_LIST_EX AsyncSplits;
 };
 
 // Storport callbacks defined outside ramdisk.cpp.
@@ -94,6 +97,7 @@ void WaitReferences(DISK* disk); // After removing the disk from the table; PASS
 void DrainWrites(DISK* disk);
 NTSTATUS AllocateDisk(ADAPTER* adapter, const QC_RAM_REQUEST* request, PIRP irp, DISK** result, ULONG failAfterSlabs);
 void FreeDisk(DISK* disk);
+void UnregisterView(DISK* disk); // PASSIVE_LEVEL; also run by FreeDisk.
 void RegisterView(ADAPTER* adapter, DISK* disk);
 NTSTATUS StartupSession(GUID* epoch, ULONGLONG* transitions);
 
@@ -104,3 +108,4 @@ bool UseWorker(ADAPTER* adapter, DISK* disk, ULONG bytes, bool write);
 void QueueTransfer(ADAPTER* adapter, REQUEST* request);
 void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR buffer, ULONG bytes, bool write);
 QC_RAM_LARGE_COPY LargeCopy;
+QC_RAM_LARGE_READ_ASYNC LargeReadAsync;

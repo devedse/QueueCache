@@ -3,14 +3,19 @@
 #include "provider.h"
 
 struct SPLIT;
-struct HELP { WORK Work; SPLIT* Split; BOOLEAN Taken; };
+struct HELP { WORK Work; SPLIT* Split; BOOLEAN Taken; LONG64 PostedAt; };
 // One large transfer copied in chunks by its submitter and any workers that join; lives on
-// the submitter's stack.
+// the submitter's stack. An asynchronous read's split is allocated (AsyncSplits) and copied
+// by workers only: the worker that copies the last chunk completes it, and the last
+// reference (each posted help, plus the submitter while posting) frees it.
 struct SPLIT
 {
     QC_RAM_STORE* Store; PUCHAR Buffer; ULONGLONG Offset; ULONG Bytes, Chunk, Chunks; BOOLEAN Write;
     volatile LONG Next, Helpers;
     HELP Help[MaxWorkers];
+    BOOLEAN Diagnostic, Sampled;
+    volatile LONG Copied, References;
+    QC_RAM_READ_DONE* Done; PVOID DoneContext; ADAPTER* Adapter;
 };
 
 // Small transfers are cheapest inline (completed during StartIo). A large write goes to a
@@ -54,15 +59,35 @@ static void Finish(ADAPTER* adapter, REQUEST* request)
     StorPortNotification(RequestComplete, adapter, request->Srb);
     KeLowerIrql(irql);
 }
-static void CopyChunks(SPLIT* split)
+static void CopyChunks(SPLIT* split, bool helper = false)
 {
+    ULONG copied = 0;
     for (;;)
     {
         const auto index = static_cast<ULONG>(InterlockedIncrement(&split->Next) - 1);
         if (index >= split->Chunks) break;
         const auto start = index * split->Chunk, bytes = min(split->Chunk, split->Bytes - start);
         QcRamStoreCopy(split->Store, split->Offset + start, split->Buffer + start, bytes, split->Write);
+        if (split->Diagnostic) copied += bytes;
     }
+    if (split->Diagnostic)
+        InterlockedAdd64(helper ? &split->Store->Coordination.Counts.HelperBytes : &split->Store->Coordination.Counts.CallerBytes, copied);
+}
+static void CopyAsyncChunks(SPLIT* split)
+{
+    for (;;)
+    {
+        const auto index = static_cast<ULONG>(InterlockedIncrement(&split->Next) - 1);
+        if (index >= split->Chunks) return; // Taken by another worker; the split may be complete.
+        const auto start = index * split->Chunk, bytes = min(split->Chunk, split->Bytes - start);
+        QcRamStoreCopy(split->Store, split->Offset + start, split->Buffer + start, bytes, false);
+        if (static_cast<ULONG>(InterlockedIncrement(&split->Copied)) == split->Chunks)
+            split->Done(split->DoneContext); // The caller's hold on the store ends here.
+    }
+}
+static void ReleaseAsync(SPLIT* split)
+{
+    if (InterlockedDecrement(&split->References) == 0) ExFreeToLookasideListEx(split->Adapter->AsyncSplits, split);
 }
 static void WorkerMain(PVOID context)
 {
@@ -80,7 +105,22 @@ static void WorkerMain(PVOID context)
         {
             work = CONTAINING_RECORD(RemoveHeadList(&worker->Queue), WORK, Link);
             // Taken and Helpers change under the queue lock that CopySplit's withdrawal holds.
-            if (work->Kind == WorkHelp) { auto help = CONTAINING_RECORD(work, HELP, Work); help->Taken = TRUE; InterlockedIncrement(&help->Split->Helpers); }
+            if (work->Kind == WorkHelp)
+            {
+                auto help = CONTAINING_RECORD(work, HELP, Work); help->Taken = TRUE;
+                InterlockedIncrement(&help->Split->Helpers);
+                if (help->Split->Diagnostic)
+                {
+                    auto& counts = help->Split->Store->Coordination.Counts;
+                    InterlockedIncrement64(&counts.Taken);
+                    InterlockedOr64(&counts.HelperCpuMask, 1LL << worker->Processor);
+                    if (help->PostedAt)
+                    {
+                        InterlockedAdd64(&counts.TakeTicks, KeQueryPerformanceCounter(nullptr).QuadPart - help->PostedAt);
+                        InterlockedIncrement64(&counts.TakeSamples);
+                    }
+                }
+            }
         }
         KeReleaseSpinLockFromDpcLevel(&worker->Lock);
         const bool found = work != nullptr;
@@ -88,7 +128,12 @@ static void WorkerMain(PVOID context)
         {
             // The help request lives on the submitter's stack; it may be gone after the decrement.
             auto split = CONTAINING_RECORD(work, HELP, Work)->Split;
-            CopyChunks(split); InterlockedDecrement(&split->Helpers); work = nullptr;
+            CopyChunks(split, true); InterlockedDecrement(&split->Helpers); work = nullptr;
+        }
+        else if (found && work->Kind == WorkAsyncHelp)
+        {
+            auto split = CONTAINING_RECORD(work, HELP, Work)->Split;
+            CopyAsyncChunks(split); ReleaseAsync(split); work = nullptr;
         }
         KeLowerIrql(irql);
         if (found)
@@ -127,9 +172,23 @@ void StopWorkers(ADAPTER* adapter)
         ObDereferenceObject(adapter->Workers[i].Thread);
     }
     adapter->WorkerCount = 0;
+    // Every posted help was processed before its worker exited; no split remains.
+    if (adapter->AsyncSplits)
+    {
+        ExDeleteLookasideListEx(adapter->AsyncSplits);
+        ExFreePoolWithTag(adapter->AsyncSplits, Tag);
+        adapter->AsyncSplits = nullptr;
+    }
 }
 void StartWorkers(ADAPTER* adapter)
 {
+    auto splits = static_cast<PLOOKASIDE_LIST_EX>(ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(LOOKASIDE_LIST_EX), Tag));
+    if (splits && !NT_SUCCESS(ExInitializeLookasideListEx(splits, nullptr, nullptr, NonPagedPoolNx, 0, sizeof(SPLIT), Tag, 0)))
+    {
+        ExFreePoolWithTag(splits, Tag);
+        splits = nullptr;
+    }
+    adapter->AsyncSplits = splits; // Null disables asynchronous reads.
     const auto processors = KeQueryActiveProcessorCountEx(0);
     const auto wanted = min(processors, MaxWorkers);
     for (ULONG i = 0; i < wanted; ++i)
@@ -153,6 +212,16 @@ void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR b
 {
     SPLIT split{}; split.Store = store; split.Buffer = buffer; split.Offset = offset; split.Bytes = bytes; split.Write = write;
     split.Chunk = SplitChunk; split.Chunks = (bytes + split.Chunk - 1) / split.Chunk;
+    // Read-only research scope. The held rundown covers every stack-backed helper.
+    split.Diagnostic = !write && QcRamCoordinationBegin(&store->Coordination);
+    if (split.Diagnostic)
+    {
+        const auto sequence = InterlockedIncrement64(&store->Coordination.Counts.Splits);
+        InterlockedAdd64(&store->Coordination.Counts.SplitBytes, bytes);
+        split.Sampled = (sequence & 63) == 1;
+        if (split.Sampled) InterlockedIncrement64(&store->Coordination.Counts.SampledSplits);
+    }
+    LONG64 stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     const auto current = KeGetCurrentProcessorNumberEx(nullptr);
     WORKER* targets[MaxWorkers]{}; ULONG helpers = 0;
     for (ULONG i = 0; i < adapter->WorkerCount && helpers + 1 < split.Chunks; ++i)
@@ -160,17 +229,29 @@ void CopySplit(ADAPTER* adapter, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR b
         auto worker = &adapter->Workers[i];
         if (worker->Processor == current) continue;
         auto help = &split.Help[helpers]; help->Work.Kind = WorkHelp; help->Split = &split;
+        if (split.Sampled) help->PostedAt = KeQueryPerformanceCounter(nullptr).QuadPart;
         Post(worker, &help->Work);
+        if (split.Diagnostic) InterlockedIncrement64(&store->Coordination.Counts.Posted);
         targets[helpers++] = worker;
     }
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.PostTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
     CopyChunks(&split);
+    stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     for (ULONG i = 0; i < helpers; ++i)
     {
         KIRQL irql; KeAcquireSpinLock(&targets[i]->Lock, &irql);
-        if (!split.Help[i].Taken) RemoveEntryList(&split.Help[i].Work.Link);
+        if (!split.Help[i].Taken)
+        {
+            RemoveEntryList(&split.Help[i].Work.Link);
+            if (split.Diagnostic) InterlockedIncrement64(&store->Coordination.Counts.Withdrawn);
+        }
         KeReleaseSpinLock(&targets[i]->Lock, irql);
     }
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.WithdrawTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+    stamp = split.Sampled ? KeQueryPerformanceCounter(nullptr).QuadPart : 0;
     while (ReadNoFence(&split.Helpers)) YieldProcessor();
+    if (stamp) InterlockedAdd64(&store->Coordination.Counts.WaitTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+    if (split.Diagnostic) QcRamCoordinationEnd(&store->Coordination);
 }
 // Direct access (volume filter): split a large copy across idle workers. Raised to
 // DISPATCH_LEVEL as in StartIo, so the request is copied without being preempted.
@@ -181,4 +262,37 @@ void LargeCopy(PVOID context, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR buff
     if (adapter->WorkerCount > 1 && bytes >= 2 * SplitChunk) CopySplit(adapter, store, offset, buffer, bytes, write != FALSE);
     else QcRamStoreCopy(store, offset, buffer, bytes, write != FALSE);
     KeLowerIrql(irql);
+}
+// Asynchronous Direct read (default-off experiment, ramasync.h): the same chunks and
+// helpers as CopySplit, but the submitter returns at once instead of copying and waiting.
+// Helpers receive work on every read, so they stay awake between reads. Workers outlive
+// the request: the store is held by the caller until done runs, and the adapter withdraws
+// every view before stopping its workers.
+BOOLEAN LargeReadAsync(PVOID context, QC_RAM_STORE* store, ULONGLONG offset, PUCHAR buffer, ULONG bytes,
+    QC_RAM_READ_DONE* done, PVOID doneContext)
+{
+    auto adapter = static_cast<ADAPTER*>(context);
+    // At least two helpers on other processors, or splitting buys nothing over inline.
+    if (!adapter->AsyncSplits || adapter->Closing || adapter->WorkerCount < 3 || bytes < 2 * SplitChunk) return FALSE;
+    auto split = static_cast<SPLIT*>(ExAllocateFromLookasideListEx(adapter->AsyncSplits));
+    if (!split) return FALSE;
+    RtlZeroMemory(split, sizeof(*split));
+    split->Store = store; split->Buffer = buffer; split->Offset = offset; split->Bytes = bytes;
+    split->Chunk = SplitChunk; split->Chunks = (bytes + SplitChunk - 1) / SplitChunk;
+    split->Done = done; split->DoneContext = doneContext; split->Adapter = adapter;
+    split->References = 1; // Until every help is posted.
+    KIRQL irql; KeRaiseIrql(DISPATCH_LEVEL, &irql);
+    const auto current = KeGetCurrentProcessorNumberEx(nullptr);
+    ULONG helpers = 0;
+    for (ULONG i = 0; i < adapter->WorkerCount && helpers < split->Chunks; ++i)
+    {
+        auto worker = &adapter->Workers[i];
+        if (worker->Processor == current) continue; // This processor returns to the submitter.
+        auto help = &split->Help[helpers++]; help->Work.Kind = WorkAsyncHelp; help->Split = split;
+        InterlockedIncrement(&split->References);
+        Post(worker, &help->Work);
+    }
+    KeLowerIrql(irql);
+    ReleaseAsync(split);
+    return TRUE;
 }

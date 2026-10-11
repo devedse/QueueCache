@@ -29,6 +29,23 @@ public static class LabDisk
         ?? throw new ArgumentException("File system must be NTFS, ReFS, FAT32 or exFAT.");
 
     public sealed record Layout(char First, char Second, char Raw);
+    public sealed record AttachedIdentity(string? ImagePath, bool LayoutValid);
+
+    /// <summary>Read-only proof of the supported two-labelled-volume plus RAW VHDX layout.</summary>
+    public static async Task<AttachedIdentity> InspectAsync(int diskNumber, CancellationToken token)
+    {
+        if (diskNumber < 0) throw new ArgumentException("Expected a physical disk number.");
+        var json = await PowerShell($"$ErrorActionPreference='Stop'; $d=Get-Disk -Number {diskNumber}; " +
+            "$p=@(Get-Partition -DiskNumber $d.Number | Where-Object Type -ne 'Reserved'); " +
+            "$v=@($p | Get-Volume -ErrorAction SilentlyContinue); " +
+            "[pscustomobject]@{ImagePath=[string]$d.Location;LayoutValid=[bool]($p.Count -eq 3 -and " +
+            "@($v | Where-Object FileSystemLabel -eq 'QC-Lab-1').Count -eq 1 -and " +
+            "@($v | Where-Object FileSystemLabel -eq 'QC-Lab-2').Count -eq 1 -and " +
+            "@($v | Where-Object { $_.FileSystem -eq 'RAW' -or [string]::IsNullOrWhiteSpace($_.FileSystem) }).Count -eq 1 -and " +
+            "$d.FriendlyName -eq 'Msft Virtual Disk' -and $d.Location -like '*.vhdx' -and " +
+            "(Test-Path -LiteralPath $d.Location -PathType Leaf))} | ConvertTo-Json -Compress", token);
+        return System.Text.Json.JsonSerializer.Deserialize<AttachedIdentity>(json) ?? throw new IOException("Missing attached lab identity.");
+    }
 
     public static Layout ParseLetters(string letters)
     {

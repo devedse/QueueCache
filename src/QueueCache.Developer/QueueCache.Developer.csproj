@@ -3,4 +3,7 @@
     <ProjectReference Include="../QueueCache.Management/QueueCache.Management.csproj" />
     <ProjectReference Include="../QueueCache.Operations/QueueCache.Operations.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.EventTracing.Processing.All" Version="1.12.10" />
+  </ItemGroup>
 </Project>

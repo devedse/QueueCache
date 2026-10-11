@@ -4,6 +4,20 @@ namespace QueueCache.Developer.Verification;
 
 public static class CacheExerciseEvidence
 {
+    public static CacheCallerRouting CallerRouting(CacheLayoutSnapshot before, CacheLayoutSnapshot after, long bytes, int backoff)
+    {
+        var first = before.Diagnostics.CallerRouting ?? throw new InvalidDataException("Missing caller routing diagnostics V23.");
+        var last = after.Diagnostics.CallerRouting ?? throw new InvalidDataException("Missing caller routing diagnostics V23.");
+        if (first.Backoff != (ulong)backoff || last.Backoff != (ulong)backoff || bytes <= 0 ||
+            after.State.AcceptedBytes < before.State.AcceptedBytes || after.State.ReadHitBytes < before.State.ReadHitBytes ||
+            after.State.ReadMissBytes < before.State.ReadMissBytes ||
+            checked(after.State.AcceptedBytes - before.State.AcceptedBytes + after.State.ReadHitBytes - before.State.ReadHitBytes +
+                after.State.ReadMissBytes - before.State.ReadMissBytes) < (ulong)bytes)
+            throw new InvalidDataException("Caller experiment changed mode or failed to account for workload bytes.");
+        // These enclosing process boundaries include metadata and startup/close activity,
+        // not an exact DiskSpd score window. Mixed workloads do not claim zero lower I/O.
+        return last.Since(first);
+    }
     /// <summary>A churned file can fit yet no longer be resident. Measure its actual
     /// recovery with disk I/O, while still requiring stable identity and byte accounting.</summary>
     public static void ValidateChurnedRead(CacheLayoutSnapshot before, CacheLayoutSnapshot after, long bytes)

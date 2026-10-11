@@ -18,6 +18,7 @@ struct QC_RAM_VIEW
     QC_RAM_STORE* Store;
     QC_RAM_LARGE_COPY* LargeCopy;
     PVOID LargeCopyContext;
+    QC_RAM_LARGE_READ_ASYNC* LargeReadAsync;
     QC_RAM_BINDING* Binding;    // ViewLock
     BOOLEAN Registered;         // ViewLock; the store may be used only while set.
 };
@@ -36,8 +37,9 @@ void QcRamDirectInitialize()
     ExInitializeFastMutex(&ViewLock);
     InitializeListHead(&Views);
 }
-void QcRamDirectInitialize(QC_RAM_BINDING* binding)
+void QcRamDirectInitialize(QC_RAM_BINDING* binding, PIO_REMOVE_LOCK removeLock)
 {
+    binding->RemoveLock = removeLock;
     ExInitializeRundownProtection(&binding->Rundown);
     ExWaitForRundownProtectionRelease(&binding->Rundown); // Not bound: every acquire fails.
 }
@@ -85,6 +87,7 @@ static void EndLocked(QC_RAM_BINDING* binding, ULONG reason, ULONG detail = 0)
     binding->Store = nullptr;
     binding->LargeCopy = nullptr;
     binding->LargeCopyContext = nullptr;
+    binding->LargeReadAsync = nullptr;
     Release(view);
 }
 void QcRamDirectEnd(QC_RAM_BINDING* binding, ULONG reason)
@@ -95,10 +98,10 @@ void QcRamDirectEnd(QC_RAM_BINDING* binding, ULONG reason)
 }
 
 // ---- Hot path ----
-static bool Decline(QC_RAM_BINDING* binding)
+static QcRamDirectResult Decline(QC_RAM_BINDING* binding)
 {
     InterlockedIncrement64(&binding->Declined);
-    return false;
+    return QcRamDirectResult::Declined;
 }
 static void Copy(QC_RAM_BINDING* binding, QC_RAM_STORE* store, ULONGLONG at, PUCHAR buffer, ULONG length, bool write)
 {
@@ -114,17 +117,49 @@ static bool SignatureIntact(const QC_RAM_BINDING* binding, const QC_RAM_STORE* s
     QcRamStoreCopy(store, binding->Offset + 3, now, sizeof(now), false);
     return RtlEqualMemory(now, binding->Signature, sizeof(now));
 }
-bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
+// Completes a pending Direct read (IRQL <= DISPATCH_LEVEL). The store is not touched after
+// the rundown release, nor the binding after the remove lock release.
+static void FinishPendingRead(PIRP irp)
+{
+    auto binding = static_cast<QC_RAM_BINDING*>(irp->Tail.Overlay.DriverContext[0]);
+    const auto started = reinterpret_cast<LONG64>(irp->Tail.Overlay.DriverContext[1]);
+    const ULONG length = IoGetCurrentIrpStackLocation(irp)->Parameters.Read.Length;
+    QcRamTimingEnd(binding->Store, false, started);
+    ExReleaseRundownProtection(&binding->Rundown);
+    InterlockedIncrement64(&binding->ReadRequests);
+    InterlockedAdd64(&binding->ReadBytes, length);
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    irp->IoStatus.Information = length;
+    IoReleaseRemoveLock(binding->RemoveLock, irp);
+    IoCompleteRequest(irp, IO_NO_INCREMENT);
+}
+// Whether the caller waits for this request anyway, so an early return buys nothing. Not
+// IoIsOperationSynchronous: it dereferences the stack location's file object, which a file
+// system's request to the volume does not carry (found under Driver Verifier).
+static bool CallerWaits(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    if (irp->Flags & (IRP_PAGING_IO | IRP_SYNCHRONOUS_PAGING_IO | IRP_SYNCHRONOUS_API))
+        return true;
+    return stack->FileObject && (stack->FileObject->Flags & FO_SYNCHRONOUS_IO);
+}
+// QC_RAM_READ_DONE: the provider's helper copied the last chunk.
+static void CompleteAsyncRead(PVOID context)
+{
+    auto irp = static_cast<PIRP>(context);
+    QcRamAsyncCompleted(&static_cast<QC_RAM_BINDING*>(irp->Tail.Overlay.DriverContext[0])->Store->Async);
+    FinishPendingRead(irp);
+}
+QcRamDirectResult QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
 {
     const auto access = ReadNoFence(&binding->Access);
     if (!access)
-        return false;
+        return QcRamDirectResult::Declined;
     const auto stack = IoGetCurrentIrpStackLocation(irp);
     const bool write = stack->MajorFunction == IRP_MJ_WRITE;
     const auto offset = stack->Parameters.Read.ByteOffset.QuadPart;
     const ULONG length = stack->Parameters.Read.Length;
     if (write && length >= LargeWriteBytes)
-        return false; // Not a decline: see LargeWriteBytes.
+        return QcRamDirectResult::Declined; // Not counted as a decline: see LargeWriteBytes.
     const auto mdl = irp->MdlAddress;
     if ((write && !(access & QcRamDirectWrites)) || !length || !mdl || mdl->Next || MmGetMdlByteCount(mdl) < length ||
         offset < 0 || static_cast<ULONGLONG>(offset) > binding->Length || length > binding->Length - static_cast<ULONGLONG>(offset))
@@ -147,7 +182,57 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
         {
             if (!write)
             {
+                // ramasync.h: only an asynchronous, non-paging request can return before its
+                // copy. Admission comes last because it counts the read.
+                auto& async = store->Async;
+                const auto asyncMode = length >= LargeCopyBytes ? ReadNoFence(&async.Enabled) : QcRamAsyncOff;
+                const bool asyncOn = asyncMode != QcRamAsyncOff;
+                if (asyncOn && binding->LargeReadAsync && !CallerWaits(irp, stack) &&
+                    KeGetCurrentIrql() == PASSIVE_LEVEL && !ReadNoFence(&store->Coordination.Enabled) && QcRamAsyncAdmit(&async, asyncMode))
+                {
+                    irp->Tail.Overlay.DriverContext[0] = binding;
+                    irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(started);
+                    IoMarkIrpPending(irp); // Before any helper can complete it.
+                    if (binding->LargeReadAsync(binding->LargeCopyContext, store, at, buffer, length, CompleteAsyncRead, irp))
+                        return QcRamDirectResult::Pending; // The read now owns the rundown and remove lock.
+                    QcRamAsyncDeclined(&async);
+                    Copy(binding, store, at, buffer, length, false);
+                    FinishPendingRead(irp);
+                    return QcRamDirectResult::Pending;
+                }
+                // While enabled, a large inline copy tells other submitters the processors are busy.
+                if (asyncOn) InterlockedIncrement(&async.InlineActive);
+                auto& coordination = store->Coordination;
+                const bool diagnostic = QcRamCoordinationBegin(&coordination);
+                LONG64 stamp = 0;
+                if (diagnostic)
+                {
+                    auto& counts = coordination.Counts;
+                    const auto active = InterlockedIncrement64(&counts.Active);
+                    for (auto peak = ReadNoFence64(&counts.PeakActive); active > peak;)
+                    {
+                        const auto prior = InterlockedCompareExchange64(&counts.PeakActive, active, peak);
+                        if (prior == peak) break;
+                        peak = prior;
+                    }
+                    const auto sequence = InterlockedIncrement64(&counts.Started);
+                    if ((sequence & 63) == 1) stamp = KeQueryPerformanceCounter(nullptr).QuadPart;
+                }
                 Copy(binding, store, at, buffer, length, false);
+                if (diagnostic)
+                {
+                    auto& counts = coordination.Counts;
+                    if (stamp)
+                    {
+                        InterlockedAdd64(&counts.DirectTicks, KeQueryPerformanceCounter(nullptr).QuadPart - stamp);
+                        InterlockedIncrement64(&counts.DirectSamples);
+                    }
+                    InterlockedAdd64(&counts.DirectBytes, length);
+                    InterlockedIncrement64(&counts.Completed);
+                    InterlockedDecrement64(&counts.Active);
+                    QcRamCoordinationEnd(&coordination);
+                }
+                if (asyncOn) InterlockedDecrement(&async.InlineActive);
                 served = true;
             }
             else
@@ -181,7 +266,7 @@ bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
     }
     irp->IoStatus.Status = STATUS_SUCCESS;
     irp->IoStatus.Information = length;
-    return true;
+    return QcRamDirectResult::Served;
 }
 void QcRamDirectObserveControl(QC_RAM_BINDING* binding, ULONG code)
 {
@@ -376,6 +461,7 @@ void QcRamDirectBind(QC_RAM_BINDING* binding, PDEVICE_OBJECT lower, const GUID& 
         binding->Store = view->Store;
         binding->LargeCopy = view->LargeCopy;
         binding->LargeCopyContext = view->LargeCopyContext;
+        binding->LargeReadAsync = view->LargeReadAsync;
         binding->Offset = start;
         binding->Length = length - length % view->Store->SectorBytes;
         binding->View = view;
@@ -449,6 +535,7 @@ NTSTATUS QcRamViewControl(PIRP irp)
         view->Store = request->Store;
         view->LargeCopy = request->LargeCopy;
         view->LargeCopyContext = request->LargeCopyContext;
+        view->LargeReadAsync = request->LargeReadAsync;
         view->Registered = TRUE;
         ExAcquireFastMutex(&ViewLock);
         bool duplicate = false;

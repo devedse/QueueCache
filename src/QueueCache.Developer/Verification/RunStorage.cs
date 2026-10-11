@@ -8,7 +8,7 @@ public sealed record VerificationOptions(string Volume, string Suite = "quick", 
     string? SystemInstance = null, long? SystemBytes = null, bool RecoverableVm = false,
     string? OraclePath = null, string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null, int? SoakSeconds = null,
-    bool KeepWorkloads = false);
+    bool KeepWorkloads = false, string? TraceSymbols = null);
 public sealed record CaseResult(string Id, string Status, string Detail, DateTimeOffset Started,
     double Seconds, DiskSpdScore? Score = null);
 
@@ -21,9 +21,9 @@ public sealed class RunStorage
         get;
     }
     public List<CaseResult> Results { get; } = [];
-    public RunStorage(string parent)
+    public RunStorage(string parent, bool campaign = false)
     {
-        DirectoryPath = Path.Combine(Path.GetFullPath(parent), $"QueueCache-Verify-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
+        DirectoryPath = Path.Combine(Path.GetFullPath(parent), $"QueueCache-{(campaign ? "Campaign" : "Verify")}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}");
         Directory.CreateDirectory(DirectoryPath);
     }
     public string PathFor(string name)

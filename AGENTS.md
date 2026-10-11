@@ -1,98 +1,83 @@
 # QueueCache agent instructions
 
-## Keep verification maintainable
+## Documents
 
-- RAM-first design principle and ordered performance/test plan:
-  `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
-  update implementation and verification separately for each item changed.
-  `docs/RAM_FIRST_PERFORMANCE_PLAN.md`. In explicit volatile Fast mode, fitting
-  supported writes must not depend on lower I/O merely for admission. Preserve
-  Strict/explicit durability, capacity backpressure and lifecycle/error semantics.
-  No incidental whole-cache drains for partial writes or harmless observations.
-  Document exceptions and prove the contract with lower-I/O-attempt counters.
+- `docs/DEVELOPMENT.md`: architecture, CLI, build and the documentation map.
+- `docs/TESTING.md`: how to test (host tests, the VM, one-command campaigns,
+  suites, reading results, judging a performance change, the README benchmark).
+  Follow it for every verification run.
+- `docs/PERFORMANCE_FINDINGS.md`: read it before any performance investigation and
+  update it when a result changes a decision. Do not rerun an established
+  experiment merely because its finding was forgotten (its decisions table says
+  when to reopen); repeat relevant regressions when code, environment or
+  measurement contracts change.
+- `docs/KNOWN_ISSUES.md`: current limitations and verification gaps; it ships with
+  the installer. Update it when you fix or find an issue.
+- `docs/history/`: dated reports and the former tracker, not maintained. Add a
+  report there only when it records evidence worth keeping; delete completed plans
+  and handovers instead (Git keeps them). Update existing documents rather than
+  adding new dated plan files.
 
-- For small-write regressions use `--suite write-performance --budget-mib 2048`
-  with the same DiskSpd binary before/after changes. This separate 72-case suite
-  compares fitting 1 GiB files, random Q1/32 and sequential Q1/8, Off/Eager/Idle,
-  and detailed timing off/on. It is not included in `full`; keep its contracts and
-  documentation up to date. Do not confuse process-wide counters with score windows.
+## Cache contract (RAM-first)
 
-- The supported current-boot runner is `qcache developer verify`. Maintain it when
-  changing driver behavior, policies, management APIs or performance diagnostics.
-  Add/regress scenarios in `src/QueueCache.Developer/Verification` and contract tests
-  in `tests/QueueCache.Management.Tests/VerificationRunnerTests.cs`. Do not create
-  another private orchestration script to repeat a supported scenario.
-- Keep orchestration, typed scenarios, process ownership, parsing, and reporting
-  separate. The CLI only binds arguments. There is no `--detach`; launch the normal
-  foreground command externally if necessary. Do not add another test executable
-  or installer. Worker mode uses the same qcache binary.
-- Update the plan version and documentation when a workload/measurement contract
-  changes. Preserve old raw output. Every repetition needs a unique immutable case
-  ID. Never silently turn missing fields into zero, infer loaded-driver identity
-  from a version string, or declare an incomplete matrix passed.
-- Before a run: use an elevated terminal on the test VM, stop competing tests/UI
-  workloads, confirm the intended CI driver is loaded, and use a volume on a clean
-  non-OS physical disk. QueueCache filters volumes (docs/VOLUME_FILTER.md); keep the
-  `volumes`/`trim-cache` suites and `write-tests` on the lab VHDX
-  (`qcache developer lab-disk`), and keep the registration check strict. No existing delay/fault hooks may be armed. The current driver
-  cannot report their original settings; the runner restores its delay to zero.
-- Examples (paths are on the machine running qcache, not the controlling machine):
+In explicit volatile Fast mode, fitting supported writes must not depend on lower
+I/O merely for admission. Preserve Strict and explicit durability, capacity
+backpressure and lifecycle/error semantics. No incidental whole-cache drains for
+partial writes or harmless observations. Document exceptions and prove the contract
+with lower-I/O-attempt counters.
 
-  ```powershell
-  qcache developer verify Q: --suite quick --output C:\QueueCache-Results
-  qcache developer verify Q: --suite flush-interference --repeats 2 --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-  qcache developer verify Q: --suite full --diskspd C:\Tools\DiskSpd\diskspd.exe --output C:\QueueCache-Results
-  qcache developer lab-disk attach C:\QueueCache-Lab\VolumeLab.vhdx
-  qcache developer verify V: --suite volumes --output C:\QueueCache-Results
-  qcache developer verify V: --suite trim-cache --output C:\QueueCache-Results
-  qcache developer verify-status C:\QueueCache-Results\QueueCache-Verify-<run-id>
-  ```
+## Verification rules
 
-- Both **Microsoft DiskSpd and CrystalDiskMark's bundled DiskSpd** are supported in
-  XML mode (tested Microsoft 2.3 and CDM 9.0.3's DiskSpd 2.2). On x64 select
-  Microsoft's `amd64\diskspd.exe` or CDM's `CdmResource\DiskSpd\DiskSpd64.exe`.
-  CDM's recognized two-line score trailer may follow valid XML; do not loosen
-  parsing to swallow arbitrary errors or accept text-mode score exit codes.
-  Keep the same binary/hash when comparing releases. Details and suite scope:
-  `docs/DEVELOPER_VERIFICATION.md`. Do not run a broad matrix when only the focused
-  regression was requested. Results default to a unique subfolder of the current
-  directory; never search unrelated historical folders to assemble a result.
-- Wait for `FINISHED.txt`, then read `status.json`, `SUMMARY.md`, `results.json`
-  and `run.log` (the timestamped console progress/error log). Keep immediate failure
-  reporting and synchronous CLI progress covered by host-safe runner tests; do not
-  replace it with fire-and-forget `Progress<T>` callbacks in the console frontend.
-  Also read raw evidence in that exact run. `MEASURED` is not a performance acceptance
-  verdict. Zero-completion samples have N/A latency. A missing completion marker
-  means interrupted/running, not success. Do not combine incomplete repetitions.
-- Restoration has a separate deadline. If it fails, stop and inspect the recorded
-  evidence. Runs have no overall deadline by default (`--deadline-minutes 0`);
-  preserve per-operation timeouts and `Test N of M` console/file progress. Inspect
-  the recorded
-  telemetry readiness/coverage and `*-interval.json` as well. Never bypass the
-  ready handshake or relax missing samples to get a passing result. Recovery may
-  wait for transient draining, but must never retry faults as if they were drains.
-  Inspect the recorded
-  PIDs, control traces and recovery snapshot. Do not kill arbitrary PowerShell
-  processes, format, reboot, or change driver defaults as automatic recovery.
-  After confirming owned processes stopped, use `qcache developer verify-recover
-  <run-directory>`; it refuses an identity mismatch or live owned process.
-- Run host-safe contract tests with `dotnet run --project
-  tests/QueueCache.Management.Tests -c Release`. For an optional real DiskSpd XML
-  parser smoke check, set `QCACHE_TEST_DISKSPD` to either supported executable first:
-  this creates/deletes only a unique 16 MiB temp workload, never accesses a driver.
-  Run `tests/QueueCache.Desktop.Tests` for frontend changes. Local success is not VM
-  driver verification. Record gaps honestly, including unexercised ordering paths.
+- `qcache developer verify` is the only runner. Maintain it when changing driver
+  behavior, policies, management APIs or performance diagnostics. Scenarios live in
+  `src/QueueCache.Developer/Verification`; contract tests in
+  `tests/QueueCache.Management.Tests` (`VerificationRunnerTests.cs`, and
+  `DiagnosticContracts.cs` for checks that must also run on Linux). Do not create
+  private orchestration scripts for a supported scenario, another test executable
+  or installer, or a `--detach` mode. Keep orchestration, typed scenarios, process
+  ownership, parsing and reporting separate; the CLI only binds arguments; worker
+  mode uses the same `qcache` binary.
+- Contracts: bump `VerificationPlan.Version` and the docs when a workload or
+  measurement contract changes; every repetition has a unique immutable case ID.
+  Never turn missing fields into zero, infer the loaded driver from a version string
+  (check `qcache developer driver loaded` hashes), declare an incomplete matrix
+  passed, bypass the ready handshake or telemetry coverage, or loosen DiskSpd XML
+  parsing to swallow errors (CrystalDiskMark's recognized two-line trailer is the
+  only accepted extra).
+- Before a run, use the checklist in `docs/TESTING.md` section 2: elevated
+  terminal, intended driver loaded, Driver Verifier off for performance, Everything
+  (and its service) and Steam closed and restored afterwards, no competing
+  workloads, a clean non-OS disk, the lab VHDX for `volumes`/`trim-cache`/
+  `write-tests`, no armed delay/fault hooks, strict registration check.
+- Scope: compare a concrete change with the smallest suite or
+  `--campaign experiment` on the same build; `focused` adds 81 retained correctness
+  checks; run `release-performance` once on the final build. Do not run a broad
+  matrix when only a focused regression was asked for. Keep the same DiskSpd
+  binary when comparing; never assemble a result from unrelated run folders.
+- Results: wait for `FINISHED.txt`, then read `status.json`, `SUMMARY.md`,
+  `results.json`, `run.log` and the raw evidence of that exact run. `MEASURED` is
+  not a performance verdict; a missing marker means interrupted or running;
+  zero-completion samples have N/A latency; never combine incomplete repetitions.
+  Keep immediate failure reporting and synchronous CLI progress covered by
+  host-safe tests (no fire-and-forget `Progress<T>` in the console frontend).
+- Restoration has its own deadline; runs have no overall deadline by default.
+  If restoration fails, stop and inspect the recorded PIDs, control traces and
+  recovery snapshot. Recovery may wait for draining but never retries faults as if
+  they were drains. Do not kill arbitrary processes, format, reboot or change
+  driver defaults as automatic recovery; use `qcache developer verify-recover
+  <run>` after confirming owned processes stopped.
+- Host tests: `dotnet run --project tests/QueueCache.Management.Tests -c Release`
+  (and `tests/QueueCache.Desktop.Tests` for frontend changes). Local success is
+  not VM driver verification; record gaps honestly, including unexercised paths.
+- Long runs from the agent runner: `dam-tools run-job` launches and validates an
+  owned job, but automatic wake does not reach Claude Code yet (DeveAgentManager
+  issue #5); wait on the job instead of assuming a message.
 
 ## README benchmarks and screenshots
 
-- CrystalDiskMark numbers and screenshots: follow `docs/BENCHMARKING.md`. Above
-  all, run CrystalDiskMark at normal priority (a scheduled task defaults to below
-  normal and halved cached reads) and run `qcache policy drop-clean` before each run.
-  Since 0.4.431.1 a cleared cache refills in order (chunk allocator); RAM-hit copies
-  use prefetch and in-chunk coalescing by default (`copy-flags`, 0.4.434.1). Use the
-  `cache-layout*` suites for layout questions and record copy flags
-  (`docs/CACHE_LAYOUT_INVESTIGATION_20261008.md`). Keep NTFS last-access updates off
-  on the test VM (`fsutil behavior set disablelastaccess 1`; see `docs/BENCHMARKING.md`).
+- CrystalDiskMark numbers and screenshots: `docs/TESTING.md` section 7 (normal
+  priority, `qcache policy drop-clean` before each run, last-access updates off,
+  background indexers closed, Verifier off).
 - App screenshots are generated, never edited: `dotnet run --project
   tests/QueueCache.Desktop.Tests -c Release -- --readme docs/images`.
 
@@ -102,7 +87,6 @@
   scoped fixes, proportionate tests, and commits/pushes to their master branch
   without another confirmation. This does not authorize destructive VM recovery
   or unrelated changes; report blockers and preserve evidence.
-
 - GitHub Actions owns build-version increments. Do not manually bump versions.
 - Personal research notes, credentials, VM keys and one-off evidence stay private.
   Preserve unrelated uncommitted research documents. `.lab/`, downloaded tools,

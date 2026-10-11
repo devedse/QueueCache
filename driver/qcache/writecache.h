@@ -134,6 +134,16 @@ struct QC_DIAGNOSTICS
     // V20: QcLabReadRecall in effect (readrecall.h), read misses kept as recent because their
     // block was used more recently than the oldest used block, and history matches not kept.
     ULONGLONG ReadRecall, RecalledFills, RecallDenied;
+    // V21: submitted driver-owned whole-range reads. CachedBytes measures known
+    // sectors pinned before submission, including dirty data later overlaid.
+    // Attempts include lower failures; allocation failures submit nothing.
+    ULONGLONG StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
+    // V22: reserved prefix for the rejected RAM queue experiment, always zero.
+    ULONGLONG RamReadQueueMode, RamReadQueued, RamReadCompleted, RamReadCancelled;
+    ULONGLONG RamReadInline, RamReadQueueFull, RamReadFallback;
+    // V23: caller-routing candidates and mutually exclusive first-decline reasons.
+    ULONGLONG CallerBackoff, CallerCandidates, CallerControls, CallerQueued;
+    ULONGLONG CallerWorkerActive, CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -154,7 +164,13 @@ static constexpr ULONG QcDiagnosticsV16Size = 880;
 static constexpr ULONG QcDiagnosticsV17Size = 896;
 static constexpr ULONG QcDiagnosticsV18Size = 944;
 static constexpr ULONG QcDiagnosticsV19Size = 952;
-static_assert(sizeof(QC_DIAGNOSTICS) == 976);
+static constexpr ULONG QcDiagnosticsV20Size = 976;
+static constexpr ULONG QcDiagnosticsV21Size = 1008;
+static constexpr ULONG QcDiagnosticsV22Size = 1064;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1136);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadRecall) == QcDiagnosticsV19Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CopyFlags) == QcDiagnosticsV18Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, LayoutMeasurements) == QcDiagnosticsV17Size);
@@ -264,7 +280,12 @@ enum : ULONG
     QcLabCopyFlags,
     // Lab: Value 1 (default) = read recall (readrecall.h), 0 = the earlier bimodal insertion.
     // Changes only where a read miss enters the clean list; clears the history. Runtime only.
-    QcLabReadRecall
+    QcLabReadRecall,
+    // Reserved action for the rejected RAM queue: 0 no-op; 1/2 unsupported.
+    QcLabRamReadQueue,
+    // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
+    // ownership checks still apply to every request. Runtime only.
+    QcLabCallerBackoff
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -412,6 +433,7 @@ struct QC_CACHE
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
+    volatile LONG64 StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
     volatile LONG64 LowerPagingForwardedReads, LowerOtherReads;
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
@@ -422,6 +444,9 @@ struct QC_CACHE
     KSPIN_LOCK PagingLock;
     QC_PAGING_READ PagingReads[QcPagingReadSlots];
     ULONG PagingQueued;
+    volatile LONG CallerBackoff;
+    volatile LONG64 CallerCandidates, CallerControls, CallerQueued, CallerWorkerActive;
+    volatile LONG64 CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
     ULONGLONG PagingSequence;
     BOOLEAN PagingStop;
     KEVENT PagingWork, PagingDone;

@@ -75,6 +75,50 @@ internal static class CacheExerciseTests
         Check(CacheExercisePlan.Cases(recall with { CaseFilter = "scan-recall1" }).Count == 3, "Recall cases can be selected by ID.");
         Reject(() => VerificationPlan.Validate(recall with { BudgetMiB = 512 }));
         Check(CacheExercisePlan.Cases(options with { Suite = "quick" }).Count == 0, "New exercises are opt-in.");
+        var caller = options with { Suite = "caller-backoff" };
+        VerificationPlan.Validate(caller);
+        var callerCases = CacheExercisePlan.Cases(caller);
+        Check(callerCases.Count == 24 && callerCases.Select(c => c.Id).Distinct().Count() == 24 &&
+            callerCases.All(c => c.CallerBackoff is 0 or 256 && !c.BackgroundDrain && c.Recall == -1),
+            "caller cooldown comparison is complete, opt-in, and keeps other policies fixed");
+        Check(callerCases.GroupBy(c => (c.Workload, c.QueueDepth, c.CallerBackoff)).All(g => g.Count() == 3),
+            "caller mode and shape pairs have three repetitions");
+        Check(callerCases.Take(2).Select(c => c.CallerBackoff).SequenceEqual([256, 0]) &&
+            callerCases.Skip(8).Take(2).Select(c => c.CallerBackoff).SequenceEqual([0, 256]),
+            "caller mode and shape order alternate");
+        Check(CacheExercisePlan.Cases(caller with { CaseFilter = "mixed" }).Count == 12,
+            "focused mixed caller selection keeps both modes and all repetitions");
+        Reject(() => VerificationPlan.Validate(caller with { CaseFilter = "missing" }));
+        var priorityOptions = options with { Suite = "priority-cost" };
+        VerificationPlan.Validate(priorityOptions);
+        var priorityCases = CacheExercisePlan.Cases(priorityOptions);
+        Check(priorityCases.Count == 36 && priorityCases.Select(c => c.Id).Distinct().Count() == 36 &&
+            priorityCases.All(c => c.Priority is not null && c.CallerBackoff == -1 && c.Recall == -1 && !c.BackgroundDrain),
+            "independent priorities compare only fitting resident reads, without changing caller/recall/drain policy");
+        Check(priorityCases.GroupBy(c => (c.Workload, c.QueueDepth, c.Priority)).All(g => g.Count() == 3),
+            "each priority/shape has three complete repetitions");
+        Check(priorityCases.Take(4).Select(c => c.Priority).SequenceEqual(Enum.GetValues<ReadPriority>().Select(p => (ReadPriority?)p)) &&
+            priorityCases.Skip(12).Take(4).Select(c => c.Priority).SequenceEqual(Enum.GetValues<ReadPriority>().Reverse().Select(p => (ReadPriority?)p)),
+            "priority and shape order reverse in the second repetition");
+        Check(CacheExercisePlan.Cases(priorityOptions with { CaseFilter = "read-q8" }).Count == 12,
+            "priority Q8 selection keeps every control and repetition");
+        var affinityOptions = options with { Suite = "priority-affinity" };
+        VerificationPlan.Validate(affinityOptions);
+        var affinityCases = CacheExercisePlan.Cases(affinityOptions);
+        Check(affinityCases.Count == 36 && affinityCases.Select(c => c.Id).Distinct().Count() == 36 &&
+            affinityCases.GroupBy(c => (c.Workload, c.QueueDepth, c.Priority, c.DisableAffinity)).All(g => g.Count() == 3),
+            "CPU priority and affinity form an independent 36-window factorial");
+        Check(affinityCases.All(c => c.Priority is ReadPriority.Normal or ReadPriority.CpuBelowNormal &&
+            c.Recall == -1 && c.CallerBackoff == -1 && c.Streams == 1 && !c.BackgroundDrain), "affinity controls preserve policy and memory/I/O hints");
+        var affinityCampaign = VerificationCampaignPlan.Create(new(options with { Suite = "quick" }, "focused", "W:", FocusSuite: "priority-affinity"));
+        Check(affinityCampaign.Single(p => p.Options.Suite == "priority-affinity").Role == CampaignTargetRole.NtfsLab,
+            "cache priority/affinity measurements run on the caller-controlled NTFS lab volume");
+        DiagnosticContracts.Run();
+        new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 5).Validate();
+        new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.BelowNormal, 2).Validate();
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.High, 5).Validate());
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 0).Validate());
+        Reject(() => new ProcessScheduling(System.Diagnostics.ProcessPriorityClass.Normal, 6).Validate());
 
         // A completed run removes only its own workload folder and that folder's sector-oracle sibling.
         var cleanupRoot = Directory.CreateTempSubdirectory("qc-cleanup-").FullName;
@@ -119,6 +163,13 @@ internal static class CacheExerciseTests
         var diagnostics = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { Attribution = JsonSerializer.Deserialize<CacheAttribution>("{}")! };
         var before = new CacheLayoutSnapshot(state, performance, diagnostics);
         var after = before with { State = state with { AcceptedBytes = 4096, ReadHitBytes = 4096 } };
+        var callerFirst = before with { Diagnostics = diagnostics with { CallerRouting = new(256, 10, 0, 0, 0, 0, 0, 0, 0) } };
+        var callerLast = after with { Diagnostics = diagnostics with { CallerRouting = new(256, 20, 0, 0, 0, 0, 0, 5, 0) } };
+        Check(CacheExerciseEvidence.CallerRouting(callerFirst, callerLast, 8192, 256).BackoffRequests == 5,
+            "caller measurement accounts for both read and write bytes and reports cooldown declines");
+        Reject(() => CacheExerciseEvidence.CallerRouting(before, callerLast, 4096, 256));
+        Reject(() => CacheExerciseEvidence.CallerRouting(callerFirst, callerLast, 4096, 0));
+        Reject(() => CacheExerciseEvidence.CallerRouting(callerFirst, callerLast, 8193, 256));
         CacheExerciseEvidence.Validate(before, after, 4096, "write", false);
         CacheExerciseEvidence.Validate(before, after, 4096, "read", false);
         var recallState = state;

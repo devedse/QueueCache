@@ -9,7 +9,12 @@ public enum RamDiskAction : uint
     Statistics, SetTiming,
     /// <summary>Reply followed by <see cref="RamPhysicalMap"/>; offset = estimated physical page span. Offered with PhysicalMapSupported.</summary>
     PhysicalMap,
-    DeveloperCreateAllocationFailure = 0x100
+    DeveloperCreateAllocationFailure = 0x100,
+    Coordination = 0x101, SetCoordination = 0x102,
+    /// <summary>Reply followed by <see cref="RamAsyncReads"/>.</summary>
+    AsyncReads = 0x103,
+    /// <summary>Offset: <see cref="RamAsyncMode"/> (adaptive at creation); a nonzero mode resets counters and fails while any is in flight.</summary>
+    SetAsyncReads = 0x104
 }
 [Flags]
 public enum RamDiskFlags : uint

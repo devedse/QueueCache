@@ -179,6 +179,22 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->ReadRecall = static_cast<ULONG>(InterlockedCompareExchange(&c->ReadRecall, 0, 0));
     output->RecalledFills = InterlockedCompareExchange64(&c->RecalledFills, 0, 0);
     output->RecallDenied = InterlockedCompareExchange64(&c->RecallDenied, 0, 0);
+    output->StagedReadRequests = InterlockedCompareExchange64(&c->StagedReadRequests, 0, 0);
+    output->StagedReadBytes = InterlockedCompareExchange64(&c->StagedReadBytes, 0, 0);
+    output->MixedStagedReads = InterlockedCompareExchange64(&c->MixedStagedReads, 0, 0);
+    output->StagedReadCachedBytes = InterlockedCompareExchange64(&c->StagedReadCachedBytes, 0, 0);
+    // V22 prefix is retained for ABI compatibility; the rejected queue has no engine.
+    output->RamReadQueueMode = output->RamReadQueued = output->RamReadCompleted = output->RamReadCancelled = 0;
+    output->RamReadInline = output->RamReadQueueFull = output->RamReadFallback = 0;
+    output->CallerBackoff = static_cast<ULONG>(InterlockedCompareExchange(&c->CallerBackoff, 0, 0));
+    output->CallerCandidates = InterlockedCompareExchange64(&c->CallerCandidates, 0, 0);
+    output->CallerControls = InterlockedCompareExchange64(&c->CallerControls, 0, 0);
+    output->CallerQueued = InterlockedCompareExchange64(&c->CallerQueued, 0, 0);
+    output->CallerWorkerActive = InterlockedCompareExchange64(&c->CallerWorkerActive, 0, 0);
+    output->CallerOwnerActive = InterlockedCompareExchange64(&c->CallerOwnerActive, 0, 0);
+    output->CallerOffloaded = InterlockedCompareExchange64(&c->CallerOffloaded, 0, 0);
+    output->CallerBackoffRequests = InterlockedCompareExchange64(&c->CallerBackoffRequests, 0, 0);
+    output->CallerProbes = InterlockedCompareExchange64(&c->CallerProbes, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
     output->LowerPagingForwardedWrites = InterlockedCompareExchange64(&c->LowerPagingForwardedWrites, 0, 0);
     output->LowerPagingForwardedReads = InterlockedCompareExchange64(&c->LowerPagingForwardedReads, 0, 0);
@@ -725,7 +741,7 @@ static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService)
 // its read runs, or map one page twice. Returns null (read nothing) when the
 // buffer or request cannot be allocated; the caller then forwards the original
 // request and keeps nothing. *status: the lower read's result.
-static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, bool allowReadService, NTSTATUS* status)
+static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, ULONGLONG cachedBytes, bool allowReadService, NTSTATUS* status)
 {
     if (length > QcStagedReadMaxBytes)
         return nullptr;
@@ -743,6 +759,15 @@ static PUCHAR StagedRead(QC_CACHE* c, LONGLONG offset, ULONG length, bool allowR
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoSetCompletionRoutine(irp, RetainCompletion, &completed, TRUE, TRUE, TRUE);
+    // Record attempted traffic only after both allocations succeeded. These live
+    // lifetime counters are independent of opt-in timing and lower completion.
+    InterlockedIncrement64(&c->StagedReadRequests);
+    InterlockedAdd64(&c->StagedReadBytes, length);
+    if (cachedBytes)
+    {
+        InterlockedIncrement64(&c->MixedStagedReads);
+        InterlockedAdd64(&c->StagedReadCachedBytes, cachedBytes);
+    }
     QcCacheRecordLowerAttempt(c, IRP_MJ_READ);
     CallLowerAndWait(c, irp, IRP_MJ_READ, &completed, allowReadService);
     *status = irp->IoStatus.Status;
@@ -1222,6 +1247,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->Performance.Frequency = frequency.QuadPart;
     c->Options = QcDefaultOptions();
     c->CallerPath = QcDefaultCallerPath;
+    c->CallerBackoff = QcCallerPathWorkerWindow;
     c->Instance = InterlockedIncrement64(&NextInstance);
     InterlockedExchange64(&SharedMemoryBudget.LimitBytes, static_cast<LONG64>(MemoryLimit()));
     // A disk-class upper filter can accidentally be installed ABOVE partmgr.
@@ -1683,6 +1709,18 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             InterlockedExchange(&c->ReadRecall, static_cast<LONG>(command.Value));
             ClearRecall(c);
         }
+        break;
+    case QcLabRamReadQueue:
+        // ABI reservation for the rejected 0.4.503.1 scheduling experiment.
+        // Mode 0 remains a harmless reset; activating either removed strategy is unsupported.
+        if (command.BudgetBytes || command.Value > 2) status = STATUS_INVALID_PARAMETER;
+        else if (command.Value) status = STATUS_NOT_SUPPORTED;
+        break;
+    case QcLabCallerBackoff:
+        if (command.Value > QcCallerPathWorkerWindow || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            InterlockedExchange(&c->CallerBackoff, static_cast<LONG>(command.Value));
         break;
     case QcLabDelay:
         if (command.Value > 2000)
@@ -2351,13 +2389,28 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     PUCHAR staging = nullptr;
     const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
+    ULONGLONG stagedCachedBytes = 0;
+    if (keepMiss && length <= QcStagedReadMaxBytes)
+    {
+        // Only staging candidates scan for accounting. Fully resident reads and
+        // writes keep their existing hot paths. Mutex and the pins above protect
+        // this pre-submission snapshot; Filling bytes are not known yet.
+        for (auto block = firstBlock; block < end; block += Chunk)
+        {
+            const auto index = FindSlot(c, block);
+            if (index == NoSlot || c->Slots[index].Filling) continue;
+            const auto from = max(start, block), to = min(end, block + Chunk);
+            stagedCachedBytes += QcValidBytes(c->Slots[index].ValidSectors &
+                QcSectorMask(static_cast<ULONG>(from - block), static_cast<ULONG>(to - from)));
+        }
+    }
     if (!full)
     {
         c->Performance.Phase = QcLowerReadPhase;
         Publish(c);
         ReleaseCache(c);
         if (keepMiss)
-            staging = StagedRead(c, start, length, allowReadService, &status);
+            staging = StagedRead(c, start, length, stagedCachedBytes, allowReadService, &status);
         if (staging)
         {
             if (NT_SUCCESS(status))

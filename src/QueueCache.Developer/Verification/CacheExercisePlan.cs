@@ -2,13 +2,14 @@ namespace QueueCache.Developer.Verification;
 
 /// <summary>Recall: cache-recall's QcLabReadRecall mode for the case (0 bimodal insertion, 1 read recall); -1 elsewhere.</summary>
 public sealed record CacheExerciseCase(string Id, string Workload, int Streams, int QueueDepth,
-    bool BackgroundDrain, int MapIntervalMs, int Seconds, int Repeat, int Recall = -1);
+    bool BackgroundDrain, int MapIntervalMs, int Seconds, int Repeat, int Recall = -1, int CallerBackoff = -1, ReadPriority? Priority = null, bool DisableAffinity = false);
 public sealed record CacheExerciseTarget(string Name, int MiB);
+public enum ReadPriority { Normal, CpuBelowNormal, IoLow, MemoryLow }
 
 /// <summary>Focused workloads; the existing write-performance matrix remains unchanged.</summary>
 public static class CacheExercisePlan
 {
-    public static bool Contains(string suite) => suite is "cache-concurrency" or "cache-sustained" or "cache-map-cost" or "cache-recall";
+    public static bool Contains(string suite) => suite is "cache-concurrency" or "cache-sustained" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity";
 
     /// <summary>cache-recall files: stale data larger than the cache, a fitting file that is read again,
     /// a hot set and a scan larger than the cache (read once, then repeated as a loop).</summary>
@@ -35,6 +36,40 @@ public static class CacheExercisePlan
         void Add(string work, int streams, int depth, bool drain, int polling, int seconds, int repeat) =>
             cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-s{streams}-q{depth}-drain{drain}-map{polling}",
                 work, streams, depth, drain, polling, seconds, repeat));
+        if (options.Suite == "caller-backoff")
+        {
+            var shapes = new[] { ("mixed", 1), ("mixed", 8), ("random-read", 1), ("read", 8) };
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+            foreach (var backoff in repeat % 2 == 1 ? new[] { 256, 0 } : [0, 256])
+                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-backoff{backoff}",
+                    work, 1, depth, false, 0, options.DurationSeconds, repeat, CallerBackoff: backoff));
+            return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+        }
+        if (options.Suite == "priority-affinity")
+        {
+            var shapes = new[] { ("read", 1), ("read", 8), ("random-read", 1) };
+            var variants = new[] { (ReadPriority.Normal, false), (ReadPriority.Normal, true),
+                (ReadPriority.CpuBelowNormal, false), (ReadPriority.CpuBelowNormal, true) };
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+            foreach (var (priority, unbound) in repeat % 2 == 1 ? variants : variants.Reverse())
+                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-priority{priority}-affinity{!unbound}",
+                    work, 1, depth, false, 0, options.DurationSeconds, repeat,
+                    Priority: priority, DisableAffinity: unbound));
+            return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+        }
+        if (options.Suite == "priority-cost")
+        {
+            var shapes = new[] { ("read", 1), ("read", 8), ("random-read", 1) };
+            var priorities = Enum.GetValues<ReadPriority>();
+            for (var repeat = 1; repeat <= options.Repeats; repeat++)
+            foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+            foreach (var priority in repeat % 2 == 1 ? priorities : priorities.Reverse())
+                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-priority{priority}",
+                    work, 1, depth, false, 0, options.DurationSeconds, repeat, Priority: priority));
+            return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+        }
         if (options.Suite == "cache-recall")
         {
             // Alternate both the workload and the mode order between repetitions.

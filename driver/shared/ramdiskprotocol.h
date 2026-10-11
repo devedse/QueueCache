@@ -19,7 +19,16 @@ enum QC_RAM_ACTION : ULONG
     QcRamPhysicalMap,
     // Request-local test: Offset is the physical slab count after which this NEW creation fails.
     // No hook survives the request; no existing disk is targeted. Same administrator authorization as Create.
-    QcRamDeveloperCreateAllocationFailure = 0x100
+    QcRamDeveloperCreateAllocationFailure = 0x100,
+    // Versioned per-resource research payload; no existing reply/flag changes.
+    QcRamCoordination = 0x101,
+    // Offset 0/1 disables/enables diagnostics; enable resets counters after rundown.
+    QcRamSetCoordination = 0x102,
+    // Reply is QC_RAM_REQUEST followed by QC_RAM_ASYNC_DATA (ramasync.h).
+    QcRamAsyncReads = 0x103,
+    // Offset: QC_RAM_ASYNC_MODE for asynchronous large Direct reads (adaptive at creation).
+    // A nonzero mode resets the counters and fails with STATUS_DEVICE_BUSY while any is in flight.
+    QcRamSetAsyncReads = 0x104
 };
 enum QC_RAM_FLAGS : ULONG
 {
