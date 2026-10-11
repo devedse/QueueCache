@@ -69,9 +69,10 @@ with lower-I/O-attempt counters.
 - Host tests: `dotnet run --project tests/QueueCache.Management.Tests -c Release`
   (and `tests/QueueCache.Desktop.Tests` for frontend changes). Local success is
   not VM driver verification; record gaps honestly, including unexercised paths.
-- Long runs from the agent runner: `dam-tools run-job` launches and validates an
-  owned job, but automatic wake does not reach Claude Code yet (DeveAgentManager
-  issue #5); wait on the job instead of assuming a message.
+- Long runs from the agent runner: use the harness's built-in background tasks
+  whenever it supports them, then read the run folder and `verify-completion`.
+  Use `dam-tools run-job` only when the harness has no built-in background-job
+  support. Long runtimes, restart survival and validation needs are not exceptions.
 
 ## README benchmarks and screenshots
 
