@@ -625,44 +625,19 @@ policy/pressure checks, preparation and restoration explain much of the remainin
 time. Tool/bootstrap failures and engineering/CI time remain separate from these
 completed measurements.
 
-## What to do next and when to repeat tests
+## Current decisions and when to repeat tests
 
-Current execution/closure instructions are in
-[PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md).
-The bounded investigation completed with no additional acceptable speedup found.
-Plan 117 implements the coordination suite and `experiment` profile. Candidate
-suites were not implemented because the diagnostic gate selected no candidate.
-The finalization record below preserves the measurements and remaining live
-Manager wake gap; that gap is independent of the completed performance diagnosis.
-
-User prioritization, 2026-10-11: the measured low-priority/affinity interaction is
-documented and further diagnosis is parked. It explains a benchmark setup
-sensitivity; these results do not establish a normal-priority product regression
-or how often ordinary applications encounter it. Keep normal-priority benchmark
-launches. Dedicated 100 ms Desktop cost measurement is removed from the active
-backlog at the user's request; no new rendering-cost claim follows from that
-decision. Focus on concrete RAM candidates with small maintained comparisons and
-affected correctness checks. Reserve broad regression/write/sustained testing
-for one final campaign after a candidate is retained, then inspect its combined
-report. The existing `focused` campaign includes 81 correctness checks; a direct
-maintained suite avoids that extra scope when it is not relevant. Preserve the
-chosen suite's byte/identity/telemetry/restoration guards and repeat affected
-checks if later code changes or failures require them.
-
-| Order | Next step | Result-driven action |
+| Topic | Decision | Reopen when |
 |---|---|---|
-| 1 | Close request-concurrency/helper research | Plan 117 measures the remaining overlap, participation and handoff facts in nine windows. Q8 copy peak is one; helpers copy 74.60% and only 0.64% of posts are unused. No bounded copy-preserving target optimization is justified. Retain synchronous split reads; no further automatic research round. |
-| 2 | Keep missing-span work closed for the tested churn shapes | Accounting completed: weighted overlap is 0.788% mixed / 0.449% recovery, no staged Q8 reads. Reopen for representative evidence of material waste in other shapes, then quantify fragmentation and merge overhead. |
-| 3 | Retain completed partial-read, paging, policy, pressure and ordering evidence | All 81 inner checks pass in five independently restored runs. Repeat affected checks for future code changes; no lifecycle qualification is needed for the removed queue engine. |
-| 4 | Use the [single-command campaigns](PERFORMANCE_CAMPAIGN_PLAN.md); qualify live Manager delivery separately | Plan 117's one-phase experiment finishes and restores in 273.02 s, then the real controller validates its event. One independent smoke also passes in 78.18 s. No actual automatic wake was observed while the agent remained busy; deployment/idle delivery qualification remains an external integration gap. No performance rerun is needed for that gap. |
-| 5 | Preserve the native optimization gate | B3 supplies the missing counters but establishes no practical safe target improvement, so candidate screen, controls and broad release campaign are skipped under their gates. Future reopening requires new evidence or a new user request. Missing-span, selective caller, priority and UI work remain parked. No promised single-reader 42 GB/s. |
-
-The reviewed [continuation plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review)
-sets the implementation order, proposed acceptance thresholds, completion-integration
-checks and run budget. Further cache priority/affinity diagnosis and dedicated
-100 ms Desktop cost testing are parked under the user scope above.
-The plan-116 results below record actual subsequent
-measurements; no new production optimization is accepted.
+| Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
+| Inline split RAM-disk reads | Retained for queue depth 1, several submitters, paging and synchronous callers. | As above. |
+| Shared whole-read queue (and the two earlier whole-read offloads) | Removed: each gave a whole 1 MiB read to one worker. | Not as such. |
+| Caller backoff | 256. A selective NTFS/ReFS policy is closed without an experiment: best measured gain +5.26% (NTFS mixed Q8), +3.79% (ReFS), at the 5% bar, while touching ordering/flush paths. | New workload evidence of a material gain. |
+| Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
+| Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
+| 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
+| Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
+| Automatic agent wake for owned jobs | Implemented and validated up to delivery; not delivered to this Claude Code conversation (DeveAgentManager issue #5). | Manager fix. |
 
 For a missing-span experiment, first record how many missing runs each partly
 cached request contains. Start with a runtime default-off implementation using
@@ -684,13 +659,6 @@ gate and append attribution for the new choice. Alternate modes on both NTFS and
 ReFS, including transitions between small mixed and large reads; a gain restricted
 to one shape is insufficient if it damages the next workload. The current global
 zero-backoff experiment is not a qualified request-size policy.
-
-For RAM-disk coordination, use sampled/context-switch attribution to select one
-specific handoff/wake/poll change. Keep existing synchronous split reads as the
-same-build control; the retired queue is evidence to learn from, not a candidate
-to re-enable without a different measured mechanism. Small/Q1/four-reader controls
-and withdrawal/cancellation/stop checks precede acceptance. Priority changes to
-user programs or unconditional driver boosts are not part of these plans.
 
 Do not repeat an established experiment merely because its result was forgotten.
 Repeat a relevant regression when native/runner behavior, hardware, power/CPU
@@ -945,7 +913,7 @@ process records and nine readiness files. The real controller validated success
 and failure events without rerunning work for delivery. Live Manager wake remains
 unverified until the new service/helper is deployed.
 
-## Finalization: request overlap and helper coordination, 2026-10-11
+## Finalization diagnostic: request overlap and helper coordination, 2026-10-11 (historical)
 
 **Final performance outcome: no additional acceptable speedup found in this
 bounded investigation.** The existing ordered allocator, bounded RAM-cache

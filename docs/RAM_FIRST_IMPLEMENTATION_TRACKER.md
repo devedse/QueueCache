@@ -5,7 +5,7 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**PR #9 completion, 2026-10-11:** plan in [PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md).
+**PR #9 completion, 2026-10-11:** results in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9); the completion plan and earlier handoffs were folded into it and removed (git history keeps them).
 Implementation: asynchronous split RAM-disk reads (`1eab076`, fixes `ef3c6de`,
 revision and default adaptive mode `21f02bf`/`5afcef4`/`87cc65e`), plans 118
 (`ram-read-async`) and 119 (`ram-read-async-lifecycle`), lean `performance` /
@@ -3308,7 +3308,7 @@ dirty/in-flight/errors zero, saved profiles unchanged, original resource IDs,
 detached owned NTFS lab and installed session-1 tray PID 7624. Intended signed
 568 remains loaded. No README benchmark rerun or PR merge; PR #9 remains draft.
 
-Historical plan checkpoint: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
+Historical plan checkpoint: `PERFORMANCE_FINALIZATION_HANDOFF.md` (removed; see git history)
 was the execution plan; its completed status table and closure now take precedence.
 Original implementation: documentation only; proposed one
 missing-fact diagnostic, one candidate plus at most one justified revision, narrow
@@ -3355,10 +3355,10 @@ Continuation review, 2026-10-10:
 
 | Item | Implementation | Verification |
 |---|---|---|
-| Findings review and ordered continuation plan | Updated [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md#continuation-plan-after-findings-review): finish external completion delivery alongside focused RAM attribution; gate one copy-preserving experiment on evidence; keep priority/affinity, UI cost and caller policy separate. Corrected the stale statement that campaign commands were unavailable. Missing-span reads remain deferred. | Reviewed recorded matched comparisons and current Direct completion/provider helper source. DiskSpd affinity controls did not vary provider helper CPU assignments. Documentation-only review; no new benchmark or native implementation is claimed. |
+| Findings review and ordered continuation plan | Updated follow-up plan (`PERFORMANCE_FOLLOWUP_PLAN_20261010.md`, removed; see git history): finish external completion delivery alongside focused RAM attribution; gate one copy-preserving experiment on evidence; keep priority/affinity, UI cost and caller policy separate. Corrected the stale statement that campaign commands were unavailable. Missing-span reads remain deferred. | Reviewed recorded matched comparisons and current Direct completion/provider helper source. DiskSpd affinity controls did not vary provider helper CPU assignments. Documentation-only review; no new benchmark or native implementation is claimed. |
 | Next RAM attribution and conditional experiment | Planned; actual concurrency, useful copy work and helper handoff/withdrawal costs need isolation before choosing a change. | Not run. Existing 30 RAM windows and 81 retained-behavior checks are preserved; new scheduling/lifetime code requires its own performance and lifecycle qualification. |
 | External Manager delivery | Planned outside the runner; requires supported process-completion/wake integration with durable deduplication and reconnect handling. | Not delivered. Qualify controller outcomes with fixtures and one short VM smoke; runner completion alone does not prove agent wake-up. |
-| Implementation handoff for the next agent | Added [PERFORMANCE_AGENT_HANDOFF.md](PERFORMANCE_AGENT_HANDOFF.md), linked from AGENTS and the follow-up plan. Specifies exact component changes, proposed suite counts, commands, tests, conditional optimization gates, external Manager dependency and final reporting. | Cross-checked against current runner/worker forwarding, suite/filter/role validation, native copy/caller paths and Desktop sampling. `dam-tools --help` still exposes only image sharing. Documentation/link/count checks only; no proposed suite, notification integration or new native optimization is claimed implemented. |
+| Implementation handoff for the next agent | Added `PERFORMANCE_AGENT_HANDOFF.md` (removed; see git history), linked from AGENTS and the follow-up plan. Specifies exact component changes, proposed suite counts, commands, tests, conditional optimization gates, external Manager dependency and final reporting. | Cross-checked against current runner/worker forwarding, suite/filter/role validation, native copy/caller paths and Desktop sampling. `dam-tools --help` still exposes only image sharing. Documentation/link/count checks only; no proposed suite, notification integration or new native optimization is claimed implemented. |
 
 PR #8 merged as `fb34f878581590123a190b048fdfd23c5d4e9b39` after the full
 72-case matrix, host/Windows CI and real Windows pop-out/100 ms checks.
@@ -3381,7 +3381,7 @@ windows for each filesystem completed, independently restored and inspected.
 The mixed boundaries retain the V21 staged-read counters, but none of the fitting
 windows staged disk reads. The completed churn accounting is reported below and in the consolidated findings.
 
-The [follow-up plan](PERFORMANCE_FOLLOWUP_PLAN_20261010.md) defines acceptance and
+The follow-up plan (`PERFORMANCE_FOLLOWUP_PLAN_20261010.md`, removed; see git history) defines acceptance and
 keeps implementation separate from verification. The initial draft PR contains
 this plan; the historical Q8 write gap remains unproved. Closed/accepted items
 remain closed, and the 72-case measurement contract is unchanged.

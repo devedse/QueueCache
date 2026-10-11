@@ -2,36 +2,25 @@
 
 ## Keep verification maintainable
 
-- Performance conclusions and decisions are consolidated in
-  `docs/PERFORMANCE_FINDINGS.md`; read it before starting an investigation and
-  update it when a result changes a decision. Preserve dated/raw evidence. Do not
-  rerun an established experiment merely because its finding was forgotten;
-  repeat relevant regressions when code, environment or measurement contracts
-  change. The maintained `--campaign` workflow and durable completion contract are
-  in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Run one foreground campaign and consume
-  its `completion.json` after process exit. The companion Manager owned-job
-  integration is documented in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. The updated
-  Runner helper can launch owned jobs now; automatic notifications additionally
-  require the updated Manager service. Live wake verification remains separate
-  from controller event validation. Select the smallest maintained suite/profile
-  for affected regressions.
-  **Active plan: `docs/PR9_COMPLETION_PLAN.md`** (owner request, 2026-10-11).
-  Asynchronous split RAM reads are accepted and default (1M Q8T1 +79.84%);
-  `ram-read-async` compares off/adaptive per window and `ram-read-async-lifecycle`
-  (in both regression profiles) checks bytes, the cap and Direct end under load.
-  Automatic Manager wake does not yet reach Claude Code (DeveAgentManager #5). It supersedes the execution order in
-  `PERFORMANCE_FINALIZATION_HANDOFF.md`, `PERFORMANCE_AGENT_HANDOFF.md` and
-  `PERFORMANCE_FOLLOWUP_PLAN_20261010.md` (technical reference only). Plan 117
-  measured one active Direct read at Q8T1; do not rerun the coordination,
-  priority/affinity or caller-backoff investigations to rediscover results.
-  `--campaign focused` also runs 81 retained correctness checks; prefer
-  `--campaign experiment --focus-suite <suite>` for candidate comparisons.
-  Proposed suites/profiles must be implemented before use. Do not expand a
-  failed candidate into unrelated research.
-  Reserve broad regression/write/sustained campaigns for the final build (plan
-  step 5), launched once with a combined report. Keep byte, identity, telemetry and restoration guards. Further
-  low-priority/affinity diagnosis and dedicated 100 ms UI cost testing are parked;
-  do not reopen them without a relevant observed problem or a new user request.
+- Performance conclusions, decisions and "reopen when" conditions are
+  consolidated in `docs/PERFORMANCE_FINDINGS.md`; read it before starting an
+  investigation and update it when a result changes a decision. Preserve
+  dated/raw evidence. Do not rerun an established experiment merely because its
+  finding was forgotten (coordination, priority/affinity and caller-backoff
+  results are recorded there); repeat relevant regressions when code, environment
+  or measurement contracts change. Asynchronous split RAM-disk reads are accepted
+  and default (1M Q8T1 +79.84%): `ram-read-async` compares off/adaptive per window
+  and `ram-read-async-lifecycle` checks bytes, the in-flight cap and ending Direct
+  access under load.
+- The single-command `--campaign` workflow and durable completion contract are in
+  `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. Compare a concrete candidate with the
+  smallest maintained suite first (`--campaign experiment --focus-suite <suite>`
+  runs one phase; `focused` adds 81 retained correctness checks). Run the broad
+  `release-performance` campaign (product-default regression, 72-case writes,
+  30-minute sustained phase) once on the final build. Keep byte, identity,
+  telemetry and restoration guards. The Runner helper launches owned jobs and
+  validates completion; automatic agent wake does not yet reach Claude Code
+  (DeveAgentManager issue #5), so wait for the job instead of assuming delivery.
 
 - RAM-first design principle and ordered performance/test plan:
   `docs/RAM_FIRST_IMPLEMENTATION_TRACKER.md` is the execution/status source of truth;
