@@ -108,8 +108,6 @@ cache or a disk.
   racing other work; multi-disk memory pressure; every fault-injection point across
   every parallelism. A lower request that cannot be allocated is retried for about
   5 s before the cache faults.
-- **Configuration rollback** (a failed Apply restoring the previous settings) is
-  covered by host tests with a fake device but has not been forced on the VM.
 - **Managed disks:** sleep, hibernate, Fast Startup and a crash during a checkpoint
   commit are not covered.
 

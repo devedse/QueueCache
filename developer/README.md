@@ -55,7 +55,7 @@ recreate those wrappers as another runner.
 | `Test-CacheFaults` lower completion error/retry | `file-tests ... test-coalescing` uses fault 4, retains dirty data, retries and verifies an independent file hash |
 | `Test-CacheFaults` lower flush error/retry | `file-tests ... test-flush-policy` uses fault 3, requires visible failure, retries and verifies the file hash |
 | raw pre-submission/short-completion faults 1/2/5 | Deferred raw-only variants. They are not needed to claim the A06 minimum fault paths and remain an explicit gap. |
-| allocation faults 6/7 | Deferred until allocation-path work is touched; listed in [known issues](../docs/KNOWN_ISSUES.md). |
+| allocation faults 6/7 | `policies/settings-rollback/lab-fault-6` and `-7`: a failed resize restores the previous settings on the real driver. |
 | `Manage-Lab` install/reattach/upgrade/uninstall | The single installer and `packaging/Install-Driver.ps1`; no per-device legacy installation path remains. |
 
 Registration backups and logs are stored under `%ProgramData%\QueueCache` before
