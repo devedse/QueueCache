@@ -126,7 +126,7 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             var child = runner.DirectoryPath ?? throw new InvalidDataException("Phase did not allocate its evidence directory.");
             result = VerificationCampaignEvidence.ReadPhase(phase, child, exit, timer.Elapsed.TotalSeconds, target, diskSpdHash);
             if (result.RestorationFailure is not null) restorationBlocked = "Child restoration failed; preserve its evidence and inspect before restoring the backing cache.";
-            if (result.Restoration == "RESTORED" && phase.Options.Suite == "ordering-faults")
+            if (result.Restoration == "RESTORED" && VerificationPlan.InjectsLabFaults(phase.Options.Suite))
             {
                 var restored = JsonSerializer.Deserialize<QueueCache.Management.WriteCacheState>(File.ReadAllText(Path.Combine(child, "restored.json")))
                     ?? throw new InvalidDataException("Missing restored fault-test state.");

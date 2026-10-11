@@ -35,6 +35,9 @@ public static class VerificationPlan
 {
     public const int Version = 120;
     public const int StressDefaultSeconds = 240;
+    /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
+    /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
+    public static bool InjectsLabFaults(string suite) => suite is "ordering-faults" or "stress-races";
     public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";

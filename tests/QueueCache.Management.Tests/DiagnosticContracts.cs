@@ -355,6 +355,9 @@ internal static class DiagnosticContracts
             StressRegion.All.Max(r => r.BlockBytes) == 4 << 20 && StressRegion.All.All(r => r.BlockBytes % StressPattern.Sector == 0),
             "regions cover 4 KiB to 4 MiB requests and one overlapped region");
         check(VerificationPlan.Integrity(new VerificationOptions("W:", "stress-races")) is [{ Id: "stress-races", Operation: "stress-races" }], "one integrity case");
+        check(VerificationPlan.InjectsLabFaults("stress-races") && VerificationPlan.InjectsLabFaults("ordering-faults") &&
+            !VerificationPlan.InjectsLabFaults("policies") && !VerificationPlan.InjectsLabFaults("pressure"),
+            "only the two fault-injecting suites may restore with a raised error count");
         VerificationPlan.Validate(new VerificationOptions("W:", "stress-races", Repeats: 1, SoakSeconds: 600));
         foreach (var invalid in new[] { new VerificationOptions("W:", "stress-races", Repeats: 1, SoakSeconds: 30), new VerificationOptions("W:", "stress-races", Repeats: 2),
             new VerificationOptions("W:", "policies", SoakSeconds: 600) })

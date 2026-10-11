@@ -721,8 +721,8 @@ public static class VerificationWorker
                     device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
                     device.SetSpecialRanges([], SpecialRangeKind.Reference);
                 }
-                // Only ordering-faults deliberately raises the lifetime error count through the driver
-                // lab gate, and each of its stages recovers with Retry. Accept that count only when the
+                // Only ordering-faults and stress-races deliberately raise the lifetime error count through
+                // driver lab faults, and each fault is recovered with Retry. Accept that count only when the
                 // cache is currently healthy, and record exactly what was accepted. Every other suite
                 // still treats any error-count change as a restoration failure.
                 if (job.AcceptsLabErrors)
@@ -733,7 +733,7 @@ public static class VerificationWorker
                         RunStorage.AtomicJson(job.Reply + ".accepted-lab-errors.json", new
                         {
                             OriginalErrors = original.State.Errors, CurrentErrors = current.Errors,
-                            Reason = "ordering-faults lab-gate failures, each recovered by Retry"
+                            Reason = "Deliberate lab-fault failures (ordering-faults or stress-races), each recovered by Retry"
                         });
                         original = original with { State = original.State with { Errors = current.Errors } };
                     }

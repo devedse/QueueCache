@@ -574,7 +574,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
-                        AcceptsLabErrors = options.Suite == "ordering-faults"
+                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite)
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
@@ -1229,9 +1229,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         Log("Recovery run directory: " + storage.DirectoryPath);
         try
         {
-            var ramOwnership = Path.Combine(path, "ram-read-reference-owned.json");
-            if (File.Exists(ramOwnership))
-                await Worker(Job("ram-read-cleanup") with { OraclePath = ramOwnership }, token, 300);
+            foreach (var ownership in new[] { "ram-read-reference-owned.json", StressOwnership }.Select(name => Path.Combine(path, name)))
+                if (File.Exists(ownership))
+                    await Worker(Job("ram-read-cleanup") with { OraclePath = ownership }, token, 300);
+            using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
+            var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
+                ?? throw new InvalidDataException("The run manifest has no suite.");
             var operation = systemRecovery ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
@@ -1245,6 +1248,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 RecoverableVm = systemRecovery,
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),
+                AcceptsLabErrors = !systemRecovery && VerificationPlan.InjectsLabFaults(suite),
                 ImageOraclePaths = systemRecovery ? PassedSystemImageOracles(path, priorResults) : null
             }, token, 300);
             storage.Write("recovery-result.json", new
