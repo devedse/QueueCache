@@ -67,6 +67,25 @@ internal static class RamDirectChecks
                $"(reads {before.ReadRequests}->{after.ReadRequests}, writes {before.WriteRequests}->{after.WriteRequests}).";
     }
 
+    /// <summary>Ends Direct access with the unrecognized control (it waits for in-flight Direct requests) and
+    /// returns the ended state; <see cref="Rebind"/> restores it.</summary>
+    public static RamDirectState EndWithUnrecognizedControl(string volume)
+    {
+        using (var handle = Open(volume))
+            DeviceIoControl(handle, UnrecognizedControl, IntPtr.Zero, 0, IntPtr.Zero, 0, out _, IntPtr.Zero); // Its own result is irrelevant.
+        var ended = State(volume);
+        if (ended.Access != RamDirectAccess.None || ended.Reason != RamDirectReason.Control || ended.Detail != UnrecognizedControl)
+            throw new IOException($"An unrecognized control did not end Direct access: {ended.Describe()}.");
+        return ended;
+    }
+    public static RamDirectState Rebind(string volume)
+    {
+        using var device = CacheDevice.OpenVolumeName(volume, writable: true);
+        var rebound = device.BindRamDirect(readsOnly: false);
+        if (!rebound.Full) throw new IOException($"A new bind did not restore Direct access: {rebound.Describe()}.");
+        return rebound;
+    }
+
     /// <summary>An unrecognized control request ends Direct access before it is forwarded; the standard path keeps
     /// serving the same data, and a new bind restores Direct access.</summary>
     public static string UnrecognizedControlFallback(ManagedDiskRecord record, string root, string sentinel, byte[] sentinelBytes)

@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 118, "plan 118 declares the same-build asynchronous split read comparison");
+        Check(VerificationPlan.Version == 119, "plan 119 adds asynchronous split read lifecycle checks and default-on adaptive mode");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -61,6 +61,8 @@ internal static class VerificationRunnerTests
         RunAsyncReadContracts(Check, Reject);
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-async", BudgetMiB = 2048, DiskSpd = "fixture", Repeats = 4 }));
         Reject(() => RamReadReferencePlan.AsyncCases(4));
+        Reject(() => RamReadReferencePlan.CasesFor(RamReadRunKind.AsyncLifecycle, 2));
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-async-lifecycle", BudgetMiB = 2048, DiskSpd = "fixture", Repeats = 2 }));
         await RunCampaignContractsAsync();
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
@@ -1884,23 +1886,27 @@ internal static class VerificationRunnerTests
         System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(8), 3);
         System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(16), 1);
         var on = QueueCache.Management.RamAsyncReads.Decode(wire);
-        check(on.Generation == 3 && on.Enabled && on.Started == 0 && on.InFlight == 0, "asynchronous read wire header/generation/mode are explicit");
+        check(on.Generation == 3 && on.Mode == QueueCache.Management.RamAsyncMode.Adaptive && on.Started == 0 && on.InFlight == 0, "asynchronous read wire header/generation/mode are explicit");
+        var always = (byte[])wire.Clone(); always[16] = 2;
+        check(QueueCache.Management.RamAsyncReads.Decode(always).Mode == QueueCache.Management.RamAsyncMode.Always, "forced mode decodes");
         reject(() => QueueCache.Management.RamAsyncReads.Decode(wire[..^8]));
         var wrongVersion = (byte[])wire.Clone(); wrongVersion[4] = 2;
         reject(() => QueueCache.Management.RamAsyncReads.Decode(wrongVersion));
-        var wrongMode = (byte[])wire.Clone(); wrongMode[16] = 2;
+        var wrongMode = (byte[])wire.Clone(); wrongMode[16] = 3;
         reject(() => QueueCache.Management.RamAsyncReads.Decode(wrongMode));
         var ran = on with { Started = 900, Completed = 880, Declined = 20, MaxInFlight = 8, Probes = 2, InlineStreak = 5 };
-        var share = QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, true, 1000);
+        var share = QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, QueueCache.Management.RamAsyncMode.Adaptive, 1000);
         check(Math.Abs(share - 0.88) < 1e-9, "asynchronous share counts only completed asynchronous reads");
         foreach (var invalid in new[] { ran with { Generation = 4 }, ran with { InFlight = 1 }, ran with { InlineActive = 1 },
             ran with { Completed = 879 }, ran with { Started = 0, Completed = 0, Declined = 0 }, ran with { MaxInFlight = 0 },
-            ran with { MaxInFlight = 17 }, ran with { Enabled = false } })
-            reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, invalid, true, 1000));
-        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, true, 100));
-        var off = ran with { Enabled = false };
-        check(QueueCache.Management.RamAsyncReads.ValidateWindow(off, off, false, 1000) == 0, "disabled windows report no asynchronous share");
-        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(off, off with { Started = 901, Completed = 881 }, false, 1000));
+            ran with { MaxInFlight = 17 }, ran with { Mode = QueueCache.Management.RamAsyncMode.Off } })
+            reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, invalid, QueueCache.Management.RamAsyncMode.Adaptive, 1000));
+        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, QueueCache.Management.RamAsyncMode.Adaptive, 100));
+        var off = ran with { Mode = QueueCache.Management.RamAsyncMode.Off };
+        check(QueueCache.Management.RamAsyncReads.ValidateWindow(off, off, QueueCache.Management.RamAsyncMode.Off, 1000) == 0, "disabled windows report no asynchronous share");
+        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(off, off with { Started = 901, Completed = 881 }, QueueCache.Management.RamAsyncMode.Off, 1000));
+        check(RamReadReferencePlan.CasesFor(RamReadRunKind.AsyncLifecycle, 1) is [{ AsyncReads: true, QueueDepth: 8, Threads: 1 }] &&
+            RamReadReferencePlan.KindFor("ram-read-async-lifecycle") == RamReadRunKind.AsyncLifecycle, "lifecycle checks are one Direct case");
         check((uint)QueueCache.Management.RamDiskAction.AsyncReads == 0x103 && (uint)QueueCache.Management.RamDiskAction.SetAsyncReads == 0x104 &&
             (uint)QueueCache.Management.RamDiskAction.SetCoordination == 0x102 && QueueCache.Management.RamDiskSnapshot.Version == 1,
             "asynchronous reads add actions without recycling IDs or changing the request ABI");
@@ -1947,7 +1953,8 @@ internal static class VerificationRunnerTests
             "smoke composes exactly two maintained NTFS cases without DiskSpd");
         var measured = basic with { Profile = "performance", Verification = basic.Verification with { DiskSpd = Environment.ProcessPath } };
         var full = VerificationCampaignPlan.Create(measured);
-        Check(full.Count == 9 && full.Sum(p => p.ExpectedCases.Count) == 33 && full[^1].Options.Suite == "ordering-faults",
+        Check(full.Count == 10 && full.Sum(p => p.ExpectedCases.Count) == 34 && full[^1].Options.Suite == "ordering-faults" &&
+              full.Any(p => p.Options.Suite == "ram-read-async-lifecycle"),
             "performance plan is product-default regression with existing counts and fault injection last");
         Check(full.All(p => p.Options.Suite is not ("ram-read-queue" or "write-performance" or "disk-removal" or "system-files" or
                 "cache-layout" or "ram-read-scheduling" or "caller-backoff" or "priority-cost")) &&
@@ -1955,7 +1962,7 @@ internal static class VerificationRunnerTests
             full.Single(p => p.Options.Suite == "cache-sustained").Options.Repeats == 1, "performance excludes retired/invasive/write suites and labels short sustained accounting");
         Reject(() => VerificationCampaignPlan.Create(measured with { LabRefs = "R:" }));
         var release = VerificationCampaignPlan.Create(measured with { Profile = "release-performance" });
-        Check(release.Count == 10 && release.Sum(p => p.ExpectedCases.Count) == 105 && release.Single(p => p.Options.Suite == "write-performance").ExpectedCases.Count == 72 &&
+        Check(release.Count == 11 && release.Sum(p => p.ExpectedCases.Count) == 106 && release.Single(p => p.Options.Suite == "write-performance").ExpectedCases.Count == 72 &&
             release.Single(p => p.Options.Suite == "cache-sustained").Options.SoakSeconds == 1800,
             "release adds the complete writes and thirty-minute sustained contract to the product-default regression");
         var focused = VerificationCampaignPlan.Create(measured with { Profile = "focused", FocusSuite = "ram-read-scheduling" });

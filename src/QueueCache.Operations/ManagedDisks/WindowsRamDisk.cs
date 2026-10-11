@@ -122,8 +122,8 @@ public sealed class WindowsRamDisk : IDisposable
         RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
         return RamAsyncReads.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
     }
-    public RamDiskSnapshot SetAsyncReads(RamDiskSnapshot expected, bool enabled) =>
-        Send(RamDiskSnapshot.Request(RamDiskAction.SetAsyncReads, expected, offset: enabled ? 1UL : 0));
+    public RamDiskSnapshot SetAsyncReads(RamDiskSnapshot expected, RamAsyncMode mode) =>
+        Send(RamDiskSnapshot.Request(RamDiskAction.SetAsyncReads, expected, offset: (ulong)mode));
     public void Remove(RamDiskSnapshot expected)
     {
         var request = RamDiskSnapshot.Request(RamDiskAction.Remove, expected);

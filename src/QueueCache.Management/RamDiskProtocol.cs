@@ -13,7 +13,7 @@ public enum RamDiskAction : uint
     Coordination = 0x101, SetCoordination = 0x102,
     /// <summary>Reply followed by <see cref="RamAsyncReads"/>.</summary>
     AsyncReads = 0x103,
-    /// <summary>Offset 0/1: asynchronous large Direct reads off/on; enabling resets counters and fails while any is in flight.</summary>
+    /// <summary>Offset: <see cref="RamAsyncMode"/> (adaptive at creation); a nonzero mode resets counters and fails while any is in flight.</summary>
     SetAsyncReads = 0x104
 }
 [Flags]

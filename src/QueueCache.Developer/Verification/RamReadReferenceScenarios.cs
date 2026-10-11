@@ -64,6 +64,25 @@ internal static class RamReadReferenceScenarios
                 }
                 var file = definition.PreferredLetter + @":\ram-read-reference.dat";
                 var expectedHash = RamReadFileOracle.Prepare(file, RamReadReferencePlan.FileMiB);
+                if (kind is RamReadRunKind.Async or RamReadRunKind.Coordination)
+                {
+                    // These suites choose the read mode per window; coordination measures the inline copy only.
+                    using var configure = WindowsRamDisk.Connect();
+                    if (configure.AsyncReads(expectedNative) is { } initial && initial.Mode != RamAsyncMode.Off)
+                        configure.SetAsyncReads(expectedNative, RamAsyncMode.Off);
+                }
+                if (kind == RamReadRunKind.AsyncLifecycle)
+                {
+                    var scenario = group.Single();
+                    var prefix = evidence + "." + scenario.Id;
+                    Console.WriteLine($"Lifecycle {scenario.Id}"); Console.Out.Flush();
+                    var detail = await RamReadAsyncChecks.RunAsync(expectedNative, current.VolumePath, file, prefix);
+                    var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
+                    RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, After = afterHash, Bytes = 1L << 30 });
+                    if (afterHash != expectedHash) throw new InvalidDataException("RAM lifecycle byte oracle changed.");
+                    checks.Add(new(scenario.Id, "PASS", detail));
+                    continue;
+                }
                 foreach (var scenario in group)
                 {
                     var prefix = evidence + "." + scenario.Id;
@@ -89,9 +108,9 @@ internal static class RamReadReferenceScenarios
                     {
                         var original = provider.AsyncReads(expectedNative)
                             ?? throw new NotSupportedException("The loaded provider does not implement asynchronous RAM reads.");
-                        if (original.Enabled || original.InFlight != 0)
+                        if (original.Mode != RamAsyncMode.Off || original.InFlight != 0)
                             throw new IOException("Owned RAM fixture unexpectedly has asynchronous reads armed or in flight.");
-                        if (scenario.AsyncReads) provider.SetAsyncReads(expectedNative, true);
+                        if (scenario.AsyncReads) provider.SetAsyncReads(expectedNative, RamAsyncMode.Adaptive);
                         asyncBefore = provider.AsyncReads(expectedNative)
                             ?? throw new IOException("RAM asynchronous read readback unavailable after configuration.");
                         RunStorage.AtomicJson(prefix + ".async-before.json", asyncBefore);
@@ -163,11 +182,11 @@ internal static class RamReadReferenceScenarios
                             }
                             finally
                             {
-                                provider.SetAsyncReads(expectedNative, false);
+                                provider.SetAsyncReads(expectedNative, RamAsyncMode.Off);
                                 var restored = provider.AsyncReads(expectedNative)
                                     ?? throw new IOException("RAM asynchronous read restore readback unavailable.");
                                 RunStorage.AtomicJson(prefix + ".async-restored.json", restored);
-                                if (restored.Enabled || restored.InFlight != 0)
+                                if (restored.Mode != RamAsyncMode.Off || restored.InFlight != 0)
                                     throw new IOException("RAM asynchronous reads stayed armed or in flight after the window.");
                             }
                         }
@@ -185,7 +204,7 @@ internal static class RamReadReferenceScenarios
                     }
                     if (kind == RamReadRunKind.Async)
                     {
-                        var share = RamAsyncReads.ValidateWindow(asyncBefore!, asyncAfter!, scenario.AsyncReads,
+                        var share = RamAsyncReads.ValidateWindow(asyncBefore!, asyncAfter!, scenario.AsyncReads ? RamAsyncMode.Adaptive : RamAsyncMode.Off,
                             checked(after.Direct.ReadRequests - before.Direct.ReadRequests));
                         // A target window that did not run the candidate would make the comparison meaningless.
                         if (RamReadAsync.IsTarget(scenario) && scenario.AsyncReads && share < RamReadAsync.MinimumTargetShare)

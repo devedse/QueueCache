@@ -2,7 +2,7 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination, Async }
+public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination, Async, AsyncLifecycle }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat, int RamReadQueueMode = 0,
@@ -22,6 +22,7 @@ public static class RamReadReferencePlan
         "ram-read-attribution" => RamReadRunKind.Attribution,
         "ram-read-coordination" => RamReadRunKind.Coordination,
         "ram-read-async" => RamReadRunKind.Async,
+        "ram-read-async-lifecycle" => RamReadRunKind.AsyncLifecycle,
         _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
     };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
@@ -34,6 +35,8 @@ public static class RamReadReferencePlan
         RamReadRunKind.Attribution => AttributionCases(repeats),
         RamReadRunKind.Coordination => CoordinationCases(repeats),
         RamReadRunKind.Async => AsyncCases(repeats),
+        RamReadRunKind.AsyncLifecycle => repeats == 1 ? [new("0001-r1-async-lifecycle", RamAccess.Direct, 1024, false, 8, 1, 1, AsyncReads: true)]
+            : throw new ArgumentOutOfRangeException(nameof(repeats)),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
     public static IReadOnlyList<RamReadReferenceCase> CoordinationCases(int repeats)

@@ -100,6 +100,8 @@ internal static class VerificationCommands
               ram-read-coordination Nine Direct off/on/off request/helper diagnostic windows.
               ram-read-async     Same-build original/candidate asynchronous split reads: 1M Q8T1 target,
                                  Q1T1 and Q2T4 controls; 18 windows at --repeats 3; --budget-mib 2048.
+              ram-read-async-lifecycle Verified overlapped reads, in-flight cap and Direct end under load
+                                 for asynchronous split reads; correctness only; --repeats 1.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
               ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).

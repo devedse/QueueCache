@@ -182,12 +182,13 @@ QcRamDirectResult QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp)
         {
             if (!write)
             {
-                // Default-off experiment (ramasync.h): only an asynchronous, non-paging request
-                // can return before its copy. Admission comes last because it counts the read.
+                // ramasync.h: only an asynchronous, non-paging request can return before its
+                // copy. Admission comes last because it counts the read.
                 auto& async = store->Async;
-                const bool asyncOn = length >= LargeCopyBytes && ReadNoFence(&async.Enabled);
+                const auto asyncMode = length >= LargeCopyBytes ? ReadNoFence(&async.Enabled) : QcRamAsyncOff;
+                const bool asyncOn = asyncMode != QcRamAsyncOff;
                 if (asyncOn && binding->LargeReadAsync && !CallerWaits(irp, stack) &&
-                    KeGetCurrentIrql() == PASSIVE_LEVEL && !ReadNoFence(&store->Coordination.Enabled) && QcRamAsyncAdmit(&async))
+                    KeGetCurrentIrql() == PASSIVE_LEVEL && !ReadNoFence(&store->Coordination.Enabled) && QcRamAsyncAdmit(&async, asyncMode))
                 {
                     irp->Tail.Overlay.DriverContext[0] = binding;
                     irp->Tail.Overlay.DriverContext[1] = reinterpret_cast<PVOID>(started);

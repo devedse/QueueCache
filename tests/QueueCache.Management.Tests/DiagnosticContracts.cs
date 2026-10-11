@@ -12,7 +12,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 118, "asynchronous read comparison has a new verification plan version on every host");
+        Check(VerificationPlan.Version == 119, "asynchronous read lifecycle checks have a new verification plan version on every host");
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,

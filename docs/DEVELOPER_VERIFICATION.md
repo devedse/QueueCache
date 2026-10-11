@@ -90,6 +90,20 @@ only on a repeatable loss of 3% or more. Fewer than three repetitions report
 `INCOMPLETE_FOR_ACCEPTANCE`. The verdict is a screen, not release qualification.
 The provider and filter must share kernel view contract 2 and store version 3.
 
+Plan 119 makes adaptive mode the default for a new RAM disk (offset 0 off, 1
+adaptive, 2 always). `ram-read-async` and `ram-read-coordination` switch each
+owned disk off first and set the mode per window. Adaptive admission also stays
+inline while more than one thread submitted a large read to the store within the
+last millisecond (the pre-declared revision after four readers lost 5.8%).
+`ram-read-async-lifecycle` (one case, `--repeats 1`, also in `performance` and
+`release-performance`) runs on an owned disk: a single-thread overlapped reader
+checks every 32 KiB of each 1 MiB block (poisoned before each read) at queue
+depth 8 in adaptive mode, at depth 32 in always mode (the cap of 16 must never be
+exceeded), and at depth 8 in always mode while an unrecognized control ends Direct
+access (the end waits for in-flight reads; the standard path serves the rest).
+Counters must balance and end with nothing in flight; the disk is rebound and
+returned to adaptive, then the whole-file oracle is verified. Correctness only.
+
 Plan 117 adds `ram-read-coordination` and the one-phase `experiment` campaign:
 
 ```powershell

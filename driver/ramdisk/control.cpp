@@ -93,8 +93,8 @@ static NTSTATUS Change(ADAPTER* adapter, DISK* disk, const QC_RAM_REQUEST& comma
         *returned = sizeof(*reply) + sizeof(QC_RAM_ASYNC_DATA);
         return STATUS_SUCCESS;
     case QcRamSetAsyncReads:
-        if (command.Flags || command.Offset > 1 || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
-        return QcRamAsyncConfigure(&store.Async, command.Offset != 0) ? STATUS_SUCCESS : STATUS_DEVICE_BUSY;
+        if (command.Flags || command.Offset > static_cast<ULONGLONG>(QcRamAsyncAlways) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;
+        return QcRamAsyncConfigure(&store.Async, static_cast<LONG>(command.Offset)) ? STATUS_SUCCESS : STATUS_DEVICE_BUSY;
     case QcRamPhysicalMap:
     {
         if (output < sizeof(*reply) + sizeof(QC_RAM_PHYSICAL_MAP) || input != sizeof(*reply)) return STATUS_INVALID_PARAMETER;

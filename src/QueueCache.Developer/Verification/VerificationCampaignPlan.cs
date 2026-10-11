@@ -12,10 +12,10 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults",
-     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async",
+     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 
@@ -107,6 +107,7 @@ public static class VerificationCampaignPlan
                 // Product-default regression only. Concluded mode comparisons (cache-layout,
                 // ram-read-scheduling, caller-backoff, priority-cost) stay standalone suites.
                 Add("ram-read-reference", CampaignTargetRole.Performance);
+                Add("ram-read-async-lifecycle", CampaignTargetRole.Performance);
                 Add("cache-recall", CampaignTargetRole.Performance);
                 Add("cache-sustained", CampaignTargetRole.Performance);
                 Add("cache-map-cost", CampaignTargetRole.Performance);

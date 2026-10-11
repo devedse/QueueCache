@@ -26,8 +26,8 @@ enum QC_RAM_ACTION : ULONG
     QcRamSetCoordination = 0x102,
     // Reply is QC_RAM_REQUEST followed by QC_RAM_ASYNC_DATA (ramasync.h).
     QcRamAsyncReads = 0x103,
-    // Offset 0/1: asynchronous large Direct reads off/on (off at creation). Enabling resets
-    // the counters and fails with STATUS_DEVICE_BUSY while any is in flight.
+    // Offset: QC_RAM_ASYNC_MODE for asynchronous large Direct reads (adaptive at creation).
+    // A nonzero mode resets the counters and fails with STATUS_DEVICE_BUSY while any is in flight.
     QcRamSetAsyncReads = 0x104
 };
 enum QC_RAM_FLAGS : ULONG
