@@ -383,15 +383,15 @@ internal static class StressRaceScenarios
             }
         }
 
-        /// <summary>One more MiB than the shared reservation can hold, past the managed RAM check: the driver
-        /// refuses the allocation after the old cache was freed, and the previous settings must come back.</summary>
+        /// <summary>More than the whole shared limit, past the managed RAM check: the driver refuses the
+        /// reservation after the old cache was freed, and the previous settings must come back. (A request
+        /// sized from the free space can fit after all: the RAM churn releases 2 GiB at any moment.)</summary>
         private void OversizeKernel(WriteCacheState before)
         {
             if (!before.Operational) { Apply(StressPlan.RandomConfiguration(new Random(), Budgets)); return; }
             using var gate = ConfigurationGate.Enter(Target.Instance);
             var state = Device.GetWriteCacheState();
-            var free = state.GlobalLimitBytes > state.GlobalReservedBytes ? state.GlobalLimitBytes - state.GlobalReservedBytes : 0;
-            var requested = (int)Math.Min(MemoryBudget.MaximumMiB, ((free + state.BudgetBytes) >> 20) + 64);
+            var requested = (int)Math.Min(MemoryBudget.MaximumMiB, (state.GlobalLimitBytes >> 20) + 64);
             try
             {
                 ConfigurationManager.ApplySteps(new CacheDeviceControl(Device), state, CacheConfiguration.FromState(state) with { BudgetMiB = requested });
