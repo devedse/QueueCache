@@ -50,7 +50,9 @@
   changes. Preserve old raw output. Every repetition needs a unique immutable case
   ID. Never silently turn missing fields into zero, infer loaded-driver identity
   from a version string, or declare an incomplete matrix passed.
-- Before a run: use an elevated terminal on the test VM, stop competing tests/UI
+- Before a run: use an elevated terminal on the test VM, stop background indexers
+  and launchers (Everything and its service, Steam; see `docs/BENCHMARKING.md`) and
+  restore them afterwards, stop competing tests/UI
   workloads, confirm the intended CI driver is loaded, and use a volume on a clean
   non-OS physical disk. QueueCache filters volumes (docs/VOLUME_FILTER.md); keep the
   `volumes`/`trim-cache` suites and `write-tests` on the lab VHDX
