@@ -29,6 +29,7 @@ internal static class RamReadReferenceScenarios
         RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
         var coordinationWindows = new List<RamCoordinationWindow>();
+        var asyncWindows = new List<RamAsyncWindow>();
         var traceJournal = ownership + ".trace.json";
         if (kind == RamReadRunKind.Attribution)
         {
@@ -82,6 +83,18 @@ internal static class RamReadReferenceScenarios
                         coordinationBefore = provider.Coordination(expectedNative)
                             ?? throw new IOException("RAM coordination readback unavailable after configuration.");
                         RunStorage.AtomicJson(prefix + ".coordination-before.json", coordinationBefore);
+                    }
+                    RamAsyncReads? asyncBefore = null, asyncAfter = null;
+                    if (kind == RamReadRunKind.Async)
+                    {
+                        var original = provider.AsyncReads(expectedNative)
+                            ?? throw new NotSupportedException("The loaded provider does not implement asynchronous RAM reads.");
+                        if (original.Enabled || original.InFlight != 0)
+                            throw new IOException("Owned RAM fixture unexpectedly has asynchronous reads armed or in flight.");
+                        if (scenario.AsyncReads) provider.SetAsyncReads(expectedNative, true);
+                        asyncBefore = provider.AsyncReads(expectedNative)
+                            ?? throw new IOException("RAM asynchronous read readback unavailable after configuration.");
+                        RunStorage.AtomicJson(prefix + ".async-before.json", asyncBefore);
                     }
                     using var sampledDevice = CacheDevice.OpenVolumeName(current.VolumePath);
                     using var stop = new CancellationTokenSource();
@@ -140,6 +153,24 @@ internal static class RamReadReferenceScenarios
                                     throw new IOException("RAM coordination disable/rundown failed.");
                             }
                         }
+                        if (kind == RamReadRunKind.Async)
+                        {
+                            try
+                            {
+                                asyncAfter = provider.AsyncReads(expectedNative)
+                                    ?? throw new IOException("Final RAM asynchronous read readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".async-after.json", asyncAfter);
+                            }
+                            finally
+                            {
+                                provider.SetAsyncReads(expectedNative, false);
+                                var restored = provider.AsyncReads(expectedNative)
+                                    ?? throw new IOException("RAM asynchronous read restore readback unavailable.");
+                                RunStorage.AtomicJson(prefix + ".async-restored.json", restored);
+                                if (restored.Enabled || restored.InFlight != 0)
+                                    throw new IOException("RAM asynchronous reads stayed armed or in flight after the window.");
+                            }
+                        }
                     }
                     var after = await Snapshot();
                     RunStorage.AtomicJson(prefix + ".boundaries.json", new { Before = before, After = after });
@@ -151,6 +182,16 @@ internal static class RamReadReferenceScenarios
                             checked(after.Direct.ReadBytes - before.Direct.ReadBytes), checked((ulong)score!.Bytes));
                         coordinationWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
                             expectedNative.CreationGeneration, coordinationBefore!, coordinationAfter!, score!));
+                    }
+                    if (kind == RamReadRunKind.Async)
+                    {
+                        var share = RamAsyncReads.ValidateWindow(asyncBefore!, asyncAfter!, scenario.AsyncReads,
+                            checked(after.Direct.ReadRequests - before.Direct.ReadRequests));
+                        // A target window that did not run the candidate would make the comparison meaningless.
+                        if (RamReadAsync.IsTarget(scenario) && scenario.AsyncReads && share < RamReadAsync.MinimumTargetShare)
+                            throw new InvalidDataException($"Candidate target window completed only {share:P1} of Direct reads asynchronously; the candidate was not exercised.");
+                        asyncWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
+                            expectedNative.CreationGeneration, asyncBefore!, asyncAfter!, share, score!));
                     }
                     var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
                     RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, Before = beforeHash, After = afterHash, Bytes = 1L << 30 });
@@ -207,6 +248,8 @@ internal static class RamReadReferenceScenarios
             await RamReadAttribution.AnalyzeAsync(traceJournal, plan, evidence, traceSymbols!);
         if (kind == RamReadRunKind.Coordination)
             RamReadCoordination.Report(evidence, plan, coordinationWindows);
+        if (kind == RamReadRunKind.Async)
+            RamReadAsync.Report(evidence, plan, asyncWindows);
         return checks;
     }
 

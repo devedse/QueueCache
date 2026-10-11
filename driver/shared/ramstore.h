@@ -3,6 +3,7 @@
 #include <ntddk.h>
 #include "ramdiskprotocol.h"
 #include "ramcoordination.h"
+#include "ramasync.h"
 
 // One RAM disk's storage. The provider (qcramdisk) owns it; with Direct access the
 // volume filter reads and writes the same pages, so the data exists once. Both paths
@@ -20,8 +21,9 @@ struct QC_RAM_STORE
     // Transfer timing, written only while QcRamTiming is set (by the provider and Direct access).
     volatile LONG64 TimedReads, TimedWrites, ReadTicks, WriteTicks, MaxReadTicks, MaxWriteTicks;
     QC_RAM_COORDINATION Coordination; // version 2 tail; old prefix unchanged
+    QC_RAM_ASYNC Async;               // version 3 tail
 };
-constexpr ULONG QcRamStoreVersion = 2;
+constexpr ULONG QcRamStoreVersion = 3;
 
 inline bool QcRamStoreBounds(const QC_RAM_STORE* store, ULONGLONG offset, ULONGLONG bytes)
 {

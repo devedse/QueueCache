@@ -110,6 +110,20 @@ public sealed class WindowsRamDisk : IDisposable
     }
     public RamDiskSnapshot SetCoordination(RamDiskSnapshot expected, bool enabled) =>
         Send(RamDiskSnapshot.Request(RamDiskAction.SetCoordination, expected, offset: enabled ? 1UL : 0));
+    /// <summary>Null only for the explicit unsupported-action response of an older provider.</summary>
+    public RamAsyncReads? AsyncReads(RamDiskSnapshot expected)
+    {
+        var wire = RamDiskSnapshot.Request(RamDiskAction.AsyncReads, expected);
+        Array.Resize(ref wire, RamDiskSnapshot.WireSize + RamAsyncReads.WireSize);
+        int returned;
+        try { returned = Call(wire, RamDiskSnapshot.WireSize, wire.Length); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 1 or 50 or 87) { return null; }
+        if (returned != wire.Length) throw new InvalidDataException("Incomplete RAM asynchronous read reply.");
+        RamDiskSnapshot.Decode(wire).RequireSameCreation(expected);
+        return RamAsyncReads.Decode(wire.AsSpan(RamDiskSnapshot.WireSize));
+    }
+    public RamDiskSnapshot SetAsyncReads(RamDiskSnapshot expected, bool enabled) =>
+        Send(RamDiskSnapshot.Request(RamDiskAction.SetAsyncReads, expected, offset: enabled ? 1UL : 0));
     public void Remove(RamDiskSnapshot expected)
     {
         var request = RamDiskSnapshot.Request(RamDiskAction.Remove, expected);

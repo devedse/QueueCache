@@ -1262,12 +1262,17 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
 #if QCACHE_CACHE_DRIVER
     // Direct access: a read or write on a bound RAM-disk volume is copied here, in the
     // caller's thread. Declined requests continue on the standard path below.
-    if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
-        ReadNoFence(&ext->RamDirect.Access) && QcRamDirectTransfer(&ext->RamDirect, irp))
+    if ((stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) && ReadNoFence(&ext->RamDirect.Access))
     {
-        IoReleaseRemoveLock(&ext->RemoveLock, irp);
-        IoCompleteRequest(irp, IO_NO_INCREMENT);
-        return STATUS_SUCCESS;
+        const auto direct = QcRamDirectTransfer(&ext->RamDirect, irp);
+        if (direct == QcRamDirectResult::Pending)
+            return STATUS_PENDING; // Not touched again here: it may already be complete.
+        if (direct == QcRamDirectResult::Served)
+        {
+            IoReleaseRemoveLock(&ext->RemoveLock, irp);
+            IoCompleteRequest(irp, IO_NO_INCREMENT);
+            return STATUS_SUCCESS;
+        }
     }
 #endif
     // Inactive devices have true pass-through semantics, including METHOD_NEITHER
@@ -1425,7 +1430,7 @@ NTSTATUS QcAddDevice(PDRIVER_OBJECT driver, PDEVICE_OBJECT pdo)
     auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
     RtlZeroMemory(ext, sizeof(*ext));
 #if QCACHE_CACHE_DRIVER
-    QcRamDirectInitialize(&ext->RamDirect);
+    QcRamDirectInitialize(&ext->RamDirect, &ext->RemoveLock);
 #endif
     ext->Self = device;
     ext->Pdo = pdo;

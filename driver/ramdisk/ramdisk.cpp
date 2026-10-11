@@ -73,6 +73,9 @@ SCSI_ADAPTER_CONTROL_STATUS AdapterControl(PVOID extension, SCSI_ADAPTER_CONTROL
 void FreeAdapter(PVOID extension)
 {
     auto adapter = static_cast<ADAPTER*>(extension);
+    // Asynchronous Direct reads finish on the workers: withdraw every view before they stop.
+    for (ULONG i = 0; i < QcRamMaxDisks; ++i)
+        if (auto disk = adapter->Disks[i]) UnregisterView(disk);
     StopWorkers(adapter); // completes every queued transfer first
     for (ULONG i = 0; i < QcRamMaxDisks; ++i)
     {

@@ -63,6 +63,33 @@ ReFS is optional for caller comparisons. Existing workload, process-ownership,
 readiness and restoration contracts remain enforced. There is no automatic
 disk creation, formatting or reboot.
 
+Plan 118 adds `ram-read-async`, the same-build comparison for the asynchronous
+split read candidate ([PR9_COMPLETION_PLAN.md](PR9_COMPLETION_PLAN.md)):
+
+```powershell
+qcache developer verify Q: --campaign experiment --focus-suite ram-read-async --lab-ntfs W: --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results
+```
+
+Eighteen windows on one owned 2 GiB RAM disk per repetition: Direct sequential
+1 MiB Q8T1 (target), Q1T1 and Q2T4 separate lanes (controls), original and
+candidate adjacent per shape with alternating order. The candidate is a per-store,
+runtime-only provider mode (actions 0x103/0x104, off at creation): a large
+asynchronous non-paging Direct read posts its 256 KiB chunks to the other
+processors' helpers and returns; the helper that copies the last chunk completes
+the request. Admission reuses the provider's write policy (asynchronous while
+another is in flight, inline after 16 that found none, probe every 64th), stays
+inline while another thread copies inline, and caps 16 in flight. Enabling
+requires nothing in flight and starts a new generation. Per-case
+`*.async-before/after/restored.json` must show the exact mode, nothing in flight
+and started = completed + declined; original windows must leave counters
+unchanged, and a candidate target window must complete at least half its Direct
+reads asynchronously or the run fails as "candidate not exercised".
+`*.async-summary.json/.md` applies the frozen screen: target median at least +5%,
+every pair improved and candidate range above the original range; a control fails
+only on a repeatable loss of 3% or more. Fewer than three repetitions report
+`INCOMPLETE_FOR_ACCEPTANCE`. The verdict is a screen, not release qualification.
+The provider and filter must share kernel view contract 2 and store version 3.
+
 Plan 117 adds `ram-read-coordination` and the one-phase `experiment` campaign:
 
 ```powershell

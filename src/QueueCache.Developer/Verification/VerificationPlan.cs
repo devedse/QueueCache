@@ -31,8 +31,8 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 117;
-    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination";
+    public const int Version = 118;
+    public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-queue" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
     public static IReadOnlyList<uint> ManagedSectorSizes { get; } = Array.AsReadOnly<uint>([512, 4096]);
@@ -81,6 +81,7 @@ public static class VerificationPlan
         "ram-read-scheduling",
         "ram-read-attribution",
         "ram-read-coordination",
+        "ram-read-async",
         "ram-read-queue",
         "write-performance",
         "sequential-resident",
@@ -439,6 +440,8 @@ public static class VerificationPlan
 
         if (options.Suite == "ram-read-attribution") RamReadAttribution.RequireSymbols(options.TraceSymbols);
         else if (options.TraceSymbols is not null) throw new ArgumentException("--trace-symbols applies only to ram-read-attribution.");
+        if (options.Suite == "ram-read-async" && options.Repeats is not (1 or 2 or 3))
+            throw new ArgumentException("RAM asynchronous read comparison uses --repeats 3 (1..3 permitted; acceptance requires 3).");
         if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
             throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
         if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)

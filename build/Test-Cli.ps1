@@ -151,6 +151,8 @@ foreach ($arguments in @(
     @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-reference', '--lab-ntfs', 'W:'),
     @('developer', 'verify', 'Q:', '--campaign', 'experiment', '--focus-suite', 'ram-read-coordination', '--lab-ntfs', 'W:', '--repeats', '3'),
     @('developer', 'verify', 'Q:', '--suite', 'ram-read-coordination', '--budget-mib', '2048', '--repeats', '3'),
+    @('developer', 'verify', 'Q:', '--suite', 'ram-read-async', '--budget-mib', '2048', '--repeats', '4'),
+    @('developer', 'verify', 'Q:', '--suite', 'ram-read-async', '--budget-mib', '1024', '--repeats', '3'),
     @('developer', 'verify', 'Q:', '--lab-ntfs', 'W:'),
     @('developer', 'verify', 'Q:', '--campaign', 'smoke'),
     @('developer', 'verify', 'Q:', '--campaign', 'smoke', '--lab-ntfs', 'C:'),

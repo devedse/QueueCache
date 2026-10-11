@@ -12,10 +12,10 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults",
-     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination",
+     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 

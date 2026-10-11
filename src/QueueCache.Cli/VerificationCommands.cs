@@ -98,6 +98,8 @@ internal static class VerificationCommands
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
               ram-read-attribution Three traced Direct RAM read shapes; diagnostic, not speed acceptance.
               ram-read-coordination Nine Direct off/on/off request/helper diagnostic windows.
+              ram-read-async     Same-build original/candidate asynchronous split reads: 1M Q8T1 target,
+                                 Q1T1 and Q2T4 controls; 18 windows at --repeats 3; --budget-mib 2048.
               ram-read-scheduling Direct RAM-disk reads: default/unbound affinity and overlapping/interleaved cursors.
                                  Existing driver/copy path unchanged; 30 windows at three repeats; --budget-mib 2048.
               ram-read-queue     Archived synchronous/adaptive queue experiment (rejected; current drivers reject modes 1/2).

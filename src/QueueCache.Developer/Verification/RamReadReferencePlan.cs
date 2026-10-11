@@ -2,12 +2,12 @@ using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
-public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination }
+public enum RamReadRunKind { Reference, ArchivedQueue, Scheduling, Attribution, Coordination, Async }
 
 public sealed record RamReadReferenceCase(string Id, RamAccess Access, int BlockKiB, bool Random,
     int QueueDepth, int Threads, int Repeat, int RamReadQueueMode = 0,
     bool DisableAffinity = false, bool Interleaved = false, bool SchedulingControl = false,
-    bool CoordinationEnabled = false);
+    bool CoordinationEnabled = false, bool AsyncReads = false);
 
 /// <summary>Read-only reference shapes; aggregate queue depth stays eight for the large multi-thread control.</summary>
 public static class RamReadReferencePlan
@@ -21,6 +21,7 @@ public static class RamReadReferencePlan
         "ram-read-scheduling" => RamReadRunKind.Scheduling,
         "ram-read-attribution" => RamReadRunKind.Attribution,
         "ram-read-coordination" => RamReadRunKind.Coordination,
+        "ram-read-async" => RamReadRunKind.Async,
         _ => throw new ArgumentException("Not a RAM read suite.", nameof(suite))
     };
     public static IReadOnlyList<RamReadReferenceCase> CasesFor(VerificationOptions options) =>
@@ -32,6 +33,7 @@ public static class RamReadReferencePlan
         RamReadRunKind.Scheduling => SchedulingCases(repeats),
         RamReadRunKind.Attribution => AttributionCases(repeats),
         RamReadRunKind.Coordination => CoordinationCases(repeats),
+        RamReadRunKind.Async => AsyncCases(repeats),
         _ => throw new ArgumentOutOfRangeException(nameof(kind))
     };
     public static IReadOnlyList<RamReadReferenceCase> CoordinationCases(int repeats)
@@ -45,6 +47,21 @@ public static class RamReadReferencePlan
             result.Add(new($"{result.Count + 1:D4}-r{repeat}-coordination-q{depth}-t{threads}-{mode}",
                 RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
                 SchedulingControl: true, CoordinationEnabled: mode == "on"));
+        return result;
+    }
+    /// <summary>Same build, same owned disk per repetition: original then candidate adjacent per
+    /// shape, alternating which runs first. Q8T1 is the target; Q1T1 and four readers are controls.</summary>
+    public static IReadOnlyList<RamReadReferenceCase> AsyncCases(int repeats)
+    {
+        if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats));
+        var result = new List<RamReadReferenceCase>();
+        var shapes = new[] { (8, 1), (1, 1), (2, 4) };
+        for (var repeat = 1; repeat <= repeats; repeat++)
+        foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
+        foreach (var candidate in repeat % 2 == 1 ? new[] { false, true } : [true, false])
+            result.Add(new($"{result.Count + 1:D4}-r{repeat}-async-q{depth}-t{threads}-{(candidate ? "candidate" : "original")}",
+                RamAccess.Direct, 1024, false, depth, threads, repeat, Interleaved: threads == 4,
+                SchedulingControl: true, AsyncReads: candidate));
         return result;
     }
     public static IReadOnlyList<RamReadReferenceCase> AttributionCases(int repeats)

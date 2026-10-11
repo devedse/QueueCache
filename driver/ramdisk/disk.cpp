@@ -89,7 +89,7 @@ void RegisterView(ADAPTER* adapter, DISK* disk)
 {
     auto& view = disk->View;
     view.Size = sizeof(view); view.Version = QcRamViewVersion; view.Owner = Driver; view.Resource = disk->Resource;
-    view.Store = &disk->Store; view.LargeCopy = LargeCopy; view.LargeCopyContext = adapter;
+    view.Store = &disk->Store; view.LargeCopy = LargeCopy; view.LargeCopyContext = adapter; view.LargeReadAsync = LargeReadAsync;
     view.Action = QcRamViewRegister;
     if (!NT_SUCCESS(PrepareCall(&disk->Unregister, disk->BudgetDevice, IOCTL_QCACHE_KERNEL_RAM_VIEW, &view, sizeof(view)))) return;
     if (NT_SUCCESS(SyncCall(disk, IOCTL_QCACHE_KERNEL_RAM_VIEW, &view, sizeof(view))) && view.View)
@@ -97,15 +97,19 @@ void RegisterView(ADAPTER* adapter, DISK* disk)
     view.Action = QcRamViewUnregister;
 }
 
+// The filter returns only after its in-flight requests, including asynchronous reads
+// finishing on the workers, left the store; it never touches the store again.
+void UnregisterView(DISK* disk)
+{
+    if (!disk->ViewRegistered) return;
+    const auto status = SendPrepared(disk, &disk->Unregister);
+    NT_ASSERT(NT_SUCCESS(status)); UNREFERENCED_PARAMETER(status);
+    disk->ViewRegistered = FALSE;
+}
+
 void FreeDisk(DISK* disk)
 {
-    // Withdraw Direct access first: the filter returns only after its in-flight requests
-    // left the store, and never touches it again.
-    if (disk->ViewRegistered)
-    {
-        const auto status = SendPrepared(disk, &disk->Unregister);
-        NT_ASSERT(NT_SUCCESS(status)); UNREFERENCED_PARAMETER(status);
-    }
+    UnregisterView(disk); // Withdraw Direct access first.
     auto& store = disk->Store;
     if (store.Slabs)
     {

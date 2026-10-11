@@ -62,6 +62,8 @@ struct QC_RAM_BINDING
     QC_RAM_STORE* Store;      // Valid while Rundown is held.
     QC_RAM_LARGE_COPY* LargeCopy;
     PVOID LargeCopyContext;
+    QC_RAM_LARGE_READ_ASYNC* LargeReadAsync;
+    PIO_REMOVE_LOCK RemoveLock; // The device's; a pending Direct read holds it until completion.
     ULONGLONG Offset, Length; // Volume extent on the RAM disk.
     UCHAR Signature[8];       // Boot sector OEM name at bind; BitLocker changes it.
     BOOLEAN SnapshotSeen;     // A flush-and-hold passed this volume (sticky).
@@ -72,10 +74,13 @@ struct QC_RAM_BINDING
 };
 
 void QcRamDirectInitialize();                                // DriverEntry
-void QcRamDirectInitialize(QC_RAM_BINDING* binding);        // AddDevice
+void QcRamDirectInitialize(QC_RAM_BINDING* binding, PIO_REMOVE_LOCK removeLock); // AddDevice
 NTSTATUS QcRamViewControl(PIRP irp);                         // Budget device, kernel registration
-// Hot path. True when served: IoStatus is set and the caller completes the IRP.
-bool QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp);
+// Hot path, with the IRP's remove lock held. Served: IoStatus is set and the caller releases
+// the lock and completes the IRP. Pending: the IRP is marked pending and is (or will be)
+// completed by Direct access, which also releases the lock; return STATUS_PENDING.
+enum class QcRamDirectResult { Declined, Served, Pending };
+QcRamDirectResult QcRamDirectTransfer(QC_RAM_BINDING* binding, PIRP irp);
 void QcRamDirectObserveControl(QC_RAM_BINDING* binding, ULONG code);
 // PASSIVE_LEVEL. lower is the next device in the volume stack.
 void QcRamDirectBind(QC_RAM_BINDING* binding, PDEVICE_OBJECT lower, const GUID& resource, ULONGLONG volumeBytes, ULONG flags);

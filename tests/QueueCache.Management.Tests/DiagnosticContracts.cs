@@ -12,8 +12,13 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 117, "coordination contract has a new verification plan version on every host");
+        Check(VerificationPlan.Version == 118, "asynchronous read comparison has a new verification plan version on every host");
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
+        VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
+        var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
+            DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "ram-read-async"));
+        Check(asyncExperiment.Count == 1 && asyncExperiment[0].MeasurementWindows == 18 && asyncExperiment[0].ExpectedCases.Count == 1,
+            "asynchronous read experiment is one phase of 18 windows on every host");
         var coordination = RamReadReferencePlan.CasesFor(RamReadRunKind.Coordination, 1);
         Check(coordination.Count == 9 && coordination.Count(c => c.CoordinationEnabled) == 3 &&
             coordination.All(c => c.SchedulingControl && !c.DisableAffinity), "nine off/on/off coordination windows on every host");

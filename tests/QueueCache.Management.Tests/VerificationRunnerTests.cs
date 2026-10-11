@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 117, "plan 117 declares narrow coordination diagnostics and one-phase experiments");
+        Check(VerificationPlan.Version == 118, "plan 118 declares the same-build asynchronous split read comparison");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -58,6 +58,9 @@ internal static class VerificationRunnerTests
         Reject(() => RamReadReferencePlan.CoordinationCases(3));
         Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-coordination", BudgetMiB = 2048, DiskSpd = "fixture", Repeats = 3 }));
         RunCoordinationContracts(Check, Reject);
+        RunAsyncReadContracts(Check, Reject);
+        Reject(() => VerificationPlan.Validate(options with { Suite = "ram-read-async", BudgetMiB = 2048, DiskSpd = "fixture", Repeats = 4 }));
+        Reject(() => RamReadReferencePlan.AsyncCases(4));
         await RunCampaignContractsAsync();
         Check(VerificationPlan.Suites.Contains("partial-read-accounting") &&
               VerificationPlan.Integrity(options with { Suite = "partial-read-accounting" }).Single().Operation == "partial-read-accounting" &&
@@ -1857,6 +1860,74 @@ internal static class VerificationRunnerTests
             reject(() => RamReadCoordination.Report(evidence, plan, rows[..^1]));
             reject(() => RamReadCoordination.Report(evidence, plan, [.. rows[..^1], rows[0]]));
             reject(() => RamReadCoordination.Report(evidence, plan, rows.Select((r, i) => i == 1 ? r with { ResourceId = Guid.NewGuid() } : r).ToArray()));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
+    internal static void RunAsyncReadContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var plan = RamReadReferencePlan.AsyncCases(3);
+        check(plan.Count == 18 && plan.Select(c => c.Id).Distinct().Count() == 18 && plan.Count(c => c.AsyncReads) == 9 &&
+            plan.All(c => c.Access == QueueCache.Operations.ManagedDisks.RamAccess.Direct && c.BlockKiB == 1024 && !c.Random &&
+                c.SchedulingControl && !c.DisableAffinity && c.Interleaved == (c.Threads == 4)) &&
+            plan.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count() == 2 && g.Count(c => c.AsyncReads) == 1) &&
+            RamReadReferencePlan.KindFor("ram-read-async") == RamReadRunKind.Async &&
+            RamReadReferencePlan.CasesFor(RamReadRunKind.Async, 3).Count == 18,
+            "asynchronous read plan pairs original/candidate per shape and repetition, Direct 1 MiB only");
+        check(!plan[0].AsyncReads && plan[1].AsyncReads && plan[6].AsyncReads && !plan[7].AsyncReads &&
+            RamReadAsync.IsTarget(plan[0]) && !RamReadAsync.IsTarget(plan[2]),
+            "candidate order alternates per repetition and the target (Q8T1) runs first in odd repetitions");
+
+        var wire = new byte[QueueCache.Management.RamAsyncReads.WireSize];
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(wire, (uint)wire.Length);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(wire.AsSpan(4), 1);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(8), 3);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(wire.AsSpan(16), 1);
+        var on = QueueCache.Management.RamAsyncReads.Decode(wire);
+        check(on.Generation == 3 && on.Enabled && on.Started == 0 && on.InFlight == 0, "asynchronous read wire header/generation/mode are explicit");
+        reject(() => QueueCache.Management.RamAsyncReads.Decode(wire[..^8]));
+        var wrongVersion = (byte[])wire.Clone(); wrongVersion[4] = 2;
+        reject(() => QueueCache.Management.RamAsyncReads.Decode(wrongVersion));
+        var wrongMode = (byte[])wire.Clone(); wrongMode[16] = 2;
+        reject(() => QueueCache.Management.RamAsyncReads.Decode(wrongMode));
+        var ran = on with { Started = 900, Completed = 880, Declined = 20, MaxInFlight = 8, Probes = 2, InlineStreak = 5 };
+        var share = QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, true, 1000);
+        check(Math.Abs(share - 0.88) < 1e-9, "asynchronous share counts only completed asynchronous reads");
+        foreach (var invalid in new[] { ran with { Generation = 4 }, ran with { InFlight = 1 }, ran with { InlineActive = 1 },
+            ran with { Completed = 879 }, ran with { Started = 0, Completed = 0, Declined = 0 }, ran with { MaxInFlight = 0 },
+            ran with { MaxInFlight = 17 }, ran with { Enabled = false } })
+            reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, invalid, true, 1000));
+        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(on, ran, true, 100));
+        var off = ran with { Enabled = false };
+        check(QueueCache.Management.RamAsyncReads.ValidateWindow(off, off, false, 1000) == 0, "disabled windows report no asynchronous share");
+        reject(() => QueueCache.Management.RamAsyncReads.ValidateWindow(off, off with { Started = 901, Completed = 881 }, false, 1000));
+        check((uint)QueueCache.Management.RamDiskAction.AsyncReads == 0x103 && (uint)QueueCache.Management.RamDiskAction.SetAsyncReads == 0x104 &&
+            (uint)QueueCache.Management.RamDiskAction.SetCoordination == 0x102 && QueueCache.Management.RamDiskSnapshot.Version == 1,
+            "asynchronous reads add actions without recycling IDs or changing the request ABI");
+
+        var resource = Guid.NewGuid(); var boot = Guid.NewGuid();
+        RamAsyncWindow[] Windows(Func<RamReadReferenceCase, double> score) => plan.Select(c => new RamAsyncWindow(c, resource, boot, 1,
+            c.AsyncReads ? on : off, c.AsyncReads ? ran : off, c.AsyncReads ? 0.88 : 0,
+            new DiskSpdScore(50L << 20, 50, 10, score(c), 5, 0.1, null, 0.2, 0.3))).ToArray();
+        var directory = Path.Combine(Path.GetTempPath(), "qcache-async-contract-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var evidence = Path.Combine(directory, "evidence");
+            double Target(RamReadReferenceCase c, double gain) => RamReadAsync.IsTarget(c) && c.AsyncReads ? 25_000 * gain + c.Repeat : 25_000 + c.Repeat;
+            check(RamReadAsync.Report(evidence, plan, Windows(c => Target(c, 1.30))) == "ACCEPT_SCREEN", "clear target gain with flat controls passes the screen");
+            using (var report = JsonDocument.Parse(File.ReadAllText(evidence + ".async-summary.json")))
+                check(report.RootElement.GetProperty("Shapes").GetArrayLength() == 3 &&
+                    report.RootElement.GetProperty("Shapes")[0].GetProperty("Role").GetString() == "target", "summary lists the target first");
+            check(RamReadAsync.Report(evidence, plan, Windows(c => Target(c, 1.02))) == "REJECT", "a gain under 5% rejects the candidate");
+            check(RamReadAsync.Report(evidence, plan, Windows(c => RamReadAsync.IsTarget(c) && c.AsyncReads ? (c.Repeat == 2 ? 24_000 : 30_000) : 25_000)) ==
+                "AMBIGUOUS_ONE_MORE_BATCH", "a median gain with one losing pair is ambiguous, not a pass");
+            check(RamReadAsync.Report(evidence, plan, Windows(c => c.QueueDepth == 1 && c.AsyncReads ? 24_000 : Target(c, 1.30))) ==
+                "CONTROL_LOSS_REVISION_OR_REJECT", "a repeatable 3% control loss blocks acceptance");
+            check(RamReadAsync.Report(evidence, plan.Take(12).ToArray(), Windows(c => Target(c, 1.30))[..12]) == "INCOMPLETE_FOR_ACCEPTANCE",
+                "fewer than three repetitions never pass the screen");
+            reject(() => RamReadAsync.Report(evidence, plan, Windows(c => 1)[..^1]));
+            reject(() => RamReadAsync.Report(evidence, plan, Windows(c => 1).Select((w, i) => i == 1 ? w with { ResourceId = Guid.NewGuid() } : w).ToArray()));
         }
         finally { Directory.Delete(directory, true); }
     }
