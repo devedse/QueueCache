@@ -13,17 +13,29 @@
   integration is documented in `docs/PERFORMANCE_CAMPAIGN_PLAN.md`. The updated
   Runner helper can launch owned jobs now; automatic notifications additionally
   require the updated Manager service. Live wake verification remains separate
-  from controller event validation. Use focused campaigns for affected regressions.
-  Follow `docs/PERFORMANCE_FINALIZATION_HANDOFF.md` for the current bounded
-  investigation and final acceptance/stop gates. It supersedes the execution
+  from controller event validation. Select the smallest maintained suite/profile
+  for affected regressions.
+  `docs/PERFORMANCE_FINALIZATION_HANDOFF.md` records the bounded investigation
+  and final acceptance/stop gates. Plan 117's executed outcome is closed: no
+  additional acceptable speedup found; Q8 helpers copy 74.60% of bytes and only
+  0.64% of posts are withdrawn unused, with one active Direct copy. Do not rerun
+  the coordination/priority/affinity investigations merely to rediscover these
+  results. Reopen for new evidence, relevant code/contract changes or a new user
+  request. Live Manager idle wake remains a separate unverified integration gap.
+  The finalization record supersedes the execution
   order in `docs/PERFORMANCE_AGENT_HANDOFF.md`, which remains technical reference.
   Proposed suites/profiles must be implemented before use. Close with a verified
   speedup or no acceptable speedup found within that scope; record verification
   blockers separately. Do not expand failed research into unrelated work.
-  Current user priority: investigate and compare concrete RAM speedup candidates
+  For any newly authorized investigation, compare concrete RAM speedup candidates
   with the smallest maintained suite and affected correctness checks first.
   `--campaign focused` also runs 81 retained correctness checks; use an existing
-  `--suite` when that extra scope is unnecessary. Reserve broad regression/write/
+  `--suite` when that extra scope is unnecessary. Plan 117 also provides
+  `--campaign experiment --focus-suite ram-read-coordination`: one phase, nine
+  off/on/off windows, without those 81 checks. Candidate comparison suites remain
+  gated on actionable diagnostic evidence; no candidate was selected and they
+  are not implemented.
+  Reserve broad regression/write/
   sustained campaigns for the final retained candidate, launched once with a
   combined report. Keep byte, identity, telemetry and restoration guards. Further
   low-priority/affinity diagnosis and dedicated 100 ms UI cost testing are parked;

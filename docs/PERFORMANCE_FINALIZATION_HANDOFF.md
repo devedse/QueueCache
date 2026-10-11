@@ -1,10 +1,33 @@
 # Final performance investigation: bounded agent handoff
 
 Prepared 2026-10-11 against `perf/ram-read-followups`, source checkpoint
-`6c52ce4`, verification plan 116. This is the **current execution plan**, replacing
+`6c52ce4`, verification plan 116. This records the **executed plan**, replacing
 the order and scope of the older [implementation handoff](PERFORMANCE_AGENT_HANDOFF.md).
-That file remains technical reference, not a second backlog. Proposed commands
-and suites below are explicitly marked; implement them before use.
+That file remains technical reference, not a second backlog.
+
+**Execution closed, 2026-10-11:** no additional acceptable speedup found. Source
+`0575e97`, plan 117, implements the missing coordination diagnostic and one-phase
+experiment profile. Signed CI and nine VM windows pass, with exact restoration.
+Q8 has one active copy, 74.60% useful helper bytes and only 0.64% withdrawn posts;
+no practical safe target candidate is selected. The full measurements, limits,
+identities and timings are in [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#finalization-request-overlap-and-helper-coordination-2026-10-11).
+The sections below preserve the executed plan and its conditional gates; they
+are not a new automatic research backlog. Candidate suites remain unimplemented.
+
+| Plan item | Implementation | Verification / final disposition |
+|---|---|---|
+| 1. Starting point and completion delivery | Existing owned-job helper used; intended signed native pair deployed with recorded clean restart. | Loaded hashes, registration, profiles and restoration checked. Independent smoke passes in 78.18 s; controller validation works. Actual live Manager automatic wake remains unverified. |
+| 2. Narrow campaign | One-phase `experiment`, typed nine-window coordination suite, plan 117 and strict contracts. | Linux/Windows contracts, Debug/Release native/CLI CI and first VM experiment pass; no hidden 81-check matrix. |
+| 3. Remaining coordination question | Default-off per-store overlap/byte/helper counters and 1/64 handoff sampling. | Nine windows PASS in 273.02 s. Q8 off brackets drift 0.85%, on differs −1.65%; target within guard. Q1/four-reader brackets drift and are not causal timing comparisons. No correction/retry needed for the primary target. |
+| 4. Candidate and screen | No candidate selected; candidate suite not implemented. | Gate stops here: useful Q8 helpers already take 99.356% of posts; asynchronous overlap needs a new lifetime/progress design, not a justified small change. No screen marked passed. |
+| 5. Winner controls/lifecycle | Not reached. | No retained candidate, so no 36-window controls or unimplemented-path lifecycle qualification. |
+| 6. Qualification or negative closure | Negative performance result documented; useful default-off diagnostics retained. | Changed diagnostic/resource paths and off/on/off behavior VM-qualified. Broad release/write/sustained campaign and README rerun not needed for a nonexistent winner. VM/UI/settings restored. PR #9 stays draft/unmerged. |
+
+The one remaining integration gap is actual Manager service deployment/idle wake
+qualification. Controller success while this agent is busy is not wake proof;
+it does not invalidate the completed performance diagnosis. Reopen native research
+only for new evidence or a new user request. Proposed commands and suites in the
+frozen plan below must still be implemented before use.
 
 ## Outcome and limits
 

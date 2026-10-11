@@ -1,11 +1,20 @@
 # RAM-first cache: contract, implementation tracker and verification
 
-Last updated: 2026-10-10. This is the authoritative execution tracker. Detailed
+Last updated: 2026-10-11. This is the authoritative execution tracker. Detailed
 audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
-**Current status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
+**Current performance finalization, 2026-10-11:** source `0575e97`, signed native
+0.4.568.1, plan 117. Nine coordination windows pass with exact restoration;
+the bounded investigation closes with no additional acceptable speedup found.
+Default-off diagnostics and the one-phase experiment profile are retained, with
+no new copying/scheduling/default optimization. Live Manager automatic wake is
+still unverified. Detailed implementation/verification and scope closure are in
+"User scope review, 2026-10-11" below and
+[PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md#finalization-request-overlap-and-helper-coordination-2026-10-11).
+
+**Historical status, 2026-09-27 (installed 0.4.148.1 `97b8f4f`, tools 0.4.149.1 plan 57).**
 Fast mode is the product focus. On 2026-09-26/27: the saved-profile shutdown
 deadlock was fixed and soaked under Driver Verifier; Driver Verifier passes found no
 other violation; a failed lower IRP allocation no longer faults the cache; settings
@@ -3239,13 +3248,57 @@ acceptance result. Temporary owner settings are restored after this check.
 Finalization implementation checkpoint (plan 117): default-off per-store Direct
 copy overlap/helper counters and 1/64 sampled handoff timings, versioned research
 query/settings with unchanged public prefixes, nine-window off/on/off typed suite
-and one-phase `experiment` campaign. Implementation and contract checks are in
-progress; VM/native build and perturbation verification are pending. No candidate
-optimization selected and no speedup claim. Automatic live Manager delivery
+and one-phase `experiment` campaign. Implementation: source `0575e97`, plan 117.
+Verification: Linux host contracts and Windows Debug/Release native, managed and
+CLI checks pass in CI run `38096468882` (6 min 46 s). The signed 0.4.568.1 package
+records synthetic PR merge `12771e5`; its tree is identical to source `0575e97`.
+VM verification completes in exact campaign
+`QueueCache-Campaign-20261011-030244-6c5d802829a74dad95f82656a87be700`: 1/1 phases,
+nine windows PASS, 273.019 s total, 8.209 s final restoration, 24 zero-exit owned
+records, 12 readiness files, 135 native samples, maximum native gap 1.023141 s.
+Nine full 1 GiB hashes, XML/scheduling, diagnostic generations/bytes and disabled
+restore readbacks checked; image attempts zero and native errors zero. Q8 copy
+peak 1, helpers 74.60% of bytes, unused posts 0.644%; off drift +0.847% and on
+versus off mean −1.654%, within the 2% diagnostic guard. Q1/four-reader drift
+is +7.977%/−4.216%; do not use their timing comparisons causally. Q1's first
+window has 116,736 bytes of ancillary in-memory Direct writes/19 generation
+increments, with unchanged full payload hash and zero image attempts; their
+effect on drift is unproved. Actual loaded 568 filter/provider hashes and strict
+registration are recorded in the consolidated findings.
+
+Final performance disposition: **no additional acceptable speedup found within
+the bounded investigation**. No candidate selected: reducing posts does not
+target a demonstrated Q8 cost, while asynchronous admission requires a new safe
+lifetime/progress design. Candidate screen/control suites remain unimplemented;
+their matrices, new asynchronous lifecycle tests and final broad release campaign
+were not run or marked passed. Useful default-off diagnostics retained; copying,
+scheduling, chunk size and production defaults remain unchanged. Automatic live Manager delivery
 remains separate from helper/event validation.
 
-Final handoff: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
-is now the execution plan. Implementation: documentation only; proposes one
+Automation smoke: exact campaign
+`QueueCache-Campaign-20261010-235349-9ea2613ab5264e8ea7c29eadad2f5de3`, unchanged
+native 0.4.514.1 / managed plan 116. Verification: 2/2 phases and cases completed,
+all checks pass, restoration RESTORED in 8.571 s, total 78.181 s, 28 owned
+zero-exit records and nine readiness files. Raw archive SHA-256
+`94448EA39B3A1A6C4A7F2CA4C2114897C861DC57BB2B1C5EEBB634C80BDC68CB`.
+Manager job `9ee931b7-8e73-435b-a8ca-5418b9119ca4` is VALIDATED with delivery
+PENDING while the agent is busy; no automatic wake has been observed. This is
+controller qualification, not proof of live Manager service delivery.
+
+Final diagnostic Manager job `76c44478-8c58-41b3-8fa7-1c53b812ee42` is also
+VALIDATED; no idle wake was observed. Already inspected results are acknowledged
+with `job-reviewed`. Preliminary job `e2a61b95-2c0c-4554-a155-819cabf5c748` stopped
+before qcache launched (binary-search long path); record preserved, no samples
+combined. Successful raw archive SHA-256
+`9EE925A1B1246387E6A5EEAC6EEFDB89292A9D30CCA53BA21250B093B7ECF861`.
+At 03:10:20 UTC session cleanup restored original Q: active 2 GiB Fast/Idle,
+dirty/in-flight/errors zero, saved profiles unchanged, original resource IDs,
+detached owned NTFS lab and installed session-1 tray PID 7624. Intended signed
+568 remains loaded. No README benchmark rerun or PR merge; PR #9 remains draft.
+
+Historical plan checkpoint: [PERFORMANCE_FINALIZATION_HANDOFF.md](PERFORMANCE_FINALIZATION_HANDOFF.md)
+was the execution plan; its completed status table and closure now take precedence.
+Original implementation: documentation only; proposed one
 missing-fact diagnostic, one candidate plus at most one justified revision, narrow
 campaign composition and final qualification/negative closure. Verification:
 source entry points and current suite/campaign contracts reviewed; no proposed

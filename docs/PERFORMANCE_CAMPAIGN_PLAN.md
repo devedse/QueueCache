@@ -8,6 +8,14 @@ remains separate. `full` does not include every specialized
 performance suite or the separate write matrix. Findings and priorities are in
 [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md).
 
+Plan-117 VM qualification: the one-phase coordination `experiment` completes
+nine guarded windows and exact restoration in 273.02 s. The real owned controller
+validates its terminal event after exit. A separate smoke passes in 78.18 s.
+Neither run proves automatic live Manager idle wake; results were inspected during
+the active agent turn. The bounded performance investigation selects no candidate
+and is closed; see the consolidated finalization record rather than repeating
+historical campaigns. Candidate suites remain conditional and unimplemented.
+
 ## Intended operator experience
 
 Run one foreground command with explicit targets and an immutable campaign plan.
