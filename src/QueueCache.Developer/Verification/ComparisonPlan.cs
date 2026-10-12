@@ -221,8 +221,8 @@ public static class ComparisonPlan
         if (targets.Any(t => long.Parse(t.Element("FileSize")?.Value ?? "-1", CultureInfo.InvariantCulture) < fileBytes))
             throw new InvalidDataException("DiskSpd target is smaller than the window's file.");
         var reads = Sum("ReadCount"); var writes = Sum("WriteCount");
-        if (score.Operations <= 0) throw new InvalidDataException("DiskSpd completed no operations.");
-        if (window.Access == 'R' && writes != 0 || window.Access == 'W' && reads != 0 || window.Access == 'M' && (reads == 0 || writes == 0))
+        // A window in which nothing completed is a measurement (a stall: 0 MB/s, latency N/A), not a collection failure.
+        if (window.Access == 'R' && writes != 0 || window.Access == 'W' && reads != 0 || window.Access == 'M' && score.Operations > 0 && (reads == 0 || writes == 0))
             throw new InvalidDataException("DiskSpd read/write split differs from the window.");
         if (score.Bytes != score.Operations * window.BlockKiB * 1024L) throw new InvalidDataException("DiskSpd bytes are not whole blocks.");
         double? Percentile(string field, double percentile, long operations)

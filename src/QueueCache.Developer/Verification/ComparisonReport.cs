@@ -65,10 +65,9 @@ public static class ComparisonReport
     {
         static double? Median(IEnumerable<double?> values)
         {
-            var list = values.ToList();
-            if (list.All(v => v is null)) return null;
-            if (list.Any(v => v is null)) throw new InvalidDataException("A latency percentile is present in some repetitions only.");
-            return ComparisonPlan.Spread(list.Select(v => v!.Value).ToArray()).Median;
+            // Repetitions that completed nothing have no latency; the median covers the ones that did.
+            var list = values.Where(v => v is not null).Select(v => v!.Value).ToArray();
+            return list.Length == 0 ? null : ComparisonPlan.Spread(list).Median;
         }
         return plan.Where(c => c.Kind == "diskspd").GroupBy(c => ComparisonPlan.Shape(c.Id)).Select(group =>
         {

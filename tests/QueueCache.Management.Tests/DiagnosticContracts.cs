@@ -396,7 +396,8 @@ internal static class DiagnosticContracts
         reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 0, 4000, cpu: false), 1L << 30));
         reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 0, 4000, p50: false), 1L << 30));
         reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 400, 4000), 1L << 30));
-        reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 0, 0), 1L << 30));
+        check(ComparisonPlan.Score(q8t4, Results(q8t4, 0, 0), 1L << 30) is { Operations: 0, MBPerSecond: 0, WriteP99Ms: null, ReadP99Ms: null },
+            "a window that completed nothing is a stall (0 MB/s, latency N/A), not a collection failure");
         var mixed = cacheWindows.Single(c => c.Access == 'M');
         check(ComparisonPlan.Score(mixed, Results(mixed, 700, 300), 4L << 30 >> 2).ReadP99Ms == 0.5, "a mixed window reports both directions");
         reject(() => ComparisonPlan.Score(mixed, Results(mixed, 700, 0), 1L << 30));
