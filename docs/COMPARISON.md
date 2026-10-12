@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 10 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 11 of 13 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -31,8 +31,7 @@ as the [README](../README.md#performance). Click a screenshot for full size, or 
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | <a href="images/comparison/R05-imdisk.png"><img src="images/comparison/R05-imdisk.png" width="300" alt="CrystalDiskMark, ImDisk Toolkit 20250206, AWE"></a> | 14,556 / 16,841 | 14,546 / 16,787 | 591 / 551 | 577 / 551 |
 | [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | <a href="images/comparison/R06-primo-directio.png"><img src="images/comparison/R06-primo-directio.png" width="300" alt="CrystalDiskMark, Primo Ramdisk 6.6.0, Direct-IO"></a> | 27,748 / 21,574 | 17,625 / 17,358 | 624 / 329 | 1,456 / 1,228 |
 | [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | <a href="images/comparison/R06-primo-scsi.png"><img src="images/comparison/R06-primo-scsi.png" width="300" alt="CrystalDiskMark, Primo Ramdisk 6.6.0, SCSI"></a> | 30,310 / 20,562 | 18,062 / 16,668 | 941 / 828 | 979 / 860 |
-| [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | Not run yet | - | - | - | - |
-| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | Not run yet | - | - | - | - |
+| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | <a href="images/comparison/R08-softperfect-ramfs.png"><img src="images/comparison/R08-softperfect-ramfs.png" width="300" alt="CrystalDiskMark, SoftPerfect RAM File System 26.10, default"></a> | 30,959 / 21,891 | 25,093 / 23,479 | 2,524 / 2,163 | 2,932 / 2,386 |
 | [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md) | Not run yet | - | - | - | - |
 | [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md) | Not run yet | - | - | - | - |
 
@@ -70,8 +69,7 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | 14,800 / 17,102 | 14,888 / 17,108 | 20,128 / 22,247 | 584 / 537 | 548 / 516 | 982 / 989 | 20 / 21 | 25 % | 4,149 | 4.5 / 4.4 / 2.9 / 4.4 | Free | Measured |
 | [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | 17,967 / 17,793 | 27,548 / 20,958 | 27,211 / 25,344 | 1,480 / 1,208 | 587 / 342 | 2,882 / 2,135 | 4 / 7 | 62 % | 4,073 | 4.6 / 4.9 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | Measured |
 | [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | 17,793 / 17,069 | 28,591 / 20,500 | 26,953 / 24,930 | 993 / 860 | 965 / 824 | 3,427 / 2,937 | 12 / 15 | 65 % | 3,996 | 47.1 / 12.4 / 147.6 / 10.4 | $24.95-54.95 (30-day trial used) | Measured |
-| [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | - | - | - | - | - | - | - | - | - | - | $39.95 (trial used) | Not run yet |
-| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | - | - | - | - | - | - | - | - | - | - | $29 per PC (30-day trial used) | Not run yet |
+| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | 25,145 / 23,713 | 30,497 / 21,626 | 31,289 / 25,157 | 2,978 / 2,364 | 2,614 / 2,206 | 8,624 / 7,476 | 2 / 2 | 63 % | 0 | 1.6 / 1.2 / 2.6 / 1.8 | $29 per PC (30-day trial used) | Measured |
 | [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md) | - | - | - | - | - | - | - | - | - | - | Free (MIT) | Not run yet |
 | [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md) | - | - | - | - | - | - | - | - | - | - | Free (MIT) | Not run yet |
 
@@ -117,8 +115,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md): Measured
 - [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md): Measured
 - [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md): Measured
-- [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md): Not run yet
-- [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md): Not run yet
+- [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md): Measured
 - [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md): Not run yet
 - [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md): Not run yet
 - [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Not run yet
@@ -131,6 +128,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 
 | Product | Kind | Why not |
 |---|---|---|
+| GiliSoft RAMDisk 7.2.0 | RAM disk | Installed and tried: the trial limits disks to 512 MB, too small for the 1 GiB tests on a 4 GiB disk. A licence costs $39.95. |
 | StarWind RAM Disk | RAM disk | Download requires a registration form; can be added if the owner downloads it. |
 | Condusiv DymaxIO | RAM read cache | Trial requires an account, and its EULA (s.5.2(vii)) forbids publishing benchmark results without consent. |
 | Arsenal Image Mounter (RAM disk) | RAM disk | Same Storport driver as AIM Toolkit, which is tested. |
