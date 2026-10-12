@@ -33,7 +33,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 120;
+    public const int Version = 121;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -101,7 +101,13 @@ public static class VerificationPlan
         "cache-read-bookkeeping",
         "flush-interference",
         "performance",
-        "full"
+        "full",
+        "compare-snapshot",
+        "compare-ram",
+        "compare-cache",
+        "compare-cache-cold",
+        "compare-durability-write",
+        "compare-durability-verify"
     ];
 
     public static IReadOnlyList<DrainDecisionCase> DrainDecision(VerificationOptions options)
@@ -172,6 +178,7 @@ public static class VerificationPlan
             new("volume-snapshot", "volume-snapshot")
         ],
         "trim-cache" => [new("trim-cache", "trim-cache")],
+        var suite when ComparisonPlan.IsComparison(suite) => [new(suite, suite)],
         _ => []
     };
 
@@ -421,6 +428,23 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (ComparisonPlan.IsComparison(options.Suite))
+        {
+            if (string.IsNullOrWhiteSpace(options.Product))
+                throw new ArgumentException("Comparison suites require --product \"<name> <version> <mode>\" (for example \"PrimoCache 4.4.1 L1 2 GiB defer-write\").");
+            if (options.Repeats is < 1 or > 3 || options.CaseFilter is not null || options.SoakSeconds is not null || options.KeepWorkloads)
+                throw new ArgumentException("Comparison suites take --repeats 1..3 and no case filter, soak or --keep-workloads.");
+            if ((options.Suite == "compare-durability-verify") != (options.OraclePath is not null))
+                throw new ArgumentException("--oracle (the durability-oracle.json of the write phase) is required only for compare-durability-verify.");
+            if (ComparisonPlan.UsesDiskSpd(options.Suite) != (options.DiskSpd is not null))
+                throw new ArgumentException(ComparisonPlan.UsesDiskSpd(options.Suite)
+                    ? $"Suite '{options.Suite}' requires --diskspd <path-to-exe> (the same binary for every product)."
+                    : $"Suite '{options.Suite}' does not use DiskSpd.");
+            if (options.DiskSpd is not null && !File.Exists(Path.GetFullPath(options.DiskSpd)))
+                throw new FileNotFoundException("DiskSpd executable was not found or is not accessible.", Path.GetFullPath(options.DiskSpd));
+            return;
+        }
+        if (options.Product is not null) throw new ArgumentException("--product applies only to comparison suites.");
         var managedLifecycle = options.Suite is "managed-broker-restart" or "managed-lifecycle-prepare" or "managed-lifecycle-verify" or "managed-lifecycle-cleanup";
         if (managedLifecycle)
         {

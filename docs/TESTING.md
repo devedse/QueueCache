@@ -121,6 +121,52 @@ ones in use:
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 3 and 7) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
+| `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
+
+**Comparisons with other products** (plan 121). These suites measure any RAM
+disk or cached volume the same way, without QueueCache's controls, hooks or
+telemetry, so QueueCache and its competitors get identical treatment. Each needs
+`--product "<name> <version> <mode>"`. QueueCache's drivers must be loaded
+exactly when the product is QueueCache, so one product never runs on top of
+another. Every run records the loaded third-party drivers, the storage filter
+lists, Secure Boot and Memory Integrity settings, and memory snapshots.
+
+- `compare-ram` runs on a 4 GiB RAM disk:
+  - 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes (36 windows at three
+    repeats), with p50/p99/p99.9 latency and CPU;
+  - memory used before and after a 2 GiB fill, and after deleting it;
+  - a seeded 40,000-file, 1.2 GiB tree: create, copy with four threads, read and
+    hash, delete;
+  - a final byte check.
+- `compare-cache` runs on a cached volume, keeping its workload files in
+  `<volume>\QCBench` so later runs overwrite the same disk areas:
+  - hot CrystalDiskMark shapes, buffered and write-through writes;
+  - random and sequential reads of an 8 GiB file larger than the cache;
+  - a 1 GiB absorb, 512 MiB plus `FlushFileBuffers`, and 8 GiB sustained writes
+    with per-second throughput;
+  - a five-minute 70/30 mix and the file tree.
+
+  After writes it waits for the disk below to go quiet: at least 45–90 s, at
+  most 300 s.
+- `compare-cache-cold` needs a cache that was emptied beforehand, with the
+  product's own command or a restart. It times a first and second read of a
+  1 GiB file and two random-read windows.
+- `compare-durability-write` works in three steps:
+  1. It writes generation 1 and lets it settle.
+  2. It writes generation 2: an application-style durable save, raw writes
+     without a flush, and 10,000 new small files.
+  3. It flushes the evidence volume before `FINISHED.txt`.
+
+  Reset the VM as soon as `FINISHED.txt` appears. After the restart, run
+  `compare-durability-verify --oracle <write run>\durability-oracle.json`. It
+  counts what survived and runs `chkdsk /scan`. These are measurements, not
+  verdicts.
+- `compare-snapshot` records memory and drivers only, for example before
+  creating a disk.
+
+Results go in `COMPARISON.md` and `comparison.json` in the run folder, as medians
+with ranges. Bytes and flushes that reached the virtual disk come from the
+hypervisor's per-disk counters, joined by each step's `compare.<step>.interval.json`.
 
 DiskSpd: Microsoft DiskSpd (`amd64\diskspd.exe`) or CrystalDiskMark's bundled
 `CdmResource\DiskSpd\DiskSpd64.exe`, both in XML mode. Keep the same binary
