@@ -9,25 +9,25 @@
 | Mode | SCSI |
 | Kind | Block device |
 | Price | $24.95-54.95 (30-day trial used) |
-| `compare-snapshot` run | `QueueCache-Verify-20261012-133637-c903576c3b80473bb95495462e8587cb` |
-| `compare-ram` run | `QueueCache-Verify-20261012-134746-9d2aff305a124d3e8bef2d3b8835adba` |
+| `compare-snapshot` run | `QueueCache-Verify-20261012-191146-ffd6e6cd502544db8b827d5c4c859b06` |
+| `compare-ram` run | `QueueCache-Verify-20261012-192301-bc644b9e08ff4f39b28cc4a8d5e78af7` |
 
 ## Notes
 
-The run went fine, but the file-workload times are not comparable yet: Windows Defender kept scanning this disk's files, as with OSFMount's physical mode, which slows the read step. This mode will be run again with that fixed. The speed measurements are not affected: about 28 GB/s for large reads, and small requests about a third slower than Primo's Direct-IO mode one at a time but faster when many are queued.
+The run went fine (measured a second time; the first attempt's file-workload times were slowed by virus scanning). Large reads from one program reach about 27 GB/s. Single small requests are about a third slower than Primo's Direct-IO mode, but unlike Direct-IO it keeps up when many requests are queued.
 
 ## CrystalDiskMark
 
 <img src="../images/comparison/R06-primo-scsi.png" width="480" alt="CrystalDiskMark, Primo Ramdisk 6.6.0, SCSI">
 
-Kept: run 1 (the faster SEQ1M Q8T1 read of two). MB/s.
+Kept: run 2 (the faster SEQ1M Q8T1 read of two). MB/s.
 
 | Test | Run 1 read / write | Run 2 read / write |
 |---|---:|---:|
-| SEQ1M Q8T1 | 30,309.57 / 20,561.64 | 30,029.91 / 21,886.15 |
-| SEQ1M Q1T1 | 18,062.38 / 16,668.49 | 18,108.02 / 16,713.68 |
-| RND4K Q32T1 | 940.98 / 828.10 | 952.11 / 830.11 |
-| RND4K Q1T1 | 979.12 / 860.19 | 983.37 / 871.83 |
+| SEQ1M Q8T1 | 25,841.62 / 21,208.92 | 26,403.74 / 20,704.39 |
+| SEQ1M Q1T1 | 16,804.75 / 16,981.72 | 16,600.96 / 17,068.31 |
+| RND4K Q32T1 | 937.55 / 798.87 | 927.10 / 803.38 |
+| RND4K Q1T1 | 979.17 / 835.79 | 975.39 / 833.17 |
 
 ## Detailed measurements (DiskSpd)
 
@@ -35,35 +35,35 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 
 | DiskSpd shape | n | MB/s | IOPS | Read p50 / p99 / p99.9 ms | Write p50 / p99 / p99.9 ms | CPU % |
 |---|---:|---:|---:|---|---|---:|
-| ram-seq1m-q1t1-read | 3 | 17,793.2 (17,672.1–17,820.2) | 16,969 | 0.055 / 0.087 / 0.164 | - / - / - | 25.4 |
-| ram-seq1m-q8t1-read | 3 | 28,590.8 (28,121.6–28,921.3) | 27,266 | 0.112 / 0.202 / 0.250 | - / - / - | 65.3 |
-| ram-seq1m-q8t4-read | 3 | 26,952.9 (26,202.4–27,184.8) | 25,704 | 0.163 / 0.601 / 1.363 | - / - / - | 100.0 |
-| ram-rnd4k-q1t1-read | 3 | 992.9 (991.8–996.6) | 242,412 | 0.004 / 0.012 / 0.025 | - / - / - | 25.4 |
-| ram-rnd4k-q32t1-read | 3 | 964.6 (957.5–969.0) | 235,498 | 0.004 / 0.013 / 0.027 | - / - / - | 25.4 |
-| ram-rnd4k-q32t4-read | 3 | 3,426.7 (3,403.8–3,433.8) | 836,607 | 0.004 / 0.014 / 0.026 | - / - / - | 100.0 |
-| ram-seq1m-q1t1-write | 3 | 17,069.3 (17,015.5–17,146.6) | 16,279 | - / - / - | 0.058 / 0.087 / 0.148 | 25.3 |
-| ram-seq1m-q8t1-write | 3 | 20,500.0 (20,422.9–20,749.2) | 19,550 | - / - / - | 0.173 / 0.235 / 0.289 | 66.9 |
-| ram-seq1m-q8t4-write | 3 | 24,929.6 (24,632.4–25,061.7) | 23,775 | - / - / - | 0.174 / 0.544 / 1.045 | 100.0 |
-| ram-rnd4k-q1t1-write | 3 | 859.9 (859.6–862.5) | 209,927 | - / - / - | 0.004 / 0.015 / 0.029 | 25.2 |
-| ram-rnd4k-q32t1-write | 3 | 824.0 (819.4–827.8) | 201,178 | - / - / - | 0.005 / 0.016 / 0.030 | 25.2 |
-| ram-rnd4k-q32t4-write | 3 | 2,936.8 (2,844.9–2,945.7) | 716,996 | - / - / - | 0.005 / 0.018 / 0.030 | 100.0 |
+| ram-seq1m-q1t1-read | 3 | 17,031.0 (16,939.3–17,061.6) | 16,242 | 0.058 / 0.090 / 0.170 | - / - / - | 25.3 |
+| ram-seq1m-q8t1-read | 3 | 26,656.0 (26,093.3–26,854.6) | 25,421 | 0.123 / 0.197 / 0.254 | - / - / - | 61.9 |
+| ram-seq1m-q8t4-read | 3 | 27,135.0 (26,745.6–27,159.1) | 25,878 | 0.161 / 0.597 / 1.417 | - / - / - | 100.0 |
+| ram-rnd4k-q1t1-read | 3 | 994.2 (989.4–996.3) | 242,729 | 0.004 / 0.012 / 0.025 | - / - / - | 25.2 |
+| ram-rnd4k-q32t1-read | 3 | 941.4 (933.6–948.1) | 229,841 | 0.004 / 0.012 / 0.027 | - / - / - | 25.5 |
+| ram-rnd4k-q32t4-read | 3 | 3,392.2 (3,368.6–3,412.6) | 828,164 | 0.004 / 0.014 / 0.026 | - / - / - | 100.0 |
+| ram-seq1m-q1t1-write | 3 | 17,440.4 (17,411.6–17,460.0) | 16,632 | - / - / - | 0.057 / 0.085 / 0.145 | 25.6 |
+| ram-seq1m-q8t1-write | 3 | 20,987.8 (20,446.4–21,164.6) | 20,016 | - / - / - | 0.169 / 0.230 / 0.301 | 66.3 |
+| ram-seq1m-q8t4-write | 3 | 24,997.9 (24,988.9–25,508.7) | 23,840 | - / - / - | 0.171 / 0.561 / 1.127 | 100.0 |
+| ram-rnd4k-q1t1-write | 3 | 827.7 (826.4–833.4) | 202,067 | - / - / - | 0.005 / 0.015 / 0.029 | 25.4 |
+| ram-rnd4k-q32t1-write | 3 | 805.9 (803.4–807.7) | 196,751 | - / - / - | 0.005 / 0.016 / 0.030 | 25.4 |
+| ram-rnd4k-q32t4-write | 3 | 2,913.1 (2,906.6–2,934.0) | 711,203 | - / - / - | 0.005 / 0.018 / 0.030 | 100.0 |
 
 | Step | n | Measure | Median | Range |
 |---|---:|---|---:|---|
-| fill | 1 | MB/s | 13,927.36 | 13,927.36–13,927.36 |
-| tree | 3 | create seconds | 47.08 | 44.29–47.15 |
-| tree | 3 | copy seconds (4 threads) | 12.44 | 11.98–12.50 |
-| tree | 3 | read and hash seconds | 147.63 | 147.48–152.92 |
-| tree | 3 | delete seconds | 10.37 | 10.26–10.50 |
+| fill | 1 | MB/s | 11,701.61 | 11,701.61–11,701.61 |
+| tree | 3 | create seconds | 4.57 | 4.53–4.99 |
+| tree | 3 | copy seconds (4 threads) | 4.67 | 4.64–4.68 |
+| tree | 3 | read and hash seconds | 2.97 | 2.91–2.98 |
+| tree | 3 | delete seconds | 4.57 | 4.56–4.58 |
 
 | Memory snapshot | Available MiB | Commit MiB | Nonpaged pool MiB |
 |---|---:|---:|---:|
-| before the disk existed | 12,986 | 2,488 | 260 |
-| memory-start | 8,990 | 6,527 | 216 |
-| memory-before-fill | 9,039 | 6,489 | 216 |
-| memory-filled | 9,034 | 6,494 | 216 |
-| memory-after-delete | 9,039 | 6,487 | 216 |
-| memory-end | 8,814 | 6,594 | 224 |
+| before the disk existed | 13,086 | 2,360 | 198 |
+| memory-start | 9,092 | 6,393 | 214 |
+| memory-before-fill | 9,131 | 6,345 | 215 |
+| memory-filled | 9,132 | 6,341 | 215 |
+| memory-after-delete | 9,133 | 6,340 | 215 |
+| memory-end | 8,760 | 6,676 | 302 |
 
 ## Environment
 

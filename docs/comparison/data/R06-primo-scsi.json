@@ -11,34 +11,34 @@
   "column": "06-primo-scsi"
  },
  "cdm": {
-  "kept": "run1",
+  "kept": "run2",
   "runs": {
    "run1": {
     "Column": "06-primo-scsi",
     "Run": "run1",
     "Drive": "T: 1% (35/4095MiB)",
     "Comment": "Primo Ramdisk 6.6.0 T: (4 GiB, SCSI)",
-    "CapturedUtc": "2026-10-12T13:42:17.8365763Z",
+    "CapturedUtc": "2026-10-12T19:17:32.0072924Z",
     "Scores": [
      {
       "Test": "SEQ1M Q8T1",
-      "Read": 30309.57,
-      "Write": 20561.64
+      "Read": 25841.62,
+      "Write": 21208.92
      },
      {
       "Test": "SEQ1M Q1T1",
-      "Read": 18062.38,
-      "Write": 16668.49
+      "Read": 16804.75,
+      "Write": 16981.72
      },
      {
       "Test": "RND4K Q32T1",
-      "Read": 940.98,
-      "Write": 828.1
+      "Read": 937.55,
+      "Write": 798.87
      },
      {
       "Test": "RND4K Q1T1",
-      "Read": 979.12,
-      "Write": 860.19
+      "Read": 979.17,
+      "Write": 835.79
      }
     ]
    },
@@ -47,27 +47,27 @@
     "Run": "run2",
     "Drive": "T: 1% (35/4095MiB)",
     "Comment": "Primo Ramdisk 6.6.0 T: (4 GiB, SCSI)",
-    "CapturedUtc": "2026-10-12T13:47:35.0755784Z",
+    "CapturedUtc": "2026-10-12T19:22:50.0812925Z",
     "Scores": [
      {
       "Test": "SEQ1M Q8T1",
-      "Read": 30029.91,
-      "Write": 21886.15
+      "Read": 26403.74,
+      "Write": 20704.39
      },
      {
       "Test": "SEQ1M Q1T1",
-      "Read": 18108.02,
-      "Write": 16713.68
+      "Read": 16600.96,
+      "Write": 17068.31
      },
      {
       "Test": "RND4K Q32T1",
-      "Read": 952.11,
-      "Write": 830.11
+      "Read": 927.1,
+      "Write": 803.38
      },
      {
       "Test": "RND4K Q1T1",
-      "Read": 983.37,
-      "Write": 871.83
+      "Read": 975.39,
+      "Write": 833.17
      }
     ]
    }
@@ -75,7 +75,7 @@
  },
  "runs": {
   "compare-snapshot": {
-   "run": "QueueCache-Verify-20261012-133637-c903576c3b80473bb95495462e8587cb",
+   "run": "QueueCache-Verify-20261012-191146-ffd6e6cd502544db8b827d5c4c859b06",
    "comparison": {
     "SchemaVersion": 1,
     "Suite": "compare-snapshot",
@@ -87,28 +87,28 @@
      {
       "Id": "snapshot-memory",
       "Snapshot": {
-       "Utc": "2026-10-12T13:36:38.2089035+00:00",
+       "Utc": "2026-10-12T19:11:49.6904539+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 13617647616,
-       "CommitBytes": 2608988160,
+       "AvailablePhysicalBytes": 13722513408,
+       "CommitBytes": 2475315200,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 273440768,
-       "KernelPagedBytes": 253837312,
-       "SystemCacheBytes": 2447015936
+       "KernelNonpagedBytes": 208482304,
+       "KernelPagedBytes": 215511040,
+       "SystemCacheBytes": 2709135360
       }
      }
     ],
     "Durability": null
    },
    "memory": {
-    "Utc": "2026-10-12T13:36:38.2089035+00:00",
+    "Utc": "2026-10-12T19:11:49.6904539+00:00",
     "TotalPhysicalBytes": 16706351104,
-    "AvailablePhysicalBytes": 13617647616,
-    "CommitBytes": 2608988160,
+    "AvailablePhysicalBytes": 13722513408,
+    "CommitBytes": 2475315200,
     "CommitLimitBytes": 17780092928,
-    "KernelNonpagedBytes": 273440768,
-    "KernelPagedBytes": 253837312,
-    "SystemCacheBytes": 2447015936
+    "KernelNonpagedBytes": 208482304,
+    "KernelPagedBytes": 215511040,
+    "SystemCacheBytes": 2709135360
    },
    "environment": {
     "windows": {
@@ -189,7 +189,7 @@
    "steps": {}
   },
   "compare-ram": {
-   "run": "QueueCache-Verify-20261012-134746-9d2aff305a124d3e8bef2d3b8835adba",
+   "run": "QueueCache-Verify-20261012-192301-bc644b9e08ff4f39b28cc4a8d5e78af7",
    "comparison": {
     "SchemaVersion": 1,
     "Suite": "compare-ram",
@@ -199,43 +199,43 @@
      {
       "Shape": "ram-seq1m-q1t1-read",
       "Samples": 3,
-      "MBPerSecond": 17793.181286400002,
-      "MinMBPerSecond": 17672.0707584,
-      "MaxMBPerSecond": 17820.2345472,
-      "Iops": 16968.9,
-      "ReadP50Ms": 0.055,
-      "ReadP99Ms": 0.087,
-      "ReadP999Ms": 0.164,
+      "MBPerSecond": 17030.971392,
+      "MinMBPerSecond": 16939.3258496,
+      "MaxMBPerSecond": 17061.5898112,
+      "Iops": 16242,
+      "ReadP50Ms": 0.058,
+      "ReadP99Ms": 0.09,
+      "ReadP999Ms": 0.17,
       "WriteP50Ms": null,
       "WriteP99Ms": null,
       "WriteP999Ms": null,
-      "CpuPercent": 25.35
+      "CpuPercent": 25.31
      },
      {
       "Shape": "ram-seq1m-q8t1-read",
       "Samples": 3,
-      "MBPerSecond": 28590.82309050949,
-      "MinMBPerSecond": 28121.5500288,
-      "MaxMBPerSecond": 28921.318323276726,
-      "Iops": 27266.333666333667,
-      "ReadP50Ms": 0.112,
-      "ReadP99Ms": 0.202,
-      "ReadP999Ms": 0.25,
+      "MBPerSecond": 26655.9553536,
+      "MinMBPerSecond": 26093.289472,
+      "MaxMBPerSecond": 26854.555648,
+      "Iops": 25421.1,
+      "ReadP50Ms": 0.123,
+      "ReadP99Ms": 0.197,
+      "ReadP999Ms": 0.254,
       "WriteP50Ms": null,
       "WriteP99Ms": null,
       "WriteP999Ms": null,
-      "CpuPercent": 65.33
+      "CpuPercent": 61.88
      },
      {
       "Shape": "ram-seq1m-q8t4-read",
       "Samples": 3,
-      "MBPerSecond": 26952.907572427575,
-      "MinMBPerSecond": 26202.4462336,
-      "MaxMBPerSecond": 27184.7522304,
-      "Iops": 25704.295704295706,
-      "ReadP50Ms": 0.163,
-      "ReadP99Ms": 0.601,
-      "ReadP999Ms": 1.363,
+      "MBPerSecond": 27135.049728,
+      "MinMBPerSecond": 26745.608601599997,
+      "MaxMBPerSecond": 27159.0621184,
+      "Iops": 25878,
+      "ReadP50Ms": 0.161,
+      "ReadP99Ms": 0.597,
+      "ReadP999Ms": 1.417,
       "WriteP50Ms": null,
       "WriteP99Ms": null,
       "WriteP999Ms": null,
@@ -244,40 +244,40 @@
      {
       "Shape": "ram-rnd4k-q1t1-read",
       "Samples": 3,
-      "MBPerSecond": 992.9203712000001,
-      "MinMBPerSecond": 991.7856351648352,
-      "MaxMBPerSecond": 996.57728,
-      "Iops": 242412.2,
+      "MBPerSecond": 994.2163456000001,
+      "MinMBPerSecond": 989.407232,
+      "MaxMBPerSecond": 996.2692608,
+      "Iops": 242728.6,
       "ReadP50Ms": 0.004,
       "ReadP99Ms": 0.012,
       "ReadP999Ms": 0.025,
       "WriteP50Ms": null,
       "WriteP99Ms": null,
       "WriteP999Ms": null,
-      "CpuPercent": 25.39
+      "CpuPercent": 25.23
      },
      {
       "Shape": "ram-rnd4k-q32t1-read",
       "Samples": 3,
-      "MBPerSecond": 964.5993983999999,
-      "MinMBPerSecond": 957.492581018981,
-      "MaxMBPerSecond": 969.0112,
-      "Iops": 235497.9,
+      "MBPerSecond": 941.4270976,
+      "MinMBPerSecond": 933.5536911088911,
+      "MaxMBPerSecond": 948.0668707292707,
+      "Iops": 229840.6,
       "ReadP50Ms": 0.004,
-      "ReadP99Ms": 0.013,
+      "ReadP99Ms": 0.012,
       "ReadP999Ms": 0.027,
       "WriteP50Ms": null,
       "WriteP99Ms": null,
       "WriteP999Ms": null,
-      "CpuPercent": 25.39
+      "CpuPercent": 25.47
      },
      {
       "Shape": "ram-rnd4k-q32t4-read",
       "Samples": 3,
-      "MBPerSecond": 3426.7418624,
-      "MinMBPerSecond": 3403.8173696,
-      "MaxMBPerSecond": 3433.814016,
-      "Iops": 836606.9,
+      "MBPerSecond": 3392.158663736264,
+      "MinMBPerSecond": 3368.58112,
+      "MaxMBPerSecond": 3412.5737984,
+      "Iops": 828163.7362637363,
       "ReadP50Ms": 0.004,
       "ReadP99Ms": 0.014,
       "ReadP999Ms": 0.026,
@@ -289,85 +289,85 @@
      {
       "Shape": "ram-seq1m-q1t1-write",
       "Samples": 3,
-      "MBPerSecond": 17069.3492736,
-      "MinMBPerSecond": 17015.4524672,
-      "MaxMBPerSecond": 17146.57453906094,
-      "Iops": 16278.6,
+      "MBPerSecond": 17440.44032,
+      "MinMBPerSecond": 17411.599242357643,
+      "MaxMBPerSecond": 17460.0486912,
+      "Iops": 16632.5,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
-      "WriteP50Ms": 0.058,
-      "WriteP99Ms": 0.087,
-      "WriteP999Ms": 0.148,
-      "CpuPercent": 25.31
+      "WriteP50Ms": 0.057,
+      "WriteP99Ms": 0.085,
+      "WriteP999Ms": 0.145,
+      "CpuPercent": 25.55
      },
      {
       "Shape": "ram-seq1m-q8t1-write",
       "Samples": 3,
-      "MBPerSecond": 20500.027434965035,
-      "MinMBPerSecond": 20422.9050368,
-      "MaxMBPerSecond": 20749.23445834166,
-      "Iops": 19550.34965034965,
+      "MBPerSecond": 20987.772928,
+      "MinMBPerSecond": 20446.3931392,
+      "MaxMBPerSecond": 21164.5628416,
+      "Iops": 20015.5,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
-      "WriteP50Ms": 0.173,
-      "WriteP99Ms": 0.235,
-      "WriteP999Ms": 0.289,
-      "CpuPercent": 66.91
+      "WriteP50Ms": 0.169,
+      "WriteP99Ms": 0.23,
+      "WriteP999Ms": 0.301,
+      "CpuPercent": 66.29
      },
      {
       "Shape": "ram-seq1m-q8t4-write",
       "Samples": 3,
-      "MBPerSecond": 24929.60632967033,
-      "MinMBPerSecond": 24632.4133888,
-      "MaxMBPerSecond": 25061.69966993007,
-      "Iops": 23774.725274725275,
+      "MBPerSecond": 24997.9469824,
+      "MinMBPerSecond": 24988.89644115884,
+      "MaxMBPerSecond": 25508.68006873127,
+      "Iops": 23839.9,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
-      "WriteP50Ms": 0.174,
-      "WriteP99Ms": 0.544,
-      "WriteP999Ms": 1.045,
+      "WriteP50Ms": 0.171,
+      "WriteP99Ms": 0.561,
+      "WriteP999Ms": 1.127,
       "CpuPercent": 100
      },
      {
       "Shape": "ram-rnd4k-q1t1-write",
       "Samples": 3,
-      "MBPerSecond": 859.8605824,
-      "MinMBPerSecond": 859.6299776000001,
-      "MaxMBPerSecond": 862.4504832,
-      "Iops": 209926.9,
+      "MBPerSecond": 827.6668416,
+      "MinMBPerSecond": 826.3718873126872,
+      "MaxMBPerSecond": 833.3725696,
+      "Iops": 202067.1,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
-      "WriteP50Ms": 0.004,
+      "WriteP50Ms": 0.005,
       "WriteP99Ms": 0.015,
       "WriteP999Ms": 0.029,
-      "CpuPercent": 25.2
+      "CpuPercent": 25.35
      },
      {
       "Shape": "ram-rnd4k-q32t1-write",
       "Samples": 3,
-      "MBPerSecond": 824.0259072,
-      "MinMBPerSecond": 819.443712,
-      "MaxMBPerSecond": 827.8450176,
-      "Iops": 201178.2,
+      "MBPerSecond": 805.8937344,
+      "MinMBPerSecond": 803.3611776,
+      "MaxMBPerSecond": 807.6742656,
+      "Iops": 196751.4,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
       "WriteP50Ms": 0.005,
       "WriteP99Ms": 0.016,
       "WriteP999Ms": 0.03,
-      "CpuPercent": 25.2
+      "CpuPercent": 25.43
      },
      {
       "Shape": "ram-rnd4k-q32t4-write",
       "Samples": 3,
-      "MBPerSecond": 2936.8139776,
-      "MinMBPerSecond": 2844.8804864,
-      "MaxMBPerSecond": 2945.6510976,
-      "Iops": 716995.6,
+      "MBPerSecond": 2913.085838961039,
+      "MinMBPerSecond": 2906.599424,
+      "MaxMBPerSecond": 2933.9922432,
+      "Iops": 711202.5974025974,
       "ReadP50Ms": null,
       "ReadP99Ms": null,
       "ReadP999Ms": null,
@@ -382,107 +382,107 @@
       "Shape": "fill",
       "Samples": 1,
       "Measure": "MB/s",
-      "Median": 13927.36216022004,
-      "Min": 13927.36216022004,
-      "Max": 13927.36216022004
+      "Median": 11701.607276357288,
+      "Min": 11701.607276357288,
+      "Max": 11701.607276357288
      },
      {
       "Shape": "tree",
       "Samples": 3,
       "Measure": "create seconds",
-      "Median": 47.0843021,
-      "Min": 44.2900329,
-      "Max": 47.1466927
+      "Median": 4.5733477,
+      "Min": 4.525695,
+      "Max": 4.9907121
      },
      {
       "Shape": "tree",
       "Samples": 3,
       "Measure": "copy seconds (4 threads)",
-      "Median": 12.4387035,
-      "Min": 11.9783968,
-      "Max": 12.4973706
+      "Median": 4.6671291,
+      "Min": 4.6441127,
+      "Max": 4.6756607
      },
      {
       "Shape": "tree",
       "Samples": 3,
       "Measure": "read and hash seconds",
-      "Median": 147.6293129,
-      "Min": 147.4811434,
-      "Max": 152.9151905
+      "Median": 2.9670813,
+      "Min": 2.908946,
+      "Max": 2.9805179
      },
      {
       "Shape": "tree",
       "Samples": 3,
       "Measure": "delete seconds",
-      "Median": 10.3721711,
-      "Min": 10.2640139,
-      "Max": 10.4977121
+      "Median": 4.5658265,
+      "Min": 4.5635904,
+      "Max": 4.583819
      }
     ],
     "Memory": [
      {
       "Id": "memory-start",
       "Snapshot": {
-       "Utc": "2026-10-12T13:47:55.31309+00:00",
+       "Utc": "2026-10-12T19:23:10.586076+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 9427345408,
-       "CommitBytes": 6844522496,
+       "AvailablePhysicalBytes": 9534406656,
+       "CommitBytes": 6703726592,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 227250176,
-       "KernelPagedBytes": 187342848,
-       "SystemCacheBytes": 2454949888
+       "KernelNonpagedBytes": 225345536,
+       "KernelPagedBytes": 220512256,
+       "SystemCacheBytes": 2823864320
       }
      },
      {
       "Id": "memory-before-fill",
       "Snapshot": {
-       "Utc": "2026-10-12T13:55:16.1414135+00:00",
+       "Utc": "2026-10-12T19:30:31.8565467+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 9479098368,
-       "CommitBytes": 6804258816,
+       "AvailablePhysicalBytes": 9574998016,
+       "CommitBytes": 6653231104,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 227442688,
-       "KernelPagedBytes": 189284352,
-       "SystemCacheBytes": 2458267648
+       "KernelNonpagedBytes": 225910784,
+       "KernelPagedBytes": 221442048,
+       "SystemCacheBytes": 2856202240
       }
      },
      {
       "Id": "memory-filled",
       "Snapshot": {
-       "Utc": "2026-10-12T13:55:16.3084487+00:00",
+       "Utc": "2026-10-12T19:30:32.0481451+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 9473449984,
-       "CommitBytes": 6809468928,
+       "AvailablePhysicalBytes": 9576382464,
+       "CommitBytes": 6649143296,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 227459072,
-       "KernelPagedBytes": 191406080,
-       "SystemCacheBytes": 2459435008
+       "KernelNonpagedBytes": 225992704,
+       "KernelPagedBytes": 221458432,
+       "SystemCacheBytes": 2858840064
       }
      },
      {
       "Id": "memory-after-delete",
       "Snapshot": {
-       "Utc": "2026-10-12T13:55:21.3141461+00:00",
+       "Utc": "2026-10-12T19:30:37.0567312+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 9478537216,
-       "CommitBytes": 6802653184,
+       "AvailablePhysicalBytes": 9577689088,
+       "CommitBytes": 6648627200,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 227409920,
-       "KernelPagedBytes": 189128704,
-       "SystemCacheBytes": 2459320320
+       "KernelNonpagedBytes": 225824768,
+       "KernelPagedBytes": 221253632,
+       "SystemCacheBytes": 2858831872
       }
      },
      {
       "Id": "memory-end",
       "Snapshot": {
-       "Utc": "2026-10-12T14:06:34.7658201+00:00",
+       "Utc": "2026-10-12T19:31:46.9587723+00:00",
        "TotalPhysicalBytes": 16706351104,
-       "AvailablePhysicalBytes": 9243095040,
-       "CommitBytes": 6914748416,
+       "AvailablePhysicalBytes": 9186299904,
+       "CommitBytes": 7001083904,
        "CommitLimitBytes": 17780092928,
-       "KernelNonpagedBytes": 235905024,
-       "KernelPagedBytes": 195842048,
-       "SystemCacheBytes": 2491375616
+       "KernelNonpagedBytes": 316702720,
+       "KernelPagedBytes": 309018624,
+       "SystemCacheBytes": 2960809984
       }
      }
     ],
@@ -497,7 +497,7 @@
     "target": {
      "Letter": "T",
      "Root": "T:\\",
-     "VolumeName": "\\\\?\\Volume{dd5a4eb5-0000-0000-0000-100000000000}\\",
+     "VolumeName": "\\\\?\\Volume{dd5a7d88-0000-0000-0000-100000000000}\\",
      "FileSystem": "NTFS",
      "Label": "QCBENCH",
      "ClusterBytes": 4096,
@@ -567,8 +567,8 @@
    "steps": {
     "fill": {
      "Bytes": 2147483648,
-     "Seconds": 0.1541917,
-     "MBPerSecond": 13927.36216022004,
+     "Seconds": 0.1835204,
+     "MBPerSecond": 11701.607276357288,
      "FlushSeconds": null,
      "BytesPerSecond": null
     }
@@ -576,5 +576,5 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine, but the file-workload times are not comparable yet: Windows Defender kept scanning this disk's files, as with OSFMount's physical mode, which slows the read step. This mode will be run again with that fixed. The speed measurements are not affected: about 28 GB/s for large reads, and small requests about a third slower than Primo's Direct-IO mode one at a time but faster when many are queued."
+ "notes": "The run went fine (measured a second time; the first attempt's file-workload times were slowed by virus scanning). Large reads from one program reach about 27 GB/s. Single small requests are about a third slower than Primo's Direct-IO mode, but unlike Direct-IO it keeps up when many requests are queued."
 }
