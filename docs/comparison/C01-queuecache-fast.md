@@ -14,6 +14,11 @@
 | `compare-durability-write` run | `QueueCache-Verify-20261012-211540-d7163ab695f643a199573774e82fe61f` |
 | `compare-durability-verify` run | `QueueCache-Verify-20261012-211734-00f5848605014672b2465ca4309b0116` |
 
+## Problems
+
+- ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut
+- ⚠ tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
+
 ## Notes
 
 The run went fine. Cached data is very fast (about 39 GB/s reads, 21 GB/s writes), and a file read once is kept (the second read came from RAM). After a 1 GiB burst the disk needed about 10 seconds to catch up, writing at about 105 MB/s, less than half of what the disk can take with several requests at once. Fast mode answers flushes and write-through requests from RAM, as designed. After the simulated power cut the file data had already reached the disk, but the file system needed repair (chkdsk found problems) and about half of 10,000 newly created small files were gone.

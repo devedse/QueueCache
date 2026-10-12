@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 1 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 1 of 5 cache configurations (updated 2026-10-13). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -8,11 +8,18 @@ feature. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise
 
 **Summary.** Written once every tool has run.
 
-Contents: [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
+Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
 [RAM disks: complete comparison](#ram-disks-complete-comparison) ·
 [RAM caches: complete comparison](#ram-caches-complete-comparison) ·
 [Results per tool](#results-per-tool) · [Not tested](#not-tested) · [How this was measured](#how-this-was-measured)
+
+## Problems found
+
+Failed runs, data loss and other problems worth knowing. They are also marked in the Problems column of both
+comparison tables.
+
+- ⚠ **[QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md)**: File system needed an offline repair (chkdsk /f) after a simulated power cut; tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
 
 ## RAM disks: CrystalDiskMark
 
@@ -44,7 +51,7 @@ shows what happens when they have to reach the disk.
 |---|---|---:|---:|---:|---:|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | Not run yet | - | - | - | - |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | <a href="images/comparison/C01-queuecache-fast.png"><img src="images/comparison/C01-queuecache-fast.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Fast, 2 GiB"></a> | 40,322 / 21,471 | 19,534 / 13,560 | 1,701 / 1,327 | 1,307 / 1,028 |
-| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | Not run yet | - | - | - | - |
+| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | <a href="images/comparison/C01-queuecache-strict.png"><img src="images/comparison/C01-queuecache-strict.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Strict, 2 GiB"></a> | 39,989 / 21,310 | 19,414 / 12,937 | 1,659 / 331 | 1,267 / 871 |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | Not run yet | - | - | - | - |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | Not run yet | - | - | - | - |
 
@@ -56,20 +63,20 @@ requests one program keeps in flight, T the number of programs (threads). The 4K
 RAM used is how much less memory Windows had available right after the empty 4 GiB disk was created: disks that reserve all their memory up front show about 4,096 MiB, disks that allocate memory as data arrives show little (each tool's page has memory snapshots after writing 1 GiB and 2 GiB more). The file tree is 40,000
 files (1.2 GiB): create, copy with four threads, read back and check, delete.
 
-| Product | SEQ1M Q1T1 R / W | SEQ1M Q8T1 R / W | SEQ1M Q8T4 R / W | RND4K Q1T1 R / W | RND4K Q32T1 R / W | RND4K Q32T4 R / W | 4K Q1 p99 R / W (µs) | CPU, 1M Q8 read | RAM used by the empty disk (MiB) | File tree create / copy / read / delete (s) | Price | Status |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | 25,103 / 16,743 | 45,245 / 23,625 | 25,450 / 25,876 | 1,611 / 1,234 | 1,457 / 1,157 | 5,071 / 3,844 | 6 / 10 | 93 % | 4,077 | 4.7 / 4.5 / 3.0 / 5.2 | Free (MIT) | Measured |
-| [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | 12,171 / 12,951 | 30,465 / 20,990 | 30,595 / 25,267 | 1,585 / 1,301 | 1,500 / 1,287 | 5,182 / 4,224 | 4 / 5 | 64 % | 4,084 | 4.5 / 4.4 / 3.0 / 4.5 | $29 per PC (30-day trial used) | Measured |
-| [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | 14,146 / 10,747 | 35,386 / 21,317 | 29,851 / 26,003 | 1,053 / 921 | 986 / 886 | 3,482 / 3,023 | 11 / 14 | 67 % | 4,063 | 4.4 / 4.5 / 2.9 / 4.4 | $29 per PC (30-day trial used) | Measured |
-| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | 3,773 / 3,703 | 4,428 / 4,385 | 4,392 / 4,417 | 82 / 90 | 227 / 220 | 220 / 217 | 77 / 58 | 32 % | 1,031 | 5.1 / 5.6 / 3.0 / 5.4 | Free (AGPL) | Measured |
-| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | 3,227 / 2,906 | 3,739 / 3,247 | 3,711 / 3,253 | 75 / 82 | 179 / 176 | 180 / 174 | 83 / 69 | 31 % | 4 | 5.2 / 6.1 / 3.1 / 5.5 | Free (AGPL) | Measured |
-| [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | 16,400 / 18,128 | 16,410 / 18,212 | 23,165 / 25,591 | 1,744 / 1,390 | 1,679 / 1,368 | 5,697 / 4,534 | 3 / 4 | 26 % | 4,209 | 4.5 / 4.3 / 2.9 / 4.2 | Free | Measured |
-| [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | 15,409 / 17,399 | 15,180 / 17,206 | 22,864 / 25,591 | 934 / 805 | 876 / 779 | 3,108 / 2,698 | 14 / 17 | 25 % | 4,045 | 5.1 / 4.5 / 2.9 / 4.5 | Free | Measured |
-| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | 14,800 / 17,102 | 14,888 / 17,108 | 20,128 / 22,247 | 584 / 537 | 548 / 516 | 982 / 989 | 20 / 21 | 25 % | 4,149 | 4.5 / 4.4 / 2.9 / 4.4 | Free | Measured |
-| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | 17,967 / 17,793 | 27,548 / 20,958 | 27,211 / 25,344 | 1,480 / 1,208 | 587 / 342 | 2,882 / 2,135 | 4 / 7 | 62 % | 4,073 | 4.6 / 4.9 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | Measured |
-| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | 17,031 / 17,440 | 26,656 / 20,988 | 27,135 / 24,998 | 994 / 828 | 941 / 806 | 3,392 / 2,913 | 12 / 15 | 62 % | 3,994 | 4.6 / 4.7 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | Measured |
-| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | 25,145 / 23,713 | 30,497 / 21,626 | 31,289 / 25,157 | 2,978 / 2,364 | 2,614 / 2,206 | 8,624 / 7,476 | 2 / 2 | 63 % | 0 | 1.6 / 1.2 / 2.6 / 1.8 | $29 per PC (30-day trial used) | Measured |
-| [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md) | 2,745 / 6,812 | 3,208 / 8,830 | 2,698 / 8,654 | 84 / 75 | 86 / 110 | 93 / 122 | 80 / 90 | 34 % | 361 | 17.0 / 8.4 / 9.2 / 15.4 | Free (MIT) | Measured |
+| Product | SEQ1M Q1T1 R / W | SEQ1M Q8T1 R / W | SEQ1M Q8T4 R / W | RND4K Q1T1 R / W | RND4K Q32T1 R / W | RND4K Q32T4 R / W | 4K Q1 p99 R / W (µs) | CPU, 1M Q8 read | RAM used by the empty disk (MiB) | File tree create / copy / read / delete (s) | Price | Problems | Status |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|
+| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | 25,103 / 16,743 | 45,245 / 23,625 | 25,450 / 25,876 | 1,611 / 1,234 | 1,457 / 1,157 | 5,071 / 3,844 | 6 / 10 | 93 % | 4,077 | 4.7 / 4.5 / 3.0 / 5.2 | Free (MIT) | None | Measured |
+| [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | 12,171 / 12,951 | 30,465 / 20,990 | 30,595 / 25,267 | 1,585 / 1,301 | 1,500 / 1,287 | 5,182 / 4,224 | 4 / 5 | 64 % | 4,084 | 4.5 / 4.4 / 3.0 / 4.5 | $29 per PC (30-day trial used) | None | Measured |
+| [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | 14,146 / 10,747 | 35,386 / 21,317 | 29,851 / 26,003 | 1,053 / 921 | 986 / 886 | 3,482 / 3,023 | 11 / 14 | 67 % | 4,063 | 4.4 / 4.5 / 2.9 / 4.4 | $29 per PC (30-day trial used) | None | Measured |
+| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | 3,773 / 3,703 | 4,428 / 4,385 | 4,392 / 4,417 | 82 / 90 | 227 / 220 | 220 / 217 | 77 / 58 | 32 % | 1,031 | 5.1 / 5.6 / 3.0 / 5.4 | Free (AGPL) | None | Measured |
+| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | 3,227 / 2,906 | 3,739 / 3,247 | 3,711 / 3,253 | 75 / 82 | 179 / 176 | 180 / 174 | 83 / 69 | 31 % | 4 | 5.2 / 6.1 / 3.1 / 5.5 | Free (AGPL) | None | Measured |
+| [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | 16,400 / 18,128 | 16,410 / 18,212 | 23,165 / 25,591 | 1,744 / 1,390 | 1,679 / 1,368 | 5,697 / 4,534 | 3 / 4 | 26 % | 4,209 | 4.5 / 4.3 / 2.9 / 4.2 | Free | None | Measured |
+| [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | 15,409 / 17,399 | 15,180 / 17,206 | 22,864 / 25,591 | 934 / 805 | 876 / 779 | 3,108 / 2,698 | 14 / 17 | 25 % | 4,045 | 5.1 / 4.5 / 2.9 / 4.5 | Free | None | Measured |
+| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | 14,800 / 17,102 | 14,888 / 17,108 | 20,128 / 22,247 | 584 / 537 | 548 / 516 | 982 / 989 | 20 / 21 | 25 % | 4,149 | 4.5 / 4.4 / 2.9 / 4.4 | Free | None | Measured |
+| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | 17,967 / 17,793 | 27,548 / 20,958 | 27,211 / 25,344 | 1,480 / 1,208 | 587 / 342 | 2,882 / 2,135 | 4 / 7 | 62 % | 4,073 | 4.6 / 4.9 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | None | Measured |
+| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | 17,031 / 17,440 | 26,656 / 20,988 | 27,135 / 24,998 | 994 / 828 | 941 / 806 | 3,392 / 2,913 | 12 / 15 | 62 % | 3,994 | 4.6 / 4.7 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | None | Measured |
+| [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | 25,145 / 23,713 | 30,497 / 21,626 | 31,289 / 25,157 | 2,978 / 2,364 | 2,614 / 2,206 | 8,624 / 7,476 | 2 / 2 | 63 % | 0 | 1.6 / 1.2 / 2.6 / 1.8 | $29 per PC (30-day trial used) | None | Measured |
+| [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md) | 2,745 / 6,812 | 3,208 / 8,830 | 2,698 / 8,654 | 84 / 75 | 86 / 110 | 93 / 122 | 80 / 90 | 34 % | 361 | 17.0 / 8.4 / 9.2 / 15.4 | Free (MIT) | None | Measured |
 
 ## RAM caches: complete comparison
 
@@ -91,13 +98,13 @@ Cached work first, then what the cache does with data that has to reach the disk
   damage afterwards.
 - **70/30 mix**: five minutes of random 4 KiB reads and writes over a 4 GiB file.
 
-| Product | Hot SEQ1M Q8T1 R / W | Hot RND4K Q1T1 R / W | First / second read of 1 GiB, cache emptied | 8 GiB file: RND4K Q32 / SEQ1M Q8 read | 1 GiB burst write | Drain after the burst: seconds / MB/s | 8 GiB sustained write: average / slowest second | Write-through 1M Q8 | Flush after 512 MiB (s) | Power loss: saved / unsaved data kept, chkdsk | 70/30 mix | File tree create / copy / read / delete (s) | Status |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|
-| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
-| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | Measured |
-| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
-| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
-| [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
+| Product | Hot SEQ1M Q8T1 R / W | Hot RND4K Q1T1 R / W | First / second read of 1 GiB, cache emptied | 8 GiB file: RND4K Q32 / SEQ1M Q8 read | 1 GiB burst write | Drain after the burst: seconds / MB/s | 8 GiB sustained write: average / slowest second | Write-through 1M Q8 | Flush after 512 MiB (s) | Power loss: saved / unsaved data kept, chkdsk | 70/30 mix | File tree create / copy / read / delete (s) | Problems | Status |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|---|
+| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
+| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13) | Measured |
+| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Partly measured |
+| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
+| [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 
 ## Results per tool
 
@@ -118,7 +125,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md): Measured
 - [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Not run yet
 - [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md): Measured
-- [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md): Not run yet
+- [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md): Partly measured
 - [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md): Not run yet
 - [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md): Not run yet
 

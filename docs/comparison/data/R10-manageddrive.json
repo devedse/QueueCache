@@ -549,5 +549,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. This is a file system in RAM that runs as an ordinary program (through WinFsp) rather than as a driver, and it is the slowest here: about 3 GB/s for large reads, under 0.1 GB/s for single small requests, and two to four times slower than the RAM disks at creating and deleting many files. Its drive is only visible to the user who started the app, and Windows Defender's folder exclusion does not cover it, so for these measurements the benchmark program itself was excluded from scanning instead."
+ "notes": "The run went fine. This is a file system in RAM that runs as an ordinary program (through WinFsp) rather than as a driver, and it is the slowest here: about 3 GB/s for large reads, under 0.1 GB/s for single small requests, and two to four times slower than the RAM disks at creating and deleting many files. Its drive is only visible to the user who started the app, and Windows Defender's folder exclusion does not cover it, so for these measurements the benchmark program itself was excluded from scanning instead.",
+ "problems": []
 }

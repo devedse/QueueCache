@@ -576,5 +576,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. Large reads from one program reach about 27 GB/s. One odd result: random 4 KiB reads get slower when one program queues many of them (about 0.6 GB/s with 32 queued against 1.5 GB/s one at a time); the SCSI mode does not show this."
+ "notes": "The run went fine. Large reads from one program reach about 27 GB/s. One odd result: random 4 KiB reads get slower when one program queues many of them (about 0.6 GB/s with 32 queued against 1.5 GB/s one at a time); the SCSI mode does not show this.",
+ "problems": []
 }

@@ -576,5 +576,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. Large reads from one program reach about 30 GB/s, a third below QueueCache, while using less processor time (about 64% busy). With four programs at once it is slightly faster than QueueCache, and single small requests are a little quicker (4 against 6 microseconds). All 4 GiB of memory is reserved as soon as the disk is created."
+ "notes": "The run went fine. Large reads from one program reach about 30 GB/s, a third below QueueCache, while using less processor time (about 64% busy). With four programs at once it is slightly faster than QueueCache, and single small requests are a little quicker (4 against 6 microseconds). All 4 GiB of memory is reserved as soon as the disk is created.",
+ "problems": []
 }

@@ -567,5 +567,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. The best small-request results so far: single 4 KiB requests at about 1.7 GB/s with the lowest delay (3 microseconds), and the fastest random requests from four programs, while using little processor time (about 26% busy). Large reads from one program reach about 16 GB/s, about a third of QueueCache."
+ "notes": "The run went fine. The best small-request results so far: single 4 KiB requests at about 1.7 GB/s with the lowest delay (3 microseconds), and the fastest random requests from four programs, while using little processor time (about 26% busy). Large reads from one program reach about 16 GB/s, about a third of QueueCache.",
+ "problems": []
 }

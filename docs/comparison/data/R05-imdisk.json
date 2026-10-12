@@ -567,5 +567,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. Large reads reach about 15 GB/s, but small requests are slow: about 0.6 GB/s for single 4 KiB requests, and four programs at once add little (about 1 GB/s in total), so this older driver does not spread work over several processors. The standard install leaves out the driver that this mode (AWE, memory that cannot be swapped out) needs; it had to be added by hand."
+ "notes": "The run went fine. Large reads reach about 15 GB/s, but small requests are slow: about 0.6 GB/s for single 4 KiB requests, and four programs at once add little (about 1 GB/s in total), so this older driver does not spread work over several processors. The standard install leaves out the driver that this mode (AWE, memory that cannot be swapped out) needs; it had to be added by hand.",
+ "problems": []
 }

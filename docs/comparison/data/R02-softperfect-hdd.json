@@ -576,5 +576,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. Hard-disk emulation (the disk appears as a normal disk with a partition) is a bit faster than SoftPerfect's default mode for large reads, but about a third slower for small 4 KiB requests."
+ "notes": "The run went fine. Hard-disk emulation (the disk appears as a normal disk with a partition) is a bit faster than SoftPerfect's default mode for large reads, but about a third slower for small 4 KiB requests.",
+ "problems": []
 }

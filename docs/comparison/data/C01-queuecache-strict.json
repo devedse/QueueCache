@@ -10,8 +10,71 @@
   "kind": "Volume filter, write-through",
   "column": "01-queuecache-strict"
  },
- "cdm": null,
+ "cdm": {
+  "kept": "run2",
+  "runs": {
+   "run1": {
+    "Column": "01-queuecache-strict",
+    "Run": "run1",
+    "Drive": "Q: 19% (37/200GiB)",
+    "Comment": "QueueCache 0.4.604.1 Q: cache (2 GiB RAM, Strict)",
+    "CapturedUtc": "2026-10-12T21:45:52.5230290Z",
+    "Scores": [
+     {
+      "Test": "SEQ1M Q8T1",
+      "Read": 39743.57,
+      "Write": 19716.73
+     },
+     {
+      "Test": "SEQ1M Q1T1",
+      "Read": 20909.02,
+      "Write": 14037.49
+     },
+     {
+      "Test": "RND4K Q32T1",
+      "Read": 1682.95,
+      "Write": 1301.37
+     },
+     {
+      "Test": "RND4K Q1T1",
+      "Read": 1277.07,
+      "Write": 897.67
+     }
+    ]
+   },
+   "run2": {
+    "Column": "01-queuecache-strict",
+    "Run": "run2",
+    "Drive": "Q: 19% (37/200GiB)",
+    "Comment": "QueueCache 0.4.604.1 Q: cache (2 GiB RAM, Strict)",
+    "CapturedUtc": "2026-10-12T21:58:27.4580242Z",
+    "Scores": [
+     {
+      "Test": "SEQ1M Q8T1",
+      "Read": 39989.21,
+      "Write": 21310.04
+     },
+     {
+      "Test": "SEQ1M Q1T1",
+      "Read": 19413.95,
+      "Write": 12937.26
+     },
+     {
+      "Test": "RND4K Q32T1",
+      "Read": 1659.49,
+      "Write": 331.45
+     },
+     {
+      "Test": "RND4K Q1T1",
+      "Read": 1266.8,
+      "Write": 871.17
+     }
+    ]
+   }
+  }
+ },
  "runs": {},
- "status": "Not run yet",
- "notes": ""
+ "status": "Partly measured",
+ "notes": "",
+ "problems": []
 }

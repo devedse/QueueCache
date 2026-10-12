@@ -558,5 +558,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. This is a file system kept in RAM rather than a disk, and it is clearly the fastest for small requests and many files: about 3 GB/s for single 4 KiB requests (2 microseconds, about twice QueueCache) and creating, copying and deleting 40,000 files about three times faster than the RAM disks. Large reads from one program reach about 30 GB/s, a third below QueueCache. Memory is taken only as data arrives."
+ "notes": "The run went fine. This is a file system kept in RAM rather than a disk, and it is clearly the fastest for small requests and many files: about 3 GB/s for single 4 KiB requests (2 microseconds, about twice QueueCache) and creating, copying and deleting 40,000 files about three times faster than the RAM disks. Large reads from one program reach about 30 GB/s, a third below QueueCache. Memory is taken only as data arrives.",
+ "problems": []
 }

@@ -549,5 +549,6 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine (measured a second time; the first attempt's file-workload times were slowed by virus scanning). Physical emulation (the disk appears as a normal disk with a partition) is about as fast as OSFMount's logical mode for large reads, about 15 GB/s, but roughly half as fast for small 4 KiB requests."
+ "notes": "The run went fine (measured a second time; the first attempt's file-workload times were slowed by virus scanning). Physical emulation (the disk appears as a normal disk with a partition) is about as fast as OSFMount's logical mode for large reads, about 15 GB/s, but roughly half as fast for small 4 KiB requests.",
+ "problems": []
 }
