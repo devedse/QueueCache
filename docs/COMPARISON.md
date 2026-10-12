@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 8 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 10 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -29,8 +29,8 @@ as the [README](../README.md#performance). Click a screenshot for full size, or 
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | <a href="images/comparison/R04-osfmount-logical.png"><img src="images/comparison/R04-osfmount-logical.png" width="300" alt="CrystalDiskMark, OSFMount 3.3.1000, logical emulation"></a> | 16,340 / 17,887 | 16,211 / 17,947 | 1,653 / 1,406 | 1,713 / 1,416 |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | <a href="images/comparison/R04-osfmount-physical.png"><img src="images/comparison/R04-osfmount-physical.png" width="300" alt="CrystalDiskMark, OSFMount 3.3.1000, physical emulation"></a> | 15,432 / 16,613 | 15,422 / 16,820 | 902 / 786 | 965 / 818 |
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | <a href="images/comparison/R05-imdisk.png"><img src="images/comparison/R05-imdisk.png" width="300" alt="CrystalDiskMark, ImDisk Toolkit 20250206, AWE"></a> | 14,556 / 16,841 | 14,546 / 16,787 | 591 / 551 | 577 / 551 |
-| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | Not run yet | - | - | - | - |
-| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | Not run yet | - | - | - | - |
+| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | <a href="images/comparison/R06-primo-directio.png"><img src="images/comparison/R06-primo-directio.png" width="300" alt="CrystalDiskMark, Primo Ramdisk 6.6.0, Direct-IO"></a> | 27,748 / 21,574 | 17,625 / 17,358 | 624 / 329 | 1,456 / 1,228 |
+| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | <a href="images/comparison/R06-primo-scsi.png"><img src="images/comparison/R06-primo-scsi.png" width="300" alt="CrystalDiskMark, Primo Ramdisk 6.6.0, SCSI"></a> | 30,310 / 20,562 | 18,062 / 16,668 | 941 / 828 | 979 / 860 |
 | [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | Not run yet | - | - | - | - |
 | [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | Not run yet | - | - | - | - |
 | [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md) | Not run yet | - | - | - | - |
@@ -68,8 +68,8 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | 16,400 / 18,128 | 16,410 / 18,212 | 23,165 / 25,591 | 1,744 / 1,390 | 1,679 / 1,368 | 5,697 / 4,534 | 3 / 4 | 26 % | 4,209 | 4.5 / 4.3 / 2.9 / 4.2 | Free | Measured |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | 15,729 / 17,279 | 15,537 / 17,122 | 23,019 / 25,051 | 980 / 822 | 912 / 784 | 3,135 / 2,729 | 13 / 17 | 25 % | 4,036 | 47.4 / 12.1 / 148.5 / 10.2 | Free | Measured |
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | 14,800 / 17,102 | 14,888 / 17,108 | 20,128 / 22,247 | 584 / 537 | 548 / 516 | 982 / 989 | 20 / 21 | 25 % | 4,149 | 4.5 / 4.4 / 2.9 / 4.4 | Free | Measured |
-| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | - | - | - | - | - | - | - | - | - | - | $24.95-54.95 (30-day trial used) | Not run yet |
-| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | - | - | - | - | - | - | - | - | - | - | $24.95-54.95 (30-day trial used) | Not run yet |
+| [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | 17,967 / 17,793 | 27,548 / 20,958 | 27,211 / 25,344 | 1,480 / 1,208 | 587 / 342 | 2,882 / 2,135 | 4 / 7 | 62 % | 4,073 | 4.6 / 4.9 / 3.0 / 4.6 | $24.95-54.95 (30-day trial used) | Measured |
+| [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | 17,793 / 17,069 | 28,591 / 20,500 | 26,953 / 24,930 | 993 / 860 | 965 / 824 | 3,427 / 2,937 | 12 / 15 | 65 % | 3,996 | 47.1 / 12.4 / 147.6 / 10.4 | $24.95-54.95 (30-day trial used) | Measured |
 | [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | - | - | - | - | - | - | - | - | - | - | $39.95 (trial used) | Not run yet |
 | [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md) | - | - | - | - | - | - | - | - | - | - | $29 per PC (30-day trial used) | Not run yet |
 | [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md) | - | - | - | - | - | - | - | - | - | - | Free (MIT) | Not run yet |
@@ -115,8 +115,8 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md): Measured
 - [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md): Measured
 - [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md): Measured
-- [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md): Not run yet
-- [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md): Not run yet
+- [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md): Measured
+- [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md): Measured
 - [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md): Not run yet
 - [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md): Not run yet
 - [RamDrive 0.4.7, WinFsp 2.1](comparison/R09-ramdrive.md): Not run yet
