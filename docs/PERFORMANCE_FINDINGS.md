@@ -201,6 +201,35 @@ Accepted and on by default from plan 120 (copy flags 7). Runs:
 per-block lookups that confirm a version is still current remain; removing them
 would change which reads are offloaded or which versions are touched.
 
+**CrystalDiskMark** (0.4.604.1, the README procedure, one session, MB/s). Copy
+flags 7 in three runs: SEQ1M Q8T1 read 38,945 / 39,702 / 39,707, SEQ1M Q1T1
+19,825 / 19,564 / 19,887. One run with the old bookkeeping (`lab-copy-flags Q: 3`)
+between them: 38,645 and 18,962. CrystalDiskMark therefore shows about +3% at
+Q8T1 and +4.5% at Q1T1; its five-second passes include file opening and the
+first touches, which the 10-second DiskSpd windows above exclude. The README
+cache column (39,702 read, run 2) matches the 0.4.476.1 run two days earlier
+(39,492): that earlier evening was simply faster, so cross-day CrystalDiskMark
+numbers say nothing about a change.
+
+**Final regression.** Signed 0.4.604.1 (final source; drivers loaded and
+Verifier off), lean `release-performance`, one command: **COMPLETED 11/11 phases,
+106/106 cases, 1 h 47 min 34 s, restored**, run
+`QueueCache-Campaign-20261011-223323-2aa3fb80bfdd4040ad56e7a601f3d09a`. All 118
+retained correctness sub-checks pass. Of 2,265 owned process exits one is
+non-zero: the first final inspection found Q: still writing back, and the
+plan-120 retry found it clean on the next attempt. Against PR #9's final run
+(0.4.583.1, the same day, same DiskSpd, same analysis): the RAM reference is
+unchanged within run-to-run variation (Direct 1M Q8T1 median 43,845 against
+44,215 MiB/s, Q1T1 24,434 against 24,668, Q2T4 36,067 against 37,818; the RAM-disk
+driver did not change). Cached 4K random reads at Q8 in the map-cost phase have a
+median of 381,055 against 369,516 IOPS (+3.1%); cache recall hits are within 1%.
+The write matrix's cached cells are 0.8–4.2% lower at Q1 and RND4K Q32 and between
+−0.6% and +2.2% at SEQ1M Q8. Plan 120 changed only the driver's read path, so
+these write differences are run-to-run variation (see the
+[measurement rules](#measurement-rules) on cross-run comparisons). The 30-minute
+sustained phase ran at 2,709–2,990 IOPS against PR #9's 1,415–2,837, following
+the Ceph storage below Q:.
+
 ## Which changes belong together
 
 | Stage | Changes retained | Evidence and limits |
@@ -749,7 +778,7 @@ running again. Private evidence and lab files remain preserved.
 
 ## Recorded verification time
 
-These selected completed runs total approximately **6 hours 2 minutes**. This
+These selected completed runs total approximately **8 hours 38 minutes**. This
 is measured run time, not a reconstruction of all engineering work or every
 earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
 attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
@@ -779,6 +808,13 @@ to 06:55 was not two hours spent executing that benchmark.
 | Plan-119 revision comparison, 18 windows | 8 min 52 s |
 | Plan-119 lifecycle checks, with / without Driver Verifier | 1 min 10 s / 55 s |
 | Final `release-performance` regression, 11 phases / 106 cases | 1 h 56 min 23 s |
+| Plan-120 cached-read attribution, 18 windows | 9 min 45 s |
+| Plan-120 RAM write reference, 36 windows | 6 min 43 s |
+| Plan-120 streaming-store comparison, 18 windows | 5 min 30 s |
+| Plan-120 read-bookkeeping comparison, 18 windows | 9 min 57 s |
+| Plan-120 Driver Verifier campaign with `stress-races`, 6 phases | 10 min 56 s |
+| Plan-120 `stress-races` without Verifier | 5 min 55 s |
+| Plan-120 final `release-performance` regression, 11 phases / 106 cases | 1 h 47 min 34 s |
 
 The original priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
@@ -803,7 +839,10 @@ at start because Q: still had unwritten data, and the first final regression,
 which stopped after 33 minutes in the sustained phase: a 197 GB resident reread
 saw six background metadata reads (4.5 KiB) on Q:, most likely the Everything
 file indexer that had restarted at sign-in. Everything and Steam were closed and
-the complete regression rerun passed.
+the complete regression rerun passed. Plan 120 adds the first RAM write reference run
+(stopped by its oracle rewrite bug), 13 stress, Verifier and stale-data diagnosis
+runs that found and fixed the issues described under
+[correctness qualification](#correctness-qualification), and their recoveries.
 
 ## Current decisions and when to repeat tests
 

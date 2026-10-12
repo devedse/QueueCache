@@ -76,7 +76,7 @@ machine's physical RAM.
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
 default test (1 GiB, 5 passes), the better of two runs per column. Both Q: columns:
-QueueCache 0.4.476.1; RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
+QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|
@@ -91,18 +91,20 @@ QueueCache 0.4.476.1; RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
 
 | MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 594 | 39,492 | 47,583 |
-| Sequential write (SEQ1M Q8T1) | 112 | 21,504 | 24,434 |
-| Random 4K read (RND4K Q1T1) | 9.0 | 1,292 | 1,657 |
-| Random 4K write (RND4K Q1T1) | 1.2 | 1,031 | 1,310 |
+| Sequential read (SEQ1M Q8T1) | 692 | 39,702 | 47,583 |
+| Sequential write (SEQ1M Q8T1) | 269 | 21,249 | 24,434 |
+| Random 4K read (RND4K Q1T1) | 19.6 | 1,297 | 1,657 |
+| Random 4K write (RND4K Q1T1) | 4.8 | 1,034 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data that is
 in its cache. Work larger than the cache runs at the drive's own speed, which on
-this network storage varies (earlier the same day it wrote 245 MB/s
-sequentially); both Q: columns were measured the same evening, without a
-restart in between. The RAM disk column was re-measured after RAM-disk reads
-became asynchronous: one program with eight reads queued now keeps every
-processor copying (SEQ1M Q8T1 read was 25,353 MB/s before).
+this network storage varies (two days earlier it read 594 and wrote 112 MB/s);
+both Q: columns were measured in one session, without a restart in between. In
+the same session the cache's previous read bookkeeping read 38,645 MB/s at
+SEQ1M Q8T1 and 18,962 MB/s at SEQ1M Q1T1 (now 39,702 and 19,564). The RAM disk
+column was re-measured after RAM-disk reads became asynchronous: one program
+with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
+25,353 MB/s before).
 [How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
 
 ## Getting started
