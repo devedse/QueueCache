@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 1 of 5 cache configurations (updated 2026-10-13). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 2 of 5 cache configurations (updated 2026-10-13). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -19,8 +19,8 @@ Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram
 Failed runs, data loss and other problems worth knowing. They are also marked in the Problems column of both
 comparison tables.
 
-- ⚠ **[QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md)**: File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
-- ⚠ **[QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md)**: Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk
+- ⚠ **[QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md)**: File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13); Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time
+- ⚠ **[QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md)**: Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk; Reads of data not yet in the cache are 3 to 6 times slower than without any cache (first read of 1 GiB 187 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time
 
 ## RAM disks: CrystalDiskMark
 
@@ -50,7 +50,7 @@ shows what happens when they have to reach the disk.
 
 | Product | CrystalDiskMark | SEQ1M Q8T1 read / write | SEQ1M Q1T1 read / write | RND4K Q32T1 read / write | RND4K Q1T1 read / write |
 |---|---|---:|---:|---:|---:|
-| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | Not run yet | - | - | - | - |
+| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | <a href="images/comparison/C00-no-cache.png"><img src="images/comparison/C00-no-cache.png" width="300" alt="CrystalDiskMark, Q: without any cache Windows 11, baseline"></a> | 628 / 259 | 278 / 123 | 117 / 11 | 20 / 5 |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | <a href="images/comparison/C01-queuecache-fast.png"><img src="images/comparison/C01-queuecache-fast.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Fast, 2 GiB"></a> | 40,322 / 21,471 | 19,534 / 13,560 | 1,701 / 1,327 | 1,307 / 1,028 |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | <a href="images/comparison/C01-queuecache-strict.png"><img src="images/comparison/C01-queuecache-strict.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Strict, 2 GiB"></a> | 39,989 / 21,310 | 19,414 / 12,937 | 1,659 / 331 | 1,267 / 871 |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | Not run yet | - | - | - | - |
@@ -101,9 +101,9 @@ Cached work first, then what the cache does with data that has to reach the disk
 
 | Product | Hot SEQ1M Q8T1 R / W | Hot RND4K Q1T1 R / W | First / second read of 1 GiB, cache emptied | 8 GiB file: RND4K Q32 / SEQ1M Q8 read | 1 GiB burst write | Drain after the burst: seconds / MB/s | 8 GiB sustained write: average / slowest second | Write-through 1M Q8 | Flush after 512 MiB (s) | Power loss: saved / unsaved data kept, chkdsk | 70/30 mix | File tree create / copy / read / delete (s) | Problems | Status |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|---|
-| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
-| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13) | Measured |
-| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | 187 / 16,409 | - | - | - | - | - | - | 100% / 100%, file system clean | - | - | ⚠ Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk | Partly measured |
+| [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | 571 / 251 | 12.1 / 4.1 | 560 / 573 | 86.2 / 668.6 | 256 | 2 / 230 | 242.5 / 218.6 | 251 | 0.001 | 100% / 100%, file system clean | 11.0 | 31.9 / 28.3 / 4.9 / 23.9 | None | Measured |
+| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13); Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time | Measured |
+| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | 187 / 16,409 | - | - | - | - | - | - | 100% / 100%, file system clean | - | - | ⚠ Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk; Reads of data not yet in the cache are 3 to 6 times slower than without any cache (first read of 1 GiB 187 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time | Partly measured |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 
@@ -124,7 +124,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md): Measured
 - [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md): Measured
 - [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md): Measured
-- [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Not run yet
+- [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Measured
 - [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md): Measured
 - [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md): Partly measured
 - [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md): Not run yet

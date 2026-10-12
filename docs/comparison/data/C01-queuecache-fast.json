@@ -1701,9 +1701,10 @@
   }
  },
  "status": "Measured",
- "notes": "The run went fine. Cached data is very fast (about 39 GB/s reads, 21 GB/s writes), and a file read once is kept (the second read came from RAM). After a 1 GiB burst the disk needed about 10 seconds to catch up, writing at about 105 MB/s, less than half of what the disk can take with several requests at once. Fast mode answers flushes and write-through requests from RAM, as designed. After the simulated power cut the file data had already reached the disk, but the file system needed repair (chkdsk found problems) and about half of 10,000 newly created small files were gone.",
+ "notes": "The run went fine. Cached data is very fast (about 39 GB/s reads, 21 GB/s writes), and a file read once is kept (the second read came from RAM). Reading data that is not in the cache yet is slower than without any cache: the first read of a 1 GiB file ran at 217 MB/s against 560 MB/s on the bare disk, and small random reads at 11 against 65 MB/s. QueueCache fetches missing data from the disk one request at a time, so it cannot use the disk's ability to work on several requests at once. After a 1 GiB burst the disk needed about 10 seconds to catch up, writing at about 105 MB/s, less than half of what the disk can take with several requests at once. Fast mode answers flushes and write-through requests from RAM, as designed. After the simulated power cut the file data had already reached the disk, but the file system needed repair (chkdsk found problems) and about half of 10,000 newly created small files were gone.",
  "problems": [
   "File system needed an offline repair (chkdsk /f) after a simulated power cut",
-  "expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)"
+  "expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)",
+  "Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time"
  ]
 }
