@@ -73,8 +73,354 @@
    }
   }
  },
- "runs": {},
+ "runs": {
+  "compare-cache-cold": {
+   "run": "QueueCache-Verify-20261012-220240-10298e9395ac4b038669f187583d78cb",
+   "comparison": {
+    "SchemaVersion": 1,
+    "Suite": "compare-cache-cold",
+    "Product": "QueueCache 0.4.604.1 Strict 2 GiB",
+    "PlanVersion": 121,
+    "Shapes": [
+     {
+      "Shape": "cold-rnd4k-q32t1-read-first",
+      "Samples": 1,
+      "MBPerSecond": 10.818327078820197,
+      "MinMBPerSecond": 10.818327078820197,
+      "MaxMBPerSecond": 10.818327078820197,
+      "Iops": 2641.193134477587,
+      "ReadP50Ms": 0.758,
+      "ReadP99Ms": 1.517,
+      "ReadP999Ms": 4.752,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 6.13
+     },
+     {
+      "Shape": "cold-rnd4k-q32t1-read-second",
+      "Samples": 1,
+      "MBPerSecond": 11.739477333333333,
+      "MinMBPerSecond": 11.739477333333333,
+      "MaxMBPerSecond": 11.739477333333333,
+      "Iops": 2866.0833333333335,
+      "ReadP50Ms": 0.729,
+      "ReadP99Ms": 1.646,
+      "ReadP999Ms": 14.915,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 6.85
+     }
+    ],
+    "Steps": [
+     {
+      "Shape": "cold-first",
+      "Samples": 1,
+      "Measure": "MB/s",
+      "Median": 186.66034673525132,
+      "Min": 186.66034673525132,
+      "Max": 186.66034673525132
+     },
+     {
+      "Shape": "cold-second",
+      "Samples": 1,
+      "Measure": "MB/s",
+      "Median": 16408.68714221531,
+      "Min": 16408.68714221531,
+      "Max": 16408.68714221531
+     }
+    ],
+    "Memory": [
+     {
+      "Id": "memory-start",
+      "Snapshot": {
+       "Utc": "2026-10-12T22:02:41.2574437+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 11431157760,
+       "CommitBytes": 4749434880,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 288587776,
+       "KernelPagedBytes": 285249536,
+       "SystemCacheBytes": 3586359296
+      }
+     },
+     {
+      "Id": "memory-end",
+      "Snapshot": {
+       "Utc": "2026-10-12T22:04:51.3247415+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 11443818496,
+       "CommitBytes": 4722835456,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 287784960,
+       "KernelPagedBytes": 284905472,
+       "SystemCacheBytes": 3586109440
+      }
+     }
+    ],
+    "Durability": null
+   },
+   "environment": {
+    "windows": {
+     "Build": "28000",
+     "Revision": "2956",
+     "Release": "26H1"
+    },
+    "target": {
+     "Letter": "Q",
+     "Root": "Q:\\",
+     "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+     "FileSystem": "NTFS",
+     "Label": "QueueCacheLab",
+     "ClusterBytes": 4096,
+     "TotalBytes": 214730534912,
+     "FreeBytes": 174489903104,
+     "DriveType": "Fixed",
+     "DiskNumber": 1
+    },
+    "drivers": [
+     {
+      "Name": "vioscsi.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+      "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO SCSI pass-through controller",
+      "FileError": null
+     },
+     {
+      "Name": "balloon.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+      "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Balloon controller",
+      "FileError": null
+     },
+     {
+      "Name": "netkvm.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+      "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Ethernet Adapter",
+      "FileError": null
+     },
+     {
+      "Name": "fwcfg.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+      "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "QEMU FwCfg Device",
+      "FileError": null
+     }
+    ],
+    "queuecache": [
+     "C:\\WINDOWS\\System32\\drivers\\QueueCache-0.4.604.1-D9416B70A3A3.sys",
+     "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
+    ]
+   },
+   "steps": {
+    "cold-r1-first": {
+     "Bytes": 1073741824,
+     "Seconds": 5.7523831,
+     "MBPerSecond": 186.66034673525132,
+     "FlushSeconds": null,
+     "BytesPerSecond": null,
+     "Started": "2026-10-12T22:02:41.2736483+00:00",
+     "Ended": "2026-10-12T22:02:47.0260592+00:00"
+    },
+    "cold-r1-second": {
+     "Bytes": 1073741824,
+     "Seconds": 0.0654374,
+     "MBPerSecond": 16408.68714221531,
+     "FlushSeconds": null,
+     "BytesPerSecond": null,
+     "Started": "2026-10-12T22:02:47.0533701+00:00",
+     "Ended": "2026-10-12T22:02:47.1188131+00:00"
+    }
+   },
+   "stalls": []
+  },
+  "compare-durability-write": {
+   "run": "QueueCache-Verify-20261012-220507-589b9019b8554cee82f16efe9ff5e1b8",
+   "comparison": {
+    "SchemaVersion": 1,
+    "Suite": "compare-durability-write",
+    "Product": "QueueCache 0.4.604.1 Strict 2 GiB",
+    "PlanVersion": 121,
+    "Shapes": [],
+    "Steps": [],
+    "Memory": [],
+    "Durability": null
+   },
+   "environment": {
+    "windows": {
+     "Build": "28000",
+     "Revision": "2956",
+     "Release": "26H1"
+    },
+    "target": {
+     "Letter": "Q",
+     "Root": "Q:\\",
+     "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+     "FileSystem": "NTFS",
+     "Label": "QueueCacheLab",
+     "ClusterBytes": 4096,
+     "TotalBytes": 214730534912,
+     "FreeBytes": 174489903104,
+     "DriveType": "Fixed",
+     "DiskNumber": 1
+    },
+    "drivers": [
+     {
+      "Name": "vioscsi.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+      "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO SCSI pass-through controller",
+      "FileError": null
+     },
+     {
+      "Name": "balloon.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+      "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Balloon controller",
+      "FileError": null
+     },
+     {
+      "Name": "netkvm.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+      "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Ethernet Adapter",
+      "FileError": null
+     },
+     {
+      "Name": "fwcfg.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+      "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "QEMU FwCfg Device",
+      "FileError": null
+     }
+    ],
+    "queuecache": [
+     "C:\\WINDOWS\\System32\\drivers\\QueueCache-0.4.604.1-D9416B70A3A3.sys",
+     "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
+    ]
+   },
+   "steps": {},
+   "stalls": []
+  },
+  "compare-durability-verify": {
+   "run": "QueueCache-Verify-20261012-220731-75b5027b8e7e4d20aed3c886c33280c9",
+   "comparison": {
+    "SchemaVersion": 1,
+    "Suite": "compare-durability-verify",
+    "Product": "QueueCache 0.4.604.1 Strict 2 GiB",
+    "PlanVersion": 121,
+    "Shapes": [],
+    "Steps": [],
+    "Memory": [],
+    "Durability": {
+     "BootUtc": "2026-10-12T22:06:50.3449196+00:00",
+     "Flushed": {
+      "Expected": 65536,
+      "New": 65536,
+      "Old": 0,
+      "Other": 0,
+      "Missing": 0
+     },
+     "Unflushed": {
+      "Expected": 65536,
+      "New": 65536,
+      "Old": 0,
+      "Other": 0,
+      "Missing": 0
+     },
+     "SmallFilesExpected": 10000,
+     "SmallFilesIntact": 8572,
+     "SmallFilesDamaged": 950,
+     "SmallFilesMissing": 478,
+     "ChkdskExitCode": 0
+    }
+   },
+   "environment": {
+    "windows": {
+     "Build": "28000",
+     "Revision": "2956",
+     "Release": "26H1"
+    },
+    "target": {
+     "Letter": "Q",
+     "Root": "Q:\\",
+     "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+     "FileSystem": "NTFS",
+     "Label": "QueueCacheLab",
+     "ClusterBytes": 4096,
+     "TotalBytes": 214730534912,
+     "FreeBytes": 173911908352,
+     "DriveType": "Fixed",
+     "DiskNumber": 1
+    },
+    "drivers": [
+     {
+      "Name": "vioscsi.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+      "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO SCSI pass-through controller",
+      "FileError": null
+     },
+     {
+      "Name": "balloon.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+      "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Balloon controller",
+      "FileError": null
+     },
+     {
+      "Name": "netkvm.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+      "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Ethernet Adapter",
+      "FileError": null
+     },
+     {
+      "Name": "fwcfg.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+      "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "QEMU FwCfg Device",
+      "FileError": null
+     }
+    ],
+    "queuecache": [
+     "C:\\WINDOWS\\System32\\drivers\\QueueCache-0.4.604.1-D9416B70A3A3.sys",
+     "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
+    ]
+   },
+   "steps": {},
+   "stalls": []
+  }
+ },
  "status": "Partly measured",
- "notes": "",
- "problems": []
+ "notes": "Reads from the cache are as fast as in Fast mode (about 40 GB/s), and a file read once is kept in RAM. Writes are uneven. After a burst of small random writes, writing stopped completely for more than 10 seconds: one test finished nothing, so the detailed run is being repeated. The likely reason is that in Strict mode a write that must go straight to the disk (Windows' file-system journal makes such writes) first waits until every write queued in RAM is on the disk, and small random writes reach this disk slowly (about 10 MB/s here). The repeat run records the driver's counters to confirm this. After the simulated power cut the file system was clean (chkdsk found no problems) and all flushed data had survived. Some newly created small files that nobody flushed were incomplete (950) or missing (478).",
+ "problems": [
+  "Writes stopped for more than 10 seconds after a burst of small random writes (likely a write-through write waiting for the whole RAM queue to reach the disk); being confirmed"
+ ]
 }

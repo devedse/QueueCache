@@ -171,7 +171,8 @@
      "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
     ]
    },
-   "steps": {}
+   "steps": {},
+   "stalls": []
   },
   "compare-ram": {
    "run": "QueueCache-Verify-20261012-075529-36f78dfa63d544f6a8affcb337745130",
@@ -542,7 +543,8 @@
      "FlushSeconds": null,
      "BytesPerSecond": null
     }
-   }
+   },
+   "stalls": []
   }
  },
  "status": "Measured",

@@ -186,7 +186,8 @@
     ],
     "queuecache": []
    },
-   "steps": {}
+   "steps": {},
+   "stalls": []
   },
   "compare-ram": {
    "run": "QueueCache-Verify-20261012-192301-bc644b9e08ff4f39b28cc4a8d5e78af7",
@@ -572,7 +573,8 @@
      "FlushSeconds": null,
      "BytesPerSecond": null
     }
-   }
+   },
+   "stalls": []
   }
  },
  "status": "Measured",

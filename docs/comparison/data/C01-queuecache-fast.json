@@ -1353,7 +1353,8 @@
      "Started": "2026-10-12T20:38:17.4028691+00:00",
      "Ended": "2026-10-12T20:38:17.457279+00:00"
     }
-   }
+   },
+   "stalls": []
   },
   "compare-cache-cold": {
    "run": "QueueCache-Verify-20261012-211315-1ccbb761c725479590fd878d4d6ace94",
@@ -1522,7 +1523,8 @@
      "Started": "2026-10-12T21:13:20.7779167+00:00",
      "Ended": "2026-10-12T21:13:20.8185886+00:00"
     }
-   }
+   },
+   "stalls": []
   },
   "compare-durability-write": {
    "run": "QueueCache-Verify-20261012-211540-d7163ab695f643a199573774e82fe61f",
@@ -1597,7 +1599,8 @@
      "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
     ]
    },
-   "steps": {}
+   "steps": {},
+   "stalls": []
   },
   "compare-durability-verify": {
    "run": "QueueCache-Verify-20261012-211734-00f5848605014672b2465ca4309b0116",
@@ -1693,7 +1696,8 @@
      "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_fb19ec298857fd7c\\qcramdisk.sys"
     ]
    },
-   "steps": {}
+   "steps": {},
+   "stalls": []
   }
  },
  "status": "Measured",
