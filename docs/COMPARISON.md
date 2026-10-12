@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 3 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 5 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -24,8 +24,8 @@ as the [README](../README.md#performance). Click a screenshot for full size, or 
 | [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | <a href="images/comparison/R01-queuecache.png"><img src="images/comparison/R01-queuecache.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, RAM disk"></a> | 45,610 / 24,026 | 25,735 / 16,832 | 1,451 / 1,184 | 1,601 / 1,270 |
 | [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | <a href="images/comparison/R02-softperfect.png"><img src="images/comparison/R02-softperfect.png" width="300" alt="CrystalDiskMark, SoftPerfect RAM Disk 26.10, static"></a> | 30,054 / 20,942 | 13,655 / 12,968 | 1,484 / 1,257 | 1,544 / 1,278 |
 | [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | <a href="images/comparison/R02-softperfect-hdd.png"><img src="images/comparison/R02-softperfect-hdd.png" width="300" alt="CrystalDiskMark, SoftPerfect RAM Disk 26.10, hard-disk emulation"></a> | 34,474 / 21,945 | 13,470 / 10,927 | 974 / 873 | 1,041 / 909 |
-| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | Not run yet | - | - | - | - |
-| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | Not run yet | - | - | - | - |
+| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | <a href="images/comparison/R03-aim-static.png"><img src="images/comparison/R03-aim-static.png" width="300" alt="CrystalDiskMark, AIM Toolkit 20260420, static"></a> | 4,435 / 4,326 | 3,802 / 3,859 | 227 / 223 | 94 / 80 |
+| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | <a href="images/comparison/R03-aim-dynamic.png"><img src="images/comparison/R03-aim-dynamic.png" width="300" alt="CrystalDiskMark, AIM Toolkit 20260420, dynamic (RamDyn)"></a> | 3,838 / 3,358 | 3,481 / 3,031 | 178 / 177 | 79 / 80 |
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | Not run yet | - | - | - | - |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | Not run yet | - | - | - | - |
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | Not run yet | - | - | - | - |
@@ -63,8 +63,8 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 | [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | 25,103 / 16,743 | 45,245 / 23,625 | 25,450 / 25,876 | 1,611 / 1,234 | 1,457 / 1,157 | 5,071 / 3,844 | 6 / 10 | 93 % | 4,077 | 4.7 / 4.5 / 3.0 / 5.2 | Free (MIT) | Measured |
 | [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | 12,171 / 12,951 | 30,465 / 20,990 | 30,595 / 25,267 | 1,585 / 1,301 | 1,500 / 1,287 | 5,182 / 4,224 | 4 / 5 | 64 % | 4,084 | 4.5 / 4.4 / 3.0 / 4.5 | $29 per PC (30-day trial used) | Measured |
 | [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | 14,146 / 10,747 | 35,386 / 21,317 | 29,851 / 26,003 | 1,053 / 921 | 986 / 886 | 3,482 / 3,023 | 11 / 14 | 67 % | 4,063 | 4.4 / 4.5 / 2.9 / 4.4 | $29 per PC (30-day trial used) | Measured |
-| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | - | - | - | - | - | - | - | - | - | - | Free (AGPL) | Not run yet |
-| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | - | - | - | - | - | - | - | - | - | - | Free (AGPL) | Not run yet |
+| [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | 3,773 / 3,703 | 4,428 / 4,385 | 4,392 / 4,417 | 82 / 90 | 227 / 220 | 220 / 217 | 77 / 58 | 32 % | 1,031 | 5.1 / 5.6 / 3.0 / 5.4 | Free (AGPL) | Measured |
+| [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | 3,227 / 2,906 | 3,739 / 3,247 | 3,711 / 3,253 | 75 / 82 | 179 / 176 | 180 / 174 | 83 / 69 | 31 % | 4 | 5.2 / 6.1 / 3.1 / 5.5 | Free (AGPL) | Measured |
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | - | - | - | - | - | - | - | - | - | - | Free | Not run yet |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | - | - | - | - | - | - | - | - | - | - | Free | Not run yet |
 | [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | - | - | - | - | - | - | - | - | - | - | Free | Not run yet |
@@ -110,8 +110,8 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md): Measured
 - [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md): Measured
 - [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md): Measured
-- [AIM Toolkit 20260420, static](comparison/R03-aim-static.md): Not run yet
-- [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md): Not run yet
+- [AIM Toolkit 20260420, static](comparison/R03-aim-static.md): Measured
+- [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md): Measured
 - [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md): Not run yet
 - [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md): Not run yet
 - [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md): Not run yet
