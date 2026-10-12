@@ -15,11 +15,11 @@
 
 ## Problems
 
-- ⚠ Writes stopped for more than 10 seconds after a burst of small random writes (likely a write-through write waiting for the whole RAM queue to reach the disk); being confirmed
+- ⚠ Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk
 
 ## Notes
 
-Reads from the cache are as fast as in Fast mode (about 40 GB/s), and a file read once is kept in RAM. Writes are uneven. After a burst of small random writes, writing stopped completely for more than 10 seconds: one test finished nothing, so the detailed run is being repeated. The likely reason is that in Strict mode a write that must go straight to the disk (Windows' file-system journal makes such writes) first waits until every write queued in RAM is on the disk, and small random writes reach this disk slowly (about 10 MB/s here). The repeat run records the driver's counters to confirm this. After the simulated power cut the file system was clean (chkdsk found no problems) and all flushed data had survived. Some newly created small files that nobody flushed were incomplete (950) or missing (478).
+Reads from the cache are as fast as in Fast mode (about 40 GB/s), and a file read once is kept in RAM. Writes are uneven. After a burst of small random writes, writing stopped completely for more than 10 seconds: one test finished nothing, so the detailed run is repeated. The reason is in how Strict mode handles a write that must go straight to the disk (Windows' file-system journal makes such writes). QueueCache first writes everything queued in RAM to the disk, then lets that write through, and other writes wait meanwhile. Small random writes reach this disk slowly (about 10 MB/s), so each such write held everything up for about 70 seconds. After the simulated power cut the file system was clean (chkdsk found no problems) and all flushed data had survived. Some newly created small files that nobody flushed were incomplete (950) or missing (478).
 
 ## CrystalDiskMark
 

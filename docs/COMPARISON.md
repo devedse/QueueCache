@@ -20,7 +20,7 @@ Failed runs, data loss and other problems worth knowing. They are also marked in
 comparison tables.
 
 - ⚠ **[QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md)**: File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
-- ⚠ **[QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md)**: Writes stopped for more than 10 seconds after a burst of small random writes (likely a write-through write waiting for the whole RAM queue to reach the disk); being confirmed
+- ⚠ **[QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md)**: Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk
 
 ## RAM disks: CrystalDiskMark
 
@@ -103,7 +103,7 @@ Cached work first, then what the cache does with data that has to reach the disk
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|---|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13) | Measured |
-| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | 187 / 16,409 | - | - | - | - | - | - | 100% / 100%, file system clean | - | - | ⚠ Writes stopped for more than 10 seconds after a burst of small random writes (likely a write-through write waiting for the whole RAM queue to reach the disk); being confirmed | Partly measured |
+| [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | 187 / 16,409 | - | - | - | - | - | - | 100% / 100%, file system clean | - | - | ⚠ Writes stopped for more than 10 seconds (about 70 seconds per stall) after a burst of small random writes: in Strict mode a write-through write waits until everything queued in RAM is on the disk | Partly measured |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | - | - | - | - | - | - | - | - | - | - | - | - | None | Not run yet |
 
