@@ -12,6 +12,10 @@
 | `compare-snapshot` run | `QueueCache-Verify-20261012-084419-3a6cbb6b305249ca9cc59bdbec6d0c43` |
 | `compare-ram` run | `QueueCache-Verify-20261012-085608-fccbc641c40f4a29869071ce3aba2868` |
 
+## Notes
+
+The run went fine. Large reads from one program reach about 30 GB/s, a third below QueueCache, while using less processor time (about 64% busy). With four programs at once it is slightly faster than QueueCache, and single small requests are a little quicker (4 against 6 microseconds). All 4 GiB of memory is reserved as soon as the disk is created.
+
 ## CrystalDiskMark
 
 <img src="../images/comparison/R02-softperfect.png" width="480" alt="CrystalDiskMark, SoftPerfect RAM Disk 26.10, static">

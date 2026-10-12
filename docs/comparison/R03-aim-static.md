@@ -12,6 +12,10 @@
 | `compare-snapshot` run | `QueueCache-Verify-20261012-095410-a1f62216046646f09fb9d381fb1ad1ea` |
 | `compare-ram` run | `QueueCache-Verify-20261012-100536-12753d7fc9764f4f990496f542163c93` |
 
+## Notes
+
+The run went fine, but this disk is much slower than the others: about 4.4 GB/s for large reads and under 100 MB/s for single small requests, roughly a tenth to a twentieth of the other RAM disks. Its memory is taken as data is written rather than all at once (1 GiB in use while empty, 3 GiB after writing 2 GiB more).
+
 ## CrystalDiskMark
 
 <img src="../images/comparison/R03-aim-static.png" width="480" alt="CrystalDiskMark, AIM Toolkit 20260420, static">

@@ -12,6 +12,10 @@
 | `compare-snapshot` run | `QueueCache-Verify-20261012-101439-c0f74e69081b40e8b1cff91de0971bc1` |
 | `compare-ram` run | `QueueCache-Verify-20261012-102554-c0f5c8b3ed76443baf784d93bbc8a6e6` |
 
+## Notes
+
+The run went fine. A little slower than AIM's static mode. Memory is taken only as data is written (almost nothing while empty) and is not given back immediately when files are deleted; it was largely returned a few minutes later.
+
 ## CrystalDiskMark
 
 <img src="../images/comparison/R03-aim-dynamic.png" width="480" alt="CrystalDiskMark, AIM Toolkit 20260420, dynamic (RamDyn)">

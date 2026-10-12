@@ -546,5 +546,5 @@
   }
  },
  "status": "Measured",
- "notes": "Measured from the snapshot with QueueCache installed (Q: keeps its 2 GiB Fast cache; T: is a QueueCache RAM disk with default Direct reads). CrystalDiskMark stayed open but idle during the detailed run because a lab script error skipped its close step; both CrystalDiskMark runs had finished before the detailed run started."
+ "notes": "The run went fine. The fastest single program so far for large reads and writes: one program reading 1 MiB blocks gets about 45 GB/s. It gets there by using all four processors for that one program (about 93% busy), so it uses more processor time than the others for the same work. All 4 GiB of memory is reserved as soon as the disk is created."
 }

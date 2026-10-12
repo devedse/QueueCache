@@ -558,5 +558,5 @@
   }
  },
  "status": "Measured",
- "notes": ""
+ "notes": "The run went fine. A little slower than AIM's static mode. Memory is taken only as data is written (almost nothing while empty) and is not given back immediately when files are deleted; it was largely returned a few minutes later."
 }

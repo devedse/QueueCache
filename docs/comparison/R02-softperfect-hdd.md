@@ -12,6 +12,10 @@
 | `compare-snapshot` run | `QueueCache-Verify-20261012-090507-b8aecb09bae74436aabc7636c77c43c5` |
 | `compare-ram` run | `QueueCache-Verify-20261012-091648-98c3352dd21d4000ba9e91adfed46b65` |
 
+## Notes
+
+The run went fine. Hard-disk emulation (the disk appears as a normal disk with a partition) is a bit faster than SoftPerfect's default mode for large reads, but about a third slower for small 4 KiB requests.
+
 ## CrystalDiskMark
 
 <img src="../images/comparison/R02-softperfect-hdd.png" width="480" alt="CrystalDiskMark, SoftPerfect RAM Disk 26.10, hard-disk emulation">
