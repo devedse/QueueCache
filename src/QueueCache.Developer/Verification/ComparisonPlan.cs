@@ -111,7 +111,10 @@ public static class ComparisonPlan
             new("prepare", "prepare-cache", 1) };
         for (var r = 1; r <= repeats; r++)
         {
-            cases.Add(new($"hot-r{r}-warm", "warm", r, "hot-1g.dat"));
+            // One read pass does not make every product keep a whole file; three recorded passes before the
+            // first repetition show how each one warms up and start the hot windows from resident data.
+            for (var pass = 1; pass <= (r == 1 ? 3 : 1); pass++)
+                cases.Add(new($"hot-r{r}-warm{pass}", "warm", r, "hot-1g.dat"));
             foreach (var s in CdmShapes) cases.Add(Window("hot", r, "hot-1g.dat", 'R', s.BlockKiB, s.Queue, s.Threads, s.Random, 10));
             foreach (var s in CdmShapes) cases.Add(Window("hot", r, "hot-1g.dat", 'W', s.BlockKiB, s.Queue, s.Threads, s.Random, 10));
             cases.Add(new($"hot-r{r}-settle", "settle", r, SettleSeconds: 45));

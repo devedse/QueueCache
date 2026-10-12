@@ -332,7 +332,8 @@ internal static class DiagnosticContracts
         check(cache.Select(c => c.Id).Distinct().Count() == cache.Count && cacheWindows.Length == 47 &&
             cacheWindows.Count(c => c.Buffering == ComparisonPlan.Buffered) == 12 && cacheWindows.Count(c => c.Buffering == ComparisonPlan.WriteThrough) == 6 &&
             cache.Count(c => c.Kind == "absorb") == 3 && cache.Count(c => c.Kind == "flush") == 3 && cache.Count(c => c.Kind == "sustained") == 2 &&
-            cache.Count(c => c.Kind == "tree") == 2 && cacheWindows.Count(c => c.Access == 'M') == 1,
+            cache.Count(c => c.Kind == "tree") == 2 && cacheWindows.Count(c => c.Access == 'M') == 1 &&
+            cache.Count(c => c.Id.StartsWith("hot-r1-warm", StringComparison.Ordinal)) == 3,
             "compare-cache: hot, buffered, write-through, larger-than-cache and mixed windows plus absorb, flush, sustained and tree steps");
         check(cache.Where(c => c.Kind is "absorb" or "flush" or "sustained" or "settle" or "tree").All(c => c.SettleSeconds >= 45) &&
             cacheWindows.All(c => ComparisonPlan.CacheFiles.Any(f => f.Name == c.File)), "every cache write waits for write-back; windows use the kept files");
