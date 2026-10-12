@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 1 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -43,7 +43,7 @@ shows what happens when they have to reach the disk.
 | Product | CrystalDiskMark | SEQ1M Q8T1 read / write | SEQ1M Q1T1 read / write | RND4K Q32T1 read / write | RND4K Q1T1 read / write |
 |---|---|---:|---:|---:|---:|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | Not run yet | - | - | - | - |
-| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | Not run yet | - | - | - | - |
+| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | <a href="images/comparison/C01-queuecache-fast.png"><img src="images/comparison/C01-queuecache-fast.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Fast, 2 GiB"></a> | 40,322 / 21,471 | 19,534 / 13,560 | 1,701 / 1,327 | 1,307 / 1,028 |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | Not run yet | - | - | - | - |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | Not run yet | - | - | - | - |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | Not run yet | - | - | - | - |
@@ -76,8 +76,8 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 Cached work first, then what the cache does with data that has to reach the disk:
 
 - **Hot**: reads and writes of a 1 GiB file already in the cache.
-- **First / third read**: reading a 1 GiB file from the disk, then again after it was read twice: does the cache
-  keep what it read?
+- **First / second read**: with the cache emptied, reading a 1 GiB file from the disk and then once more: does
+  the cache keep what it read?
 - **8 GiB file**: a file four times the cache size.
 - **Burst write**: 1 GiB written in one go; how fast it is accepted.
 - **Drain**: after that burst, how long the disk below kept writing and at what speed, counted by the hypervisor
@@ -87,13 +87,14 @@ Cached work first, then what the cache does with data that has to reach the disk
 - **Flush**: how long `FlushFileBuffers` takes after 512 MiB of writes. Near zero means the cache did not write the
   data to disk before reporting it saved.
 - **Power loss**: the virtual machine is reset right after a durable save (buffered writes, then a flush) and after
-  raw writes without a flush; the share of each that survived, and whether `chkdsk /scan` found damage (0 = none).
+  raw writes without a flush; the share of each that survived, and whether `chkdsk /scan` found file-system
+  damage afterwards.
 - **70/30 mix**: five minutes of random 4 KiB reads and writes over a 4 GiB file.
 
-| Product | Hot SEQ1M Q8T1 R / W | Hot RND4K Q1T1 R / W | First / third read of 1 GiB | 8 GiB file: RND4K Q32 / SEQ1M Q8 read | 1 GiB burst write | Drain after the burst: seconds / MB/s | 8 GiB sustained write: average / slowest second | Write-through 1M Q8 | Flush after 512 MiB (s) | Power loss: saved / unsaved data kept, chkdsk | 70/30 mix | File tree create / copy / read / delete (s) | Status |
+| Product | Hot SEQ1M Q8T1 R / W | Hot RND4K Q1T1 R / W | First / second read of 1 GiB, cache emptied | 8 GiB file: RND4K Q32 / SEQ1M Q8 read | 1 GiB burst write | Drain after the burst: seconds / MB/s | 8 GiB sustained write: average / slowest second | Write-through 1M Q8 | Flush after 512 MiB (s) | Power loss: saved / unsaved data kept, chkdsk | 70/30 mix | File tree create / copy / read / delete (s) | Status |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
-| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
+| [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | Measured |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | - | - | - | - | - | - | - | - | - | - | - | - | Not run yet |
@@ -116,7 +117,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [SoftPerfect RAM File System 26.10, default](comparison/R08-softperfect-ramfs.md): Measured
 - [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md): Measured
 - [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Not run yet
-- [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md): Not run yet
+- [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md): Measured
 - [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md): Not run yet
 - [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md): Not run yet
 - [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md): Not run yet
