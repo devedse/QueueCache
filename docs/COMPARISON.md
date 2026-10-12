@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 7 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 8 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -28,7 +28,7 @@ as the [README](../README.md#performance). Click a screenshot for full size, or 
 | [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | <a href="images/comparison/R03-aim-dynamic.png"><img src="images/comparison/R03-aim-dynamic.png" width="300" alt="CrystalDiskMark, AIM Toolkit 20260420, dynamic (RamDyn)"></a> | 3,838 / 3,358 | 3,481 / 3,031 | 178 / 177 | 79 / 80 |
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | <a href="images/comparison/R04-osfmount-logical.png"><img src="images/comparison/R04-osfmount-logical.png" width="300" alt="CrystalDiskMark, OSFMount 3.3.1000, logical emulation"></a> | 16,340 / 17,887 | 16,211 / 17,947 | 1,653 / 1,406 | 1,713 / 1,416 |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | <a href="images/comparison/R04-osfmount-physical.png"><img src="images/comparison/R04-osfmount-physical.png" width="300" alt="CrystalDiskMark, OSFMount 3.3.1000, physical emulation"></a> | 15,432 / 16,613 | 15,422 / 16,820 | 902 / 786 | 965 / 818 |
-| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | Not run yet | - | - | - | - |
+| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | <a href="images/comparison/R05-imdisk.png"><img src="images/comparison/R05-imdisk.png" width="300" alt="CrystalDiskMark, ImDisk Toolkit 20250206, AWE"></a> | 14,556 / 16,841 | 14,546 / 16,787 | 591 / 551 | 577 / 551 |
 | [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | Not run yet | - | - | - | - |
 | [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | Not run yet | - | - | - | - |
 | [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | Not run yet | - | - | - | - |
@@ -67,7 +67,7 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 | [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md) | 3,227 / 2,906 | 3,739 / 3,247 | 3,711 / 3,253 | 75 / 82 | 179 / 176 | 180 / 174 | 83 / 69 | 31 % | 4 | 5.2 / 6.1 / 3.1 / 5.5 | Free (AGPL) | Measured |
 | [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md) | 16,400 / 18,128 | 16,410 / 18,212 | 23,165 / 25,591 | 1,744 / 1,390 | 1,679 / 1,368 | 5,697 / 4,534 | 3 / 4 | 26 % | 4,209 | 4.5 / 4.3 / 2.9 / 4.2 | Free | Measured |
 | [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md) | 15,729 / 17,279 | 15,537 / 17,122 | 23,019 / 25,051 | 980 / 822 | 912 / 784 | 3,135 / 2,729 | 13 / 17 | 25 % | 4,036 | 47.4 / 12.1 / 148.5 / 10.2 | Free | Measured |
-| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | - | - | - | - | - | - | - | - | - | - | Free | Not run yet |
+| [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md) | 14,800 / 17,102 | 14,888 / 17,108 | 20,128 / 22,247 | 584 / 537 | 548 / 516 | 982 / 989 | 20 / 21 | 25 % | 4,149 | 4.5 / 4.4 / 2.9 / 4.4 | Free | Measured |
 | [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md) | - | - | - | - | - | - | - | - | - | - | $24.95-54.95 (30-day trial used) | Not run yet |
 | [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md) | - | - | - | - | - | - | - | - | - | - | $24.95-54.95 (30-day trial used) | Not run yet |
 | [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md) | - | - | - | - | - | - | - | - | - | - | $39.95 (trial used) | Not run yet |
@@ -114,7 +114,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [AIM Toolkit 20260420, dynamic (RamDyn)](comparison/R03-aim-dynamic.md): Measured
 - [OSFMount 3.3.1000, logical emulation](comparison/R04-osfmount-logical.md): Measured
 - [OSFMount 3.3.1000, physical emulation](comparison/R04-osfmount-physical.md): Measured
-- [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md): Not run yet
+- [ImDisk Toolkit 20250206, AWE](comparison/R05-imdisk.md): Measured
 - [Primo Ramdisk 6.6.0, Direct-IO](comparison/R06-primo-directio.md): Not run yet
 - [Primo Ramdisk 6.6.0, SCSI](comparison/R06-primo-scsi.md): Not run yet
 - [GiliSoft RAMDisk 7.2.0, default](comparison/R07-gilisoft.md): Not run yet
