@@ -17,7 +17,7 @@
 ## Problems
 
 - ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut
-- ⚠ tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
+- ⚠ expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13)
 
 ## Notes
 
