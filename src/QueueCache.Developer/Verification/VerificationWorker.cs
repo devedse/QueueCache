@@ -28,6 +28,7 @@ public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 [SupportedOSPlatform("windows")]
 public static class VerificationWorker
 {
+    public const string NotCleanMessage = "Start with a clean cache; drain your workload first.";
     public static void ValidateFileTarget(DiskTarget target, DiskDescription inventory)
     {
         if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
@@ -669,7 +670,7 @@ public static class VerificationWorker
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
                 if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
-                    throw new IOException("Start with a clean cache; drain your workload first.");
+                    throw new IOException(NotCleanMessage);
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
                     device.GetDiagnostics().CallerRouting?.Backoff);
@@ -721,8 +722,8 @@ public static class VerificationWorker
                     device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
                     device.SetSpecialRanges([], SpecialRangeKind.Reference);
                 }
-                // Only ordering-faults deliberately raises the lifetime error count through the driver
-                // lab gate, and each of its stages recovers with Retry. Accept that count only when the
+                // Only ordering-faults and stress-races deliberately raise the lifetime error count through
+                // driver lab faults, and each fault is recovered with Retry. Accept that count only when the
                 // cache is currently healthy, and record exactly what was accepted. Every other suite
                 // still treats any error-count change as a restoration failure.
                 if (job.AcceptsLabErrors)
@@ -733,7 +734,7 @@ public static class VerificationWorker
                         RunStorage.AtomicJson(job.Reply + ".accepted-lab-errors.json", new
                         {
                             OriginalErrors = original.State.Errors, CurrentErrors = current.Errors,
-                            Reason = "ordering-faults lab-gate failures, each recovered by Retry"
+                            Reason = "Deliberate lab-fault failures (ordering-faults or stress-races), each recovered by Retry"
                         });
                         original = original with { State = original.State with { Errors = current.Errors } };
                     }
@@ -923,6 +924,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, faultChecks);
                 ReportFailures(faultChecks, Console.Error);
                 return faultChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "stress-races":
+                var stressChecks = await StressRaceScenarios.RunAsync(target, device, job.WorkDirectory!, job.Seconds, job.OraclePath!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, stressChecks);
+                ReportFailures(stressChecks, Console.Error);
+                return stressChecks.Count > 0 && stressChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
                 var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, pressureChecks);

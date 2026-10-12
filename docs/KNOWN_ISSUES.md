@@ -1,7 +1,7 @@
 # Known issues and verification gaps
 
 What is known to be limited or not yet proven in the current QueueCache build
-(0.4.583.1, 2026-10-11). Fixed defects are listed at the end with the build that
+(0.4.604.1, 2026-10-12). Fixed defects are listed at the end with the build that
 fixed them; do not report them as current bugs without a reproduction on the
 current driver. Performance results and decisions are in
 [performance findings](PERFORMANCE_FINDINGS.md); how things are tested is in
@@ -103,11 +103,16 @@ cache or a disk.
   (paging I/O bypasses the RAM cache), but full boot, paging, hibernation and dump
   acceptance is open. A pre-alpha large-image crash on the old engine left no dump
   and was never reproduced.
-- **Edge cases:** allocation-failure, cancellation and teardown races; oversized
-  and quota-boundary requests under concurrency; explicit flush or live resize
-  racing other work; multi-disk memory pressure; every fault-injection point across
-  every parallelism. A lower request that cannot be allocated is retried for about
-  5 s before the cache faults.
+- **Edge cases:** `stress-races` now covers flush, live resize, teardown,
+  drop-clean, slowed and transiently failing lower writes, refused and rolled-back
+  settings, Strict switches, cancelled requests, 4 MiB requests and RAM disks
+  created and removed, all at once on two volumes under concurrent I/O, plus a
+  failed lower write and Retry at drain parallelism 1, 2 and 4 (with and without
+  Driver Verifier). Still open: faults injected during that busy window rather
+  than after it, every fault-injection point at every parallelism, and memory
+  pressure from Windows itself rather than from QueueCache's own reservation. A
+  lower request that cannot be allocated is retried for about 5 s before the
+  cache faults.
 - **Managed disks:** sleep, hibernate, Fast Startup and a crash during a checkpoint
   commit are not covered.
 
@@ -118,6 +123,7 @@ recovery: a faulted cache must be inspected and recovered explicitly.
 
 | What you would have seen | Fixed in |
 |---|---|
+| With "keep written data" off, a program re-reading a large file (reads over 1 MiB) while QueueCache was still writing it to disk could get an older version of a 256 KiB piece; the disk itself was always right | 0.4.601.1 (found by the new `stress-races` suite) |
 | One program reading a RAM disk topped out at about 26 GB/s whatever its queue depth (CrystalDiskMark SEQ1M Q8T1 25,353 MB/s) | 0.4.583.1: queued reads overlap, 47,583 MB/s ([findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)) |
 | Sequential cached reads up to 45% slower after drop-clean and refill | 0.4.431.1 chunk allocator; 0.4.434.1 prefetch and coalesced copies |
 | Programs on a cached C: crashed: page-in misses were kept from a buffer that can repeat a shared page (0.4.148.1-0.4.162.1) | 0.4.166.1 |

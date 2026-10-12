@@ -26,7 +26,9 @@ internal static class RamReadReferenceScenarios
         if (File.Exists(ownership)) throw new IOException("RAM reference ownership journal already exists.");
         RunStorage.AtomicJson(ownership, journal);
         var plan = RamReadReferencePlan.CasesFor(kind, repeats);
-        RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds, Measurement = "Read reference; no speed acceptance verdict" });
+        var write = kind == RamReadRunKind.WriteReference;
+        RunStorage.AtomicJson(evidence + ".plan.json", new { Cases = plan, Seconds = seconds,
+            Measurement = write ? "Write reference and user-mode memory copies; no speed acceptance verdict" : "Read reference; no speed acceptance verdict" });
         var checks = new List<CheckResult>();
         var coordinationWindows = new List<RamCoordinationWindow>();
         var asyncWindows = new List<RamAsyncWindow>();
@@ -39,8 +41,17 @@ internal static class RamReadReferenceScenarios
         }
         try
         {
-        foreach (var group in plan.GroupBy(s => new { s.Repeat, s.Access }))
+        foreach (var group in plan.Where(s => s.Probe is null).GroupBy(s => new { s.Repeat, s.Access }))
         {
+            foreach (var probe in plan.Where(p => p.Probe is not null && p.Repeat == group.Key.Repeat))
+            {
+                // Before the owned disk exists: the copy region and the disk do not compete for memory.
+                Console.WriteLine($"Memory copy {probe.Id} ({checks.Count + 1} of {plan.Count})"); Console.Out.Flush();
+                var copied = MemoryCopyProbe.Run(probe.Probe!, probe.Write, probe.Threads);
+                RunStorage.AtomicJson(evidence + "." + probe.Id + ".memory.json", copied);
+                checks.Add(new(probe.Id, "PASS", $"Memory copy {copied.MiBPerSecond:F2} MiB/s, {(probe.Write ? "hot buffer into cold memory" : "cold memory into hot buffer")}, " +
+                    $"{probe.Probe} copy, {probe.Threads} thread(s); no driver involved. No speed acceptance verdict."));
+            }
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam) with
             {
                 CapacityBytes = RamReadReferencePlan.DiskMiB * (1UL << 20), Access = group.Key.Access,
@@ -80,8 +91,9 @@ internal static class RamReadReferenceScenarios
                 {
                     var prefix = evidence + "." + scenario.Id;
                     Console.WriteLine($"Reference {scenario.Id} ({checks.Count + 1} of {plan.Count})"); Console.Out.Flush();
-                    var beforeHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".before");
-                    if (beforeHash != expectedHash) throw new InvalidDataException("RAM reference oracle hash changed.");
+                    // Write windows change the payload; their disk is rewritten and read back after the group.
+                    var beforeHash = write ? null : RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".before");
+                    if (!write && beforeHash != expectedHash) throw new InvalidDataException("RAM reference oracle hash changed.");
                     var before = await Snapshot();
                     var samples = new List<RamReadReferenceSample>();
                     using var provider = WindowsRamDisk.Connect();
@@ -123,7 +135,7 @@ internal static class RamReadReferenceScenarios
                     {
                         // Forbid writes to the payload while allowing the read-only
                         // DiskSpd handle. NTFS may still write unrelated volume metadata.
-                        using var payloadGuard = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        using var payloadGuard = write ? null : new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
                         await Task.WhenAny(ready.Task, observer).WaitAsync(TimeSpan.FromSeconds(45));
                         if (observer.IsCompleted) { await observer; throw new IOException("RAM telemetry ended before readiness."); }
                         await ready.Task;
@@ -205,11 +217,16 @@ internal static class RamReadReferenceScenarios
                         asyncWindows.Add(new(scenario, expectedNative.ResourceId, expectedNative.BootEpoch,
                             expectedNative.CreationGeneration, asyncBefore!, asyncAfter!, share, score!));
                     }
-                    var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
-                    RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, Before = beforeHash, After = afterHash, Bytes = 1L << 30 });
-                    if (afterHash != expectedHash) throw new InvalidDataException("RAM reference byte oracle changed after scoring.");
+                    if (!write)
+                    {
+                        var afterHash = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, prefix + ".after");
+                        RunStorage.AtomicJson(prefix + ".oracle.json", new { Expected = expectedHash, Before = beforeHash, After = afterHash, Bytes = 1L << 30 });
+                        if (afterHash != expectedHash) throw new InvalidDataException("RAM reference byte oracle changed after scoring.");
+                    }
                     RunStorage.AtomicJson(prefix + ".score.json", score!);
-                    checks.Add(new(scenario.Id, "PASS", $"Reference {score!.MiBPerSecond:F2} MiB/s; whole-file bytes/access/lifecycle and telemetry checked. No speed acceptance verdict."));
+                    checks.Add(new(scenario.Id, "PASS", write
+                        ? $"Write reference {score!.MiBPerSecond:F2} MiB/s; write accounting/access/lifecycle and telemetry checked, disk rewrite and read-back after the group. No speed acceptance verdict."
+                        : $"Reference {score!.MiBPerSecond:F2} MiB/s; whole-file bytes/access/lifecycle and telemetry checked. No speed acceptance verdict."));
                     async Task<RamReadReferenceBoundary> Snapshot()
                     {
                         var record = (await service.ListAsync()).Single(r => r.ResourceId == definition.ResourceId);
@@ -243,6 +260,16 @@ internal static class RamReadReferenceScenarios
                             stop.Token.WaitHandle.WaitOne(1000);
                         }
                     }
+                }
+                if (write)
+                {
+                    // The write windows replaced the payload: rewrite the oracle and read every byte back.
+                    var rewritten = RamReadFileOracle.Rewrite(file, RamReadReferencePlan.FileMiB);
+                    var readBack = RamReadFileOracle.Verify(file, RamReadReferencePlan.FileMiB, evidence + $".r{group.Key.Repeat}-{group.Key.Access}.readback");
+                    RunStorage.AtomicJson(evidence + $".r{group.Key.Repeat}-{group.Key.Access}.readback.json",
+                        new { Expected = expectedHash, Rewritten = rewritten, ReadBack = readBack, Bytes = 1L << 30 });
+                    if (rewritten != expectedHash || readBack != expectedHash)
+                        throw new InvalidDataException("RAM write reference disk did not read back its rewritten byte oracle.");
                 }
             }
             catch (Exception ex)

@@ -209,7 +209,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -486,12 +486,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ReferenceRepeats = options.Repeats,
                         TraceSymbols = options.TraceSymbols,
                         ReferenceKind = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.KindFor(options.Suite) : RamReadRunKind.Reference,
-                        Seconds = options.DurationSeconds,
-                        OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") : null,
+                        Seconds = test.Operation == "stress-races" ? options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds : options.DurationSeconds,
+                        OraclePath = test.Operation == "ram-read-reference" ? storage.PathFor("ram-read-reference-owned.json") :
+                            test.Operation == "stress-races" ? storage.PathFor(StressOwnership) : null,
                         ProductExecutable = test.Operation == "managed-cli" ? executable : null,
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
-                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 : 900);
-                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "app-write-profile" or
+                        test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 :
+                        test.Operation == "stress-races" ? (options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds) + 1800 : 900);
+                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "stress-races" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
@@ -517,6 +519,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => Measure(scenario, deadline.Token));
+                }
+                if (options.Suite == "cache-read-reference" && options.CaseFilter is null)
+                    foreach (var row in CacheReadReference.Report(storage, performance))
+                        Log("Attribution " + row.Describe());
+                if (options.Suite == "cache-read-bookkeeping")
+                {
+                    await Control(WriteCacheAction.LabCopyFlags, deadline.Token, CacheReadBookkeeping.ProductFlags);
+                    Log("Comparison verdict (screen only): " + CacheReadBookkeeping.Report(storage, performance));
                 }
                 foreach (var scenario in exercises)
                 {
@@ -554,13 +564,17 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
+                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.ProductFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
+                    if (options.Suite == "stress-races" && File.Exists(storage.PathFor(StressOwnership)))
+                        await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor(StressOwnership) }, CancellationToken.None, 300);
                     await Worker(Job("restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
-                        AcceptsLabErrors = options.Suite == "ordering-faults"
+                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite)
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
@@ -785,6 +799,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         return score;
     }
 
+    private const string StressOwnership = "stress-races-owned.json";
     private ulong? layoutGeneration, layoutMeasurements;
     private async Task<CacheLayoutSnapshot> LayoutSnapshot(string name, CancellationToken token)
     {
@@ -834,6 +849,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         if (scenario.Layout == CacheLayoutStage.None)
             await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
+        if (scenario.CopyFlags is { } copyFlags)
+            await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
         if (scenario.Layout != CacheLayoutStage.None)
         {
             await WaitForQuiet(scenario.Id + "-start", token);
@@ -940,10 +957,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     }, children.Token, options.DurationSeconds + 120);
             }
             var arguments = scenario.Workload == "interference" ? new List<string> { "-b4K", "-r4K", "-o8", "-t2", "-w0" } :
-                new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", "-t1",
+                new List<string> { scenario.Workload.StartsWith("sequential") ? "-b1M" : "-b4K", $"-o{scenario.QueueDepth}", $"-t{scenario.Threads}",
                     scenario.Workload.EndsWith("write") ? "-w100" : scenario.Workload == "mixed" ? "-w30" : "-w0", scenario.WriteBufferArgument };
             if (scenario.Workload.StartsWith("random") || scenario.Workload == "mixed")
                 arguments.Add("-r4K");
+            else if (scenario.Threads > 1)
+                arguments.AddRange(["-s4M", "-T1M"]); // Interleaved 1 MiB blocks, as the RAM-disk four-reader control.
             // A fixed five-second warmup exercises the fitting working set before scoring.
             // Unlike interference, this is not a promise that every block is resident.
             arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident && !scenario.WarmResident ? "-W5" : "-W0"]);
@@ -1210,9 +1229,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         Log("Recovery run directory: " + storage.DirectoryPath);
         try
         {
-            var ramOwnership = Path.Combine(path, "ram-read-reference-owned.json");
-            if (File.Exists(ramOwnership))
-                await Worker(Job("ram-read-cleanup") with { OraclePath = ramOwnership }, token, 300);
+            foreach (var ownership in new[] { "ram-read-reference-owned.json", StressOwnership }.Select(name => Path.Combine(path, name)))
+                if (File.Exists(ownership))
+                    await Worker(Job("ram-read-cleanup") with { OraclePath = ownership }, token, 300);
+            using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
+            var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
+                ?? throw new InvalidDataException("The run manifest has no suite.");
             var operation = systemRecovery ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
@@ -1226,6 +1248,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 RecoverableVm = systemRecovery,
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),
+                AcceptsLabErrors = !systemRecovery && VerificationPlan.InjectsLabFaults(suite),
                 ImageOraclePaths = systemRecovery ? PassedSystemImageOracles(path, priorResults) : null
             }, token, 300);
             storage.Write("recovery-result.json", new

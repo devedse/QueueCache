@@ -7,12 +7,17 @@ identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
 are run is in [testing](TESTING.md); current gaps in [known issues](KNOWN_ISSUES.md).
 
-**Current conclusion (2026-10-11): one new RAM-disk speedup is accepted.**
-Asynchronous split reads raise single-thread queued 1 MiB RAM-disk reads (the
-CrystalDiskMark SEQ1M Q8T1 shape) from a median **24,234 to 43,583 MiB/s
-(+79.8%)** in a same-build comparison, with Q1T1 (−0.52%) and four readers
-(+0.46%) unchanged. It is the default for new RAM disks from plan 119. Details
-and evidence: [Asynchronous split reads](#ram-disk-asynchronous-split-reads-accepted-pr-9).
+**Current conclusion (2026-10-11): two speedups accepted, writes at the machine limit.**
+Asynchronous split reads (PR #9) raise single-thread queued 1 MiB RAM-disk reads
+(the CrystalDiskMark SEQ1M Q8T1 shape) from a median **24,234 to 43,583 MiB/s
+(+79.8%)**; default for new RAM disks from plan 119. Lighter read-hit bookkeeping
+(plan 120) raises resident 1 MiB cached reads **+7.9% at Q8T1** (34,951 to 37,718
+MiB/s), +4.5% at Q1T1 and +3.5% with four readers; default from plan 120. Large
+RAM-disk writes are at this VM's memory write bandwidth: four writers are no
+faster than one, and streaming stores were measured and rejected. Details:
+[asynchronous split reads](#ram-disk-asynchronous-split-reads-accepted-pr-9),
+[cached reads](#cached-reads-lighter-read-hit-bookkeeping-accepted-plan-120),
+[RAM-disk writes](#ram-disk-writes-no-speedup-available-on-this-machine-plan-120).
 Everything else retained earlier stays: the ordered chunk allocator, bounded
 RAM-hit copy optimizations, read recall and caller backoff 256. The shared
 whole-read queue stays removed. Partial-read counters are implemented and
@@ -23,9 +28,7 @@ gain +5.26%, at the acceptance bar). Dedicated 100 ms map-refresh cost testing w
 dropped by the owner.
 
 The maintained single-command campaign and durable completion event are
-implemented (plan 119, including the one-phase `experiment` profile). The Manager
-helper runs owned jobs and validates completion, but automatic agent wake does
-not yet work for this Claude Code conversation (DeveAgentManager issue #5).
+implemented (plan 119, including the one-phase `experiment` profile).
 
 ## RAM-disk asynchronous split reads: accepted (PR #9)
 
@@ -112,6 +115,121 @@ review threshold and within cross-day variation seen before; PR #9's default-off
 diagnostics add a few counter updates to the cache path and may contribute.
 Uncached results follow the Ceph storage (higher today).
 
+## RAM-disk writes: no speedup available on this machine (plan 120)
+
+**Question.** CrystalDiskMark wrote SEQ1M Q8T1 at 24,434 MB/s to the RAM disk
+against 47,583 MB/s read. Queued large writes already return at once and are
+copied by the provider's per-processor workers, so the read fix (overlapping one
+submitter's requests) was already in place for writes.
+
+**Measurement** (`ram-write-reference`, signed 0.4.596.1, owned 2 GiB RAM disk,
+1 GiB file, DiskSpd 2.2 with a fixed 1 MiB source buffer `-Z1M`, 10 s windows with
+3 s warmup, three alternating repetitions; medians, MiB/s). The memory rows copy
+1 MiB blocks between a hot buffer and a cold 1 GiB region in user mode, with no
+driver involved:
+
+| Shape | One thread / submitter | Four threads / submitters |
+|---|---:|---:|
+| Copy into cold memory, runtime copy | 19,271 | 22,110 |
+| Copy into cold memory, explicit SSE2 stores | 18,030 | 22,114 |
+| Copy into cold memory, non-temporal (streaming) stores | 23,621 | 24,161 |
+| Copy out of cold memory (read), runtime copy | 40,091 | 47,099 |
+| RAM-disk 1M writes, Q1 / four submitters at Q2 | 15,791 | 23,101 |
+| RAM-disk 1M writes, Q8 / four submitters at Q8 | 23,190 | 24,293 |
+
+Four submitters write 0 to 5% faster than one, and queued writes already exceed
+the machine's four-thread ordinary-store copy rate. Writing into memory the
+processor has not cached costs about twice a read on this VM (22 against 47 GiB/s),
+so the RAM disk's write rate is the machine's, not the driver's. Splitting writes
+across processors (as reads now are) cannot help; the September tuning had also
+measured split writes slower than worker writes (16.2 against 24.7 GB/s).
+
+**Candidate rejected: streaming stores.** The only lever left was non-temporal
+stores, which skip reading each destination line (one user-mode thread: 23.6
+against 18.0 GiB/s). A default-off per-disk mode streamed every large write copy;
+the same-build comparison (`ram-write-streaming`, 18 windows, 100% of candidate
+bytes streamed) found 1M Q1T1 **−0.59%** (target), Q8T1 −0.09%, four submitters
+−2.17%: verdict REJECT. The mode, its provider actions (0x105/0x106, reserved)
+and the comparison suite were removed; `ram-write-reference` stays. The Q1 write
+time is not dominated by the copy's memory traffic.
+
+Runs: `QueueCache-Campaign-20261011-180850-8b826f60a1b041e6a900421e6f25e7f8`
+(reference, COMPLETED 36/36, all three disks rewritten and read back) and
+`QueueCache-Campaign-20261011-181541-df9636018eab4518b202118baa8f8954`
+(comparison, COMPLETED 18/18). An earlier reference run on 0.4.595.1 stopped after
+its first repetition on a runner bug (rewriting the oracle over the existing file)
+and is preserved but not used. The VM's virtual processor hides some copy
+features (ERMS is not reported), so a physical PC may reach a different limit.
+
+## Cached reads: lighter read-hit bookkeeping accepted (plan 120)
+
+**Where the time went** (`cache-read-reference`, signed 0.4.595.1, 2 GiB Fast
+cache on Q:, resident 1 GiB file, 10 s windows, three repetitions, timing-on
+windows for the lock counters; medians):
+
+| Resident 1M read | MiB/s | Served by | Lock acquisitions / wait / held per read | Worker queue per read |
+|---|---:|---|---:|---:|
+| Q1T1 | 18,625 | caller thread (99%) | 2.0 / 0.4 µs / 7.5 µs | 0.1 µs |
+| Q8T1 | 36,138 | copy threads (100%) | 3.0 / 8.9 µs / 11.5 µs | 20.8 µs |
+| Q2T4 (four readers) | 32,072 | copy threads (100%) | 3.0 / 8.8 µs / 12.2 µs | 15.9 µs |
+
+At Q8 the cache lock was busy about 40% of the time, and four readers were slower
+than one: the limit was bookkeeping under the lock, not the copy. Each 1 MiB hit
+walked its 256 blocks five times under the lock: the request worker's residency
+check, the copy thread's residency check, a second lookup to pin, the unpin and a
+recency move per block.
+
+**Change.** Copy flag 4: the copy thread records each block's slot during its
+residency check and pins from that record (one lookup per block, not two), and
+blocks that are already neighbours in their clean recency list move to its end in
+one step instead of one relink each. The resulting recency order is identical to
+moving them one at a time; dirty blocks, promotions and non-neighbours keep the
+per-block path. Same-build comparison (`cache-read-bookkeeping`, signed 0.4.597.1,
+18 cases, three alternating repetitions, timing off; MiB/s):
+
+| Shape | Flags 3 (before) median / range | Flags 7 median / range | Change |
+|---|---:|---:|---:|
+| 1M Q8T1 target | 34,951 (34,159–36,190) | **37,718 (37,217–37,738)** | **+7.92%**, every pair up, ranges separated |
+| 1M Q1T1 | 18,782 (18,702–18,847) | 19,631 (19,570–19,860) | +4.52%, ranges separated |
+| 1M Q2T4 | 32,689 (32,007–33,352) | 33,818 (33,017–34,080) | +3.46%, every pair up |
+
+Accepted and on by default from plan 120 (copy flags 7). Runs:
+`QueueCache-Campaign-20261011-173857-a865de3e67804982a12c91fc40b04568`
+(attribution, COMPLETED 18/18) and
+`QueueCache-Campaign-20261011-182600-f8dea4c1adaf491ab3996c92fba644e1`
+(comparison, COMPLETED 18/18). The request worker's own residency check and the
+per-block lookups that confirm a version is still current remain; removing them
+would change which reads are offloaded or which versions are touched.
+
+**CrystalDiskMark** (0.4.604.1, the README procedure, one session, MB/s). Copy
+flags 7 in three runs: SEQ1M Q8T1 read 38,945 / 39,702 / 39,707, SEQ1M Q1T1
+19,825 / 19,564 / 19,887. One run with the old bookkeeping (`lab-copy-flags Q: 3`)
+between them: 38,645 and 18,962. CrystalDiskMark therefore shows about +3% at
+Q8T1 and +4.5% at Q1T1; its five-second passes include file opening and the
+first touches, which the 10-second DiskSpd windows above exclude. The README
+cache column (39,702 read, run 2) matches the 0.4.476.1 run two days earlier
+(39,492): that earlier evening was simply faster, so cross-day CrystalDiskMark
+numbers say nothing about a change.
+
+**Final regression.** Signed 0.4.604.1 (final source; drivers loaded and
+Verifier off), lean `release-performance`, one command: **COMPLETED 11/11 phases,
+106/106 cases, 1 h 47 min 34 s, restored**, run
+`QueueCache-Campaign-20261011-223323-2aa3fb80bfdd4040ad56e7a601f3d09a`. All 118
+retained correctness sub-checks pass. Of 2,265 owned process exits one is
+non-zero: the first final inspection found Q: still writing back, and the
+plan-120 retry found it clean on the next attempt. Against PR #9's final run
+(0.4.583.1, the same day, same DiskSpd, same analysis): the RAM reference is
+unchanged within run-to-run variation (Direct 1M Q8T1 median 43,845 against
+44,215 MiB/s, Q1T1 24,434 against 24,668, Q2T4 36,067 against 37,818; the RAM-disk
+driver did not change). Cached 4K random reads at Q8 in the map-cost phase have a
+median of 381,055 against 369,516 IOPS (+3.1%); cache recall hits are within 1%.
+The write matrix's cached cells are 0.8–4.2% lower at Q1 and RND4K Q32 and between
+−0.6% and +2.2% at SEQ1M Q8. Plan 120 changed only the driver's read path, so
+these write differences are run-to-run variation (see the
+[measurement rules](#measurement-rules) on cross-run comparisons). The 30-minute
+sustained phase ran at 2,709–2,990 IOPS against PR #9's 1,415–2,837, following
+the Ceph storage below Q:.
+
 ## Which changes belong together
 
 | Stage | Changes retained | Evidence and limits |
@@ -120,6 +238,8 @@ Uncached results follow the Ceph storage (higher today).
 | Merged [PR #8](https://github.com/devedse/QueueCache/pull/8), merge `fb34f878581590123a190b048fdfd23c5d4e9b39` | Read recall; maintained concurrency, sustained-use and map-cost scenarios; neighboring-sector checks; map lifecycle/grouping; map pop-out/full-screen; 100 ms refresh preference and occupancy legend; runner cleanup; regenerated README benchmarks/screenshots | Read recall has controlled positive results and a documented temporary hit-rate trade-off. Full write matrix completed 72/72. Real Windows UI behavior was checked; 100 ms rendering cost was not benchmarked. |
 | [PR #9](https://github.com/devedse/QueueCache/pull/9), `perf/ram-read-followups` | **Asynchronous split RAM-disk reads (default adaptive)**; partial-read diagnostics/scenario; caller dispatch attribution and bounded runtime lab control; RAM-reference verification and robust sampling; independent owned-child priority comparison; single-command campaigns; restoration, ownership and parser contracts; consolidated findings | 1M Q8T1 RAM-disk reads +79.84% in the accepted same-build comparison; lifecycle checks pass with and without Driver Verifier. Earlier PR #9 measurements: 10 partial-read checks, 36 RAM-reference windows, 54 RAM-queue comparison windows, 24 windows per NTFS/ReFS caller comparison and 36 priority windows. |
 | PR #9 experiment removed | Shared sleeping queue for whole large Direct RAM-disk reads | Same-build comparison loses 3.62% Q1, 11.30% Q8 and 49.62% four-reader throughput. The native engine is removed; wire reservations remain for compatibility. |
+| Plan 120, `perf/writes-cache-edge-cases` | **Lighter read-hit bookkeeping (copy flags 7)**; `ram-write-reference`, `cache-read-reference`, `cache-read-bookkeeping` and `stress-races` suites | Cached 1M Q8T1 +7.92% in the accepted same-build comparison. RAM-disk writes measured at the machine's memory write bandwidth. |
+| Plan 120 experiment removed | Streaming (non-temporal) stores for large RAM-disk write copies | Same-build comparison: Q1T1 −0.59%, Q8T1 −0.09%, four writers −2.17%. Mode, provider actions 0x105/0x106 (reserved) and comparison suite removed. |
 
 ## Measurement rules
 
@@ -265,7 +385,7 @@ Physical TLB/prefetch costs were not isolated by hardware-counter measurements.
 | Prefetch next block | 18.25 / 37.44 | 17.36 / 35.29 | 17.40 / 36.19 | Helps Q1, including about 19% after churn. |
 | Unbounded contiguous copy runs | 14.88 / 22.10 | 19.33 / 37.91 | 19.37 / 37.02 | Reject the unbounded form: fresh Q8 falls sharply when a run becomes 1 MiB. |
 | Runs bounded to one 256 KiB chunk | 20.60 / 39.51 | 19.22 / 37.79 | 19.41 / 34.55 | Removes that copy-size regression. |
-| Prefetch plus bounded runs | 20.85 / 39.36 | 19.34 / 37.71 | 19.32 / 37.17 | Retained as default flags 3 from 0.4.434.1; integrity/policy/pressure checks pass. |
+| Prefetch plus bounded runs | 20.85 / 39.36 | 19.34 / 37.71 | 19.32 / 37.17 | Retained as default flags 3 from 0.4.434.1; integrity/policy/pressure checks pass. Plan 120 adds flag 4 (default 7, [cached reads](#cached-reads-lighter-read-hit-bookkeeping-accepted-plan-120)). |
 
 These optimizations affect **RAM-backed cache hits on a disk volume**. A dedicated
 RAM disk uses a different payload layout: locked pages and the provider's
@@ -577,6 +697,51 @@ actual captures; frontend README images are generated by the desktop tests.
 
 ## Correctness qualification
 
+**Plan 120 stress suite.** `stress-races` runs both lab NTFS volumes at once:
+writers of 4 KiB, 64 KiB, 1 MiB and 4 MiB blocks and an overlapped writer/reader
+whose requests are cancelled at random, every read checked per 4 KiB sector
+against the versions written, while a chaos actor per volume flushes, resizes,
+tears down, drops clean data, slows the disk, injects transient allocation
+failures, applies refused and rolled-back settings and switches to Strict, and
+owned 2 GiB RAM disks are created and removed against the same reservation. It
+then faults each drain parallelism (1, 2, 4) with dirty data, requires reads to
+fail rather than return data, retries, and reads every byte back from disk.
+
+Its first long runs found one real driver bug and three of its own: (1) **stale
+cached data after large partly cached reads** (fixed in plan 120, see
+[known issues](KNOWN_ISSUES.md#fixed-issues)): with retained writes off, a read
+over 1 MiB fetched the range from disk while the dirty version of some blocks
+finished draining, and kept those blocks from the older disk bytes. Under Driver
+Verifier this gave 38 stale reads in 90 s, always whole 256 KiB drain batches of
+an older version in 4 MiB blocks, with no unwritten (poisoned) sectors and the
+disk verified correct; it reproduced with copy flags 3, so it predates the
+bookkeeping change. After the fix, two 300 s busy windows under Verifier checked
+about 390,000 reads with no stale data. (2) A RAM churn disk was stopped with a
+generation read before its oracle was written. (3) The "refused budget" request
+was sized from the free reservation, which a concurrent RAM disk removal could
+enlarge, so the driver correctly accepted it. (4) Weighted random actions left
+rare ones out of slow Verifier windows; actions now run in shuffled rounds. Wiring
+it into campaigns also exposed three runner gaps, now fixed: restoration accepted
+deliberately raised lab-fault error counts only for `ordering-faults` (and
+`verify-recover` never did); later phases compared against the preflight baseline
+instead of the one updated after such errors; and the final capture of the backing
+volume could catch the lab image's late writes right after its drain.
+
+**Final Driver Verifier run:** the focused campaign with `stress-races`
+(`QueueCache-Campaign-20261011-214930-07f2ed10a5cf42978fbf1cc002c0db35`, signed
+0.4.601.1 drivers with the stale-read fix, runner from the final source) completed
+**6/6 phases, restored**: partial reads, paging coherence, policies, pressure,
+`stress-races` and ordering faults all PASS. Its busy window ran 312 s with
+254,894 (W:) and 182,739 (V:) verified reads, 268,875 and 198,640 cancelled
+overlapped requests, every chaos action at least three times per volume and 11
+RAM disks created and removed; fault and Retry passed at drain parallelism 1, 2
+and 4, and the shared reservation returned exactly to its start. Later builds
+change only managed code. Without Verifier on the final signed 0.4.604.1
+(`QueueCache-Campaign-20261011-221957-8b19fe05c36b4caabb02c12e5149f237`, COMPLETED,
+restored) the 306 s window checked 431,437 (W:) and 342,337 (V:) reads, cancelled
+362,277 and 308,174 overlapped requests, ran every chaos action at least seven
+times per volume and churned 23 RAM disks, with every check passing.
+
 Current: the final `release-performance` regression on 0.4.583.1 passed all 118
 retained correctness sub-checks (see the accepted change above). Earlier, the
 signed 0.4.514.1 native driver and managed `1788970` preview completed
@@ -613,7 +778,7 @@ running again. Private evidence and lab files remain preserved.
 
 ## Recorded verification time
 
-These selected completed runs total approximately **6 hours 2 minutes**. This
+These selected completed runs total approximately **8 hours 38 minutes**. This
 is measured run time, not a reconstruction of all engineering work or every
 earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
 attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
@@ -638,11 +803,18 @@ to 06:55 was not two hours spent executing that benchmark.
 | Plan-116 cached priority/affinity, 81 correctness checks + 36 untraced windows | 25 min 02 s |
 | Plan-117 coordination diagnostic, nine windows | 4 min 33 s |
 | Plan-117 controller smoke, two phases | 1 min 18 s |
-| Wake-up smoke (owned job, agent idle), two phases | 1 min 03 s |
+| Wake-up smoke, two phases | 1 min 03 s |
 | Plan-118 asynchronous-read comparison, 18 windows | 8 min 50 s |
 | Plan-119 revision comparison, 18 windows | 8 min 52 s |
 | Plan-119 lifecycle checks, with / without Driver Verifier | 1 min 10 s / 55 s |
 | Final `release-performance` regression, 11 phases / 106 cases | 1 h 56 min 23 s |
+| Plan-120 cached-read attribution, 18 windows | 9 min 45 s |
+| Plan-120 RAM write reference, 36 windows | 6 min 43 s |
+| Plan-120 streaming-store comparison, 18 windows | 5 min 30 s |
+| Plan-120 read-bookkeeping comparison, 18 windows | 9 min 57 s |
+| Plan-120 Driver Verifier campaign with `stress-races`, 6 phases | 10 min 56 s |
+| Plan-120 `stress-races` without Verifier | 5 min 55 s |
+| Plan-120 final `release-performance` regression, 11 phases / 106 cases | 1 h 47 min 34 s |
 
 The original priority run's main scores total about six minutes within its nineteen-minute
 run. Preparation, residency proofs, warmup, worker/process ownership and
@@ -667,13 +839,18 @@ at start because Q: still had unwritten data, and the first final regression,
 which stopped after 33 minutes in the sustained phase: a 197 GB resident reread
 saw six background metadata reads (4.5 KiB) on Q:, most likely the Everything
 file indexer that had restarted at sign-in. Everything and Steam were closed and
-the complete regression rerun passed.
+the complete regression rerun passed. Plan 120 adds the first RAM write reference run
+(stopped by its oracle rewrite bug), 13 stress, Verifier and stale-data diagnosis
+runs that found and fixed the issues described under
+[correctness qualification](#correctness-qualification), and their recoveries.
 
 ## Current decisions and when to repeat tests
 
 | Topic | Decision | Reopen when |
 |---|---|---|
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
+| Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
+| Large RAM-disk writes | **No speedup available on this VM**: four writers ≤ +5% over one; queued writes already exceed user-mode copy rates into cold memory. Split writes (September) and streaming stores (plan 120) both rejected. | Different hardware with a measured gap between `ram-write-reference` disk writes and its memory-copy rows. |
 | Inline split RAM-disk reads | Retained for queue depth 1, several submitters, paging and synchronous callers. | As above. |
 | Shared whole-read queue (and the two earlier whole-read offloads) | Removed: each gave a whole 1 MiB read to one worker. | Not as such. |
 | Caller backoff | 256. A selective NTFS/ReFS policy is closed without an experiment: best measured gain +5.26% (NTFS mixed Q8), +3.79% (ReFS), at the 5% bar, while touching ordering/flush paths. | New workload evidence of a material gain. |
@@ -681,7 +858,6 @@ the complete regression rerun passed.
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
-| Automatic agent wake for owned jobs | Implemented and validated up to delivery; not delivered to this Claude Code conversation (DeveAgentManager issue #5). | Manager fix. |
 
 For a missing-span experiment, first record how many missing runs each partly
 cached request contains. Start with a runtime default-off implementation using

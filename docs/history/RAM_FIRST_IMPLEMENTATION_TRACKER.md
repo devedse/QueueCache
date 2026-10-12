@@ -5,6 +5,14 @@ audit/rationale: [RAM_FIRST_PERFORMANCE_PLAN.md](RAM_FIRST_PERFORMANCE_PLAN.md).
 Statuses distinguish source implementation from VM verification. No performance
 gain is claimed until measured. Keep each row current in the implementing commit.
 
+**Note, 2026-10-12:** entries below that mention DeveAgentManager owned jobs
+(`dam-tools run-job`), Manager completion delivery or its automatic wake (issue #5)
+describe how long verification runs were orchestrated at the time. That job runner
+is no longer used. Long campaigns now run as the agent harness's own built-in
+background task (Claude Code, Codex), and the agent reads the run folder and
+`verify-completion` when it finishes. Current instructions: [AGENTS.md](../../AGENTS.md)
+and [testing](../TESTING.md).
+
 **PR #9 completion, 2026-10-11:** results in [PERFORMANCE_FINDINGS.md](../PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9); the completion plan and earlier handoffs were folded into it and removed (git history keeps them).
 Implementation: asynchronous split RAM-disk reads (`1eab076`, fixes `ef3c6de`,
 revision and default adaptive mode `21f02bf`/`5afcef4`/`87cc65e`), plans 118

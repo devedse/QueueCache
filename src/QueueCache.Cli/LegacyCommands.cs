@@ -29,7 +29,7 @@ internal static class LegacyCommands
           qcache start <device> <budget MiB>  (configure and enable; e.g. 4096 = 4 GiB)
           qcache enable|flush|disable|retry <device>
           qcache lab-delay <device> <0..2000 ms>
-          qcache lab-copy-flags <device> <0..3: 1 prefetch next block | 2 copy memory-neighbour runs at once>
+          qcache lab-copy-flags <device> <0..7: 1 prefetch next block | 2 copy memory-neighbour runs at once | 4 one lookup per block and run-based recency moves; default 7>
           qcache lab-read-recall <device> <1 keep a re-read miss as recent when it was used more recently than the oldest cached block (default) | 0 earlier bimodal insertion>
           qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted|10=direct paging write error|11=paging write map failure>
         Write-cache controls require the explicit lab write-cache build and elevation.
@@ -92,7 +92,7 @@ internal static class LegacyCommands
                     throw new ArgumentException("Expected a non-negative integer.");
                 if (configure && (amount < 1 || amount > 131072))
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
-                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11 || args[0] == "lab-copy-flags" && amount > 3 || args[0] == "lab-read-recall" && amount > 1)
+                if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11 || args[0] == "lab-copy-flags" && amount > 7 || args[0] == "lab-read-recall" && amount > 1)
                     throw new ArgumentException("Lab hook value is outside its range.");
                 var state = await CacheTasks.ControlAsync(args[1],
                     configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay :

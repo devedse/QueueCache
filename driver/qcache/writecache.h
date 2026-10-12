@@ -290,7 +290,11 @@ enum : ULONG
 enum : ULONG
 {
     QcCopyPrefetch = 1, // Prefetch the next block's buffer while copying the current one.
-    QcCopyCoalesce = 2  // Copy whole valid blocks that are memory neighbours with one copy.
+    QcCopyCoalesce = 2, // Copy whole valid blocks that are memory neighbours with one copy.
+    // Pinned read hits look each block up once (not once to check and again to pin) and move runs
+    // of blocks that are already neighbours in their recency list in one step, leaving the same
+    // order. Cached 1 MiB reads held the cache lock about 11 us each (plan 120; on by default).
+    QcCopyBookkeeping = 4
 };
 struct QC_SLOT
 {

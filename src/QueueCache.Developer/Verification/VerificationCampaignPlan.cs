@@ -12,16 +12,16 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "stress-races"];
     public static readonly string[] FocusSuites =
-    ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults",
-     "sequential-resident", "cache-layout", "ram-read-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
+    ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults", "stress-races",
+     "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "ram-read-reference", "ram-write-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 
     public static IReadOnlyList<string> ExpectedCases(VerificationOptions options)
     {
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" ||
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" ||
             VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         return [.. VerificationPlan.Integrity(options).Select(c => c.Id), .. performance.Select(c => c.Id),
             .. VerificationPlan.DrainDecision(options).Select(c => c.Id), .. CacheExercisePlan.Cases(options).Select(c => c.Id)];
@@ -42,9 +42,9 @@ public static class VerificationCampaignPlan
             options.FocusSuite is { } focus && !FocusSuites.Contains(focus))
             throw new ArgumentException("--focus-suite is required only for focused/experiment campaigns and must name a supported suite.");
         if (options.Profile == "experiment" && (options.FocusSuite is null || !ExperimentSuites.Contains(options.FocusSuite) ||
-            options.LabRefs is not null || options.Verification.TraceSymbols is not null || options.Verification.SoakSeconds is not null))
-            throw new ArgumentException("Experiment campaigns allow only implemented narrow RAM suites, without ReFS, tracing or sustained options.");
-        if (options.Verification.SoakSeconds is not null && options.Profile is not ("performance" or "release-performance") && options.FocusSuite != "cache-sustained")
+            options.LabRefs is not null || options.Verification.TraceSymbols is not null || options.Verification.SoakSeconds is not null && options.FocusSuite != "stress-races"))
+            throw new ArgumentException("Experiment campaigns allow only the implemented narrow suites, without ReFS, tracing or sustained options.");
+        if (options.Verification.SoakSeconds is not null && options.Profile is not ("performance" or "release-performance") && options.FocusSuite is not ("cache-sustained" or "stress-races"))
             throw new ArgumentException("--soak-seconds requires a campaign with a sustained phase.");
         static void Volume(string value)
         {
@@ -69,9 +69,9 @@ public static class VerificationCampaignPlan
             {
                 Volume = volume.ToUpperInvariant(), Suite = suite, CaseFilter = filter,
                 TraceSymbols = suite == "ram-read-attribution" ? options.Verification.TraceSymbols : null,
-                SoakSeconds = suite == "cache-sustained" ? options.Verification.SoakSeconds ??
+                SoakSeconds = suite == "stress-races" ? options.Verification.SoakSeconds : suite == "cache-sustained" ? options.Verification.SoakSeconds ??
                     (options.Profile == "release-performance" ? 1800 : 120) : null,
-                Repeats = suite is "cache-sustained" or "ram-read-async-lifecycle" ? 1 : options.Verification.Repeats,
+                Repeats = suite is "cache-sustained" or "ram-read-async-lifecycle" or "stress-races" ? 1 : options.Verification.Repeats,
                 // The optional overall deadline belongs to the campaign, not a fresh timer per phase.
                 DeadlineMinutes = 0
             };
@@ -85,7 +85,7 @@ public static class VerificationCampaignPlan
         }
 
         if (options.Profile == "experiment")
-            Add(options.FocusSuite!, CampaignTargetRole.Performance);
+            Add(options.FocusSuite!, options.FocusSuite == "stress-races" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
         else if (options.Profile == "smoke")
         {
             Add("quick", CampaignTargetRole.NtfsLab);
@@ -98,7 +98,7 @@ public static class VerificationCampaignPlan
             if (options.Profile == "focused")
             {
                 if (!phases.Any(p => p.Options.Suite == options.FocusSuite) && options.FocusSuite != "ordering-faults")
-                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" or "priority-affinity" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
+                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" or "priority-affinity" or "stress-races" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
                 if (options.FocusSuite == "caller-backoff" && options.LabRefs is not null)
                     Add("caller-backoff", CampaignTargetRole.RefsLab);
             }

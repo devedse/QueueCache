@@ -99,6 +99,9 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
         Action<string> created, IProgress<string> progress, CancellationToken token)
     {
         RequireQuietNormalHost();
+        // A phase that raised the lifetime error count on purpose (InjectsLabFaults) updated its role's
+        // baseline after restoration; later phases must compare against that, not the preflight copy.
+        target = baselines[target.Role];
         var timer = Stopwatch.StartNew();
         var main = baselines[CampaignTargetRole.Performance];
         var pause = target.Role != CampaignTargetRole.Performance && target.BackingCacheEnabled == true;
@@ -126,7 +129,7 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             var child = runner.DirectoryPath ?? throw new InvalidDataException("Phase did not allocate its evidence directory.");
             result = VerificationCampaignEvidence.ReadPhase(phase, child, exit, timer.Elapsed.TotalSeconds, target, diskSpdHash);
             if (result.RestorationFailure is not null) restorationBlocked = "Child restoration failed; preserve its evidence and inspect before restoring the backing cache.";
-            if (result.Restoration == "RESTORED" && phase.Options.Suite == "ordering-faults")
+            if (result.Restoration == "RESTORED" && VerificationPlan.InjectsLabFaults(phase.Options.Suite))
             {
                 var restored = JsonSerializer.Deserialize<QueueCache.Management.WriteCacheState>(File.ReadAllText(Path.Combine(child, "restored.json")))
                     ?? throw new InvalidDataException("Missing restored fault-test state.");
@@ -182,6 +185,7 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             target => Inspect(target.Role, target.Recovery.Target.Device, directory, progress, CancellationToken.None, target.Recovery.Target));
     }
 
+    public const int FinalCleanAttempts = 5;
     public static async Task FinalizeTargetsAsync(IEnumerable<CampaignTargetEvidence> targets,
         Func<CampaignTargetEvidence, Task> prepare, Func<CampaignTargetEvidence, Task<CampaignTargetEvidence>> inspect)
     {
@@ -190,8 +194,19 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             // Lab filesystem cleanup can dirty its backing volume after the saved task
             // was resumed. Explicit final restoration preparation flushes that filesystem
             // and drains under its own deadline before the unchanged strict capture.
-            if (target.Role == CampaignTargetRole.Performance && target.Recovery.State.Enabled) await prepare(target);
-            var current = await inspect(target);
+            var drain = target.Role == CampaignTargetRole.Performance && target.Recovery.State.Enabled;
+            CampaignTargetEvidence current;
+            for (var attempt = 1; ; attempt++)
+            {
+                if (drain) await prepare(target);
+                try { current = await inspect(target); break; }
+                // The lab image's own lazy writes can reach the backing volume just after it was drained.
+                // Drain again and re-capture (each attempt is a recorded worker run); the capture stays strict.
+                catch (IOException exception) when (drain && attempt < FinalCleanAttempts && exception.Message.Contains(VerificationWorker.NotCleanMessage))
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2));
+                }
+            }
             VerificationCampaignEvidence.ValidateConfiguration(target.Recovery, current.Recovery);
             if (VerificationCampaignEvidence.DriversKey(target.Drivers) != VerificationCampaignEvidence.DriversKey(current.Drivers))
                 throw new IOException("Loaded driver identity changed before campaign cleanup completed.");

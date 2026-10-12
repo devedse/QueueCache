@@ -15,6 +15,7 @@ public enum RamDiskAction : uint
     AsyncReads = 0x103,
     /// <summary>Offset: <see cref="RamAsyncMode"/> (adaptive at creation); a nonzero mode resets counters and fails while any is in flight.</summary>
     SetAsyncReads = 0x104
+    // 0x105/0x106: the rejected plan-120 streaming write copy experiment. Not reused.
 }
 [Flags]
 public enum RamDiskFlags : uint
