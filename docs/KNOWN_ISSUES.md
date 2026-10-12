@@ -13,22 +13,6 @@ production qualification.
 
 ## Current limitations
 
-### A saved cache can stay off after a restart when RAM is briefly short (bug)
-
-At startup QueueCache restores saved caches once. If Windows reports too little
-available memory at that moment (the cache must leave at least 2 GiB or 25% of RAM
-free), the restore is refused and not tried again, so the volume runs uncached until
-`qcache policy restore` or the app reapplies it. Seen on the 16 GB test VM on
-2026-10-12: Q:'s 2 GiB Fast cache was refused two minutes after a normal boot
-(`C:\ProgramData\QueueCache\ManagedDisks\service.log`) and was still off 15
-minutes later with 13 GB free; the boot before restored normally. Data is unaffected.
-The restore marks the boot as handled even after a temporary refusal
-(`WindowsManagedDiskEngine.InitializeAsync`), and the refusal is a point-in-time check
-(`MemoryBudget.ValidateIncrease`). Planned fix: retry a refusal caused only by memory
-for a few minutes, mark the boot handled only after that, log the measured amounts,
-and show a cache that is still waiting or was not restored in the app and in
-`qcache volume list`.
-
 ### Fast mode and RAM disks lose data on a crash (by design)
 
 In Fast mode a save finishes when the data is in RAM; QueueCache writes it to the
