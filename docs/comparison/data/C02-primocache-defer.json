@@ -1,0 +1,17 @@
+{
+ "id": "C02-primocache-defer",
+ "window": "C",
+ "entry": {
+  "id": "C02-primocache-defer",
+  "product": "PrimoCache",
+  "version": "4.4.1",
+  "mode": "L1 2 GiB, Defer-Write",
+  "price": "$29.95-49.95 (30-day trial used)",
+  "kind": "Disk filter, write-back",
+  "column": "02-primocache-defer"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

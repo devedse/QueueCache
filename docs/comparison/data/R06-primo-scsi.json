@@ -1,0 +1,17 @@
+{
+ "id": "R06-primo-scsi",
+ "window": "R",
+ "entry": {
+  "id": "R06-primo-scsi",
+  "product": "Primo Ramdisk",
+  "version": "6.6.0",
+  "mode": "SCSI",
+  "price": "$24.95-54.95 (30-day trial used)",
+  "kind": "Block device",
+  "column": "06-primo-scsi"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

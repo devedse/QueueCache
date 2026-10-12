@@ -1,0 +1,17 @@
+{
+ "id": "R04-osfmount-logical",
+ "window": "R",
+ "entry": {
+  "id": "R04-osfmount-logical",
+  "product": "OSFMount",
+  "version": "3.3.1000",
+  "mode": "logical emulation",
+  "price": "Free",
+  "kind": "Block device",
+  "column": "04-osfmount-logical"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

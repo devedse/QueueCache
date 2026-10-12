@@ -1,0 +1,17 @@
+{
+ "id": "R02-softperfect-hdd",
+ "window": "R",
+ "entry": {
+  "id": "R02-softperfect-hdd",
+  "product": "SoftPerfect RAM Disk",
+  "version": "26.10",
+  "mode": "hard-disk emulation",
+  "price": "$29 per PC (30-day trial used)",
+  "kind": "Block device",
+  "column": "02-softperfect-hdd"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

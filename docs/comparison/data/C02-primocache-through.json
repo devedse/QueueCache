@@ -1,0 +1,17 @@
+{
+ "id": "C02-primocache-through",
+ "window": "C",
+ "entry": {
+  "id": "C02-primocache-through",
+  "product": "PrimoCache",
+  "version": "4.4.1",
+  "mode": "L1 2 GiB, no Defer-Write",
+  "price": "$29.95-49.95 (30-day trial used)",
+  "kind": "Disk filter, write-through",
+  "column": "02-primocache-through"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

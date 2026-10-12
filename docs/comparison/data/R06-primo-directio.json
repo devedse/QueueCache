@@ -1,0 +1,17 @@
+{
+ "id": "R06-primo-directio",
+ "window": "R",
+ "entry": {
+  "id": "R06-primo-directio",
+  "product": "Primo Ramdisk",
+  "version": "6.6.0",
+  "mode": "Direct-IO",
+  "price": "$24.95-54.95 (30-day trial used)",
+  "kind": "Block device",
+  "column": "06-primo-directio"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

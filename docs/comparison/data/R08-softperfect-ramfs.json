@@ -1,0 +1,17 @@
+{
+ "id": "R08-softperfect-ramfs",
+ "window": "R",
+ "entry": {
+  "id": "R08-softperfect-ramfs",
+  "product": "SoftPerfect RAM File System",
+  "version": "26.10",
+  "mode": "default",
+  "price": "$29 per PC (30-day trial used)",
+  "kind": "File system (not a disk)",
+  "column": "08-softperfect-ramfs"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

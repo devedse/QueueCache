@@ -1,0 +1,17 @@
+{
+ "id": "C01-queuecache-strict",
+ "window": "C",
+ "entry": {
+  "id": "C01-queuecache-strict",
+  "product": "QueueCache",
+  "version": "0.4.604.1",
+  "mode": "Strict, 2 GiB",
+  "price": "Free (MIT)",
+  "kind": "Volume filter, write-through",
+  "column": "01-queuecache-strict"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

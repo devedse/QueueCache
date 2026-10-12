@@ -1,0 +1,17 @@
+{
+ "id": "R05-imdisk",
+ "window": "R",
+ "entry": {
+  "id": "R05-imdisk",
+  "product": "ImDisk Toolkit",
+  "version": "20250206",
+  "mode": "AWE",
+  "price": "Free",
+  "kind": "Block device (legacy driver)",
+  "column": "05-imdisk"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

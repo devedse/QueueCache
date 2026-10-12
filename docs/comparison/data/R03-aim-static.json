@@ -1,0 +1,17 @@
+{
+ "id": "R03-aim-static",
+ "window": "R",
+ "entry": {
+  "id": "R03-aim-static",
+  "product": "AIM Toolkit",
+  "version": "20260420",
+  "mode": "static",
+  "price": "Free (AGPL)",
+  "kind": "Block device (Arsenal Storport)",
+  "column": "03-aim-static"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

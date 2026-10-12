@@ -1,0 +1,17 @@
+{
+ "id": "C00-no-cache",
+ "window": "C",
+ "entry": {
+  "id": "C00-no-cache",
+  "product": "Q: without any cache",
+  "version": "Windows 11",
+  "mode": "baseline",
+  "price": "-",
+  "kind": "Baseline",
+  "column": "00-no-cache"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

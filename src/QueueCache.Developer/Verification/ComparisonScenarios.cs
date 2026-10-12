@@ -18,9 +18,10 @@ public sealed record ComparisonTarget(char Letter, string Root, string? VolumeNa
 public sealed record MemorySnapshot(DateTimeOffset Utc, long TotalPhysicalBytes, long AvailablePhysicalBytes,
     long CommitBytes, long CommitLimitBytes, long KernelNonpagedBytes, long KernelPagedBytes, long SystemCacheBytes);
 
-public sealed record SettleResult(double Seconds, long? DiskBytesWritten, bool IdleObserved, string Source);
+public sealed record SettleResult(double Seconds, long? DiskBytesWritten, bool IdleObserved, string Source, long[]? DiskBytesPerSecond = null);
 
-public sealed record SequentialPass(long Bytes, double Seconds, double MBPerSecond, double? FlushSeconds, long[]? BytesPerSecond);
+public sealed record SequentialPass(long Bytes, double Seconds, double MBPerSecond, double? FlushSeconds, long[]? BytesPerSecond,
+    DateTimeOffset? Started = null, DateTimeOffset? Ended = null);
 
 public sealed record TreeResult(int Files, long Bytes, double CreateSeconds, double CopySeconds, double ReadSeconds, double DeleteSeconds,
     SettleResult? AfterCreate, SettleResult? AfterCopy);
@@ -250,16 +251,18 @@ internal static class ComparisonScenarios
         }
         var start = DiskBytesWritten(number);
         var previous = start; var quiet = 0;
+        var series = new List<long>();
         while (timer.Elapsed.TotalSeconds < 300)
         {
             Thread.Sleep(1000);
             var now = DiskBytesWritten(number);
+            series.Add(now - previous);
             quiet = now - previous < 1_000_000 ? quiet + 1 : 0;
             previous = now;
             if (timer.Elapsed.TotalSeconds >= minimum && quiet >= 10)
-                return new(timer.Elapsed.TotalSeconds, now - start, true, "IOCTL_DISK_PERFORMANCE");
+                return new(timer.Elapsed.TotalSeconds, now - start, true, "IOCTL_DISK_PERFORMANCE", series.ToArray());
         }
-        return new(timer.Elapsed.TotalSeconds, previous - start, false, "IOCTL_DISK_PERFORMANCE");
+        return new(timer.Elapsed.TotalSeconds, previous - start, false, "IOCTL_DISK_PERFORMANCE", series.ToArray());
     }
 
     private static unsafe int? DiskNumber(char letter)
@@ -293,6 +296,7 @@ internal static class ComparisonScenarios
             FileShare.Read, (create ? FileOptions.None : FileOptions.Asynchronous) | NoBuffering);
         long next = 0, done = 0;
         var errors = new List<Exception>();
+        var started = DateTimeOffset.UtcNow;
         var series = perSecond ? new List<long>() : null;
         var timer = Stopwatch.StartNew();
         var threads = Enumerable.Range(0, create ? 1 : queue).Select(index => new Thread(() =>
@@ -324,6 +328,7 @@ internal static class ComparisonScenarios
                 var now = Interlocked.Read(ref done); series.Add(now - last); last = now;
             }
         var seconds = timer.Elapsed.TotalSeconds;
+        var ended = DateTimeOffset.UtcNow;
         if (errors.Count > 0) throw new AggregateException("Sequential pass failed.", errors);
         if (done != bytes) throw new IOException("The pass did not cover the whole range.");
         if (series is not null && done > last) series.Add(done - last);
@@ -334,7 +339,7 @@ internal static class ComparisonScenarios
             if (!FlushFileBuffers(handle)) throw new Win32Exception(Marshal.GetLastWin32Error());
             flushSeconds = flushTimer.Elapsed.TotalSeconds;
         }
-        return new(bytes, seconds, bytes / seconds / 1_000_000, flushSeconds, series?.ToArray());
+        return new(bytes, seconds, bytes / seconds / 1_000_000, flushSeconds, series?.ToArray(), started, ended);
     }
 
     private static unsafe int WriteAt(SafeFileHandle handle, byte* buffer, long offset)

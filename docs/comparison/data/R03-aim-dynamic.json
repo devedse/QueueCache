@@ -1,0 +1,17 @@
+{
+ "id": "R03-aim-dynamic",
+ "window": "R",
+ "entry": {
+  "id": "R03-aim-dynamic",
+  "product": "AIM Toolkit",
+  "version": "20260420",
+  "mode": "dynamic (RamDyn)",
+  "price": "Free (AGPL)",
+  "kind": "Block device (Arsenal Storport)",
+  "column": "03-aim-dynamic"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

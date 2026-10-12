@@ -1,0 +1,17 @@
+{
+ "id": "R10-manageddrive",
+ "window": "R",
+ "entry": {
+  "id": "R10-manageddrive",
+  "product": "ManagedDrive",
+  "version": "2.3.0",
+  "mode": "WinFsp 2.1",
+  "price": "Free (MIT)",
+  "kind": "File system (WinFsp, user mode)",
+  "column": "10-manageddrive"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}

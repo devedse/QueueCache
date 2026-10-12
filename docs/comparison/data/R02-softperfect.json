@@ -1,0 +1,17 @@
+{
+ "id": "R02-softperfect",
+ "window": "R",
+ "entry": {
+  "id": "R02-softperfect",
+  "product": "SoftPerfect RAM Disk",
+  "version": "26.10",
+  "mode": "static",
+  "price": "$29 per PC (30-day trial used)",
+  "kind": "Block device",
+  "column": "02-softperfect"
+ },
+ "cdm": null,
+ "runs": {},
+ "status": "Not run yet",
+ "notes": ""
+}
