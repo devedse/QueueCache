@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 0 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> **Work in progress.** Measured so far: 1 of 14 RAM-disk configurations and 0 of 5 cache configurations (updated 2026-10-12). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -21,7 +21,7 @@ as the [README](../README.md#performance). Click a screenshot for full size, or 
 
 | Product | CrystalDiskMark | SEQ1M Q8T1 read / write | SEQ1M Q1T1 read / write | RND4K Q32T1 read / write | RND4K Q1T1 read / write |
 |---|---|---:|---:|---:|---:|
-| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | Not run yet | - | - | - | - |
+| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | <a href="images/comparison/R01-queuecache.png"><img src="images/comparison/R01-queuecache.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, RAM disk"></a> | 45,610 / 24,026 | 25,735 / 16,832 | 1,451 / 1,184 | 1,601 / 1,270 |
 | [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | Not run yet | - | - | - | - |
 | [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | Not run yet | - | - | - | - |
 | [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | Not run yet | - | - | - | - |
@@ -60,7 +60,7 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 
 | Product | SEQ1M Q1T1 R / W | SEQ1M Q8T1 R / W | SEQ1M Q8T4 R / W | RND4K Q1T1 R / W | RND4K Q32T1 R / W | RND4K Q32T4 R / W | 4K Q1 p99 R / W (µs) | CPU, 1M Q8 read | RAM used (MiB) | File tree create / copy / read / delete (s) | Price | Status |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
-| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | - | - | - | - | - | - | - | - | - | - | Free (MIT) | Not run yet |
+| [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md) | 25,103 / 16,743 | 45,245 / 23,625 | 25,450 / 25,876 | 1,611 / 1,234 | 1,457 / 1,157 | 5,071 / 3,844 | 6 / 10 | 93 % | 4,077 | 4.7 / 4.5 / 3.0 / 5.2 | Free (MIT) | Measured |
 | [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md) | - | - | - | - | - | - | - | - | - | - | $29 per PC (30-day trial used) | Not run yet |
 | [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md) | - | - | - | - | - | - | - | - | - | - | $29 per PC (30-day trial used) | Not run yet |
 | [AIM Toolkit 20260420, static](comparison/R03-aim-static.md) | - | - | - | - | - | - | - | - | - | - | Free (AGPL) | Not run yet |
@@ -107,7 +107,7 @@ Cached work first, then what the cache does with data that has to reach the disk
 Each product links to its own page: both CrystalDiskMark runs, every DiskSpd shape with latency percentiles and CPU,
 the timed steps, memory snapshots and the drivers that were loaded.
 
-- [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md): Not run yet
+- [QueueCache 0.4.604.1, RAM disk](comparison/R01-queuecache.md): Measured
 - [SoftPerfect RAM Disk 26.10, static](comparison/R02-softperfect.md): Not run yet
 - [SoftPerfect RAM Disk 26.10, hard-disk emulation](comparison/R02-softperfect-hdd.md): Not run yet
 - [AIM Toolkit 20260420, static](comparison/R03-aim-static.md): Not run yet
