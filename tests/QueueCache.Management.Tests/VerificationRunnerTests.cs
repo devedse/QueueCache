@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 124, "plan 124 records unreadable churn files");
+        Check(VerificationPlan.Version == 125, "plan 125 adds drain batch size to drain-decision");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -971,21 +971,28 @@ internal static class VerificationRunnerTests
             new IntegrityCase[] { new("pressure-integrity", "pressure") }),
             "pressure remains a focused opt-in integrity suite");
         var drainDecision = VerificationPlan.DrainDecision(options with { Suite = "drain-decision" });
-        Check(drainDecision.Count == 24 && drainDecision.Select(c => c.Id).Distinct().Count() == 24,
-            "drain decision has unique controls and p1/p2/p4 repetitions");
+        Check(drainDecision.Count == 42 && drainDecision.Select(c => c.Id).Distinct().Count() == 42,
+            "drain decision has unique controls and batch x parallelism repetitions");
+        Check(drainDecision.Where(c => c.PendingDrain).GroupBy(c => (c.Workload, c.BatchKiB, c.Parallelism)).Count() == 12 &&
+            drainDecision.Where(c => c.PendingDrain).GroupBy(c => (c.Workload, c.BatchKiB, c.Parallelism)).All(g => g.Count() == 3) &&
+            drainDecision.Where(c => c.PendingDrain).Select(c => c.BatchKiB).Distinct().Order().SequenceEqual(new[] { 256, 1024 }),
+            "drain decision measures 256 and 1024 KiB batches at every parallelism three times");
+        Check(drainDecision[1].Id.EndsWith("-b256-p1", StringComparison.Ordinal) && drainDecision[2].Id.EndsWith("-b1024-p1", StringComparison.Ordinal) &&
+            drainDecision.First(c => c.Repeat == 2 && c.PendingDrain).Id.EndsWith("-b1024-p4", StringComparison.Ordinal),
+            "drain decision reverses batch and parallelism order every other repetition");
         Check(drainDecision.Count(c => !c.PendingDrain) == 6 &&
             drainDecision.Where(c => c.PendingDrain).Select(c => c.Parallelism).Distinct().Order().SequenceEqual(new[] { 1, 2, 4 }),
             "drain decision retains matched controls and supported parallelism");
-        Check(drainDecision[8].Workload == "cold-read" && drainDecision[8].Repeat == 2,
+        Check(drainDecision[14].Workload == "cold-read" && drainDecision[14].Repeat == 2,
             "drain decision alternates workload order between repetitions");
         Check(VerificationPlan.DrainDecision(options with { Suite = "quick" }).Count == 0,
             "other suites do not acquire drain-decision cases");
         var selectedDrain = VerificationPlan.DrainDecision(options with
         {
             Suite = "drain-decision",
-            CaseFilter = "fitting-write-p1"
+            CaseFilter = "fitting-write-b256-p1"
         });
-        Check(selectedDrain.Count == 3 && selectedDrain.All(c => c.Workload == "fitting-write" && c.Parallelism == 1),
+        Check(selectedDrain.Count == 3 && selectedDrain.All(c => c.Workload == "fitting-write" && c.Parallelism == 1 && c.BatchKiB == 256),
             "drain decision filter retains stable matched repetition IDs");
         Reject(() => VerificationPlan.Validate(options with { Suite = "drain-decision", BudgetMiB = 4097 }));
         VerificationPlan.Validate(new VerificationOptions("Q:", "trim-diagnostic"));

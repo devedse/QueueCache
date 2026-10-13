@@ -28,12 +28,13 @@ public sealed record DrainDecisionCase(
     string Workload,
     int Parallelism,
     int Repeat,
-    bool PendingDrain);
+    bool PendingDrain,
+    int BatchKiB = 256);
 
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 124;
+    public const int Version = 125;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -124,9 +125,13 @@ public static class VerificationPlan
             foreach (var workload in workloads)
             {
                 cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-control", workload, 1, repeat, false));
+                // Plan 125: drain batch size next to parallelism (issue #15), both orders reversed every other
+                // repetition so storage drift reaches every setting alike.
                 var parallelism = repeat % 2 == 1 ? new[] { 1, 2, 4 } : [4, 2, 1];
+                var batches = repeat % 2 == 1 ? new[] { 256, 1024 } : [1024, 256];
                 foreach (var workers in parallelism)
-                    cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-p{workers}", workload, workers, repeat, true));
+                    foreach (var batch in batches)
+                        cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{workload}-b{batch}-p{workers}", workload, workers, repeat, true, batch));
             }
         }
         return options.CaseFilter is null ? cases :

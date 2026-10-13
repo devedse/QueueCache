@@ -119,7 +119,7 @@ ones in use:
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 3 and 7) | Prints a screen verdict |
-| `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices | Use when the area changes |
+| `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 

@@ -690,7 +690,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 return property.ValueKind == JsonValueKind.Null ? null : property.GetDouble();
             }
             storage.Write("drain-aggregates.json", drainDecision
-                .GroupBy(c => new { c.Workload, c.PendingDrain, c.Parallelism })
+                .GroupBy(c => new { c.Workload, c.PendingDrain, c.Parallelism, c.BatchKiB })
                 .Select(group => new
                 {
                     Configuration = group.Key,
@@ -1074,7 +1074,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             {
                 Options = new CacheOptions(CacheAllocation.Automatic, 100, RetainWrites: false,
                     Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000,
-                    BatchKiB: 256, Parallelism: scenario.Parallelism)
+                    BatchKiB: scenario.BatchKiB, Parallelism: scenario.Parallelism)
             }
         }, token, 300);
         await Control(WriteCacheAction.Flush, token);

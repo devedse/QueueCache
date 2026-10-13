@@ -63,7 +63,8 @@ internal static class VerificationCommands
                                  --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
-              drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads.
+              drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
+                                 256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
                                  Parallelism 1/2/4; 24 cases at three repeats. Requires DiskSpd.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
