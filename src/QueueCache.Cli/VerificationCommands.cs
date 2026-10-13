@@ -134,8 +134,10 @@ internal static class VerificationCommands
                                  1 GiB file, 60 s random reads of the 8 GiB file twice. Run compare-cache first.
               compare-durability-write  Generation 1 flushed and settled, then a durable save, raw writes without a flush and
                                  10,000 new small files; the evidence volume is flushed before FINISHED.txt. Reset the VM then.
-              compare-durability-verify After the reset, with --oracle <write run>\durability-oracle.json: what survived and
-                                 chkdsk /scan. Measurement only.
+              compare-durability-churn  2,000 base files settled, then 40 s of file creation (200/s) with deletes and no flush;
+                                 FINISHED.txt as above. Reset the VM while the cache writes the churn out to the disk.
+              compare-durability-verify After the reset, with --oracle <write run>\durability-oracle.json: what survived (for the
+                                 churn test by file age) and chkdsk /scan. Measurement only.
 
             DiskSpd: download standard Microsoft DiskSpd from https://github.com/microsoft/diskspd/releases
             Extract DiskSpd.ZIP; use amd64\diskspd.exe on x64 Windows (also for Intel CPUs).

@@ -371,7 +371,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         {
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
-                            OraclePath = options.Suite == "compare-durability-write" ? storage.PathFor("durability-oracle.json") : options.OraclePath
+                            OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))
                             ?? throw new InvalidDataException("Missing comparison step results.");
@@ -743,7 +743,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         storage.Write("timing.json", new VerificationTiming(elapsed.Elapsed.TotalSeconds, preflightSeconds,
             preparationSeconds, storage.Results.Sum(r => r.Seconds), restorationSeconds, finalizing.Elapsed.TotalSeconds));
         var finished = $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n";
-        if (options.Suite == "compare-durability-write")
+        if (ComparisonPlan.IsDurabilityWrite(options.Suite))
         {
             // The VM is reset right after this marker appears: everything written so far must already be on disk.
             ComparisonScenarios.FlushVolume(storage.DirectoryPath[0]);

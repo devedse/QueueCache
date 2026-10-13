@@ -12,7 +12,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 121, "plan 121 comparison suites have a new verification plan version on every host");
+        Check(VerificationPlan.Version == 122, "plan 122 adds the churn power-cut suite; the version changes on every host");
         RunPlan120Contracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
@@ -344,6 +344,11 @@ internal static class DiagnosticContracts
             ComparisonPlan.WorkDirectory("compare-ram", @"T:\", "Run") == Path.Combine(@"T:\", "Run") &&
             ComparisonPlan.WorkDirectory("compare-cache", @"Q:\", "Run") == Path.Combine(@"Q:\", "QCBench") &&
             ComparisonPlan.WorkDirectory("compare-snapshot", @"Q:\", "Run") is null, "comparison folders: run-owned for RAM disks, kept for caches");
+        check(ComparisonPlan.CasesFor("compare-durability-churn", 1).Single().Kind == "durability-churn" &&
+            ComparisonPlan.IsDurabilityWrite("compare-durability-churn") && ComparisonPlan.IsDurabilityWrite("compare-durability-write") &&
+            !ComparisonPlan.IsDurabilityWrite("compare-durability-verify") && !ComparisonPlan.UsesDiskSpd("compare-durability-churn") &&
+            ComparisonPlan.WorkDirectory("compare-durability-churn", @"Q:\", "Run") == Path.Combine(@"Q:\", "QCBench-churn"),
+            "the churn power-cut test writes an oracle and a durable FINISHED marker, without DiskSpd, in its own folder");
         reject(() => { try { ComparisonPlan.CasesFor("compare-ram", 4); } catch (ArgumentOutOfRangeException) { throw new InvalidDataException(); } });
 
         string[] Args(ComparisonCase c) => ComparisonPlan.Arguments(c, 1L << 30);
@@ -415,9 +420,11 @@ internal static class DiagnosticContracts
         VerificationPlan.Validate(options);
         VerificationPlan.Validate(options with { Suite = "compare-durability-verify", DiskSpd = null, OraclePath = "oracle.json" });
         VerificationPlan.Validate(options with { Suite = "compare-snapshot", DiskSpd = null });
+        VerificationPlan.Validate(options with { Suite = "compare-durability-churn", DiskSpd = null });
         foreach (var invalid in new[] { options with { Product = null }, options with { DiskSpd = null }, options with { Repeats = 4 },
             options with { Suite = "compare-durability-write" }, options with { Suite = "compare-durability-verify", DiskSpd = null },
             options with { Suite = "compare-durability-write", DiskSpd = null, OraclePath = "oracle.json" }, options with { Suite = "quick", DiskSpd = null },
+            options with { Suite = "compare-durability-churn" }, options with { Suite = "compare-durability-churn", DiskSpd = null, OraclePath = "oracle.json" },
             options with { KeepWorkloads = true } })
             try { VerificationPlan.Validate(invalid); throw new Exception("comparison options accepted: " + invalid); }
             catch (ArgumentException) { }
@@ -437,6 +444,33 @@ internal static class DiagnosticContracts
             "durability sectors identify their generation and nothing else");
         sector[100] ^= 1;
         check(ComparisonData.Classify(sector, 42, 1, 7) == 0, "a changed byte makes a sector 'other'");
+
+        // Churn power-cut test: deterministic file contents and schedule, and age groups from the oracle's timeline.
+        var churnFile = ComparisonData.ChurnFile(42, ComparisonData.ChurnSet, 5);
+        var changed = (byte[])churnFile.Clone(); changed[^1] ^= 1;
+        check(churnFile.Length == ComparisonData.ChurnSectors(ComparisonData.ChurnSet, 5) * 4096 && churnFile.Length is >= 4096 and <= 32768 &&
+            ComparisonData.ChurnIntact(churnFile, 42, ComparisonData.ChurnSet, 5) && !ComparisonData.ChurnIntact(changed, 42, ComparisonData.ChurnSet, 5) &&
+            !ComparisonData.ChurnIntact(churnFile.AsSpan(0, churnFile.Length - 4096), 42, ComparisonData.ChurnSet, 5) &&
+            !ComparisonData.ChurnIntact(churnFile, 42, ComparisonData.ChurnBaseSet, 5) && !ComparisonData.ChurnIntact(churnFile, 43, ComparisonData.ChurnSet, 5) &&
+            Enumerable.Range(0, 64).Select(i => ComparisonData.ChurnSectors(ComparisonData.ChurnSet, i)).Distinct().Count() == 8,
+            "churn files have fixed 4-32 KiB contents; a changed byte, a missing sector, another set or nonce is not intact");
+        var churnSteps = ComparisonData.ChurnSeconds * ComparisonData.ChurnFilesPerSecond;
+        var deletes = Enumerable.Range(0, churnSteps).Select(i => ComparisonData.ChurnDeletes(i)).ToArray();
+        var baseDeletes = deletes.Where(d => d.Base is not null).Select(d => d.Base!.Value).ToArray();
+        var churnDeletes = deletes.Where(d => d.Churn is not null).Select((d, n) => (d.Churn!.Value, n)).ToArray();
+        check(baseDeletes.Distinct().Count() == ComparisonData.ChurnBaseFiles / 2 && baseDeletes.Max() < ComparisonData.ChurnBaseFiles / 2 &&
+            churnDeletes.Length > 0 && Enumerable.Range(0, churnSteps).All(i => ComparisonData.ChurnDeletes(i).Churn is not { } c || c == i - 1000) &&
+            Enumerable.Range(0, 1000).All(i => ComparisonData.ChurnDeletes(i).Churn is null),
+            "a full churn deletes the first half of the base files once each and only churn files 1,000 steps old");
+        var t0 = DateTimeOffset.UnixEpoch;
+        var churnOracle = new ChurnOracle(2, 42, @"Q:\QCBench-churn", 2, t0, t0, t0.AddSeconds(40), [0, 5_000, 15_000, 25_000, 35_000, 39_000],
+            [-1, 100], [-1, -1, -1, -1, -1, 39_500], "Example");
+        check(ComparisonData.ChurnGroup(churnOracle, true, 0) == "base files kept" &&
+            ComparisonData.ChurnGroup(churnOracle, true, 1) == "base files deleted during the churn" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 0) == "churn files 30 s or older" && ComparisonData.ChurnGroup(churnOracle, false, 1) == "churn files 30 s or older" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 2) == "churn files 20-30 s old" && ComparisonData.ChurnGroup(churnOracle, false, 3) == "churn files 10-20 s old" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 4) == "churn files under 10 s old" && ComparisonData.ChurnGroup(churnOracle, false, 5) == "churn files deleted again",
+            "churn files are grouped by their age when the churn ended; deleted files form their own groups");
 
         var directory = Directory.CreateTempSubdirectory("qc-compare-").FullName;
         try

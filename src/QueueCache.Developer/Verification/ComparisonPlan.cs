@@ -28,9 +28,12 @@ public static class ComparisonPlan
         ("mixed-4g.dat", 4L << 30), ("big-8g.dat", 8L << 30)
     ];
     public static readonly string[] Suites =
-        ["compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-verify"];
+        ["compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
+         "compare-durability-verify"];
     public static bool IsComparison(string suite) => Suites.Contains(suite);
     public static bool UsesDiskSpd(string suite) => suite is "compare-ram" or "compare-cache" or "compare-cache-cold";
+    /// <summary>Write phases of a power-cut test: they write the oracle, and the VM is reset once FINISHED.txt is on disk.</summary>
+    public static bool IsDurabilityWrite(string suite) => suite is "compare-durability-write" or "compare-durability-churn";
 
     /// <summary>Where a suite keeps its files on the target: RAM runs use a run-owned folder (removed after a
     /// completed run); cache and durability runs reuse fixed folders.</summary>
@@ -39,6 +42,7 @@ public static class ComparisonPlan
         "compare-ram" => Path.Combine(root, runName),
         "compare-cache" or "compare-cache-cold" => Path.Combine(root, "QCBench"),
         "compare-durability-write" or "compare-durability-verify" => Path.Combine(root, "QCBench-durability"),
+        "compare-durability-churn" => Path.Combine(root, "QCBench-churn"),
         _ => null
     };
 
@@ -47,7 +51,7 @@ public static class ComparisonPlan
         "compare-ram" => 600 + repeats * 900,
         "compare-cache" => 2400 + repeats * 2400,
         "compare-cache-cold" => 1200,
-        "compare-durability-write" => 900,
+        "compare-durability-write" or "compare-durability-churn" => 900,
         "compare-durability-verify" => 1800,
         _ => 300
     };
@@ -62,6 +66,7 @@ public static class ComparisonPlan
             "compare-cache" => Cache(repeats),
             "compare-cache-cold" => CacheCold(),
             "compare-durability-write" => [new("durability-write", "durability-write", 1)],
+            "compare-durability-churn" => [new("durability-churn", "durability-churn", 1)],
             "compare-durability-verify" => [new("durability-verify", "durability-verify", 1)],
             _ => throw new ArgumentException("Not a comparison suite: " + suite)
         };

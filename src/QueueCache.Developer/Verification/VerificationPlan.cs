@@ -33,7 +33,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 121;
+    public const int Version = 122;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -107,6 +107,7 @@ public static class VerificationPlan
         "compare-cache",
         "compare-cache-cold",
         "compare-durability-write",
+        "compare-durability-churn",
         "compare-durability-verify"
     ];
 

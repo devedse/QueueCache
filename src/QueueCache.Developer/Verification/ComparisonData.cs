@@ -57,4 +57,36 @@ public static class ComparisonData
         return 0;
     }
 
+    /// <summary>Churn power-cut test (compare-durability-churn): sets of the base files written and settled first, and of
+    /// the files created during the churn.</summary>
+    public const int ChurnBaseSet = 5, ChurnSet = 6, ChurnBaseFiles = 2_000, ChurnSeconds = 40, ChurnFilesPerSecond = 200;
+
+    /// <summary>Size of a churn-test file in 4 KiB sectors (1..8), fixed by its set and index.</summary>
+    public static int ChurnSectors(int set, long index) => 1 + (int)(((ulong)index * 2654435761UL + (ulong)set) % 8);
+
+    /// <summary>Contents of a churn-test file: durability sectors numbered index * 8 + sector.</summary>
+    public static byte[] ChurnFile(ulong nonce, int set, long index)
+    {
+        var bytes = new byte[ChurnSectors(set, index) * 4096];
+        for (var s = 0; s < bytes.Length / 4096; s++)
+            FillSector(bytes.AsSpan(s * 4096, 4096), nonce, 1, set, index * 8 + s);
+        return bytes;
+    }
+
+    public static bool ChurnIntact(ReadOnlySpan<byte> bytes, ulong nonce, int set, long index) => bytes.SequenceEqual(ChurnFile(nonce, set, index));
+
+    /// <summary>Deletes after creating churn file <paramref name="index"/>, each every eighth step: one base file (in order,
+    /// so a full 40 s run deletes the first half and keeps the rest; their clusters and file records are reused), and from
+    /// step 1,000 on the churn file created 1,000 steps earlier.</summary>
+    public static (int? Base, int? Churn) ChurnDeletes(int index, int baseFiles = ChurnBaseFiles) =>
+        (index % 8 == 3 ? index / 8 % baseFiles : null, index % 8 == 7 && index >= 1000 ? index - 1000 : null);
+
+    /// <summary>Groups for the churn check: base files kept or deleted, churn files by age when the churn ended, deleted churn files.</summary>
+    public static string ChurnGroup(ChurnOracle oracle, bool isBase, int index)
+    {
+        if (isBase) return oracle.BaseDeletedMs[index] >= 0 ? "base files deleted during the churn" : "base files kept";
+        if (oracle.ChurnDeletedMs[index] >= 0) return "churn files deleted again";
+        var age = (oracle.CompletedUtc - oracle.ChurnStartUtc).TotalMilliseconds - oracle.CreatedMs[index];
+        return age >= 30_000 ? "churn files 30 s or older" : age >= 20_000 ? "churn files 20-30 s old" : age >= 10_000 ? "churn files 10-20 s old" : "churn files under 10 s old";
+    }
 }

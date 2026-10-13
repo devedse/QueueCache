@@ -34,6 +34,16 @@ public sealed record SectorCounts(long Expected, long New, long Old, long Other,
 public sealed record DurabilityResult(DateTimeOffset BootUtc, SectorCounts Flushed, SectorCounts Unflushed,
     int SmallFilesExpected, int SmallFilesIntact, int SmallFilesDamaged, int SmallFilesMissing, int ChkdskExitCode);
 
+/// <summary>Churn power-cut oracle (schema 2): when each churn file was created and when files were deleted, in
+/// milliseconds after ChurnStartUtc (-1: not deleted). Contents follow from the nonce (ComparisonData.ChurnFile).</summary>
+public sealed record ChurnOracle(int SchemaVersion, ulong Nonce, string Directory, int BaseFiles, DateTimeOffset BaseSettledUtc,
+    DateTimeOffset ChurnStartUtc, DateTimeOffset CompletedUtc, int[] CreatedMs, int[] BaseDeletedMs, int[] ChurnDeletedMs, string Product);
+
+/// <summary>Files of one group after the reset. For deleted files, Intact means the deletion was lost (the file came back).</summary>
+public sealed record ChurnBucket(string Group, int Expected, int Intact, int Damaged, int Missing);
+
+public sealed record ChurnResult(DateTimeOffset BootUtc, IReadOnlyList<ChurnBucket> Groups, int ChkdskExitCode);
+
 /// <summary>Runs inside the worker for driver-independent comparisons (see ComparisonPlan).</summary>
 [SupportedOSPlatform("windows")]
 internal static class ComparisonScenarios
@@ -184,6 +194,8 @@ internal static class ComparisonScenarios
             }
             case "durability-write":
                 return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
+            case "durability-churn":
+                return DurabilityChurn(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
             case "durability-verify":
                 return await DurabilityVerify(target, job.OraclePath ?? throw new ArgumentException("compare-durability-verify requires --oracle."), prefix);
             default:
@@ -479,6 +491,80 @@ internal static class ComparisonScenarios
             $"{ComparisonPlan.DurabilitySetMiB} MiB raw writes and {ComparisonPlan.DurabilitySmallFiles} small files without a flush. Reset the VM now.";
     }
 
+    /// <summary>Base files written and settled, then 40 s of steady file creation (200 per second) with deletes, so a
+    /// write-back cache holds part of the work while older parts are on the disk. The VM is reset during the write-out
+    /// that follows FINISHED.txt (the host watches the disk counters).</summary>
+    private static string DurabilityChurn(ComparisonTarget target, string work, string oraclePath, string product, string prefix)
+    {
+        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        var baseDirectory = Path.Combine(work, "base"); var churnDirectory = Path.Combine(work, "churn");
+        Directory.CreateDirectory(baseDirectory); Directory.CreateDirectory(churnDirectory);
+        var nonce = BinaryPrimitives.ReadUInt64LittleEndian(RandomNumberGenerator.GetBytes(8));
+        for (var i = 0; i < ComparisonData.ChurnBaseFiles; i++)
+            File.WriteAllBytes(Path.Combine(baseDirectory, $"b{i:D5}.bin"), ComparisonData.ChurnFile(nonce, ComparisonData.ChurnBaseSet, i));
+        var settle = Settle(target.DiskNumber, 60);
+        var baseSettled = DateTimeOffset.UtcNow;
+        var created = new List<int>(); var churnDeleted = new List<int>();
+        var baseDeleted = Enumerable.Repeat(-1, ComparisonData.ChurnBaseFiles).ToArray();
+        var start = DateTimeOffset.UtcNow; var clock = Stopwatch.StartNew();
+        for (var i = 0; clock.Elapsed.TotalSeconds < ComparisonData.ChurnSeconds; i++)
+        {
+            while (clock.Elapsed.TotalMilliseconds < i * 1000.0 / ComparisonData.ChurnFilesPerSecond) Thread.Sleep(1);
+            File.WriteAllBytes(Path.Combine(churnDirectory, $"c{i:D6}.bin"), ComparisonData.ChurnFile(nonce, ComparisonData.ChurnSet, i));
+            created.Add((int)clock.ElapsedMilliseconds); churnDeleted.Add(-1);
+            var (deleteBase, deleteChurn) = ComparisonData.ChurnDeletes(i);
+            if (deleteBase is { } b && baseDeleted[b] < 0)
+            {
+                File.Delete(Path.Combine(baseDirectory, $"b{b:D5}.bin"));
+                baseDeleted[b] = (int)clock.ElapsedMilliseconds;
+            }
+            if (deleteChurn is { } c)
+            {
+                File.Delete(Path.Combine(churnDirectory, $"c{c:D6}.bin"));
+                churnDeleted[c] = (int)clock.ElapsedMilliseconds;
+            }
+        }
+        var oracle = new ChurnOracle(2, nonce, work, ComparisonData.ChurnBaseFiles, baseSettled, start, DateTimeOffset.UtcNow,
+            [.. created], baseDeleted, [.. churnDeleted], product);
+        using (var file = new FileStream(oraclePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            file.Write(JsonSerializer.SerializeToUtf8Bytes(oracle, RunStorage.Json));
+            file.Flush(flushToDisk: true);
+        }
+        RunStorage.AtomicJson(prefix + ".settle.json", settle);
+        return $"{ComparisonData.ChurnBaseFiles} base files settled ({Describe(settle)}); churn: {created.Count} files created in " +
+            $"{clock.Elapsed.TotalSeconds:F1} s, {baseDeleted.Count(d => d >= 0)} base and {churnDeleted.Count(d => d >= 0)} churn files deleted, " +
+            "nothing flushed. Reset the VM during the write-out that follows.";
+    }
+
+    private static async Task<string> ChurnVerify(ComparisonTarget target, ChurnOracle oracle, string prefix)
+    {
+        var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(System.Environment.TickCount64);
+        if (boot <= oracle.CompletedUtc) throw new IOException("Windows has not restarted since the write phase; reset the VM first.");
+        var groups = new Dictionary<string, int[]>(StringComparer.Ordinal); // expected, intact, damaged, missing
+        async Task Count(bool isBase, int index)
+        {
+            var group = ComparisonData.ChurnGroup(oracle, isBase, index);
+            if (!groups.TryGetValue(group, out var counts)) groups[group] = counts = new int[4];
+            counts[0]++;
+            var set = isBase ? ComparisonData.ChurnBaseSet : ComparisonData.ChurnSet;
+            var path = isBase ? Path.Combine(oracle.Directory, "base", $"b{index:D5}.bin") : Path.Combine(oracle.Directory, "churn", $"c{index:D6}.bin");
+            if (!File.Exists(path)) { counts[3]++; return; }
+            counts[ComparisonData.ChurnIntact(await File.ReadAllBytesAsync(path), oracle.Nonce, set, index) ? 1 : 2]++;
+        }
+        for (var i = 0; i < oracle.BaseFiles; i++) await Count(isBase: true, i);
+        for (var i = 0; i < oracle.CreatedMs.Length; i++) await Count(isBase: false, i);
+        var chkdsk = await OwnedProcess.RunAsync(Path.Combine(System.Environment.SystemDirectory, "chkdsk.exe"), [$"{target.Letter}:", "/scan"],
+            prefix + ".chkdsk", TimeSpan.FromMinutes(20), CancellationToken.None);
+        string[] order = ["base files kept", "base files deleted during the churn", "churn files 30 s or older", "churn files 20-30 s old",
+            "churn files 10-20 s old", "churn files under 10 s old", "churn files deleted again"];
+        var result = new ChurnResult(boot, [.. order.Where(groups.ContainsKey).Select(g => new ChurnBucket(g, groups[g][0], groups[g][1], groups[g][2], groups[g][3]))],
+            chkdsk.ExitCode);
+        RunStorage.AtomicJson(prefix + ".churn.json", result);
+        return "After the reset: " + string.Join("; ", result.Groups.Select(g => $"{g.Group} {g.Intact} intact, {g.Damaged} damaged, {g.Missing} missing of {g.Expected}")) +
+            $"; chkdsk /scan exit {chkdsk.ExitCode}. Measurement only.";
+    }
+
     private static SectorCounts CountSectors(string path, ulong nonce, int set, int mebibytes)
     {
         var expected = (long)mebibytes << 8;
@@ -501,7 +587,15 @@ internal static class ComparisonScenarios
         var finished = Path.Combine(writeRun, "FINISHED.txt");
         if (!File.Exists(finished) || !File.ReadLines(finished).First().StartsWith("COMPLETED", StringComparison.Ordinal))
             throw new IOException("The write phase did not finish COMPLETED; its oracle cannot be used.");
-        var oracle = JsonSerializer.Deserialize<DurabilityOracle>(await File.ReadAllBytesAsync(oraclePath)) ?? throw new InvalidDataException("Missing durability oracle.");
+        var oracleBytes = await File.ReadAllBytesAsync(oraclePath);
+        using (var document = JsonDocument.Parse(oracleBytes))
+            if (document.RootElement.GetProperty("SchemaVersion").GetInt32() == 2)
+            {
+                var churn = JsonSerializer.Deserialize<ChurnOracle>(oracleBytes) ?? throw new InvalidDataException("Missing churn oracle.");
+                if (char.ToUpperInvariant(churn.Directory[0]) != target.Letter) throw new IOException("The oracle belongs to another volume.");
+                return await ChurnVerify(target, churn, prefix);
+            }
+        var oracle = JsonSerializer.Deserialize<DurabilityOracle>(oracleBytes) ?? throw new InvalidDataException("Missing durability oracle.");
         if (oracle.SchemaVersion != 1) throw new InvalidDataException("Unknown durability oracle version.");
         if (char.ToUpperInvariant(oracle.Directory[0]) != target.Letter) throw new IOException("The oracle belongs to another volume.");
         var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(System.Environment.TickCount64);

@@ -19,11 +19,15 @@ public static class ComparisonReport
         var steps = Steps(directory, plan);
         var memory = plan.Where(c => c.Kind == "memory")
             .Select(c => (c.Id, Snapshot: Read<MemorySnapshot>(directory, c.Id, "memory"))).ToArray();
-        var durability = plan.Any(c => c.Kind == "durability-verify") ? Read<DurabilityResult>(directory, "durability-verify", "result") : null;
+        // A verify run writes result.json for the generations test and churn.json for the churn test.
+        var verify = plan.Any(c => c.Kind == "durability-verify");
+        var durability = verify && File.Exists(Path.Combine(directory, "compare.durability-verify.result.json"))
+            ? Read<DurabilityResult>(directory, "durability-verify", "result") : null;
+        var churn = verify && durability is null ? Read<ChurnResult>(directory, "durability-verify", "churn") : null;
         RunStorage.AtomicJson(Path.Combine(directory, "comparison.json"), new
         {
             SchemaVersion = 1, Suite = suite, Product = product, PlanVersion = VerificationPlan.Version,
-            Shapes = shapes, Steps = steps, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability
+            Shapes = shapes, Steps = steps, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
         });
         var md = new StringBuilder($"# Comparison: {product}\n\nSuite `{suite}`, plan {VerificationPlan.Version}. Medians of the repetitions " +
             "(range in brackets). MB/s are decimal (1,000,000 bytes/s). Raw evidence: `compare.<step>.*`. Not a verdict.\n");
@@ -51,6 +55,13 @@ public static class ComparisonReport
             md.AppendLine($"\nDurability after the reset: durable save {Share(durability.Flushed)}; raw writes without a flush {Share(durability.Unflushed)}; " +
                 $"small files {durability.SmallFilesIntact} intact, {durability.SmallFilesDamaged} damaged, {durability.SmallFilesMissing} missing of " +
                 $"{durability.SmallFilesExpected}; chkdsk /scan exit {durability.ChkdskExitCode}.");
+        if (churn is not null)
+        {
+            md.AppendLine($"\nChurn power cut: chkdsk /scan exit {churn.ChkdskExitCode}. For deleted files, intact means the deletion was lost.\n\n" +
+                "| Group | Files | Intact | Damaged | Missing |\n|---|---:|---:|---:|---:|");
+            foreach (var g in churn.Groups)
+                md.AppendLine($"| {g.Group} | {g.Expected} | {g.Intact} | {g.Damaged} | {g.Missing} |");
+        }
         File.WriteAllText(Path.Combine(directory, "COMPARISON.md"), md.ToString());
     }
 
