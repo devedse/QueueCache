@@ -65,7 +65,7 @@ internal static class VerificationCommands
                                  Separate from full; no DiskSpd needed.
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
                                  256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
-                                 Parallelism 1/2/4; 24 cases at three repeats. Requires DiskSpd.
+                                 Requires DiskSpd.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Xml.Linq;
 using QueueCache.Developer.Verification;
+using QueueCache.Management;
 
 internal static class DiagnosticContracts
 {
@@ -12,7 +13,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 127, "plan 127 adds same-build read-miss comparisons; the version changes on every host");
+        Check(VerificationPlan.Version == 128, "plan 128 settles filesystem metadata and proves retry drained the retained payload");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
@@ -549,7 +550,7 @@ internal static class DiagnosticContracts
         finally { Directory.Delete(directory, recursive: true); }
     }
 
-    /// <summary>Plan 120 cached read candidate: copy flags 3 against 7 on one build.</summary>
+    /// <summary>Cached bookkeeping candidate: flags 11/15 on one build, with miss offload in both arms.</summary>
     private static void RunBookkeepingContracts(Action<bool, string> check, Action<Action> reject)
     {
         var options = new VerificationOptions("Q:", "cache-read-bookkeeping", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
@@ -628,5 +629,17 @@ internal static class DiagnosticContracts
         var focused = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, SoakSeconds: 120), "focused", "W:", FocusSuite: "stress-races"));
         check(focused.Single(p => p.Options.Suite == "stress-races").Role == CampaignTargetRole.NtfsLab && focused[^1].Options.Suite == "ordering-faults",
             "a focused stress campaign keeps fault injection last");
+        var faulted = new WriteCacheState(8163, -1, 1UL << 30, 64UL << 20, 64UL << 20,
+            1UL << 20, 0, 60UL << 20, 256, 2UL << 20, 1UL << 20, 0, 0, 1, 1, 1UL << 20)
+            { Instance = 7, Generation = 3 };
+        var retried = faulted with { Flags = 8161, LastError = 0, DirtyBytes = 0, DrainedBytes = 2UL << 20 };
+        StressRetryEvidence.Validate(faulted, retried);
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { DrainedBytes = retried.DrainedBytes - 512 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with
+            { AcceptedBytes = retried.AcceptedBytes + 16384, DrainedBytes = retried.DrainedBytes + 8192, DirtyBytes = 8192 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { InFlightBytes = 512 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { Instance = 8 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { Errors = 2 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { DiscardedBytes = 512 }));
     }
 }

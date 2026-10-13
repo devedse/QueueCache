@@ -101,7 +101,17 @@ The concurrent-miss implementation and 1024 KiB × 4 drain defaults on
 concurrent fills could make a read release a slot it never pinned. The branch now
 uses exact pin identities for every read. Plan 126 adds overlapping cold/partial
 read byte checks and verifies that clean entries can be evicted afterwards.
-Final Driver Verifier, performance and release regression results are pending.
+The signed 0.4.675.1 Driver Verifier campaign completed all six phases and
+98 correctness checks, including 12 overlapping-read rounds and a 304-second
+stress window on both lab volumes. Every check passed and restoration succeeded
+(`20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`). Performance and final release
+regression results are pending.
+
+The first non-Verifier stress attempt on 0.4.677.1 was incomplete at Retry:
+16 KiB of new writes arrived after the fault snapshot and 8 KiB remained dirty.
+Plan 128 now flushes filesystem metadata around that fixture and additionally
+requires proof that the retained bytes drained; it still rejects any dirty
+result. A complete run of the corrected fixture is pending.
 
 The first 0.4.673.1 `cache-concurrency` run was incomplete: a RAM-only window
 recorded 36 lower reads / 27 KiB of misses. Restoration succeeded; it is not a

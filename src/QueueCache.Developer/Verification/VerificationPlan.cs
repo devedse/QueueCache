@@ -34,7 +34,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 127;
+    public const int Version = 128;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -238,8 +238,9 @@ public static class VerificationPlan
 
         if (options.Suite == "cache-read-bookkeeping")
         {
-            // Plan 120, same build: copy flags 3 (before) against 7 (product default: + one lookup per block
-            // and run-based recency moves). Q8T1 is the target; Q1T1 (caller thread) and Q2T4 are controls.
+            // Plan 120 bookkeeping comparison, now flags 11/15 so both arms keep miss offload enabled.
+            // Flag 4 adds one lookup per block and run-based recency moves. Q8T1 is the target;
+            // Q1T1 (caller thread) and Q2T4 are controls.
             var shapes = new[] { (8, 1), (1, 1), (2, 4) };
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var (depth, threads) in repeat % 2 == 1 ? shapes : shapes.Reverse())
