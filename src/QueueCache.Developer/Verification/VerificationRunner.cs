@@ -175,8 +175,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         if (CampaignOwnsDiskLease && CampaignBaseline is null)
             throw new InvalidOperationException("Campaign ownership requires a captured baseline.");
         layoutGeneration = null;
+        ulong? originalCopyFlags = null;
         layoutMeasurements = null;
-        if ((VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((selected.Suite == "cache-read-misses" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -210,7 +211,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -332,6 +333,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
+            if (options.Suite == "cache-read-misses")
+            {
+                originalCopyFlags = (await LayoutSnapshot("copy-flags-original.json", deadline.Token)).Diagnostics.CopyFlags
+                    ?? throw new InvalidDataException("Missing runtime copy flags for the read-miss comparison.");
+            }
             if (comparison)
             {
                 workDirectory = ComparisonPlan.WorkDirectory(options.Suite, comparisonTarget!.Root, Path.GetFileName(storage.DirectoryPath)) ?? "";
@@ -560,6 +566,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     await Control(WriteCacheAction.LabCopyFlags, deadline.Token, CacheReadBookkeeping.ProductFlags);
                     Log("Comparison verdict (screen only): " + CacheReadBookkeeping.Report(storage, performance));
                 }
+                if (options.Suite == "cache-read-misses")
+                    Log("Comparison verdict (screen only): " + CacheReadMisses.Report(storage, performance));
                 foreach (var scenario in exercises)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -596,6 +604,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    if (originalCopyFlags is { } restoreFlags)
+                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, restoreFlags);
                     if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
                         await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.ProductFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
@@ -665,7 +675,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var sorted = values.Order().ToArray();
                 return (sorted[(sorted.Length - 1) / 2] + sorted[sorted.Length / 2]) / 2;
             }
-            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush, c.Resident, c.Timing })
+            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush, c.Resident, c.Timing, c.Threads, c.CopyFlags })
                 .Select(g => new
                 {
                     Configuration = g.Key,
@@ -1005,6 +1015,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 arguments.Add("-r4K");
             else if (scenario.Threads > 1)
                 arguments.AddRange(["-s4M", "-T1M"]); // Interleaved 1 MiB blocks, as the RAM-disk four-reader control.
+            if (options.Suite == "cache-read-misses")
+                arguments.Add("-z1415"); // Identical random offsets for each comparison arm.
             // A fixed five-second warmup exercises the fitting working set before scoring.
             // Unlike interference, this is not a promise that every block is resident.
             arguments.AddRange([$"-d{options.DurationSeconds}", scenario.Resident && !scenario.WarmResident ? "-W5" : "-W0"]);
@@ -1036,10 +1048,16 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     throw new IOException("Driver error or instance change during measurement.");
             }
             TelemetryCoverage.Validate(timestamps, workloadStart, workloadEnd);
-            await Worker(Job("snapshot") with
+            var afterPath = await Worker(Job("snapshot") with
             {
                 Reply = storage.PathFor(scenario.Id + "-after.json")
             }, token);
+            if (options.Suite == "cache-read-misses")
+            {
+                using var before = JsonDocument.Parse(await File.ReadAllTextAsync(beforePath, token));
+                using var after = JsonDocument.Parse(await File.ReadAllTextAsync(afterPath, token));
+                CacheReadMisses.Window(scenario, before.RootElement, after.RootElement, score);
+            }
             if (scenario.Layout != CacheLayoutStage.None)
                 CacheLayoutEvidence.ValidateScore(
                     JsonSerializer.Deserialize<CacheLayoutSnapshot>(File.ReadAllText(storage.PathFor(scenario.Id + "-before.json")))!,

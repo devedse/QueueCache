@@ -34,7 +34,7 @@ public sealed record DrainDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 126;
+    public const int Version = 127;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -100,6 +100,7 @@ public static class VerificationPlan
         "cache-layout-full",
         "cache-read-reference",
         "cache-read-bookkeeping",
+        "cache-read-misses",
         "flush-interference",
         "performance",
         "full",
@@ -196,6 +197,8 @@ public static class VerificationPlan
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
         var cases = new List<PerformanceCase>();
+        if (options.Suite == "cache-read-misses")
+            return CacheReadMisses.Cases(options);
 
         if (IsLayoutSuite(options.Suite))
         {
@@ -467,7 +470,7 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
@@ -517,13 +520,13 @@ public static class VerificationPlan
             throw new ArgumentException("RAM asynchronous read lifecycle checks run once (--repeats 1).");
         if (options.Suite == "ram-read-async" && options.Repeats is not (1 or 2 or 3))
             throw new ArgumentException("RAM asynchronous read comparison uses --repeats 3 (1..3 permitted; acceptance requires 3).");
-        if (options.Suite is "ram-write-reference" or "cache-read-reference" or "cache-read-bookkeeping" && options.Repeats is not (1 or 2 or 3))
+        if (options.Suite is "ram-write-reference" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" && options.Repeats is not (1 or 2 or 3))
             throw new ArgumentException("Plan 120 reference suites use --repeats 3 (1..3 permitted).");
         if (options.Suite == "ram-read-coordination" && options.Repeats is not (1 or 2))
             throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
         if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
             throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }

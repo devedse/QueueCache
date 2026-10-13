@@ -89,7 +89,9 @@ internal static class VerificationCommands
                                  re-read, then ascending reset control. 18 cases; measures layout.
               cache-read-reference Resident 1M reads Q1T1/Q8T1/Q2T4, timing off (scores) and on (lock and queue
                                  time per read); 18 cases at --repeats 3; --budget-mib 2048. Attribution only.
-              cache-read-bookkeeping Same-build copy flags 3/7 (one lookup per block, run-based recency moves):
+              cache-read-misses  Same-build flags 7/15: cold 4K Q32 and 1M Q8 reads, cached controls,
+                                 three alternated repetitions; byte/mode checks and worst-read latency.
+              cache-read-bookkeeping Same-build copy flags 11/15 (one lookup per block, run-based recency moves):
                                  1M Q8T1 target, Q1T1 and Q2T4 controls; 18 cases at --repeats 3.
               cache-concurrency  Separate fitting files; 1/2/4 streams at total Q8, Q1 control, RAM-only and background-drain writes.
               cache-sustained    Six mixed read/write episodes with concurrent byte oracles and idle rereads, never clearing.

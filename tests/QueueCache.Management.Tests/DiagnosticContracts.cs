@@ -12,8 +12,9 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 126, "plan 126 adds overlapping cold/partial read misses; the version changes on every host");
+        Check(VerificationPlan.Version == 127, "plan 127 adds same-build read-miss comparisons; the version changes on every host");
         RunPlan120Contracts(Check, Reject);
+        ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
@@ -235,6 +236,48 @@ internal static class DiagnosticContracts
     }
 
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>
+    private static void ReadMissContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "cache-read-misses", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
+        VerificationPlan.Validate(options);
+        var cases = VerificationPlan.Performance(options);
+        check(cases.Count == 24 && cases.Select(c => c.Id).Distinct().Count() == 24 &&
+            cases.All(c => !c.Timing && c.CopyFlags is 7 or 15) &&
+            cases.GroupBy(c => (c.Repeat, c.Workload, c.WarmResident)).All(g => g.Count() == 2 &&
+                g.First().CopyFlags == (g.Key.Repeat % 2 == 1 ? 7UL : 15UL)),
+            "read-miss matrix alternates same-build modes with cold targets and cached controls");
+        var campaign = VerificationCampaignPlan.Create(new(options with { Suite = "quick" }, "experiment", "W:", FocusSuite: "cache-read-misses"));
+        check(campaign.Count == 1 && campaign[0].ExpectedCases.Count == 24, "read-miss experiment composes without extra phases");
+        CacheReadMisses.ComparisonWindow[] Windows(Func<PerformanceCase, double> speed) => cases.Select(c =>
+            new CacheReadMisses.ComparisonWindow(c, speed(c), 1, 10, 4096, c.WarmResident ? 0UL : 4096UL, c.WarmResident ? 0UL : 1UL)).ToArray();
+        double Win(PerformanceCase c) => c.WarmResident ? 1000 : c.CopyFlags == 15 ? 200 : 100;
+        check(CacheReadMisses.Evaluate(Windows(Win)).Verdict == "ACCEPT_SCREEN", "both read targets must win");
+        check(CacheReadMisses.Evaluate(Windows(c => c.WarmResident && c.CopyFlags == 15 ? 900 : Win(c))).Verdict ==
+            "CONTROL_LOSS_REVISION_OR_REJECT", "cached control loss prevents read-miss acceptance");
+        check(CacheReadMisses.Evaluate(Windows(c => !c.WarmResident && c.Workload == "random-read" ? 100 : Win(c))).Verdict == "REJECT",
+            "one winning shape cannot hide a losing read target");
+        reject(() => CacheReadMisses.Evaluate(Windows(Win).Skip(1).ToArray()));
+        reject(() => CacheReadMisses.Evaluate([.. Windows(Win), Windows(Win)[0]]));
+        check(CacheReadMisses.Evaluate(Windows(Win).Where(w => w.Case.Repeat < 3).ToArray()).Verdict == "INCOMPLETE_FOR_ACCEPTANCE",
+            "two complete read-miss repetitions are not acceptance");
+        JsonElement Snapshot(ulong flags, ulong hit, ulong miss, ulong reads) => JsonSerializer.SerializeToElement(new
+        {
+            State = new { Operational = true, Instance = 1, Generation = 2, PayloadCapacity = 1024, Errors = 0, LastError = 0,
+                ReadHitBytes = hit, ReadMissBytes = miss },
+            Performance = new { TimingEnabled = 0 },
+            Diagnostics = new { CopyFlags = flags, Attribution = new { LowerReadAttempts = reads } }
+        });
+        var cold = cases.First(c => !c.WarmResident && c.Workload == "random-read");
+        var score = new DiskSpdScore(4096, 1, 1, 1, 1, 1, null, 2, 3);
+        CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 4096, 1), score);
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(15, 0, 4096, 1), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 2048, 1), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 4096, 0, 0), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 4096, 1), score with { ReadMaxMilliseconds = null }));
+        var warm = cases.First(c => c.WarmResident && c.Workload == "random-read");
+        reject(() => CacheReadMisses.Window(warm, Snapshot(7, 0, 0, 0), Snapshot(7, 4096, 512, 1), score));
+    }
+
     private static void RunPlan120Contracts(Action<bool, string> check, Action<Action> reject)
     {
         var writes = RamReadReferencePlan.CasesFor(RamReadRunKind.WriteReference, 3);
