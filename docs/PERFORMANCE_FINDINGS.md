@@ -32,8 +32,9 @@ implemented (plan 119, including the one-phase `experiment` profile).
 
 **Competitor comparison (2026-10-13).** QueueCache leads cached reads and
 single-program RAM-disk reads, but the comparison with the bare disk and
-PrimoCache found three cache weaknesses: read misses do not overlap, the drain
-writes small pieces, and Strict stalls all writes behind whole-cache drains.
+PrimoCache found three cache weaknesses: read misses do not overlap (#14), the drain
+writes small pieces (#15), and Strict stalls all writes behind whole-cache
+drains (#16).
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
 
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
@@ -894,9 +895,9 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
-| Read misses one at a time | **Open weakness** (plan 121): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s. | Before changing the miss path; candidate: several misses in flight. |
-| Drain batch size and parallelism | **Open weakness** (plan 121): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. | Measure `--batch-kib 1024` / `--drain-parallelism 4` with `compare-cache` before changing defaults. |
-| Strict durability barriers | **Open weakness** (plan 121): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
+| Read misses one at a time | **Open weakness** (plan 121, issue #14): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s. | Before changing the miss path; candidate: several misses in flight. |
+| Drain batch size and parallelism | **Open weakness** (plan 121, issue #15): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. | Measure `--batch-kib 1024` / `--drain-parallelism 4` with `compare-cache` before changing defaults. |
+| Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
 For a missing-span experiment, first record how many missing runs each partly
