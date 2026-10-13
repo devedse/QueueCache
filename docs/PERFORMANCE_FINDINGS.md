@@ -62,6 +62,23 @@ data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
 | Drain uses small writes | After a 1 GiB burst: 10 s at 105 MB/s (PrimoCache 7 s at 149). 8 GiB sustained write 178 MB/s against 242 bare and 486 PrimoCache. During it the disk received 256 KiB writes at 129 MB/s; PrimoCache's averaged about 1.4 MiB at 366 MB/s, DiskSpd's 1 MiB Q8 215 MB/s. | Default 256 KiB batches with drain parallelism 2. | Measure `--batch-kib 1024` and `--drain-parallelism 4` (existing settings) with `compare-cache`; change the defaults only for a repeated gain. |
 | Strict stalls all writes behind whole-cache drains | Rerun: 6 of 12 hot write windows completed nothing in 10 s; creating 40,000 files 213 s (bare 32), 8 GiB write 53 MB/s with a 0 MB/s slowest second (bare 242), write-through 1M Q8 52 MB/s (bare 251), flush after 512 MiB 12.6 s. Probe on the same VM (cache flushed first): RND4K Q32 then Q1 writes completed 0 operations in their windows and needed 106 s and 168 s to finish; each window received one write-through write and two flushes from NTFS (`StrictWriteBarriers` +1, `ApplicationBarriers` +2). Random dirty data drains at about 10 MB/s (bare RND4K Q32 write 10.7 MB/s). | Strict admits writes to RAM at RAM speed (about 1 GB during a 2 s warm-up), then honours each write-through write or flush with `QcCacheBarrier`: wait for `DirtyBytes == 0`, lower flush, while the ordered worker holds every other write. | Bound Strict's dirty data by what the disk drains in a short time, so a flush finishes in bounded time, and complete a write-through write after older overlapping versions without draining unrelated dirty data. |
 
+**Investigation (2026-10-13, issues #14 and #15).**
+
+- *Misses (#14):* the caller path serves hits only (`Read(..., hitOnly)`); misses queue to the ordered worker, which
+  waits for each lower read (`StagedRead`/`OriginalIo` -> `CallLowerAndWait`). During that wait the service lane takes
+  hits and one paging miss, and moves up to 8 queued misses back to the queue head; each worker step rescans from the
+  head. In every comparison window with 32 queued misses the slowest read waited 41-59 s of 60 (bare disk and PrimoCache
+  under 0.5 s; median 0.7 ms, average 7-19 ms). Proposed: stop the head reinsertion, then several misses in flight
+  (offload threads, at most 3, or asynchronous misses with Filling ranges).
+- *Drain (#15):* each drainer copies one batch (at most 1 MiB, `MaxBatchBytes`) and waits for its lower write, so
+  writes in flight equal the parallelism. `compare-cache` with only batch/parallelism changed (one repetition each,
+  default first and last as a drift check): the storage became about 2.3x faster between runs 2 and 3, so only
+  same-period runs compare. Same period: 1024 KiB x 4 against 256 KiB x 2 drained a 1 GiB burst at 126 against
+  87 MB/s and sustained 8 GiB at 267 against 182 MB/s (slowest second 202 against 131); hot, mixed and tree results
+  unchanged. Slow period: 1024 x 2 against 256 x 2 drained the burst equally (37/39 MB/s), sustained 83 against
+  57 MB/s. Not yet attributable to batch size or parallelism (256 x 4 not measured; T050 found 256 x 4 no faster).
+  Next: an alternated, repeated comparison (drain-decision with a batch option) before any default change.
+
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
 1,066 incomplete of 10,000; Strict 478 / 950; PrimoCache without Defer-Write 0 /
@@ -895,8 +912,8 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
-| Read misses one at a time | **Open weakness** (plan 121, issue #14): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s. | Before changing the miss path; candidate: several misses in flight. |
-| Drain batch size and parallelism | **Open weakness** (plan 121, issue #15): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. | Measure `--batch-kib 1024` / `--drain-parallelism 4` with `compare-cache` before changing defaults. |
+| Read misses one at a time | **Open weakness** (plan 121, issue #14): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s; slowest read 41-59 s with 32 queued misses (service-lane head reinsertion). | Before changing the miss path: stop the reordering, then several misses in flight. |
+| Drain batch size and parallelism | **Open weakness** (plan 121, issue #15): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. 2026-10-13: 1024 KiB x 4 drained 45% and sustained 47% faster than 256 x 2 in the same storage period (one run each). | An alternated, repeated batch x parallelism comparison before changing defaults. |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
