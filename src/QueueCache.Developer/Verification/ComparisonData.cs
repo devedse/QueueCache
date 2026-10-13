@@ -28,11 +28,13 @@ public static class ComparisonData
 
     public static int TreeOffset(int index, int bytes) => (int)((long)index * 4099 % ((4 << 20) - bytes));
 
+    private const ulong SectorMagic = 0x3142415255444351UL; // "QCDURAB1"
+
     /// <summary>4 KiB durability sector: header (magic, nonce, generation, set, index) and a seeded body.</summary>
     public static void FillSector(Span<byte> sector, ulong nonce, int generation, int set, long index)
     {
         if (sector.Length != 4096) throw new ArgumentException("Sectors are 4 KiB.");
-        BinaryPrimitives.WriteUInt64LittleEndian(sector, 0x3142415255444351UL); // "QCDURAB1"
+        BinaryPrimitives.WriteUInt64LittleEndian(sector, SectorMagic);
         BinaryPrimitives.WriteUInt64LittleEndian(sector[8..], nonce);
         BinaryPrimitives.WriteInt32LittleEndian(sector[16..], generation);
         BinaryPrimitives.WriteInt32LittleEndian(sector[20..], set);
@@ -74,6 +76,24 @@ public static class ComparisonData
     }
 
     public static bool ChurnIntact(ReadOnlySpan<byte> bytes, ulong nonce, int set, long index) => bytes.SequenceEqual(ChurnFile(nonce, set, index));
+
+    /// <summary>What a damaged churn-test file holds: "empty", "short" (fewer bytes than its size), "another file" (a sector
+    /// of another test file: old contents of reused space), "zeros", or "other".</summary>
+    public static string ChurnDamage(ReadOnlySpan<byte> bytes, int set, long index)
+    {
+        if (bytes.Length == 0) return "empty";
+        if (bytes.Length < ChurnSectors(set, index) * 4096) return "short";
+        var zeros = true;
+        for (var offset = 0; offset + 4096 <= bytes.Length; offset += 4096)
+        {
+            var sector = bytes.Slice(offset, 4096);
+            if (BinaryPrimitives.ReadUInt64LittleEndian(sector) == SectorMagic && (BinaryPrimitives.ReadInt32LittleEndian(sector[20..]) != set ||
+                BinaryPrimitives.ReadInt64LittleEndian(sector[24..]) != index * 8 + offset / 4096))
+                return "another file";
+            zeros &= sector.IndexOfAnyExcept((byte)0) < 0;
+        }
+        return zeros ? "zeros" : "other";
+    }
 
     /// <summary>Deletes after creating churn file <paramref name="index"/>, each every eighth step: one base file (in order,
     /// so a full 40 s run deletes the first half and keeps the rest; their clusters and file records are reused), and from

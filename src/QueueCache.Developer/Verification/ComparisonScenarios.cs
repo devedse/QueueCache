@@ -40,7 +40,7 @@ public sealed record ChurnOracle(int SchemaVersion, ulong Nonce, string Director
     DateTimeOffset ChurnStartUtc, DateTimeOffset CompletedUtc, int[] CreatedMs, int[] BaseDeletedMs, int[] ChurnDeletedMs, string Product);
 
 /// <summary>Files of one group after the reset. For deleted files, Intact means the deletion was lost (the file came back).</summary>
-public sealed record ChurnBucket(string Group, int Expected, int Intact, int Damaged, int Missing);
+public sealed record ChurnBucket(string Group, int Expected, int Intact, int Damaged, int Missing, IReadOnlyDictionary<string, int> DamagedAs);
 
 public sealed record ChurnResult(DateTimeOffset BootUtc, IReadOnlyList<ChurnBucket> Groups, int ChkdskExitCode);
 
@@ -542,6 +542,7 @@ internal static class ComparisonScenarios
         var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(System.Environment.TickCount64);
         if (boot <= oracle.CompletedUtc) throw new IOException("Windows has not restarted since the write phase; reset the VM first.");
         var groups = new Dictionary<string, int[]>(StringComparer.Ordinal); // expected, intact, damaged, missing
+        var damage = new Dictionary<string, SortedDictionary<string, int>>(StringComparer.Ordinal);
         async Task Count(bool isBase, int index)
         {
             var group = ComparisonData.ChurnGroup(oracle, isBase, index);
@@ -550,7 +551,12 @@ internal static class ComparisonScenarios
             var set = isBase ? ComparisonData.ChurnBaseSet : ComparisonData.ChurnSet;
             var path = isBase ? Path.Combine(oracle.Directory, "base", $"b{index:D5}.bin") : Path.Combine(oracle.Directory, "churn", $"c{index:D6}.bin");
             if (!File.Exists(path)) { counts[3]++; return; }
-            counts[ComparisonData.ChurnIntact(await File.ReadAllBytesAsync(path), oracle.Nonce, set, index) ? 1 : 2]++;
+            var bytes = await File.ReadAllBytesAsync(path);
+            if (ComparisonData.ChurnIntact(bytes, oracle.Nonce, set, index)) { counts[1]++; return; }
+            counts[2]++;
+            if (!damage.TryGetValue(group, out var kinds)) damage[group] = kinds = new(StringComparer.Ordinal);
+            var kind = ComparisonData.ChurnDamage(bytes, set, index);
+            kinds[kind] = kinds.GetValueOrDefault(kind) + 1;
         }
         for (var i = 0; i < oracle.BaseFiles; i++) await Count(isBase: true, i);
         for (var i = 0; i < oracle.CreatedMs.Length; i++) await Count(isBase: false, i);
@@ -558,7 +564,8 @@ internal static class ComparisonScenarios
             prefix + ".chkdsk", TimeSpan.FromMinutes(20), CancellationToken.None);
         string[] order = ["base files kept", "base files deleted during the churn", "churn files 30 s or older", "churn files 20-30 s old",
             "churn files 10-20 s old", "churn files under 10 s old", "churn files deleted again"];
-        var result = new ChurnResult(boot, [.. order.Where(groups.ContainsKey).Select(g => new ChurnBucket(g, groups[g][0], groups[g][1], groups[g][2], groups[g][3]))],
+        var result = new ChurnResult(boot, [.. order.Where(groups.ContainsKey).Select(g => new ChurnBucket(g, groups[g][0], groups[g][1], groups[g][2], groups[g][3],
+            damage.TryGetValue(g, out var kinds) ? kinds : new SortedDictionary<string, int>()))],
             chkdsk.ExitCode);
         RunStorage.AtomicJson(prefix + ".churn.json", result);
         return "After the reset: " + string.Join("; ", result.Groups.Select(g => $"{g.Group} {g.Intact} intact, {g.Damaged} damaged, {g.Missing} missing of {g.Expected}")) +

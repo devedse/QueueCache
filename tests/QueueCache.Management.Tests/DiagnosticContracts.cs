@@ -12,7 +12,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 122, "plan 122 adds the churn power-cut suite; the version changes on every host");
+        Check(VerificationPlan.Version == 123, "plan 123 classifies damaged churn files; the version changes on every host");
         RunPlan120Contracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
@@ -454,6 +454,15 @@ internal static class DiagnosticContracts
             !ComparisonData.ChurnIntact(churnFile, 42, ComparisonData.ChurnBaseSet, 5) && !ComparisonData.ChurnIntact(churnFile, 43, ComparisonData.ChurnSet, 5) &&
             Enumerable.Range(0, 64).Select(i => ComparisonData.ChurnSectors(ComparisonData.ChurnSet, i)).Distinct().Count() == 8,
             "churn files have fixed 4-32 KiB contents; a changed byte, a missing sector, another set or nonce is not intact");
+        var full = ComparisonData.ChurnFile(42, ComparisonData.ChurnSet, 13);
+        var foreign = (byte[])full.Clone();
+        ComparisonData.ChurnFile(42, ComparisonData.ChurnBaseSet, 2).AsSpan(0, 4096).CopyTo(foreign.AsSpan(full.Length - 4096));
+        check(ComparisonData.ChurnDamage([], ComparisonData.ChurnSet, 13) == "empty" &&
+            ComparisonData.ChurnDamage(full.AsSpan(0, full.Length - 4096), ComparisonData.ChurnSet, 13) == (full.Length > 4096 ? "short" : "empty") &&
+            ComparisonData.ChurnDamage(new byte[full.Length], ComparisonData.ChurnSet, 13) == "zeros" &&
+            ComparisonData.ChurnDamage(foreign, ComparisonData.ChurnSet, 13) == "another file" &&
+            ComparisonData.ChurnDamage(changed, ComparisonData.ChurnSet, 5) == "other",
+            "damaged churn files are classified as empty, short, zeros, another test file's data, or other");
         var churnSteps = ComparisonData.ChurnSeconds * ComparisonData.ChurnFilesPerSecond;
         var deletes = Enumerable.Range(0, churnSteps).Select(i => ComparisonData.ChurnDeletes(i)).ToArray();
         var baseDeletes = deletes.Where(d => d.Base is not null).Select(d => d.Base!.Value).ToArray();

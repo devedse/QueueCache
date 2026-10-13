@@ -58,9 +58,9 @@ public static class ComparisonReport
         if (churn is not null)
         {
             md.AppendLine($"\nChurn power cut: chkdsk /scan exit {churn.ChkdskExitCode}. For deleted files, intact means the deletion was lost.\n\n" +
-                "| Group | Files | Intact | Damaged | Missing |\n|---|---:|---:|---:|---:|");
+                "| Group | Files | Intact | Damaged | Missing | Damaged files hold |\n|---|---:|---:|---:|---:|---|");
             foreach (var g in churn.Groups)
-                md.AppendLine($"| {g.Group} | {g.Expected} | {g.Intact} | {g.Damaged} | {g.Missing} |");
+                md.AppendLine($"| {g.Group} | {g.Expected} | {g.Intact} | {g.Damaged} | {g.Missing} | {string.Join(", ", g.DamagedAs.Select(k => $"{k.Key} {k.Value}"))} |");
         }
         File.WriteAllText(Path.Combine(directory, "COMPARISON.md"), md.ToString());
     }
