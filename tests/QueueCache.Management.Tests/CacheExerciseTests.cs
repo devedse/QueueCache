@@ -47,6 +47,16 @@ internal static class CacheExerciseTests
         Check(concurrency.Where(c => c.QueueDepth != 1 || c.Streams != 1).All(c => c.Streams * c.QueueDepth == 8), "Concurrent shapes keep total queue depth at eight.");
         Check(concurrency.Where(c => c.Workload == "read").All(c => !c.BackgroundDrain), "Read controls never enable background drain.");
         Check(concurrency[0].Streams == 1 && concurrency[12].Streams == 4, "Concurrent repetitions reverse shape order.");
+        foreach (var scenario in concurrency)
+        {
+            var prime = CacheExercisePlan.WritePrimeArguments(scenario, 2048);
+            Check((prime.Length != 0) == (scenario.Workload == "write" && !scenario.BackgroundDrain),
+                "Only RAM-only write windows prime writable-file metadata before the strict boundary.");
+            if (prime.Length != 0)
+                Check(prime.Contains("-w100") && prime.Contains("-b1M") && prime.Contains("-o1") &&
+                    prime.Contains("-W0") && prime.Contains("-d3") && prime.Contains($"-f{1024 / scenario.Streams}M"),
+                    "Write priming covers the same complete owned targets without a hidden warmup.");
+        }
         VerificationPlan.Validate(options with { Suite = "cache-map-cost" });
         Check(CacheExercisePlan.Cases(options with { Suite = "cache-map-cost" }).Select(c => c.MapIntervalMs).SequenceEqual([0, 2000, 250, 250, 2000, 0, 0, 2000, 250]), "Map controls alternate normal and stress polling.");
         var sustained = options with { Suite = "cache-sustained", Repeats = 1 };
@@ -186,6 +196,9 @@ internal static class CacheExerciseTests
         Reject(() => CacheExerciseEvidence.Validate(before, after with { State = after.State with { AcceptedBytes = 0 } }, 4096, "write", false));
         var io = after with { Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerWriteAttempts = 1 } } };
         Reject(() => CacheExerciseEvidence.Validate(before, io, 4096, "write", false));
+        var metadataRead = after with { State = after.State with { ReadMissBytes = 24576 },
+            Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerReadAttempts = 3 } } };
+        Reject(() => CacheExerciseEvidence.Validate(before, metadataRead, 4096, "write", false));
         CacheExerciseEvidence.Validate(before, io, 4096, "mixed", true);
         CacheExerciseEvidence.ValidateChurnedRead(before, io with { State = state with { ReadHitBytes = 2048, ReadMissBytes = 2048 } }, 4096);
         Reject(() => CacheExerciseEvidence.ValidateChurnedRead(before, io, 8192));

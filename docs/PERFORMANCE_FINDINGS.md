@@ -98,6 +98,46 @@ was left open, so the failure needs a clean repeat and cannot be counted as a
 passing correctness or performance result. Same-build comparisons and final
 release-performance qualification remain pending.
 
+**Read-miss speed screen (plan 127).** Signed 0.4.677.1 completed all 24 windows
+of `cache-read-misses`, three alternated repetitions of flags 7/15, timing off,
+20-second scores, 2 GiB cache, a 4 GiB cold file and 1 GiB resident controls
+(`QueueCache-Verify-20261013-182938-2fbb3355818244b18228ff848afe88c2`). Both modes
+use the branch's 16-thread pool and corrected queue order; flag 8 isolates ordinary
+miss offload. This is a same-build comparison, not a comparison against the entire
+older driver. The screen returned ACCEPT_SCREEN and restoration succeeded.
+
+| Read shape | Serial misses, median MiB/s (range) | Offloaded misses, median MiB/s (range) | Median change | Median p99, serial / offloaded (ms) |
+|---|---:|---:|---:|---:|
+| Cold random 4K Q32 | 5.55 (4.44–8.53) | 33.27 (28.22–103.18) | +499.9% | 100.664 / 34.456 |
+| Cold sequential 1M Q8 | 177.85 (167.28–337.55) | 612.10 (597.15–1009.70) | +244.2% | 160.428 / 121.793 |
+| Resident random 4K Q32 | 1653.06 (1646.02–1661.38) | 1636.53 (1621.46–1642.49) | −1.0% | 0.104 / 0.106 |
+| Resident sequential 1M Q8 | 37053.70 (36948.05–37118.54) | 36604.50 (35928.65–37096.05) | −1.2% | 0.430 / 0.442 |
+
+Every cold pair improved, and the candidate ranges were above the serial ranges.
+Every cold p99 improved. The largest cold-read samples were higher in some
+candidate windows: 376.696 ms versus 300.564 ms for random reads, 731.899 ms
+versus 602.090 ms for sequential reads. This does not qualify worst-read latency
+as improved. All resident controls recorded zero misses and zero lower reads;
+one sequential control pair lost 3.04%, while the other two lost 0.93% and 0.06%,
+so there was no repeated 3% control loss. The loaded filter hash was
+`B7AA752B6F21E00FF8A2027B9DBA679E14DFF6D5A6186CE9BD81820BAB130F73`, provider
+`0FDD5279B96D8B20D416FD5C509C7C90D66A3D5299A1F98EFF5AC88E2DCA651C`, DiskSpd
+`7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+The final release regression remains required.
+
+**Concurrency repeat, plan 128 (incomplete).** On signed 0.4.679.1, all four
+first-repetition resident-read shapes passed, including four readers at Q2 that
+failed in the initial 0.4.673.1 attempt. The first RAM-only write window then
+recorded three lower reads / 24 KiB of misses. All 141,410,959,360 scored write
+bytes were admitted; lower writes, lower flushes and drained bytes remained zero,
+and identity/health stayed stable. This is consistent with writable-file
+metadata activity, rather than lower I/O for payload admission, but the strict
+window correctly failed. Plan 129 primes the writable DiskSpd profile before
+the quiet wait and measurement boundary. The zero-lower-I/O guard is unchanged.
+The incomplete 6/37 run (`20261013-230517-9cd6a418dc51416c9ba8611511f3ba91`)
+restored successfully and supplies no complete matrix or performance aggregate.
+The corrected fixture still needs a full repeat.
+
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
 1,066 incomplete of 10,000; Strict 478 / 950; PrimoCache without Defer-Write 0 /
@@ -792,7 +832,16 @@ filesystem metadata around its closed handles. Plan 128 adds those filesystem
 flushes and a retained-byte drainage check, while preserving the zero-dirty,
 zero-in-flight and stable-identity requirements. The failed attempt is retained
 as incomplete (`20261013-181833-229f91cc19354cee801dd03e63e11da1`); restoration
-succeeded. The corrected fixture still needs a complete non-Verifier run.
+succeeded. The corrected plan-128 fixture completed on signed 0.4.679.1
+(`QueueCache-Campaign-20261013-225440-cf15f15164264cbcb2b63c3886f8b2c8`), all five
+checks PASS, restoration RESTORED. Its 307-second busy window checked 380,986
+reads on V: and 603,948 on W:, exercised every chaos action at least three times
+per volume and created and removed 13 RAM disks. At drain parallelism 1, 2 and 4,
+each retry drained at least the original captured dirty bytes and left zero dirty
+and in-flight bytes; every region then matched from disk after cache release.
+The shared reservation returned exactly to 2 GiB. The loaded filter hash was
+`71BB75DC99CBF6B138AC30F8448961CC17711C76138AC8D68F8E16623EAA2955`, provider
+`5236851804D9A016017C7B4145865DB8271B7E2BDC038BEB82FEBCA924083A4A`.
 
 **Plan 120 stress suite.** `stress-races` runs both lab NTFS volumes at once:
 writers of 4 KiB, 64 KiB, 1 MiB and 4 MiB blocks and an overlapped writer/reader

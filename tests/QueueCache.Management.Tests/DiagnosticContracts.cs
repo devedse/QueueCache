@@ -13,7 +13,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 128, "plan 128 settles filesystem metadata and proves retry drained the retained payload");
+        Check(VerificationPlan.Version == 129, "plan 129 primes writable-file metadata before RAM-only write windows");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);

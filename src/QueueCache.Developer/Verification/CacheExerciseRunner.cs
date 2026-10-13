@@ -103,6 +103,14 @@ public sealed partial class VerificationRunner
         }
         if (!sustained)
             await WarmExercise(scenario.Id, targets, perFileMiB, token);
+        var primeWrite = CacheExercisePlan.WritePrimeArguments(scenario, options.BudgetMiB);
+        if (primeWrite.Length != 0)
+        {
+            // Open/close and first-write metadata belong to preparation. The scored
+            // window still requires zero lower reads, writes, flushes and drains.
+            var primed = await DiskTargets(scenario.Id + "-prime-write", targets, primeWrite, token);
+            WarmResidentEvidence.ValidateFirstPass(primed.Bytes, (ulong)perFileMiB * (ulong)targets.Length << 20);
+        }
         if (sustained && scenario.Repeat == 1)
             await ResidentReread(scenario.Id + "-fresh", token);
         await WaitForQuiet(scenario.Id + "-start", token);

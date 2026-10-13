@@ -30,6 +30,15 @@ public static class CacheExercisePlan
     public static IReadOnlyList<CacheExerciseTarget> AllTargets(int budgetMiB) =>
         [.. Targets(budgetMiB, 1), .. Targets(budgetMiB, 2), .. Targets(budgetMiB, 4)];
 
+    /// <summary>Prime the same write access as the scored RAM-only window before its
+    /// counter boundary; read-only warming does not warm NTFS's writable-file metadata.</summary>
+    public static string[] WritePrimeArguments(CacheExerciseCase scenario, int budgetMiB)
+    {
+        if (scenario.Workload != "write" || scenario.BackgroundDrain) return [];
+        var targets = Targets(budgetMiB, scenario.Streams);
+        return ["-b1M", "-o1", "-t1", "-w100", "-Z1M", "-d3", "-W0", $"-f{targets[0].MiB}M"];
+    }
+
     public static IReadOnlyList<CacheExerciseCase> Cases(VerificationOptions options)
     {
         var cases = new List<CacheExerciseCase>();

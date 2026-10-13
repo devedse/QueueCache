@@ -107,16 +107,33 @@ stress window on both lab volumes. Every check passed and restoration succeeded
 (`20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`). Performance and final release
 regression results are pending.
 
+The 0.4.677.1 same-build read-miss screen completed 24/24 windows: cold random
+reads improved 6.0× and sequential reads 3.4×, with every pair improving and no
+repeated 3% loss in resident controls. Cold p99 latency improved, but some
+worst-read samples increased; worst-read latency is not qualified as improved.
+Read misses covering more than the bounded 1 MiB offload range, or arriving when
+its table is full, still use the ordered worker.
+
 The first non-Verifier stress attempt on 0.4.677.1 was incomplete at Retry:
 16 KiB of new writes arrived after the fault snapshot and 8 KiB remained dirty.
 Plan 128 now flushes filesystem metadata around that fixture and additionally
 requires proof that the retained bytes drained; it still rejects any dirty
-result. A complete run of the corrected fixture is pending.
+result. The corrected fixture completed all five checks on 0.4.679.1 without
+Verifier: retry left zero dirty/in-flight bytes at all three concurrency settings,
+every region matched from disk, and restoration succeeded
+(`20261013-225440-cf15f15164264cbcb2b63c3886f8b2c8`).
 
 The first 0.4.673.1 `cache-concurrency` run was incomplete: a RAM-only window
 recorded 36 lower reads / 27 KiB of misses. Restoration succeeded; it is not a
 passing result. The tray was still open during that attempt. A clean repeat is
 required to distinguish environmental activity from a driver defect.
+
+The clean 0.4.679.1 repeat passed the four resident-read shapes, then stopped at
+the first fitting write window: three lower reads / 24 KiB of misses, with all
+scored writes admitted and no lower writes, flushes or drains. Plan 129 now primes
+writable-file access before the measurement boundary; it still rejects any
+lower I/O during a RAM-only score. That matrix remains incomplete pending a full
+repeat of the corrected fixture.
 
 ## Not yet proven on the VM
 
