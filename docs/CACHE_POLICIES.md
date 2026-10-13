@@ -37,8 +37,13 @@ decided in one place, while copies of independent requests run in parallel.
 | Several requests outstanding (queue depth > 1) | Queued to the worker, which overlaps with the submitting thread and polls 30 us before sleeping. After finding it busy, the next 256 candidates follow; every 1024th caller-path candidate is sent to the worker to detect a deep queue. |
 | Read of 256 KiB or more fully in RAM; payload copy of a fitting write that size | Admitted in order by the worker, copied on an offloaded-request thread. Overlapping writes and reads wait for it; controls wait for all of them. |
 | Paging read that needs the disk | Offloaded-request thread, as before. |
+| Ordinary read that needs the disk, up to 1 MiB (since plan 125) | Found by the worker, then read and kept on one of 16 offloaded-request threads, so up to 16 misses are at the disk at once. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the offload table is full the worker reads it as before. |
 | Paging-file I/O | Forwarded from dispatch, as before. |
-| Misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+| Larger misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+
+While the worker waits for the disk, it completes queued reads that are already in RAM and hands queued misses
+to the offloaded-request threads. A read it cannot do either keeps its place in the queue (before plan 125 it went
+back to the front, so newer reads could overtake it for as long as reads kept arriving).
 
 `qcache developer performance Q: --caller-path false` turns the caller path off
 until the next boot (for comparisons); Diagnostics V14-V16 count caller-path
@@ -71,7 +76,7 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 |---|---|
 | Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The alpha baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 256 KiB batches and parallelism 2 (1 before plan 56). |
+| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 1024 KiB batches and parallelism 4 (256 KiB and 2 before plan 125; parallelism 1 before plan 56). |
 | Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
@@ -89,7 +94,7 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes. `--drain-parallelism 1..4` (default 2 since plan 56; 1 before) bounds concurrent writes; overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. The default remains one 256 KiB gather stream.
+Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes (default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4 since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain thread waits for its write before gathering the next. Overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Plan 125 `drain-decision` (medians of three, alternated): a 256 MiB backlog drained in 1.86 s at 1024 x 4 against 2.67 s at 256 x 2 while cold reads ran, and in 8.4 against 18.2 s while random writes ran, with 3.5x the foreground write rate; 256 x 4 alone was not faster ([findings](PERFORMANCE_FINDINGS.md)).
 
 ## CLI examples
 
