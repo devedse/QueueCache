@@ -78,6 +78,14 @@ data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
   unchanged. Slow period: 1024 x 2 against 256 x 2 drained the burst equally (37/39 MB/s), sustained 83 against
   57 MB/s. Not yet attributable to batch size or parallelism (256 x 4 not measured; T050 found 256 x 4 no faster).
   Next: an alternated, repeated comparison (drain-decision with a batch option) before any default change.
+- *Drain decision (plan 125, `drain-decision`, 42 cases, run
+  `QueueCache-Verify-20261013-131647-d5f42aaebc094cf38529b3a18514968a`, installed 0.4.604.1, Verifier off; medians
+  of three, batch and parallelism order reversed every other repetition).* Seconds to drain a 256 MiB backlog during
+  cold random reads: 256 KiB x 1/2/4 = 3.88/2.67/3.07, 1024 KiB x 1/2/4 = 3.08/3.68/1.86. During fitting random
+  writes (the flush also drains writes admitted meanwhile): 256 x 1/2/4 = 32.6/18.2/17.7 s at 14,202/14,413/13,202
+  foreground IOPS; 1024 x 1/2/4 = 18.8/15.3/8.4 s at 37,342/26,412/50,859 IOPS. 1024 x 4 beat 256 x 2 in every
+  write pairing (11.4/8.4/6.3 against 18.2/19.3/8.8 s) and in two of three read pairings (third equal); p99 latency
+  was unchanged. 256 x 4 alone was not faster, as in T050. **Default changed to 1024 KiB x 4** (plan 125).
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -913,7 +921,7 @@ runs that found and fixed the issues described under
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
 | Read misses one at a time | **Open weakness** (plan 121, issue #14): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s; slowest read 41-59 s with 32 queued misses (service-lane head reinsertion). | Before changing the miss path: stop the reordering, then several misses in flight. |
-| Drain batch size and parallelism | **Open weakness** (plan 121, issue #15): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. 2026-10-13: 1024 KiB x 4 drained 45% and sustained 47% faster than 256 x 2 in the same storage period (one run each). | An alternated, repeated batch x parallelism comparison before changing defaults. |
+| Drain batch size and parallelism | **Default 1024 KiB x 4** (plan 125, issue #15): `drain-decision` medians of three, 256 MiB backlog 1.86 against 2.67 s (reads) and 8.4 against 18.2 s (writes) for 256 x 2; 256 x 4 alone no faster. | Storage with a different latency profile, or drain-thread changes (more than one write in flight per thread, more than 4 threads). |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
