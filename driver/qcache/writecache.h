@@ -334,7 +334,6 @@ struct QC_PAGING_READ
     ULONGLONG Sequence;
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
-    BOOLEAN Miss; // An ordinary read that needs the disk: run like the worker's read so the miss is kept.
     PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER

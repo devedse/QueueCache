@@ -903,7 +903,9 @@ public static class VerificationWorker
                 return sectorChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "partial-read-accounting":
                 var partialChecks = PartialReadScenarios.Run(target, device, job.WorkDirectory!, job.BudgetMiB,
-                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation));
+                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation)).ToList();
+                partialChecks.AddRange(PartialReadScenarios.ConcurrentMisses(target, device, job.WorkDirectory!, job.BudgetMiB,
+                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation)));
                 RunStorage.AtomicJson(job.Reply, partialChecks);
                 ReportFailures(partialChecks, Console.Error);
                 return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;

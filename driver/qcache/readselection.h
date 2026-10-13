@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+// A service-lane miss retains its original arrival sequence. Return the place
+// before which it must be restored, so retrying misses cannot reverse the queue.
+template <typename Node, typename Next, typename Before>
+constexpr Node* QcReadReinsertPosition(Node* head, Next next, Before before)
+{
+    auto position = next(head);
+    while (position != head && before(position))
+        position = next(position);
+    return position;
+}
+
 // QC_STATE flag contract: enabled + Fast, without fault/suspend/barrier/removal.
 // Only application flushes use this exception; controls/TRIM never do.
 constexpr bool QcReadMayPassApplicationFlush(unsigned flags)

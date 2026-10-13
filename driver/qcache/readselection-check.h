@@ -4,6 +4,36 @@
 
 namespace QcSelectionChecks
 {
+constexpr bool MissesKeepArrivalOrder()
+{
+    struct Entry { Entry* Next; unsigned Sequence; };
+    Entry entries[33]{};
+    auto head = &entries[0];
+    for (unsigned i = 0; i < 33; ++i)
+        entries[i] = {&entries[(i + 1) % 33], i};
+    // Return service-lane misses in several orders while newer reads are already
+    // queued. Every retry must leave the oldest read first (head insertion did not).
+    for (unsigned retry = 0; retry < 8; ++retry)
+        for (unsigned sequence = 8; sequence > 0; --sequence)
+        {
+            auto entry = &entries[sequence];
+            auto previous = head;
+            while (previous->Next != entry) previous = previous->Next;
+            previous->Next = entry->Next;
+            auto position = QcReadReinsertPosition(head, [](Entry* p) { return p->Next; },
+                [sequence](Entry* p) { return p->Sequence < sequence; });
+            previous = head;
+            while (previous->Next != position) previous = previous->Next;
+            entry->Next = position;
+            previous->Next = entry;
+        }
+    auto next = head->Next;
+    for (unsigned sequence = 1; sequence <= 32; ++sequence, next = next->Next)
+        if (next->Sequence != sequence) return false;
+    return next == head;
+}
+static_assert(MissesKeepArrivalOrder(), "Read miss reinsertion must preserve arrival order");
+
 struct Node
 {
     Node* Next;

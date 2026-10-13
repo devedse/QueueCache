@@ -216,10 +216,10 @@ static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert)
         // arriving (issue #14: single reads waited up to 59 s of a 60 s test). It crosses
         // nothing it had not already passed, so ordering against older writes is unchanged.
         const auto sequence = reinterpret_cast<ULONGLONG>(irp->Tail.Overlay.DriverContext[0]);
-        auto next = ext->Pending.Flink;
-        while (next != &ext->Pending &&
-               reinterpret_cast<ULONGLONG>(CONTAINING_RECORD(next, IRP, Tail.Overlay.ListEntry)->Tail.Overlay.DriverContext[0]) < sequence)
-            next = next->Flink;
+        auto next = QcReadReinsertPosition(&ext->Pending, [](PLIST_ENTRY node) { return node->Flink; },
+            [sequence](PLIST_ENTRY node) {
+                return reinterpret_cast<ULONGLONG>(CONTAINING_RECORD(node, IRP, Tail.Overlay.ListEntry)->Tail.Overlay.DriverContext[0]) < sequence;
+            });
         InsertTailList(next, &irp->Tail.Overlay.ListEntry); // Inserts before next.
         ext->ReadSelection.Reset(ext->Pending.Flink);
     }

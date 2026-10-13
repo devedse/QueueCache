@@ -37,13 +37,17 @@ decided in one place, while copies of independent requests run in parallel.
 | Several requests outstanding (queue depth > 1) | Queued to the worker, which overlaps with the submitting thread and polls 30 us before sleeping. After finding it busy, the next 256 candidates follow; every 1024th caller-path candidate is sent to the worker to detect a deep queue. |
 | Read of 256 KiB or more fully in RAM; payload copy of a fitting write that size | Admitted in order by the worker, copied on an offloaded-request thread. Overlapping writes and reads wait for it; controls wait for all of them. |
 | Paging read that needs the disk | Offloaded-request thread, as before. |
-| Ordinary read that needs the disk, up to 1 MiB (since plan 125) | Found by the worker, then read and kept on one of 16 offloaded-request threads, so up to 16 misses are at the disk at once. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the offload table is full the worker reads it as before. |
+| Ordinary read that needs the disk, up to 1 MiB (since plan 125) | Found by the worker, then read and kept on one of 16 offloaded-request threads, allowing concurrent disk reads. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the offload table is full the worker reads it as before. |
 | Paging-file I/O | Forwarded from dispatch, as before. |
 | Larger misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
 
 While the worker waits for the disk, it completes queued reads that are already in RAM and hands queued misses
 to the offloaded-request threads. A read it cannot do either keeps its place in the queue (before plan 125 it went
 back to the front, so newer reads could overtake it for as long as reads kept arriving).
+Every read retains the identities of its pinned cache entries, including entries
+that were absent. Concurrent fills cannot cause it to copy or release a version
+it never pinned. Ordinary misses are retained from driver-owned staging buffers;
+paging misses are never retained.
 
 `qcache developer performance Q: --caller-path false` turns the caller path off
 until the next boot (for comparisons); Diagnostics V14-V16 count caller-path

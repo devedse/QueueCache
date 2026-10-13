@@ -102,7 +102,7 @@ internal static class VerificationCommands
               priority-affinity  Cached reads: Normal/BelowNormal CPU crossed with default/unbound affinity.
               priority-cost      Fitting RAM reads: independent Normal/CPU BelowNormal/I/O Low/memory Low.
                                  1M Q1/Q8 and 4K Q1 controls; owned child settings, three-second warmup.
-              partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
+              partial-read-accounting Patterned partial sectors and accounting, plus 16 overlapping cold/partial readers.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
               ram-read-attribution Three traced Direct RAM read shapes; diagnostic, not speed acceptance.

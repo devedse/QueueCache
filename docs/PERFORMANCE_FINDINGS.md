@@ -87,6 +87,17 @@ data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
   write pairing (11.4/8.4/6.3 against 18.2/19.3/8.8 s) and in two of three read pairings (third equal); p99 latency
   was unchanged. 256 x 4 alone was not faster, as in T050. **Default changed to 1024 KiB x 4** (plan 125).
 
+**Fix branch qualification (plan 126, in progress).** The initial concurrent-miss
+candidate built successfully but is not accepted yet. Review found that using the
+old worker path without pin scratch allowed one overlapping miss to unpin a slot
+filled by another read. Every read now saves its original pin identities, and the
+maintained partial-read suite checks simultaneous cold/partial readers and clean
+entry eviction. The first cache-concurrency attempt on 0.4.673.1 failed its
+RAM-only guard (36 lower reads, 27 KiB of misses); restoration succeeded. The tray
+was left open, so the failure needs a clean repeat and cannot be counted as a
+passing correctness or performance result. Same-build comparisons and final
+release-performance qualification remain pending.
+
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
 1,066 incomplete of 10,000; Strict 478 / 950; PrimoCache without Defer-Write 0 /

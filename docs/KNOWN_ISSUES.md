@@ -93,6 +93,21 @@ stale-sample marking and every trigger/wait reason are not all shown. Unavailabl
 values stay unavailable rather than showing zero. Closing the app never stops a
 cache or a disk.
 
+## Fix branch verification (#14 / #15)
+
+The concurrent-miss implementation and 1024 KiB × 4 drain defaults on
+`fix/read-misses-drain` are still undergoing VM qualification. The initial
+0.4.673.1 candidate omitted a stable pin snapshot for ordinary offloaded misses:
+concurrent fills could make a read release a slot it never pinned. The branch now
+uses exact pin identities for every read. Plan 126 adds overlapping cold/partial
+read byte checks and verifies that clean entries can be evicted afterwards.
+Final Driver Verifier, performance and release regression results are pending.
+
+The first 0.4.673.1 `cache-concurrency` run was incomplete: a RAM-only window
+recorded 36 lower reads / 27 KiB of misses. Restoration succeeded; it is not a
+passing result. The tray was still open during that attempt. A clean repeat is
+required to distinguish environmental activity from a driver defect.
+
 ## Not yet proven on the VM
 
 - **Removal and power:** Windows eject with pending writes passes; live reconnect

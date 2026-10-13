@@ -12,7 +12,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 125, "plan 125 adds drain batch size to drain-decision; the version changes on every host");
+        Check(VerificationPlan.Version == 126, "plan 126 adds overlapping cold/partial read misses; the version changes on every host");
         RunPlan120Contracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
