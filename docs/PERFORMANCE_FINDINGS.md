@@ -1,7 +1,7 @@
 # QueueCache performance findings
 
 This is the consolidated reference for performance findings and decisions from
-the RAM-first, RAM-disk and cache-layout investigations through 2026-10-11.
+the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-13.
 Read it before proposing another experiment. Detailed methods and raw-evidence
 identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
@@ -29,6 +29,43 @@ dropped by the owner.
 
 The maintained single-command campaign and durable completion event are
 implemented (plan 119, including the one-phase `experiment` profile).
+
+**Competitor comparison (2026-10-13).** QueueCache leads cached reads and
+single-program RAM-disk reads, but the comparison with the bare disk and
+PrimoCache found three cache weaknesses: read misses do not overlap, the drain
+writes small pieces, and Strict stalls all writes behind whole-cache drains.
+Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
+
+## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
+
+**Question.** How does QueueCache compare with other RAM disks and RAM caches on the
+same VM, and what does the comparison show about QueueCache itself? Full results:
+[COMPARISON.md](COMPARISON.md) (generated from the `compare-*` suites, plan 121;
+products installed one at a time on restored snapshots, measured by tools that use
+no QueueCache feature).
+
+**RAM disk.** QueueCache leads single-program large reads (SEQ1M Q8T1 45,245 MB/s;
+next SoftPerfect hard-disk emulation 35,386) and ties at Q1T1 with SoftPerfect RAM
+File System (about 25,100). Small requests sit in the leading block-device group
+(RND4K Q1T1 1,611 / 1,234; OSFMount logical 1,744 / 1,390). SoftPerfect RAM File
+System is a file system, not a disk, and wins small requests and the file tree by
+a wide margin. No RAM-disk decision changes.
+
+**Cache (2 GiB on Q:, against the bare disk, PrimoCache 4.4.1 L1 2 GiB).** Cached
+data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
+17,172 / 19,036). Three measured weaknesses:
+
+| Finding | Evidence | Cause | Candidate |
+|---|---|---|---|
+| Read misses do not overlap | 1 GiB first read 217 MB/s Fast / 187 Strict, bare disk 560, PrimoCache 512 / 409; cold RND4K Q32 11 MB/s against 65 bare and 72-80 PrimoCache. QueueCache equals the bare disk at Q1 (230 MB/s, 2,949 IOPS). | The request worker reads each miss synchronously (`StagedRead`/`OriginalIo` on the worker), so one miss is in flight per volume. | Several misses in flight (asynchronous lower reads with ordered completion), keeping the driver-owned staging buffer and the pins. |
+| Drain uses small writes | After a 1 GiB burst: 10 s at 105 MB/s (PrimoCache 7 s at 149). 8 GiB sustained write 178 MB/s against 242 bare and 486 PrimoCache. During it the disk received 256 KiB writes at 129 MB/s; PrimoCache's averaged about 1.4 MiB at 366 MB/s, DiskSpd's 1 MiB Q8 215 MB/s. | Default 256 KiB batches with drain parallelism 2. | Measure `--batch-kib 1024` and `--drain-parallelism 4` (existing settings) with `compare-cache`; change the defaults only for a repeated gain. |
+| Strict stalls all writes behind whole-cache drains | Rerun: 6 of 12 hot write windows completed nothing in 10 s; creating 40,000 files 213 s (bare 32), 8 GiB write 53 MB/s with a 0 MB/s slowest second (bare 242), write-through 1M Q8 52 MB/s (bare 251), flush after 512 MiB 12.6 s. Probe on the same VM (cache flushed first): RND4K Q32 then Q1 writes completed 0 operations in their windows and needed 106 s and 168 s to finish; each window received one write-through write and two flushes from NTFS (`StrictWriteBarriers` +1, `ApplicationBarriers` +2). Random dirty data drains at about 10 MB/s (bare RND4K Q32 write 10.7 MB/s). | Strict admits writes to RAM at RAM speed (about 1 GB during a 2 s warm-up), then honours each write-through write or flush with `QcCacheBarrier`: wait for `DirtyBytes == 0`, lower flush, while the ordered worker holds every other write. | Bound Strict's dirty data by what the disk drains in a short time, so a flush finishes in bounded time, and complete a write-through write after older overlapping versions without draining unrelated dirty data. |
+
+Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
+survived for every product. New unflushed small files: bare disk 698 missing and
+1,066 incomplete of 10,000; Strict 478 / 950; PrimoCache without Defer-Write 0 /
+105; PrimoCache Defer-Write all 10,000 missing with a clean file system; QueueCache
+Fast 5,668 missing and `chkdsk` exit 13 (GitHub issue #13, as designed for now).
 
 ## RAM-disk asynchronous split reads: accepted (PR #9)
 
@@ -857,6 +894,9 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
+| Read misses one at a time | **Open weakness** (plan 121): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s. | Before changing the miss path; candidate: several misses in flight. |
+| Drain batch size and parallelism | **Open weakness** (plan 121): drain at 105-129 MB/s with 256 KiB writes; PrimoCache about 1.4 MiB writes at 366 MB/s. | Measure `--batch-kib 1024` / `--drain-parallelism 4` with `compare-cache` before changing defaults. |
+| Strict durability barriers | **Open weakness** (plan 121): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
 For a missing-span experiment, first record how many missing runs each partly

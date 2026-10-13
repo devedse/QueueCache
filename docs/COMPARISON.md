@@ -1,12 +1,32 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> **Work in progress.** Measured so far: 12 of 12 RAM-disk configurations and 5 of 5 cache configurations (updated 2026-10-13). Rows marked *Not run yet* are planned. This page is regenerated from the measurements after every tool.
+> All 12 RAM-disk and 5 cache configurations measured, 2026-10-12 to 2026-10-13.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
 feature. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise.
 
-**Summary.** Written once every tool has run.
+**Summary.**
+
+- **RAM disks.** QueueCache's RAM disk is the fastest at large reads by one program (45 GB/s with eight requests
+  in flight; next best 35 GB/s) and shares first place for single large reads (25 GB/s) with SoftPerfect RAM File
+  System. For small 4 KiB requests it is among the fastest true disks, about 8% behind OSFMount. SoftPerfect RAM
+  File System is a file system in RAM rather than a disk: it handles small requests almost twice as fast, and creates,
+  copies and deletes files two to four times as fast as any disk. With four programs reading at once the faster disks all land between
+  20 and 31 GB/s (QueueCache 25). AIM Toolkit and ManagedDrive were much slower (3 to 4.5 GB/s for large reads, against
+  15 to 45 GB/s for the others).
+- **RAM caches.** QueueCache Fast serves cached data the fastest: 39 GB/s reads and 21 GB/s writes, against 17 and
+  19 GB/s for PrimoCache with Defer-Write. It has three weaknesses that PrimoCache does not have:
+  - Data that is not in the cache yet is read more slowly than without any cache (217 MB/s against 560 for the
+    bare disk and 512 for PrimoCache), because QueueCache fetches it one request at a time.
+  - Pending writes reach the disk slowly (105 to 130 MB/s, about half of what the disk takes), because QueueCache
+    writes them in 256 KiB pieces; PrimoCache's larger pieces reached 150 to 370 MB/s.
+  - Strict mode, the safe setting, made writing and file operations 5 to 11 times slower than no cache, with
+    complete write stops of 100 seconds or more.
+- **Power cuts.** On every product everything that had been flushed survived. The two settings that answer flushes
+  from RAM (QueueCache Fast and PrimoCache Defer-Write) lost far more of the newest, unflushed files, and QueueCache
+  Fast also left the file system needing a repair ([#13](https://github.com/devedse/QueueCache/issues/13)).
+  PrimoCache's did not.
 
 Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
