@@ -1240,7 +1240,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     // Measured (plan 96, 1 MiB sequential RAM hits): prefetch +19-21% Q1; coalescing within a chunk
     // +33% Q1 and up to +11% Q8; together no loss. Bookkeeping (plan 120): 1M Q8T1 +7.9%, Q1T1 +4.5%,
     // four readers +3.5% in a same-build comparison. QcLabCopyFlags can still turn them off for A/B.
-    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping;
+    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses;
     // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
     c->ReadRecall = 1;
     LARGE_INTEGER frequency;
@@ -1696,7 +1696,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
         break;
     case QcLabCopyFlags:
-        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping) || command.BudgetBytes)
+        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses) || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
@@ -2292,8 +2292,11 @@ static bool DistinctPages(PIRP irp)
 }
 // callerPath (with hitOnly): QcCacheTryCallerPath; the read-service counters
 // stay the worker's, and a mapping failure declines instead of failing.
+// Returned by Read with offloadMiss for an ordinary miss, before any pin or disk I/O:
+// QcCacheProcess hands it to an offloaded-read thread (QcCopyOffloadMisses).
+static constexpr NTSTATUS QcReadMissOffload = static_cast<NTSTATUS>(0x6000A002L);
 static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true,
-                     ULONG* pinned = nullptr, bool callerPath = false)
+                     ULONG* pinned = nullptr, bool callerPath = false, bool offloadMiss = false)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Read.Length;
@@ -2381,12 +2384,20 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         ReleaseCache(c);
         return STATUS_NOT_FOUND;
     }
+    // The worker would wait here for the disk, one miss at a time (issue #14).
+    if (offloadMiss && !full && !pagingIo && length <= QcPagingPinBlocks * Chunk &&
+        (copyFlags & QcCopyOffloadMisses))
+    {
+        ReleaseCache(c);
+        return QcReadMissOffload;
+    }
     const auto firstBlock = start / Chunk * Chunk;
     // Blocks that had a cached version when this read started. A kept miss is filled from the
     // disk data read below, but for these blocks that data can predate the cached version: its
     // drain may complete during the read and, unretained, leave the index, so the block would
     // look missing and get the older disk bytes (found by stress-races). Only blocks without a
-    // cached version are filled; the worker serializes writes, so they cannot change meanwhile.
+    // cached version are filled; writes cannot change them meanwhile: the worker serializes them, and
+    // a write overlapping an offloaded read (QcCopyOffloadMisses) waits for it.
     const bool fillCandidate = !full && !pagingIo && !pinned && !hitOnly && length <= QcStagedReadMaxBytes;
     ULONG64 cachedAtStart[QcStagedReadMaxBytes / Chunk / 64 + 1];
     if (fillCandidate)
@@ -2406,7 +2417,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     NTSTATUS status = STATUS_SUCCESS;
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
-    // Only the request worker keeps misses; paging reads never do (DistinctPages).
+    // Only the request worker and, for misses it hands over, offloaded-read threads keep misses; paging
+    // reads never do (DistinctPages).
     PUCHAR staging = nullptr;
     const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
@@ -2724,12 +2736,14 @@ static bool FullyResident(QC_CACHE* c, LONGLONG start, LONGLONG end)
     }
     return true;
 }
-bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
+bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool miss)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+    if (miss && (pagingIo || !(InterlockedCompareExchange(&c->CopyFlags, 0, 0) & QcCopyOffloadMisses)))
+        return false;
     if (stack->MajorFunction != IRP_MJ_READ || !c->ReadThreads[0].Thread || !c->CompleteRequest ||
-        (!pagingIo && stack->Parameters.Read.Length < QcCopyOffloadMinBytes))
+        (!pagingIo && !miss && stack->Parameters.Read.Length < QcCopyOffloadMinBytes))
         return false;
     const auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     const auto length = stack->Parameters.Read.Length;
@@ -2744,13 +2758,17 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     // Only the request worker sets these fields and offloads, so the decision
     // cannot race a new fence, active write or blocking request.
     // A paging read is offloaded for its disk wait: a RAM hit completes faster on
-    // the worker. A large ordinary read is offloaded only as a RAM hit, so several
-    // copies run at once; a miss keeps the worker's ordered path and read fill.
+    // the worker. A large ordinary read is offloaded as a RAM hit, so several copies
+    // run at once. An ordinary miss (miss: Read found it on the worker, with
+    // QcCopyOffloadMisses) is offloaded for its disk wait and keeps its read fill:
+    // the thread runs the worker's Read, and writes wait for overlapping offloaded
+    // reads, so its blocks cannot change meanwhile. If the range filled up in the
+    // meantime, that Read simply serves it from RAM.
     AcquireCache(c);
     const bool refused = c->OffloadBlocked || c->Stop || c->Gone || !c->Enabled ||
         (c->RangeDrain && start < c->RangeEnd && end > c->RangeStart) ||
         (c->ActiveWrite && start < c->ActiveWriteEnd && end > c->ActiveWriteStart) ||
-        FullyResident(c, start, end) == pagingIo || PagingReadsOverlap(c, start, end, true);
+        (!miss && FullyResident(c, start, end) == pagingIo) || PagingReadsOverlap(c, start, end, true);
     ReleaseCache(c);
     if (refused)
         return false;
@@ -2772,6 +2790,7 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
+        entry->Miss = miss;
         entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
@@ -2853,8 +2872,10 @@ static void PagingReader(PVOID context)
         }
         auto irp = next->Irp;
         const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+        // A miss runs without the pin scratch, exactly as on the request worker, so its
+        // disk data is kept (Read: fillCandidate requires no pin scratch).
         auto status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
-                                  : Read(c, irp, false, false, reader->Pins);
+                                  : Read(c, irp, false, false, next->Miss ? nullptr : reader->Pins);
         if (pagingIo)
         {
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
@@ -3228,7 +3249,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         const bool write = stack->MajorFunction == IRP_MJ_WRITE;
         if (pagingIo)
             InterlockedIncrement64(write ? &c->PagingRoutedWriteRequests : &c->PagingRoutedReadRequests);
-        auto status = write ? Write(c, irp) : Read(c, irp);
+        auto status = write ? Write(c, irp) : Read(c, irp, false, true, nullptr, false, !pagingIo);
         if (pagingIo)
             InterlockedIncrement64(write
                 ? NT_SUCCESS(status) ? &c->PagingRoutedWriteCompletions : &c->PagingRoutedWriteFailures
@@ -3337,7 +3358,15 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         if (first >= 0 && length)
             WaitForPagingReads(c, first, first > MAXLONGLONG - static_cast<LONGLONG>(length) ? MAXLONGLONG : first + length,
                                nullptr, nullptr, true);
-        return Process(c, irp, deviceBytes);
+        auto status = Process(c, irp, deviceBytes);
+        if (status != QcReadMissOffload)
+            return status;
+        if (QcCacheOffloadPagingRead(c, irp, deviceBytes, true))
+        {
+            *transferred = true;
+            return STATUS_PENDING;
+        }
+        return Read(c, irp); // Refused (table full, overlapping write or fence): the worker reads it.
     }
     if (major == IRP_MJ_WRITE)
     {

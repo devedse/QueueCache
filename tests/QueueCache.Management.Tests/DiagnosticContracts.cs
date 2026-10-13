@@ -517,21 +517,22 @@ internal static class DiagnosticContracts
             cases.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count() == 2 && g.Select(c => c.CopyFlags).Distinct().Count() == 2),
             "cached read comparison: each shape once per mode per repetition, timing off");
         check(CacheReadBookkeeping.IsTarget(cases[0]) && CacheReadBookkeeping.CandidateFlags == (CacheReadBookkeeping.OriginalFlags | 4) &&
-            CacheReadBookkeeping.ProductFlags == CacheReadBookkeeping.CandidateFlags, "the candidate adds only flag 4 and is the product default; Q8T1 is the target");
+            CacheReadBookkeeping.ProductFlags == CacheReadBookkeeping.CandidateFlags && (CacheReadBookkeeping.ProductFlags & 8) != 0,
+            "the candidate adds only flag 4 and is the product default (with miss offload, flag 8); Q8T1 is the target");
         var phase = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "cache-read-bookkeeping"));
         check(phase.Count == 1 && phase[0].Role == CampaignTargetRole.Performance && phase[0].MeasurementWindows == 18, "one-phase cached read comparison");
-        var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 7UL } });
+        var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 15UL } });
         var score = new DiskSpdScore(1000L << 20, 1000, 10, 100, 100, null, null, null, null);
-        var candidate = cases.First(c => c.CopyFlags == 7);
-        check(CacheReadBookkeeping.Window(candidate, before, score).CopyFlags == 7, "the window records the reported copy flags");
-        reject(() => CacheReadBookkeeping.Window(cases.First(c => c.CopyFlags == 3), before, score));
+        var candidate = cases.First(c => c.CopyFlags == 15);
+        check(CacheReadBookkeeping.Window(candidate, before, score).CopyFlags == 15, "the window records the reported copy flags");
+        reject(() => CacheReadBookkeeping.Window(cases.First(c => c.CopyFlags == 11), before, score));
         reject(() => CacheReadBookkeeping.Window(candidate, JsonSerializer.SerializeToElement(new { Diagnostics = new { } }), score));
         CacheReadBookkeeping.ComparisonWindow[] Windows(Func<PerformanceCase, double> rate) =>
             cases.Select(c => new CacheReadBookkeeping.ComparisonWindow(c, c.CopyFlags!.Value, rate(c))).ToArray();
-        double Target(PerformanceCase c, double gain) => CacheReadBookkeeping.IsTarget(c) && c.CopyFlags == 7 ? 36_000 * gain + c.Repeat : 36_000 + c.Repeat;
+        double Target(PerformanceCase c, double gain) => CacheReadBookkeeping.IsTarget(c) && c.CopyFlags == 15 ? 36_000 * gain + c.Repeat : 36_000 + c.Repeat;
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10))).Verdict == "ACCEPT_SCREEN", "a clear Q8 gain passes the screen");
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.01))).Verdict == "REJECT", "a 1% gain rejects");
-        check(CacheReadBookkeeping.Evaluate(Windows(c => c.QueueDepth == 1 && c.CopyFlags == 7 ? 34_000 : Target(c, 1.10))).Verdict ==
+        check(CacheReadBookkeeping.Evaluate(Windows(c => c.QueueDepth == 1 && c.CopyFlags == 15 ? 34_000 : Target(c, 1.10))).Verdict ==
             "CONTROL_LOSS_REVISION_OR_REJECT", "a repeatable control loss blocks acceptance");
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10)).Where(w => w.Case.Repeat < 3).ToArray()).Verdict == "INCOMPLETE_FOR_ACCEPTANCE",
             "two repetitions never pass");
