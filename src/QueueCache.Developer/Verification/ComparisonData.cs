@@ -78,7 +78,8 @@ public static class ComparisonData
     public static bool ChurnIntact(ReadOnlySpan<byte> bytes, ulong nonce, int set, long index) => bytes.SequenceEqual(ChurnFile(nonce, set, index));
 
     /// <summary>What a damaged churn-test file holds: "empty", "short" (fewer bytes than its size), "another file" (a sector
-    /// of another test file: old contents of reused space), "zeros", or "other".</summary>
+    /// of another test file: old contents of reused space), "zeros", or "other". A file Windows cannot read at all is
+    /// counted as "unreadable" by the verify run.</summary>
     public static string ChurnDamage(ReadOnlySpan<byte> bytes, int set, long index)
     {
         if (bytes.Length == 0) return "empty";

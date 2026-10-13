@@ -176,7 +176,9 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
   (30 s or older, 20–30, 10–20, under 10 s), each intact, damaged or missing, and
   `chkdsk /scan`. From plan 123 it also says what damaged files hold: nothing
   (empty), part of their data (short), zeros, another test file's data (old
-  contents of reused space), or other bytes.
+  contents of reused space), or other bytes. From plan 124 a file that Windows
+  cannot read (NTFS reports it corrupted) counts as damaged, "unreadable", and
+  the check continues to `chkdsk`.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 

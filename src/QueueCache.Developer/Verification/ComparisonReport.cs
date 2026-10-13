@@ -61,6 +61,8 @@ public static class ComparisonReport
                 "| Group | Files | Intact | Damaged | Missing | Damaged files hold |\n|---|---:|---:|---:|---:|---|");
             foreach (var g in churn.Groups)
                 md.AppendLine($"| {g.Group} | {g.Expected} | {g.Intact} | {g.Damaged} | {g.Missing} | {string.Join(", ", g.DamagedAs.Select(k => $"{k.Key} {k.Value}"))} |");
+            if (churn.Unreadable.Count > 0)
+                md.AppendLine($"\n{churn.Unreadable.Count} file(s) could not be read: " + string.Join("; ", churn.Unreadable.Take(5)) + (churn.Unreadable.Count > 5 ? "; ..." : ""));
         }
         File.WriteAllText(Path.Combine(directory, "COMPARISON.md"), md.ToString());
     }
