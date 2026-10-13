@@ -26,12 +26,17 @@ feature. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise
 - **Power cuts.** On every product everything that had been flushed survived. The two settings that answer flushes
   from RAM (QueueCache Fast and PrimoCache Defer-Write) lost far more of the newest, unflushed files, and QueueCache
   Fast also left the file system needing a repair ([#13](https://github.com/devedse/QueueCache/issues/13)).
-  PrimoCache's did not.
+  PrimoCache's did not there, because it had written none of the newest work yet. Cut while part of its held work
+  was on the disk, PrimoCache also damaged NTFS in one of five fully checked cuts (NTFS reported a corrupted file in a
+  sixth), and in every cut files came back with wrong contents, often another file's data
+  ([Power cut while the cache is writing](#power-cut-while-the-cache-is-writing)). At that
+  test's pace QueueCache Fast kept up with the disk and lost only the newest seconds, like the disk without a cache.
 
 Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
 [RAM disks: complete comparison](#ram-disks-complete-comparison) ·
 [RAM caches: complete comparison](#ram-caches-complete-comparison) ·
+[Power cut while the cache is writing](#power-cut-while-the-cache-is-writing) ·
 [Results per tool](#results-per-tool) · [Not tested](#not-tested) · [How this was measured](#how-this-was-measured)
 
 ## Problems found
@@ -41,7 +46,7 @@ comparison tables.
 
 - ⚠ **[QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md)**: File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13); Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14); Pending writes reach the disk at about half the disk's speed (105-130 MB/s in 256 KiB pieces), so long writes are slower than without a cache; GitHub issue [#15](https://github.com/devedse/QueueCache/issues/15)
 - ⚠ **[QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md)**: 6 measurement window(s) completed nothing in 10 s (stalled): hot-r1-rnd4k-q1t1-write, hot-r1-rnd4k-q32t1-write, hot-r2-rnd4k-q1t1-write, hot-r3-rnd4k-q1t1-write, hot-r3-rnd4k-q32t1-write, hot-r3-seq1m-q8t1-write; Writes stop completely for 100 seconds or more after a burst of writes: every flush or write-through request from Windows makes all writes wait until everything queued in RAM is on the disk (confirmed with the driver's counters); GitHub issue [#16](https://github.com/devedse/QueueCache/issues/16); Writing and file operations are 5 to 11 times slower than without any cache (creating 40,000 files 213 against 32 s; 8 GiB write 53 against 242 MB/s; write-through 52 against 251 MB/s); Reads of data not yet in the cache are 3 to 6 times slower than without any cache (first read of 1 GiB 187 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14)
-- ⚠ **[PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md)**: All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write
+- ⚠ **[PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md)**: All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write; Power cuts while part of its held writes were on the disk (churn test): in 1 of 5 checked cuts NTFS needed an offline repair (volume bitmap corruption) and in another NTFS reported a file "corrupted and unreadable"; in the others files written 10-20 s earlier came back with zeros or another file's data, and deleted files came back
 
 ## RAM disks: CrystalDiskMark
 
@@ -125,8 +130,41 @@ Cached work first, then what the cache does with data that has to reach the disk
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | 571 / 251 | 12.1 / 4.1 | 560 / 573 | 86.2 / 668.6 | 256 | 2 / 230 | 242.5 / 218.6 | 251 | 0.001 | 100% / 100%, file system clean | 11.0 | 31.9 / 28.3 / 4.9 / 23.9 | None | Measured |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13); Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14); Pending writes reach the disk at about half the disk's speed (105-130 MB/s in 256 KiB pieces), so long writes are slower than without a cache; GitHub issue [#15](https://github.com/devedse/QueueCache/issues/15) | Measured |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | 40,874 / 3,477 | 1,300.3 / 0.0 | 187 / 16,409 | 6.0 / 221.4 | 1,112 | 25 / 41 | 52.9 / 0.0 | 52 | 12.564 | 100% / 100%, file system clean | 4.1 | 212.9 / 129.8 / 4.9 / 263.8 | ⚠ 6 measurement window(s) completed nothing in 10 s (stalled): hot-r1-rnd4k-q1t1-write, hot-r1-rnd4k-q32t1-write, hot-r2-rnd4k-q1t1-write, hot-r3-rnd4k-q1t1-write, hot-r3-rnd4k-q32t1-write, hot-r3-seq1m-q8t1-write; Writes stop completely for 100 seconds or more after a burst of writes: every flush or write-through request from Windows makes all writes wait until everything queued in RAM is on the disk (confirmed with the driver's counters); GitHub issue [#16](https://github.com/devedse/QueueCache/issues/16); Writing and file operations are 5 to 11 times slower than without any cache (creating 40,000 files 213 against 32 s; 8 GiB write 53 against 242 MB/s; write-through 52 against 251 MB/s); Reads of data not yet in the cache are 3 to 6 times slower than without any cache (first read of 1 GiB 187 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14) | Measured |
-| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | 17,172 / 19,036 | 1,020.5 / 522.1 | 512 / 13,883 | 129.9 / 384.0 | 8,444 | 7 / 149 | 486.2 / 374.9 | 19,013 | 0.001 | 100% / 100%, file system clean | 23.7 | 21.4 / 8.4 / 4.9 / 14.9 | ⚠ All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write | Measured |
+| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | 17,172 / 19,036 | 1,020.5 / 522.1 | 512 / 13,883 | 129.9 / 384.0 | 8,444 | 7 / 149 | 486.2 / 374.9 | 19,013 | 0.001 | 100% / 100%, file system clean | 23.7 | 21.4 / 8.4 / 4.9 / 14.9 | ⚠ All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write; Power cuts while part of its held writes were on the disk (churn test): in 1 of 5 checked cuts NTFS needed an offline repair (volume bitmap corruption) and in another NTFS reported a file "corrupted and unreadable"; in the others files written 10-20 s earlier came back with zeros or another file's data, and deleted files came back | Measured |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | 17,253 / 250 | 1,056.1 / 4.1 | 409 / 16,775 | 128.9 / 413.9 | 259 | 2 / 289 | 259.4 / 237.5 | 255 | 0.001 | 100% / 100%, file system clean | 12.7 | 28.1 / 23.1 / 4.9 / 24.2 | None | Measured |
+
+## Power cut while the cache is writing
+
+The power-loss column above cuts the power right after a test, before a delayed-write cache has written anything new,
+so the disk still holds the older, consistent state. This test cuts it while part of the newer work is on the disk and
+part is not (`compare-durability-churn`):
+
+1. 2,000 files are written and given time to reach the disk.
+2. For 40 seconds, 200 new files per second are created without a flush. Every eighth step one of the first 1,000 old
+   files is deleted and, from step 1,000 on, the new file created 1,000 steps earlier, so freed disk space is reused.
+3. The virtual machine is reset about 2 seconds after the last file (or, in the first cuts, the moment the disk below
+   was written afterwards). Each cut starts from the same restored snapshot.
+4. After the restart every file is checked, grouped by its age when the churn ended, and `chkdsk /scan` runs.
+
+**Damaged** means the file exists but holds the wrong contents: zeros, part of its data, or **another file's data**
+(old contents of reused disk space). A deleted file that comes back means its deletion was lost. The disk without a
+cache is the yardstick: Windows itself only loses the newest seconds, and those come back as zeros or missing.
+
+| Product | Cut | Power cut | `chkdsk /scan` | Files 20-30 s old: missing / damaged | 10-20 s old: missing / damaged | Newest 10 s: intact / damaged / missing | Damaged files holding another file's data | Deleted files back (intact / damaged) |
+|---|---|---|---|---:|---:|---:|---:|---:|
+| Q: without a cache task (PrimoCache driver idle) | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1833 / 41 / 0 | 0 | 0 / 0 |
+| Q: without any cache | 2 | during the write-out, 20 s after the churn | clean | 0 / 0 | 0 / 0 | 1830 / 0 / 0 | not classified | 0 / 0 |
+| QueueCache 0.4.604.1 Fast 2 GiB | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1568 / 265 / 42 | 0 | 11 / 0 |
+| QueueCache 0.4.604.1 Fast 2 GiB | 2 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1567 / 266 / 41 | 0 | 11 / 0 |
+| QueueCache 0.4.604.1 Fast 2 GiB | 3 | during the write-out, 5 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
+| QueueCache 0.4.604.1 Fast 2 GiB | 4 | during the write-out, 10 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 316 | 0 / 44 / 1831 | not classified | 304 / 65 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 2 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 49 | 286 / 232 / 1356 | not classified | 265 / 36 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 3 | about 2 s after the churn ended | ⚠ not run: the check stopped, NTFS reported a file "corrupted and unreadable" | - | - | - | - | - |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 4 | about 2 s after the churn ended | ⚠ needs offline repair (exit 13), 26 files unreadable | 369 / 50 | 1751 / 0 | 0 / 0 / 1875 | 152 | 275 / 320 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 5 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 189 | 446 / 309 / 1120 | 144 | 221 / 47 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 6 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 92 | 530 / 232 / 1113 | 88 | 235 / 31 |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 7 | during the write-out, 11 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
 
 ## Results per tool
 
