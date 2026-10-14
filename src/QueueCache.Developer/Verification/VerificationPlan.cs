@@ -44,7 +44,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 137;
+    public const int Version = 138;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -85,6 +85,7 @@ public static class VerificationPlan
         "drain-decision",
         "drain-flush-decision",
         "drain-overlap-decision",
+        "strict-impact-decision",
         "tree-decision",
         "read-tail-decision",
         "volumes",
@@ -511,8 +512,8 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" or "read-tail-decision" or "drain-flush-decision" or "drain-overlap-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
-            throw new ArgumentException("Resident sequential, tree, read-tail, drain-flush, drain-overlap and layout suites require --budget-mib 2048 for their fixed workload size.");
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" or "read-tail-decision" or "drain-flush-decision" or "drain-overlap-decision" or "strict-impact-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+            throw new ArgumentException("Resident sequential, tree, read-tail, drain-flush, drain-overlap, strict-impact and layout suites require --budget-mib 2048 for their fixed workload size.");
         if (options.Suite == "tree-decision" && options.Repeats != 3)
             throw new ArgumentException("tree-decision requires exactly three alternated repetitions.");
         if (options.Suite == "read-tail-decision" &&
@@ -522,6 +523,8 @@ public static class VerificationPlan
             DrainOverlapDecision.ValidateOptions(options);
         if (options.Suite == "drain-flush-decision")
             DrainFlushDecision.ValidateOptions(options);
+        if (options.Suite == "strict-impact-decision")
+            StrictImpactDecision.ValidateOptions(options);
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
         if (options.Suite == "cache-recall" && options.BudgetMiB < 1024)

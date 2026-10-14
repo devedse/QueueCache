@@ -226,6 +226,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var drainDecision = VerificationPlan.DrainDecision(options);
         var drainFlush = DrainFlushDecision.Cases(options);
         var drainOverlap = DrainOverlapDecision.Cases(options);
+        var strictImpact = StrictImpactDecision.Cases(options);
         var treeDecision = VerificationPlan.TreeDecision(options);
         var readTailDecision = ReadTailDecision.Cases(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -234,6 +235,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         expected.AddRange(drainDecision.Select(c => c.Id));
         expected.AddRange(drainFlush.Select(c => c.Id));
         expected.AddRange(drainOverlap.Select(c => c.Id));
+        expected.AddRange(strictImpact.Select(c => c.Id));
         expected.AddRange(treeDecision.Select(c => c.Id));
         expected.AddRange(readTailDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
@@ -255,6 +257,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
         if (drainFlush.Count > 0)
             Log($"Explicit-drain comparison: fixed {DrainFlushDecision.SeedBytes} byte seed; timing diagnostics OFF; worker-ready/start handshake; timestamped Flush call; three alternated pairs.");
+        if (strictImpact.Count > 0)
+            Log($"Strict-impact matrix: {StrictImpactDecision.RequiredCases} cases; 512 MiB deterministic seeds in a prepared 4 GiB file; timing diagnostics OFF; age-only Deferred scheduling; ready/start worker times each durability boundary.");
         if (drainOverlap.Count > 0)
             Log($"Drain-overlap score: {options.DurationSeconds}s; default Idle triggers; timing diagnostics OFF; 75% dirty seed; at least 1 MiB verified foreground/drain progress in shared telemetry intervals.");
         if (readTailDecision.Count > 0)
@@ -272,6 +276,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             DrainFlushSeedBytes = drainFlush.Count == 0 ? (int?)null : DrainFlushDecision.SeedBytes,
             DrainOverlapDecisionCases = drainOverlap,
             DrainOverlapSeedBytes = drainOverlap.Count == 0 ? (int?)null : DrainOverlapDecision.SeedBytes(options.BudgetMiB),
+            StrictImpactDecisionCases = strictImpact,
+            StrictImpactSeedBytes = strictImpact.Count == 0 ? (int?)null : StrictImpactDecision.SeedPayloadBytes,
+            StrictImpactPreparedFileBytes = strictImpact.Count == 0 ? (long?)null : StrictImpactDecision.PreparedFileBytes,
             TreeDecisionCases = treeDecision,
             ReadTailDecisionCases = readTailDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
@@ -585,19 +592,26 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 deadline.Token.ThrowIfCancellationRequested();
                 await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
             }
-            if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || drainOverlap.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
+            if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || drainOverlap.Count > 0 || strictImpact.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 var preparing = Stopwatch.StartNew();
                 try
                 {
-                    await Worker(Job("prepare") with
+                    if (strictImpact.Count > 0)
                     {
-                        WorkDirectory = workDirectory,
-                        BudgetMiB = options.BudgetMiB,
-                        Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity" ? 3UL : 1UL,
-                        DrainSeedBytes = drainOverlap.Count == 0 ? null : DrainOverlapDecision.SeedBytes(options.BudgetMiB)
-                    }, deadline.Token, 900);
+                        await Worker(Job("prepare-strict-impact") with { WorkDirectory = workDirectory }, deadline.Token, 900);
+                    }
+                    else
+                    {
+                        await Worker(Job("prepare") with
+                        {
+                            WorkDirectory = workDirectory,
+                            BudgetMiB = options.BudgetMiB,
+                            Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity" ? 3UL : 1UL,
+                            DrainSeedBytes = drainOverlap.Count == 0 ? null : DrainOverlapDecision.SeedBytes(options.BudgetMiB)
+                        }, deadline.Token, 900);
+                    }
                 }
                 finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }
                 foreach (var scenario in readTailDecision)
@@ -640,6 +654,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => MeasureDrainOverlap(scenario, deadline.Token));
+                }
+                foreach (var scenario in strictImpact)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureStrictImpact(scenario, deadline.Token));
                 }
             }
         }
@@ -743,8 +762,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 Log("Workload folders were kept, removal failed (the results are unaffected): " + ex.Message);
             }
         }
-        var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
-            token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         if (complete && performance.Count > 0)
         {
             static double Median(IEnumerable<double> values)
@@ -826,6 +843,25 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             storage.Write("drain-flush-aggregates.json", summary);
             File.WriteAllText(storage.PathFor("drain-flush-summary.md"), DrainFlushDecision.RenderSummary(summary));
         }
+        if (complete && strictImpact.Count > 0)
+        {
+            try
+            {
+                var evidence = strictImpact.Select(test => StrictImpactDecision.ParseEvidence(
+                    File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))).ToArray();
+                var summary = StrictImpactDecision.BuildSummary(evidence);
+                storage.Write("strict-impact-aggregates.json", summary);
+                File.WriteAllText(storage.PathFor("strict-impact-summary.md"), StrictImpactDecision.RenderSummary(summary));
+            }
+            catch (Exception ex)
+            {
+                complete = false;
+                failure = "Strict-impact final evidence/aggregate validation failed; no complete matrix report was emitted.\n" + ex;
+                Log("ERROR: " + failure);
+            }
+        }
+        var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
+            token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         storage.Write("status.json", new
         {
             Status = status,
@@ -850,6 +886,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             report.AppendLine("\nComplete drain-overlap matrix: `drain-overlap-summary.md` and `drain-overlap-aggregates.json`. The comparison is collection-only; use the paired raw evidence to judge the result.\n");
         if (complete && drainFlush.Count > 0)
             report.AppendLine("\nComplete explicit-drain matrix: `drain-flush-summary.md` and `drain-flush-aggregates.json`. Timing starts at the recorded Flush call, not worker launch.\n");
+        if (complete && strictImpact.Count > 0)
+            report.AppendLine("\nComplete Strict-impact matrix: `strict-impact-summary.md` and `strict-impact-aggregates.json`. Boundary timings and state/counter deltas are diagnostic only.\n");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
         var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs,WriteP99Ms,MBPerSecond\n");
         foreach (var r in storage.Results)
@@ -1614,6 +1652,119 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             if (!released) workerCancellation.Cancel();
             try { await workerTask; }
             catch (Exception) { /* original case failure retained */ }
+        }
+    }
+
+    private async Task<DiskSpdScore?> MeasureStrictImpact(StrictImpactCase scenario, CancellationToken token)
+    {
+        StrictImpactDecision.ValidateCase(scenario);
+        await Control(WriteCacheAction.LabDelay, token);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+
+        var configuration = StrictImpactDecision.Configuration(scenario);
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var configuredPath = await Worker(Job("snapshot"), token, 120);
+        var configured = JsonSerializer.Deserialize<StrictImpactSnapshot>(
+            await File.ReadAllTextAsync(configuredPath, token))
+            ?? throw new InvalidDataException("Missing Strict-impact configured snapshot.");
+        StrictImpactDecision.ValidateSnapshot(configured, scenario,
+            original.State.Instance, original.State.Errors);
+        if (configured.State.DirtyBytes != 0 || configured.State.InFlightBytes != 0)
+            throw new InvalidDataException("Strict-impact case did not begin with a clean cache.");
+
+        var seedPath = await Worker(Job("strict-impact-seed") with
+        {
+            WorkDirectory = workDirectory,
+            StrictImpactCase = scenario
+        }, token, StrictImpactDecision.WorkerTimeoutSeconds);
+        var seed = JsonSerializer.Deserialize<StrictImpactSeedResult>(
+            await File.ReadAllTextAsync(seedPath, token))
+            ?? throw new InvalidDataException("Missing Strict-impact seed snapshots.");
+        StrictImpactDecision.ValidateSeed(seed, original.State.Instance, original.State.Errors);
+
+        var workerId = scenario.Id + "-boundary-worker";
+        var readyPath = storage.PathFor(scenario.Id + ".boundary-ready.json");
+        var startPath = storage.PathFor(scenario.Id + ".boundary-start");
+        var processPath = storage.PathFor(workerId + ".process.json");
+        using var workerCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var workerTask = Worker(Job("strict-impact-boundary") with
+        {
+            WorkDirectory = workDirectory,
+            StrictImpactCase = scenario,
+            ReadyFile = readyPath,
+            StartFile = startPath,
+            ProcessEvidence = processPath
+        }, workerCancellation.Token, StrictImpactDecision.WorkerTimeoutSeconds);
+        var released = false;
+        try
+        {
+            await TelemetryCoverage.WaitReadyAsync(readyPath, workerTask, TimeSpan.FromSeconds(45), token);
+            using var readyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(readyPath, token));
+            var readyUtc = readyDocument.RootElement.GetProperty("At").GetDateTimeOffset();
+            var releaseUtc = DateTimeOffset.UtcNow;
+            File.WriteAllText(startPath, "start");
+            released = true;
+            var controlPath = await workerTask;
+            var control = JsonSerializer.Deserialize<StrictImpactBoundaryControlResult>(
+                await File.ReadAllTextAsync(controlPath, token))
+                ?? throw new InvalidDataException("Missing Strict-impact boundary snapshots and monotonic timing.");
+            var process = JsonSerializer.Deserialize<ProcessIdentity>(
+                await File.ReadAllTextAsync(processPath, token))
+                ?? throw new InvalidDataException("Missing owned Strict-impact boundary worker identity.");
+
+            // Evict retained clean writes while Strict stays enabled. The following unbuffered oracle
+            // must then read the persisted data from the lower device rather than the RAM cache.
+            await Control(WriteCacheAction.DropClean, token);
+            var beforeOraclePath = await Worker(Job("snapshot"), token, 120);
+            var beforeOracle = JsonSerializer.Deserialize<StrictImpactSnapshot>(
+                await File.ReadAllTextAsync(beforeOraclePath, token))
+                ?? throw new InvalidDataException("Missing pre-oracle Strict-impact snapshot after clean-entry eviction.");
+            StrictImpactDecision.ValidateSnapshot(beforeOracle, scenario,
+                original.State.Instance, original.State.Errors);
+            if (beforeOracle.State.DirtyBytes != 0 || beforeOracle.State.InFlightBytes != 0)
+                throw new InvalidDataException("Strict-impact clean-entry eviction did not leave a clean cache before the unbuffered oracle.");
+            var oraclePath = await Worker(Job("strict-impact-verify") with
+            {
+                WorkDirectory = workDirectory,
+                StrictImpactCase = scenario
+            }, token, StrictImpactDecision.WorkerTimeoutSeconds);
+            var oracle = JsonSerializer.Deserialize<StrictImpactOracleResult>(
+                await File.ReadAllTextAsync(oraclePath, token))
+                ?? throw new InvalidDataException("Missing Strict-impact unbuffered byte-oracle result.");
+            var afterOraclePath = await Worker(Job("snapshot"), token, 120);
+            var afterOracle = JsonSerializer.Deserialize<StrictImpactSnapshot>(
+                await File.ReadAllTextAsync(afterOraclePath, token))
+                ?? throw new InvalidDataException("Missing post-oracle Strict-impact cache snapshot.");
+            StrictImpactDecision.ValidateSnapshot(afterOracle, scenario,
+                original.State.Instance, original.State.Errors);
+            if (afterOracle.State.DirtyBytes != 0 || afterOracle.State.InFlightBytes != 0)
+                throw new InvalidDataException("Strict-impact unbuffered oracle did not leave a clean cache before case cleanup.");
+            var metrics = StrictImpactDecision.Metrics(seed, control, beforeOracle, afterOracle);
+            var evidence = new StrictImpactEvidence(scenario, seed, process, readyUtc,
+                releaseUtc, control, beforeOracle, afterOracle, oracle, metrics, processPath, seedPath);
+            _ = StrictImpactDecision.ValidateEvidence(evidence,
+                original.State.Instance, original.State.Errors);
+            storage.Write(scenario.Id + "-configured.json", configured);
+            storage.Write(scenario.Id + "-evidence.json", evidence);
+            storage.Write(scenario.Id + "-oracle.json", oracle);
+            storage.Write(scenario.Id + "-before-oracle.json", beforeOracle);
+            storage.Write(scenario.Id + "-after-oracle.json", afterOracle);
+            var overwrite = scenario.Boundary == StrictImpactDecision.WriteThrough
+                ? "newest 1 MiB overwrite and all 512 seeded blocks verified unbuffered"
+                : "all 512 seeded blocks verified unbuffered";
+            caseChecks = [new("Strict durability boundary and persisted-byte oracle", "PASS",
+                $"{scenario.Boundary} took {metrics.BoundaryMilliseconds:F1} ms; drained {metrics.Boundary.DrainedBytes / (double)(1 << 20):F1} MiB in {metrics.Boundary.DrainBatches} batches; {overwrite}.")];
+            return null;
+        }
+        finally
+        {
+            if (!released) workerCancellation.Cancel();
+            try { await workerTask; }
+            catch (Exception) { /* retain the primary case failure and raw worker evidence */ }
         }
     }
 

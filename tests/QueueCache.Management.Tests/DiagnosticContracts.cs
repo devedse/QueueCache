@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 137, "plan 137 versions copy-flag recovery, file-tree, read-tail and timed drain measurement contracts");
+        Check(VerificationPlan.Version == 138, "plan 138 versions copy-flag recovery, file-tree, read-tail, timed drain and Strict-impact measurement contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -36,6 +36,7 @@ internal static class DiagnosticContracts
         RunReadTailDecisionContracts(Check, Reject);
         RunDrainFlushContracts(Check, Reject);
         RunDrainOverlapContracts(Check, Reject);
+        RunStrictImpactContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -755,6 +756,253 @@ internal static class DiagnosticContracts
         reject(() => DrainFlushDecision.BuildSummary(verified.Select((row, index) => index == 0
             ? row with { SeedVerified = false } : row).ToArray()));
         Console.WriteLine("Explicit-drain plan, ready/start handshake timestamps, timing-off counters and full-matrix contracts passed (no driver access).");
+    }
+
+    private static void RunStrictImpactContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        static void RejectArgument(Action action)
+        {
+            try { action(); } catch (ArgumentException) { return; }
+            throw new Exception("Expected strict-impact option rejection.");
+        }
+
+        var options = new VerificationOptions("Q:", "strict-impact-decision", BudgetMiB: 2048, Repeats: 3);
+        VerificationPlan.Validate(options);
+        StrictImpactDecision.ValidateOptions(options);
+        var cases = StrictImpactDecision.Cases(options);
+        check(cases.Count == 24 && cases.Select(test => test.Id).Distinct(StringComparer.Ordinal).Count() == 24 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 8 &&
+                group.Select(test => test.Position).SequenceEqual(Enumerable.Range(1, 8))) &&
+            cases.GroupBy(test => (test.BatchKiB, test.Parallelism, test.SeedShape, test.Boundary)).Count() == 8 &&
+            cases.GroupBy(test => (test.BatchKiB, test.Parallelism, test.SeedShape, test.Boundary)).All(group => group.Count() == 3),
+            "Strict-impact freezes 24 unique cases across two drain settings, two seed shapes, two boundaries and three repetitions");
+        check(cases[0].Id == "strict-impact-r01-p01-b256-p2-sequential-application-flush" &&
+            cases[8].Id == "strict-impact-r02-p01-b1024-p4-sequential-write-through" &&
+            cases[16].Id == "strict-impact-r03-p01-b256-p2-scattered-write-through" &&
+            cases[0] != cases[8] && cases[8] != cases[16],
+            "immutable case IDs expose the rotated eight-case order each repetition");
+        var sequential = cases.First(test => test.Repeat == 1 && test.SeedShape == StrictImpactDecision.Sequential);
+        var scattered = cases.First(test => test.Repeat == 1 && test.SeedShape == StrictImpactDecision.Scattered);
+        check(StrictImpactDecision.SeedOffset(sequential, 0) == 0 &&
+            StrictImpactDecision.SeedOffset(sequential, 511) == (511L << 20) &&
+            StrictImpactDecision.SeedOffset(scattered, 0) == (7L << 20) &&
+            StrictImpactDecision.SeedOffset(scattered, 511) == (4095L << 20) &&
+            Enumerable.Range(1, 511).All(index => StrictImpactDecision.SeedOffset(scattered, index) -
+                StrictImpactDecision.SeedOffset(scattered, index - 1) == (8L << 20)),
+            "scattered one-MiB seed blocks span the prepared 4 GiB file at fixed eight-MiB spacing");
+        check(StrictImpactDecision.SeedBlock(sequential, 17).SequenceEqual(StrictImpactDecision.SeedBlock(sequential, 17)) &&
+            StrictImpactDecision.SeedBlock(sequential, 17).Length == StrictImpactDecision.SeedBlockBytes &&
+            StrictImpactDecision.SeedPayloadBytes == 512 << 20 && StrictImpactDecision.PreparedFileBytes == 4L << 30,
+            "seed payload is deterministic, exactly 512 MiB and bounded by one prepared 4 GiB file");
+        var throughCase = cases.First(test => test.Boundary == StrictImpactDecision.WriteThrough);
+        var oldBlock = StrictImpactDecision.SeedBlock(throughCase, 0);
+        var newestBlock = StrictImpactDecision.NewestBlock(throughCase, 0);
+        check(oldBlock.AsSpan(StrictImpactDecision.OverwriteBytes).SequenceEqual(newestBlock.AsSpan(StrictImpactDecision.OverwriteBytes)) &&
+            newestBlock.All(value => value == 0xA7) &&
+            StrictImpactDecision.WriteThroughPayload().Length == StrictImpactDecision.OverwriteBytes,
+            "write-through oracle replaces one complete seeded one-MiB block");
+        check(cases.All(test => StrictImpactDecision.Options(test) is
+                { Allocation: CacheAllocation.Automatic, WritePercent: 100, RetainWrites: true,
+                  PromoteOnRead: true, Drain: DrainAlgorithm.Deferred,
+                  LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 3_600_000, IdleMs: 60_000 }) &&
+            cases.All(test => StrictImpactDecision.Configuration(test).Preset == CachePreset.Strict &&
+                StrictImpactDecision.Configuration(test).Options.BatchKiB == test.BatchKiB &&
+                StrictImpactDecision.Configuration(test).Options.Parallelism == test.Parallelism),
+            "Strict mode and every non-comparison policy stay fixed while only batch and parallelism vary");
+        RejectArgument(() => VerificationPlan.Validate(options with { Repeats = 2 }));
+        RejectArgument(() => VerificationPlan.Validate(options with { BudgetMiB = 1024 }));
+        RejectArgument(() => VerificationPlan.Validate(options with { DiskSpd = Environment.ProcessPath }));
+        RejectArgument(() => VerificationPlan.Validate(options with { CaseFilter = "strict-impact-r01" }));
+        RejectArgument(() => VerificationPlan.Validate(options with { SoakSeconds = 60 }));
+
+        const ulong instance = 138, errors = 0, seedBytes = 512UL << 20;
+        const ulong baselineAccepted = 10_000, baselineDrained = 2_000;
+        const uint strictFlags = 1U | 256U | 512U | 4096U;
+        CacheOptions Policy(StrictImpactCase test) => StrictImpactDecision.Options(test);
+        WriteCacheState State(StrictImpactCase test, ulong accepted, ulong drained, ulong dirty,
+            ulong lowerWrites, ulong flushes, ulong readHits = 0, ulong readMisses = 0) => new(strictFlags, 0, 8UL << 30, 2UL << 30,
+                2UL << 30, dirty, 0, 2UL << 30, dirty / 4096, accepted, drained,
+                0, 0, errors, flushes, dirty)
+            {
+                Options = Policy(test), Instance = instance, Generation = 12,
+                ReadHitBytes = readHits, ReadMissBytes = readMisses
+            };
+        CachePerformance Performance(ulong timing = 0, ulong batches = 0,
+            ulong drainBytes = 0, ulong lowerIoTicks = 0) => new(1_000_000, timing,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                batches, drainBytes, 0, lowerIoTicks);
+        CacheAttribution Attribution(ulong reads, ulong writes, ulong flushes,
+            ulong applicationBarriers, ulong strictBarriers) => new(reads, writes, flushes,
+                0, strictBarriers, 0, 0, applicationBarriers, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheDiagnostics Diagnostics(StrictImpactCase test, ulong applicationFlushes,
+            ulong writeThroughWrites, ulong applicationBarriers, ulong strictBarriers,
+            ulong lowerReads, ulong lowerWrites, ulong lowerFlushes) => new(applicationFlushes, 0,
+                writeThroughWrites, 0, 0, 0, 0, 0, 0)
+            {
+                Attribution = Attribution(lowerReads, lowerWrites, lowerFlushes, applicationBarriers, strictBarriers)
+            };
+        StrictImpactSnapshot Snapshot(StrictImpactCase test, ulong accepted, ulong drained,
+            ulong dirty, ulong lowerWrites, ulong flushes, ulong batches, ulong drainBytes,
+            ulong applicationFlushes, ulong writeThroughWrites, ulong applicationBarriers,
+            ulong strictBarriers, ulong lowerWriteAttempts, ulong lowerFlushAttempts,
+            ulong lowerReadAttempts = 0, ulong readHits = 0, ulong readMisses = 0) => new(
+                State(test, accepted, drained, dirty, lowerWrites, flushes, readHits, readMisses),
+                Performance(0, batches, drainBytes, drainBytes == 0 ? 0UL : 100UL),
+                Diagnostics(test, applicationFlushes, writeThroughWrites,
+                    applicationBarriers, strictBarriers, lowerReadAttempts, lowerWriteAttempts, lowerFlushAttempts));
+
+        var epoch = new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero);
+        var evidence = new List<StrictImpactEvidence>();
+        foreach (var test in cases)
+        {
+            var seedBefore = Snapshot(test, baselineAccepted, baselineDrained, 0, 0, 0,
+                3, 4096, 5, 7, 11, 13, 17, 19);
+            var seedAfter = Snapshot(test, baselineAccepted + seedBytes, baselineDrained, seedBytes,
+                0, 0, 3, 4096, 5, 7, 11, 13, 17, 19);
+            var seed = new StrictImpactSeedResult(test, StrictImpactDecision.PreparedFileBytes,
+                StrictImpactDecision.SeedPayloadBytes, 5000, 1_000_000, seedBefore, seedAfter);
+            StrictImpactDecision.ValidateSeed(seed, instance, errors);
+
+            var controlBefore = seedAfter;
+            var isFlush = test.Boundary == StrictImpactDecision.ApplicationFlush;
+            var controlAfter = Snapshot(test, baselineAccepted + seedBytes,
+                baselineDrained + seedBytes, 0, 100, 1, 3 + 512, 4096 + seedBytes,
+                isFlush ? 6UL : 5UL, isFlush ? 7UL : 8UL,
+                isFlush ? 12UL : 11UL, isFlush ? 13UL : 14UL, 117, 20);
+            var control = new StrictImpactBoundaryControlResult(test.Boundary,
+                isFlush ? -1 : StrictImpactDecision.SeedOffset(test, 0),
+                epoch.AddSeconds(3), epoch.AddSeconds(3.001), 350, 1_000_000,
+                controlBefore, controlAfter);
+            var oracle = new StrictImpactOracleResult(StrictImpactDecision.PreparedFileBytes,
+                StrictImpactDecision.SeedBlockCount, StrictImpactDecision.SeedPayloadBytes,
+                new string('A', 64), new string('A', 64), isFlush ? null : true);
+            var oracleBefore = controlAfter with
+            {
+                State = controlAfter.State with { ReadHitBytes = 40, ReadMissBytes = 50 },
+                Diagnostics = controlAfter.Diagnostics with
+                {
+                    Attribution = controlAfter.Diagnostics.Attribution! with { LowerReadAttempts = 17 }
+                }
+            };
+            var oracleAfter = oracleBefore with
+            {
+                State = oracleBefore.State with { ReadHitBytes = 40, ReadMissBytes = 50 + seedBytes },
+                Diagnostics = oracleBefore.Diagnostics with
+                {
+                    Attribution = oracleBefore.Diagnostics.Attribution! with
+                        { LowerReadAttempts = 17 + StrictImpactDecision.SeedBlockCount }
+                }
+            };
+            var process = new ProcessIdentity(500 + test.Repeat,
+                DateTime.SpecifyKind(epoch.AddSeconds(1).UtcDateTime, DateTimeKind.Utc));
+            var metrics = StrictImpactDecision.Metrics(seed, control, oracleBefore, oracleAfter);
+            var row = new StrictImpactEvidence(test, seed, process, epoch.AddSeconds(2),
+                epoch.AddSeconds(2.5), control, oracleBefore, oracleAfter, oracle, metrics,
+                "worker.process.json", "worker.seed.json");
+            check(StrictImpactDecision.ValidateEvidence(row, instance, errors) == metrics,
+                "Strict-impact seed and boundary evidence validates its barrier-specific counter deltas: " + test.Id);
+            evidence.Add(row);
+        }
+
+        var first = evidence[0];
+        reject(() => StrictImpactDecision.ValidateEvidence(first, 0, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+            { ReleaseUtc = first.WorkerReadyUtc.AddTicks(-1) }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateSeed(first.Seed with { PayloadBytes = 256 << 20 }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateSeed(first.Seed with
+        {
+            After = first.Seed.After with { Performance = first.Seed.After.Performance with { TimingEnabled = 1 } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateSeed(first.Seed with
+        {
+            After = first.Seed.After with { State = first.Seed.After.State with { Flags = strictFlags | 32U } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            Control = first.Control with { After = first.Control.After with
+                { State = first.Control.After.State with { DirtyBytes = 4096 } } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            Control = first.Control with { After = first.Control.After with
+                { Diagnostics = first.Control.After.Diagnostics with
+                    { Attribution = first.Control.After.Diagnostics.Attribution! with { ApplicationBarriers = 11 } } } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            Control = first.Control with { After = first.Control.After with
+                { State = first.Control.After.State with { Flushes = first.Control.Before.State.Flushes } } }
+        }, instance, errors));
+        var noLowerReads = first.BeforeOracle with
+        {
+            Diagnostics = first.BeforeOracle.Diagnostics with
+            {
+                Attribution = first.BeforeOracle.Diagnostics.Attribution! with
+                    { LowerReadAttempts = first.AfterOracle.Diagnostics.Attribution!.LowerReadAttempts }
+            }
+        };
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            BeforeOracle = noLowerReads,
+            Metrics = StrictImpactDecision.Metrics(first.Seed, first.Control, noLowerReads, first.AfterOracle)
+        }, instance, errors));
+        var retainedCacheHit = first.AfterOracle with
+        {
+            State = first.AfterOracle.State with { ReadHitBytes = first.AfterOracle.State.ReadHitBytes + 4096 }
+        };
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            AfterOracle = retainedCacheHit,
+            Metrics = StrictImpactDecision.Metrics(first.Seed, first.Control,
+                first.BeforeOracle, retainedCacheHit)
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            Oracle = first.Oracle with { BytesChecked = first.Oracle.BytesChecked - 4096 }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            AfterOracle = first.Control.After with
+                { State = first.Control.After.State with { DirtyBytes = 4096 } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateEvidence(first with
+        {
+            AfterOracle = first.Control.After with
+                { State = first.Control.After.State with { AcceptedBytes = first.Control.After.State.AcceptedBytes + 1 } }
+        }, instance, errors));
+        reject(() => StrictImpactDecision.ValidateOracle(first.Case,
+            first.Oracle with { ActualSha256 = new string('B', 64) }));
+        reject(() => StrictImpactDecision.ValidateOracle(first.Case,
+            first.Oracle with { OverwrittenBlockVerified = first.Case.Boundary == StrictImpactDecision.WriteThrough ? false : true }));
+
+        var complete = StrictImpactDecision.BuildSummary(evidence);
+        check(complete.PlanVersion == 138 && complete.CaseCount == 24 && complete.Rows.Count == 8 &&
+            complete.Rows.All(row => row.Samples == 3) &&
+            StrictImpactDecision.RenderSummary(complete).Contains("Collection only", StringComparison.Ordinal) &&
+            StrictImpactDecision.RenderSummary(complete).Contains("512 MiB", StringComparison.Ordinal),
+            "Strict-impact aggregate requires and reports all eight three-sample arms as diagnostic evidence");
+        reject(() => StrictImpactDecision.BuildSummary(evidence[..^1]));
+        reject(() => StrictImpactDecision.BuildSummary(evidence.Select((row, index) => index == 0
+            ? row with { Case = evidence[1].Case } : row).ToArray()));
+
+        var serialized = JsonSerializer.Serialize(first);
+        check(StrictImpactDecision.ParseEvidence(serialized).Case == first.Case,
+            "Strict-impact persisted evidence parses and revalidates against its raw snapshots");
+        var missingRoot = JsonNode.Parse(serialized)!.AsObject();
+        missingRoot.Remove("Metrics");
+        reject(() => StrictImpactDecision.ParseEvidence(missingRoot.ToJsonString()));
+        var missingNested = JsonNode.Parse(serialized)!.AsObject();
+        missingNested["Control"]!.AsObject().Remove("Before");
+        reject(() => StrictImpactDecision.ParseEvidence(missingNested.ToJsonString()));
+        var missingOracleReadHit = JsonNode.Parse(serialized)!.AsObject();
+        missingOracleReadHit["BeforeOracle"]!["State"]!.AsObject().Remove("ReadHitBytes");
+        reject(() => StrictImpactDecision.ParseEvidence(missingOracleReadHit.ToJsonString()));
+        var missingOracleReadMiss = JsonNode.Parse(serialized)!.AsObject();
+        missingOracleReadMiss["AfterOracle"]!["State"]!.AsObject().Remove("ReadMissBytes");
+        reject(() => StrictImpactDecision.ParseEvidence(missingOracleReadMiss.ToJsonString()));
+        check(StrictImpactDecision.Cases(options with { Suite = "quick" }).Count == 0,
+            "the opt-in Strict-impact diagnostic does not add cases to unrelated suites");
+        Console.WriteLine("Strict-impact matrix, policy, timing, barrier attribution, parser, oracle and full-matrix contracts passed (no driver access).");
     }
 
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>

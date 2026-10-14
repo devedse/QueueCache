@@ -214,9 +214,15 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   background comparison. The latter counts foreground I/O and driver drain
   progress only within telemetry intervals no longer than 500 ms, reports the
   maximum credited interval, then proves that default Idle draining persisted
-  the seed before explicit cleanup. Both new suites have
-  host contracts but have not yet run on the VM; the Strict check also remains
-  open.
+  the seed before explicit cleanup. Plan 138 adds `strict-impact-decision`: a
+  24-case timing-off Strict comparison of 256 KiB × 2 and 1024 KiB × 4 across
+  sequential/scattered 512 MiB seeds and application Flush/write-through
+  boundaries. It captures state, performance and barrier-counter deltas,
+  requires both intended barrier and successful Flush counters, drops clean
+  entries, then proves the oracle reached the lower device with at least 512
+  read attempts and zero QueueCache read-hit bytes. The Plan 137 and 138 suites
+  have host contracts but have not run on the VM; this diagnostic does not
+  change Strict behavior or defaults.
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
   fix build. Existing 0.4.604.1 and competitor results remain historical and do
   not establish the newer build's crash behavior.

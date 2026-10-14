@@ -126,6 +126,7 @@ ones in use:
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
 | `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
+| `strict-impact-decision` | Strict-mode application Flush and write-through boundaries after sequential and scattered 512 MiB dirty seeds; 256 KiB × 2 and 1024 KiB × 4, three rotated repetitions (24 cases) | Timing OFF; age-only Deferred scheduling prevents incidental Idle drains; scattered 1 MiB blocks span a prepared 4 GiB file; requires the intended barrier and successful Flush counters, drops clean entries before the oracle, then requires at least 512 lower-read attempts and zero QueueCache read-hit bytes; collection only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -298,6 +299,49 @@ Both reports are collection-only. Read `drain-flush-summary.md` and
 `drain-overlap-summary.md` only after their respective complete matrices, and
 compare paired cases plus raw worker, telemetry and byte-oracle evidence. The
 general `SUMMARY.md` links to an aggregate only for a complete matrix.
+
+Plan 138 adds `strict-impact-decision` to characterize the open Strict durability
+barrier cost without changing driver behavior or defaults. It compares 256 KiB ×
+2 with 1024 KiB × 4 across sequential/scattered seeds and application Flush/write-
+through boundaries, with three rotated repetitions (24 cases). Each case seeds
+exactly 512 MiB as 512 deterministic 1 MiB blocks. Scattered blocks are placed
+every 8 MiB from 7 MiB through the end of a fully prepared 4 GiB file, so the
+seed spans the file rather than merely changing submission order. All other
+settings are held fixed in Strict mode. The age-only Deferred scheduler with a
+one-hour dirty age suppresses incidental idle drains in every arm; explicit
+durability barriers still drain normally. Driver timing diagnostics remain OFF.
+
+The owned boundary worker opens the file and captures its baseline before the
+ready/start gate, then uses Stopwatch around the actual application Flush or a
+write-through overwrite of one complete seeded 1 MiB block. The runner requires
+the matching ApplicationBarriers or StrictWriteBarriers counter and the
+successful Flush counter to advance, and the cache to be clean. It then drops
+clean entries while Strict mode remains enabled, snapshots the cache, and runs
+the unbuffered oracle. The oracle must account for at least 512 lower-read
+attempts with no QueueCache read-hit bytes, so retained clean writes cannot
+silently satisfy the byte check from RAM. It checks the newest overwritten
+block plus all other seeded blocks; disabling or cleanup cannot make a failed
+boundary pass. State, performance and diagnostic snapshots and their deltas are
+retained for seed admission, the boundary and the oracle. The suite accepts no
+case filter and reports collection only, not a speed verdict or Strict-mode
+recommendation.
+
+The suite writes 4 GiB once during preparation, then performs 12 GiB of total
+seed writes and 12 GiB of unbuffered oracle reads across its 24 cases. It needs
+at least 5 GiB free on a clean non-OS target. Seed, boundary and oracle workers
+have 600-second limits; the overall run has no deadline unless
+`--deadline-minutes` is supplied. Existing Strict measurements include a 12.6 s
+flush of 512 MiB and random-write drain rates near 10 MiB/s, so allow for a long
+run and preserve incomplete evidence rather than aggregating partial cases.
+
+```powershell
+qcache developer verify Q: --suite strict-impact-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 600 --output C:\QCResults\strict-impact-decision
+```
+
+The complete report is `strict-impact-summary.md`; per-case raw snapshots,
+derived deltas, worker identity and oracle evidence are retained in the run
+folder. Inspect all 24 paired samples. No VM results are implied by adding the
+suite or passing its host contracts.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a
