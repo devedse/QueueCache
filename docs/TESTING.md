@@ -125,7 +125,7 @@ ones in use:
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
-| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; 200 ms telemetry requires at least 1 MiB of foreground I/O and background drain progress co-observed in shared intervals (the ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
+| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -269,7 +269,7 @@ This suite records evidence and does not declare a latency SLA or performance
 win. Compare each paired repetition and inspect its full samples and cache
 counters; do not infer threshold counts from percentiles.
 
-Plan 136 separates explicit-flush duration from foreground interference. First,
+Plan 137 separates explicit-flush duration from foreground interference. First,
 `drain-flush-decision` compares the former 256 KiB × 2 setting with 1024 KiB × 4
 for a deterministic 512 MiB dirty seed. An owned worker is ready before the
 coordinator releases it, and duration starts immediately before the driver's
@@ -282,9 +282,10 @@ qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repe
 
 Then `drain-overlap-decision` measures foreground random writes and cold random
 reads while the default Idle policy drains. It seeds 75% of the 2 GiB Fast
-cache, waits for real drain progress, and requires 200 ms telemetry to show at
-least 1 MiB of foreground and drain progress co-observed in the same intervals;
-the order within an interval is unresolved. It records a clean Idle snapshot
+cache, waits for real drain progress, and requires at least 1 MiB of foreground
+and drain progress co-observed within credited telemetry intervals no longer
+than 500 ms. It reports the maximum credited interval; ordering within an
+interval remains unresolved. It records a clean Idle snapshot
 before disabling the cache, then checks the seed with unbuffered reads without
 an explicit Flush between those steps. All 12 cases use the same DiskSpd binary,
 whose hash is recorded:

@@ -11,7 +11,7 @@ public sealed record DrainOverlapMetrics(int SharedTelemetryIntervals, ulong For
     ulong DrainedBytesDuringForeground, ulong LowerWriteAttemptsDuringOverlap,
     ulong DrainBatchesDuringForeground, ulong DriverDrainBytesDuringForeground,
     ulong CapacityWaits, ulong TotalDrainedBytes, ulong RemainingDirtyBytes,
-    double BackgroundDrainCompletionSeconds);
+    double MaximumSharedIntervalMilliseconds, double BackgroundDrainCompletionSeconds);
 
 public sealed record DrainOverlapEvidence(DrainOverlapCase Case, DrainSeedResult Seed,
     bool SeedVerified, CacheLayoutSnapshot IdleCompletion, ProcessIdentity WorkloadProcess,
@@ -24,7 +24,8 @@ public sealed record DrainOverlapSummaryRow(string Workload, int BatchKiB, int P
     int Samples, double IopsMedian, double IopsMin, double IopsMax,
     double P99MillisecondsMedian, double ForegroundMiBDuringDrainMedian,
     double DrainedMiBDuringForegroundMedian, double CapacityWaitsMedian,
-    double DrainBatchBytesMedian, double BackgroundDrainCompletionSecondsMedian,
+    double DrainBatchBytesMedian, double MaximumSharedIntervalMilliseconds,
+    double BackgroundDrainCompletionSecondsMedian,
     IReadOnlyList<string> CaseIds);
 
 public sealed record DrainOverlapSummary(int PlanVersion, int CaseCount,
@@ -37,6 +38,7 @@ public static class DrainOverlapDecision
     public const int RequiredBudgetMiB = 2048;
     public const int SeedPercentOfBudget = 75;
     public const int MinimumConcurrentMiB = 1;
+    public const int MaximumSharedIntervalMilliseconds = 500;
     public const int SeedPreparationTimeoutSeconds = 600;
     public const int DrainStartDeadlineSeconds = 30;
     public const int CompletionAllowanceSeconds = 300;
@@ -94,7 +96,7 @@ public static class DrainOverlapDecision
             test.Position is < 1 or > 4 ||
             !Cases(new VerificationOptions("Q:", "drain-overlap-decision", BudgetMiB: RequiredBudgetMiB,
                 Repeats: RequiredRepeats)).Contains(test))
-            throw new InvalidDataException("Drain-overlap case is outside the declared plan-136 workload bounds.");
+            throw new InvalidDataException("Drain-overlap case is outside the declared plan-137 workload bounds.");
     }
 
     public static DrainOverlapMetrics ValidateEvidence(DrainOverlapCase test, DrainSeedResult seed,
@@ -162,11 +164,15 @@ public static class DrainOverlapDecision
             ? current - previous : throw new InvalidDataException("Drain-overlap " + name + " counter decreased.");
 
         var intervals = 0;
+        double maximumSharedIntervalMilliseconds = 0;
         ulong foregroundBytes = 0, drainedBytes = 0, lowerAttempts = 0, drainBatches = 0, driverDrainBytes = 0;
         for (var index = 1; index < samples.Count; index++)
         {
             var before = samples[index - 1];
             var after = samples[index];
+            var elapsedIntervalSeconds = after.ElapsedSeconds - before.ElapsedSeconds;
+            if (!double.IsFinite(elapsedIntervalSeconds) || elapsedIntervalSeconds <= 0)
+                throw new InvalidDataException("Drain-overlap monotonic telemetry elapsed time is not strictly increasing.");
             var drain = Delta(after.State.DrainedBytes, before.State.DrainedBytes, "drained-bytes");
             _ = Delta(after.State.AcceptedBytes, before.State.AcceptedBytes, "accepted-bytes");
             _ = Delta(after.State.ReadHitBytes, before.State.ReadHitBytes, "read-hit-bytes");
@@ -187,8 +193,12 @@ public static class DrainOverlapDecision
                 before.State.DirtyBytes + before.State.InFlightBytes == 0 ||
                 after.State.DirtyBytes + after.State.InFlightBytes == 0)
                 continue;
+            var intervalMilliseconds = elapsedIntervalSeconds * 1000;
+            if (intervalMilliseconds > MaximumSharedIntervalMilliseconds)
+                continue;
 
             intervals++;
+            maximumSharedIntervalMilliseconds = Math.Max(maximumSharedIntervalMilliseconds, intervalMilliseconds);
             foregroundBytes = checked(foregroundBytes + foreground);
             drainedBytes = checked(drainedBytes + drain);
             drainBatches = checked(drainBatches + Delta(after.Performance.DrainBatches,
@@ -207,11 +217,14 @@ public static class DrainOverlapDecision
         var processSamples = samples.Where(sample => sample.Utc >= processStart && sample.Utc <= processFinishedUtc).ToArray();
         if (processSamples.Length < 2)
             throw new InvalidDataException("Drain-overlap has fewer than two telemetry samples inside the workload process interval.");
+        var backgroundDrainCompletionSeconds = backgroundCompletion.ElapsedSeconds - firstDrain.ElapsedSeconds;
+        if (!double.IsFinite(backgroundDrainCompletionSeconds) || backgroundDrainCompletionSeconds <= 0)
+            throw new InvalidDataException("Background drain completion duration is invalid on the monotonic telemetry clock.");
         return new(intervals, foregroundBytes, drainedBytes, lowerAttempts, drainBatches, driverDrainBytes,
             Delta(processSamples[^1].State.ThrottleWaits, processSamples[0].State.ThrottleWaits, "capacity-waits"),
             Delta(backgroundCompletion.State.DrainedBytes, seed.After.DrainedBytes, "total-drained-bytes"),
             backgroundCompletion.State.DirtyBytes + backgroundCompletion.State.InFlightBytes,
-            (backgroundCompletedUtc - drainStartedUtc).TotalSeconds);
+            maximumSharedIntervalMilliseconds, backgroundDrainCompletionSeconds);
     }
 
     public static void ValidateIdleCompletion(DrainOverlapCase test, DrainSeedResult seed,
@@ -253,6 +266,9 @@ public static class DrainOverlapDecision
                 row.Metrics.SharedTelemetryIntervals == 0 || row.Metrics.ForegroundBytesDuringDrain == 0 ||
                 row.Metrics.DrainedBytesDuringForeground == 0 || row.Metrics.LowerWriteAttemptsDuringOverlap == 0 ||
                 row.Metrics.DrainBatchesDuringForeground == 0 || row.Metrics.DriverDrainBytesDuringForeground == 0 ||
+                !double.IsFinite(row.Metrics.MaximumSharedIntervalMilliseconds) ||
+                row.Metrics.MaximumSharedIntervalMilliseconds <= 0 ||
+                row.Metrics.MaximumSharedIntervalMilliseconds > MaximumSharedIntervalMilliseconds ||
                 row.Metrics.RemainingDirtyBytes != 0 || row.Metrics.TotalDrainedBytes < row.Seed.OwnedBytes))
             throw new InvalidDataException("Drain-overlap summary requires every unique case in the complete 12-case matrix.");
         foreach (var row in evidence)
@@ -277,6 +293,7 @@ public static class DrainOverlapDecision
                     Median(cases.Select(row => (double)row.Metrics.CapacityWaits)),
                     Median(cases.Select(row => row.Metrics.DriverDrainBytesDuringForeground /
                         (double)row.Metrics.DrainBatchesDuringForeground)),
+                    cases.Max(row => row.Metrics.MaximumSharedIntervalMilliseconds),
                     Median(cases.Select(row => row.Metrics.BackgroundDrainCompletionSeconds)),
                     cases.Select(row => row.Case.Id).ToArray());
             })
@@ -286,16 +303,17 @@ public static class DrainOverlapDecision
 
     public static string RenderSummary(DrainOverlapSummary summary)
     {
-        var text = new System.Text.StringBuilder($"# Drain-overlap comparison\n\nPlan {summary.PlanVersion}; {summary.CaseCount}/12 cases. Timing diagnostics were OFF. Foreground and drain progress must be co-observed in the same 200 ms telemetry intervals; this does not resolve ordering within an interval. Idle completion is recorded before cache disable and the unbuffered seed-byte oracle, with no explicit Flush in between. Collection only; compare paired repetitions and do not infer a winner from pooled medians.\n\n");
-        text.AppendLine("| Workload | Batch × parallelism | Cases | IOPS median (range) | p99 median (ms) | Foreground MiB co-observed during drain | Drained MiB co-observed during foreground | Capacity waits median | Mean drain batch (KiB) | Idle completion observed (s) |");
-        text.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+        var text = new System.Text.StringBuilder($"# Drain-overlap comparison\n\nPlan {summary.PlanVersion}; {summary.CaseCount}/12 cases. Timing diagnostics were OFF. Foreground and drain progress are counted only when both advance within the same telemetry interval, with each credited interval bounded to {MaximumSharedIntervalMilliseconds} ms; the maximum credited interval is reported below. This still does not resolve ordering within an interval. Idle completion is recorded before cache disable and the unbuffered seed-byte oracle, with no explicit Flush in between. Collection only; compare paired repetitions and do not infer a winner from pooled medians.\n\n");
+        text.AppendLine("| Workload | Batch × parallelism | Cases | IOPS median (range) | p99 median (ms) | Foreground MiB co-observed during drain | Drained MiB co-observed during foreground | Capacity waits median | Mean drain batch (KiB) | Maximum credited interval (ms) | Idle completion observed (s) |");
+        text.AppendLine("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
         foreach (var row in summary.Rows)
             text.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                "| {0} | {1} KiB × {2} | {3} | {4:F0} ({5:F0}–{6:F0}) | {7:F3} | {8:F1} | {9:F1} | {10:F1} | {11:F1} | {12:F1} |",
+                "| {0} | {1} KiB × {2} | {3} | {4:F0} ({5:F0}–{6:F0}) | {7:F3} | {8:F1} | {9:F1} | {10:F1} | {11:F1} | {12:F1} | {13:F1} |",
                 row.Workload, row.BatchKiB, row.Parallelism, row.Samples, row.IopsMedian, row.IopsMin,
                 row.IopsMax, row.P99MillisecondsMedian, row.ForegroundMiBDuringDrainMedian,
                 row.DrainedMiBDuringForegroundMedian, row.CapacityWaitsMedian,
-                row.DrainBatchBytesMedian / 1024, row.BackgroundDrainCompletionSecondsMedian));
+                row.DrainBatchBytesMedian / 1024, row.MaximumSharedIntervalMilliseconds,
+                row.BackgroundDrainCompletionSecondsMedian));
         return text.ToString();
     }
 }

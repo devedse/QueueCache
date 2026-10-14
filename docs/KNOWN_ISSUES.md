@@ -208,12 +208,13 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off
   comparison with verified overlap between foreground I/O and default Idle
-  draining, plus a focused Strict-mode check, remains open. Plan 136 adds a
+  draining, plus a focused Strict-mode check, remains open. Plan 137 adds a
   six-case timing-off explicit-Flush repeat with an owned worker ready/start
   gate and timestamps around the actual driver call, plus a maintained 12-case
-  background comparison. The latter must show foreground I/O and driver drain
-  progress in the same telemetry intervals, then prove that default Idle
-  draining persisted the seed before explicit cleanup. Both new suites have
+  background comparison. The latter counts foreground I/O and driver drain
+  progress only within telemetry intervals no longer than 500 ms, reports the
+  maximum credited interval, then proves that default Idle draining persisted
+  the seed before explicit cleanup. Both new suites have
   host contracts but have not yet run on the VM; the Strict check also remains
   open.
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the

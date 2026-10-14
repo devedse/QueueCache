@@ -75,7 +75,7 @@ public static class DrainFlushDecision
         if (test.Repeat is < 1 or > RequiredRepeats || test.Position is < 1 or > 2 ||
             !Cases(new VerificationOptions("Q:", "drain-flush-decision", BudgetMiB: RequiredBudgetMiB,
                 Repeats: RequiredRepeats)).Contains(test))
-            throw new InvalidDataException("Explicit-drain case is outside the declared plan-136 workload bounds.");
+            throw new InvalidDataException("Explicit-drain case is outside the declared plan-137 workload bounds.");
     }
 
     public static DrainFlushMetrics ValidateEvidence(DrainFlushCase test, DrainSeedResult seed,

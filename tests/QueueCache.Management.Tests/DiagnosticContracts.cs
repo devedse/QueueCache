@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 136, "plan 136 versions copy-flag recovery, file-tree, read-tail and drain-overlap contracts");
+        Check(VerificationPlan.Version == 137, "plan 137 versions copy-flag recovery, file-tree, read-tail and timed drain measurement contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -527,6 +527,7 @@ internal static class DiagnosticContracts
         var readScore = new DiskSpdScore(8L << 20, 2000, 10, 0.8, 200, 2, null, 2.5, 4);
         var verified = new List<(DrainOverlapCase Case, DrainSeedResult Seed, DrainOverlapMetrics Metrics,
             DiskSpdScore Score, CacheLayoutSnapshot IdleCompletion)>();
+        IReadOnlyList<TelemetrySnapshot>? firstSamples = null;
         foreach (var test in cases)
         {
             var seedBefore = State(test, 0, drainStartBytes, 0, 0, 0, 0);
@@ -566,13 +567,41 @@ internal static class DiagnosticContracts
                 completionSample.Diagnostics);
             var metrics = DrainOverlapDecision.ValidateEvidence(test, seed, seedCompleted, drainStarted,
                 process, processEnd, backgroundCompleted, idleCompletion, score, samples, instance, errors);
+            firstSamples ??= samples;
             verified.Add((test, seed, metrics, score, idleCompletion));
             check(metrics.SharedTelemetryIntervals > 0 && metrics.ForegroundBytesDuringDrain >= mib &&
                 metrics.DrainedBytesDuringForeground >= mib && metrics.LowerWriteAttemptsDuringOverlap > 0 &&
-                metrics.DrainBatchesDuringForeground > 0 && metrics.BackgroundDrainCompletionSeconds > 0,
-                "drain-overlap requires foreground and drain progress co-observed in shared 200 ms intervals");
+                metrics.DrainBatchesDuringForeground > 0 && metrics.BackgroundDrainCompletionSeconds > 0 &&
+                metrics.MaximumSharedIntervalMilliseconds is > 0 and <= DrainOverlapDecision.MaximumSharedIntervalMilliseconds,
+                "drain-overlap requires foreground and drain progress in credited intervals bounded to 500 ms");
         }
         var first = verified[0];
+        var overlapSamples = firstSamples ?? throw new InvalidOperationException("Synthetic overlap samples were not retained.");
+        var clockShiftedSamples = overlapSamples.Select(sample => sample.Utc >= epoch.AddSeconds(4)
+            ? sample with { Utc = sample.Utc.AddMilliseconds(500) } : sample).ToArray();
+        var clockShiftedMetrics = DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed,
+            seedCompleted, drainStarted, process, processEnd, epoch.AddSeconds(4.5), first.IdleCompletion,
+            first.Score, clockShiftedSamples, instance, errors);
+        check(Math.Abs(clockShiftedMetrics.BackgroundDrainCompletionSeconds - 3.0) < 0.001,
+            "Idle drain completion duration uses monotonic telemetry elapsed time across a wall-clock adjustment");
+
+        var middleState = State(first.Case, seedBytes + 6 * mib, drainStartBytes + 7 * mib,
+            seedBytes - mib, 0, 0, 0);
+        var middleSample = new TelemetrySnapshot(epoch.AddSeconds(2.75), 2.75, middleState,
+            Performance(0, 1, 6 * mib), Diagnostics(11), new(0, 0, 0, 0, null, null));
+        var splitSamples = overlapSamples.TakeWhile(sample => sample.ElapsedSeconds < 3)
+            .Append(middleSample).Concat(overlapSamples.Where(sample => sample.ElapsedSeconds >= 3)).ToArray();
+        var longGapSamples = splitSamples.Select(sample => sample.ElapsedSeconds == 2.75
+            ? sample with { ElapsedSeconds = 3.2 }
+            : sample.ElapsedSeconds >= 3
+                ? sample with { ElapsedSeconds = sample.ElapsedSeconds + 0.3 }
+                : sample).ToArray();
+        var boundedGapMetrics = DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed,
+            seedCompleted, drainStarted, process, processEnd, epoch.AddSeconds(4), first.IdleCompletion,
+            first.Score, longGapSamples, instance, errors);
+        check(boundedGapMetrics.SharedTelemetryIntervals == 2 &&
+            boundedGapMetrics.MaximumSharedIntervalMilliseconds <= DrainOverlapDecision.MaximumSharedIntervalMilliseconds,
+            "over-500 ms counter windows do not count as drain/foreground co-observation");
         reject(() => DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed, seedCompleted, drainStarted,
             process, processEnd, epoch.AddSeconds(4), first.IdleCompletion, writeScore,
             Enumerable.Range(0, 10).Select(i => new TelemetrySnapshot(epoch.AddSeconds(i / 2d), i / 2d,
@@ -605,9 +634,12 @@ internal static class DiagnosticContracts
         var rendered = DrainOverlapDecision.RenderSummary(summary);
         check(summary.PlanVersion == VerificationPlan.Version && summary.CaseCount == 12 && summary.Rows.Count == 4,
             "drain-overlap aggregation only renders a complete 12-case timing-off matrix");
-        check(rendered.Contains("same 200 ms telemetry intervals", StringComparison.Ordinal) &&
+        check(rendered.Contains("bounded to 500 ms", StringComparison.Ordinal) &&
+            rendered.Contains("maximum credited interval", StringComparison.Ordinal) &&
+            summary.Rows.All(row => row.MaximumSharedIntervalMilliseconds == 500) &&
+            rendered.Contains("| 500.0 |", StringComparison.Ordinal) &&
             rendered.Contains("no explicit Flush in between", StringComparison.Ordinal),
-            "drain-overlap report states its sampling resolution and explicit-flush-free byte-oracle order");
+            "drain-overlap report includes the measured interval maximum and explicit-flush-free byte-oracle order");
         reject(() => DrainOverlapDecision.BuildSummary(evidence[..^1]));
         reject(() => DrainOverlapDecision.BuildSummary(evidence.Select((row, index) => index == 0
             ? row with { Case = evidence[1].Case } : row).ToArray()));

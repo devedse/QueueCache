@@ -1507,7 +1507,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             storage.Write(scenario.Id + "-idle-completion.json", idleCompletion);
             storage.Write(scenario.Id + "-seed-verification.json", verifyDocument.RootElement.Clone());
             caseChecks = [new("Idle drain / foreground progress and persisted seed", "PASS",
-                $"{metrics.SharedTelemetryIntervals} shared 200 ms telemetry intervals; foreground {metrics.ForegroundBytesDuringDrain} bytes and drained {metrics.DrainedBytesDuringForeground} bytes co-observed; timing off; Idle left the cache clean before disable and the unbuffered seed byte oracle passed without an explicit Flush.")];
+                $"{metrics.SharedTelemetryIntervals} credited intervals (maximum {metrics.MaximumSharedIntervalMilliseconds:F1} ms); foreground {metrics.ForegroundBytesDuringDrain} bytes and drained {metrics.DrainedBytesDuringForeground} bytes co-observed; timing off; Idle left the cache clean before disable and the unbuffered seed byte oracle passed without an explicit Flush.")];
             return score;
         }
         finally
