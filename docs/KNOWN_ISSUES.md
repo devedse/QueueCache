@@ -1,7 +1,7 @@
 # Known issues and verification gaps
 
 What is known to be limited or not yet proven in the current QueueCache source.
-The latest VM checks use 0.4.685.1 (2026-10-14); their scope is recorded below.
+The latest VM checks use 0.4.687.1 (2026-10-14); their scope is recorded below.
 Fixed defects are listed at the end with the build that
 fixed them; do not report them as current bugs without a reproduction on the
 current driver. Performance results and decisions are in
@@ -147,8 +147,29 @@ pair improving and separated ranges; full process completion improved too
 changed −6.30%, −4.22% and +0.99%. All scored writes had been admitted before
 the first observed drain progress, and that interval varied with control-worker
 startup. General foreground write throughput is not qualified as improved or
-invariant by this diagnostic. The final release campaign
-and comparison refresh remain pending.
+invariant by this diagnostic.
+
+Signed 0.4.687.1 completed the final `release-performance` campaign: all 11
+phases and 106 outer cases, including the 93 retained correctness subchecks,
+36 RAM read windows, lifecycle checks, recall, 30 minutes of mixed workload,
+map polling and the 72-case write matrix
+(`20261014-081924-fd5ed11e2abd459aab30498cf5ca8918`). All 186 raw DiskSpd
+scores matched their XML byte totals; all 137 declared process intervals had
+complete telemetry, with a maximum gap of 1.048 seconds. Final Q: state was
+clean, healthy and back at the original 256 KiB × 2 profile; saved profiles
+were identical. The lab volume's three injected fault counts remained in its
+lifetime counter, with no active fault or pending data. This completes collection
+and correctness qualification, not a speed verdict for every measured case.
+The comparison refresh remains pending.
+
+The sustained measurements retain limits: the first Q1 reread after churn had
+no cache hits and ran at 152–202 MiB/s; the following Q8 reread reached
+99.750–99.988% hits but still made some lower reads. These are sequential
+recovery stages, not independent queue-depth controls. After natural idle,
+768–897 MiB remained dirty with 56–70-second oldest ages: the 5-second setting
+starts scheduling and cannot guarantee a drain deadline. Diagnostic timing
+reduced cached random-write throughput by about 6–10%; it is off by default and
+must match between comparisons. See [findings](PERFORMANCE_FINDINGS.md).
 
 Qualification exposed two fixture problems and a recorder delay. Plans 128/129
 settle filesystem metadata and prime writable-file access before strict measured

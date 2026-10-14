@@ -39,8 +39,8 @@ The fix branch has completed its correctness and concurrency checks. Same-build
 miss offload improves cold random/sequential throughput 9.4×/3.35× with better
 p99, though random worst latency increases. Larger drain batches and four
 drainers improve the cold-read target and repeated write-drain times. Fixed-window
-foreground write IOPS are not qualified as invariant. The final release campaign and benchmark refresh remain
-pending.
+foreground write IOPS are not qualified as invariant. The final release campaign
+completed all 11 phases; the benchmark refresh remains pending.
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
 
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
@@ -194,8 +194,8 @@ interval covered its process window; the largest UTC/monotonic gap was
 stages took at most 3.892 ms. The original 2 GiB Fast/Idle 256 KiB × 2 profile
 was restored with zero errors, dirty or in-flight bytes. Full raw evidence and
 XML byte totals were reviewed; no samples from incomplete runs were aggregated.
-The final cold-read screen and complete drain comparison below are finished;
-the release campaign remains pending.
+The final cold-read screen, complete drain comparison and release campaign below
+are finished. The refreshed product comparison remains pending.
 
 **Final-build read-miss screen (plan 131).** Signed 0.4.685.1 completed 24/24
 windows with the same budget, file sizes, alternated three repetitions and
@@ -289,7 +289,54 @@ Consequently these IOPS values do not qualify general foreground throughput or
 an invariant write control; the raw drops remain recorded. No capacity waits
 occurred. Retain 1024 KiB × 4 for the repeated drain-time improvement, with this
 measurement limit and the unchanged explicit-flush blocking behavior. Final
-product-default release checks and comparison refresh remain required.
+product-default release checks are complete below; comparison refresh remains required.
+
+**Final release campaign (plan 132).** Signed 0.4.687.1 from functional commit
+`4b0e3c6` completed `release-performance` in 7918.2 seconds (2 h 12 min), all
+11 phases / 106 outer cases
+(`20261014-081924-fd5ed11e2abd459aab30498cf5ca8918`). The maintained completion
+reader accepted its terminal event and manifest hash. All 18,171 evidence files
+were copied with SHA-256 verification. The 93 retained correctness subchecks,
+36 RAM read windows, RAM lifecycle, 12 recall cases, six 300-second mixed
+episodes, nine map-polling windows and 72 fitting-write windows completed.
+Every one of 186 raw XML scores matched its byte total and completed operations;
+all 137 declared process intervals had actual complete telemetry. Largest gap:
+1.048 seconds in RAM reference, 0.333 seconds elsewhere. Final Q: was restored
+to its original 2 GiB Fast/Idle 256 KiB × 2 settings with zero errors or pending
+bytes, timing off and unchanged saved profiles. Lab V: was uncached and clean;
+its lifetime error count includes the three intentional ordering faults, with
+no active fault. Loaded filter:
+`FE00891A0D6ADA54CD4FCB587C704DAFFDA97C6C0DD47F6BCF9F444C56A16632`;
+provider: `0B13C2F5DBDF45BBCFBEB3B07FFCE5BB915B2A2CA50193D6B2CF8EDA5F34D8FC`.
+DiskSpd is the same binary recorded above. Later `43eb208` changes documentation
+only; it does not change the qualified workload or native source.
+
+Direct RAM 1M Q8T1 median was 44,489 MiB/s (44,363–44,809), with p99
+0.261–0.278 ms and zero image-I/O attempts. Lifecycle verified adaptive reads,
+the 16-request cap, inline overflow and ending Direct access under load.
+Controlled recall-on final scores reached 100% hits with zero lower attempts;
+the hot scan control stayed resident in both recall modes. Map polling at
+2 seconds / 250 ms had no repeatable throughput loss of 3%; this does not test
+GUI rendering or 100 ms refresh.
+
+The mixed episodes measured 219–258 MiB/s without driver-error deltas and with
+concurrent/persisted byte oracles. Post-churn Q1 rereads still missed entirely
+(152–202 MiB/s); following Q8 rereads reached 99.750–99.988% hits and
+20,992–28,193 MiB/s, with 37–526 lower reads per window. Q8 follows Q1 recovery,
+so these are not independent queue-depth comparisons or RAM-only controls.
+Natural idle left 768–897 MiB dirty with oldest ages of 56–70 seconds before
+explicit drainage. Maximum age schedules work; slow storage is not bounded by
+that age. This does not establish the cause of the remaining recovery cost.
+
+All cached write-matrix windows had zero capacity waits, error deltas and
+durability barriers; background writes occurred. Two boundaries had small lower
+reads, so this matrix is not the zero-I/O admission proof supplied by the separate
+37-case concurrency matrix. Timing-on reduced cached random-write throughput
+in every pair: about 6–7% at Q1 and 9–10% at Q32. Keep timing off for product
+scores and match it between comparisons. Sequential and cache-Off results varied
+substantially. These measurements do not infer a causal old-build gain or accept
+every latency tail; all windows had completions. The original settings were
+restored and the refreshed generic product comparison is the remaining step.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
