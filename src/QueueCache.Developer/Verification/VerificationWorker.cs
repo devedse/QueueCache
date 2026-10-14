@@ -20,7 +20,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
     string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null,
     string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
-    bool RequireCopyFlagsRestore = false);
+    bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
@@ -948,6 +948,20 @@ public static class VerificationWorker
             case "tree-settle":
                 result = ComparisonScenarios.Settle(target.Number, job.Seconds);
                 break;
+            case "read-tail":
+                var tailCase = job.TailDecision ?? throw new ArgumentException("Read-tail measurement is missing its immutable case.");
+                result = await ReadTailWorker.MeasureAsync(tailCase,
+                    WorkloadFile(target, job.WorkDirectory, tailCase.Resident ? "resident.dat" : "writer.dat"));
+                break;
+            case "read-tail-warm":
+                result = await ReadTailWorker.WarmResidentAsync(
+                    WorkloadFile(target, job.WorkDirectory, "resident.dat"), checked((long)job.Value));
+                break;
+            case "read-tail-verify":
+                var verifyCase = job.TailDecision ?? throw new ArgumentException("Read-tail write verification is missing its immutable case.");
+                result = await ReadTailWorker.VerifyWritesAsync(verifyCase,
+                    WorkloadFile(target, job.WorkDirectory, "writer.dat"));
+                break;
             case "tree-decision":
                 var treeRoot = Path.GetFullPath(job.WorkDirectory ?? throw new ArgumentException("Tree-decision work directory is required."));
                 if (!treeRoot.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(treeRoot) || Directory.Exists(treeRoot + "-copy"))
@@ -1141,6 +1155,21 @@ public static class VerificationWorker
         }
         RunStorage.AtomicJson(job.Reply, result);
         return 0;
+    }
+
+    private static string WorkloadFile(DiskTarget target, string? workDirectory, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(workDirectory) || Path.GetFileName(fileName) != fileName)
+            throw new ArgumentException("The workload directory or file name is invalid.");
+        var root = Path.GetFullPath(workDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var targetRoot = Path.GetFullPath(target.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var path = Path.GetFullPath(Path.Combine(root, fileName));
+        if (!root.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase) ||
+            !path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            throw new IOException("Read-tail worker files must be existing files in this run's target-volume workload directory.");
+        return path;
     }
 
     public static object Provenance(string executable)

@@ -180,7 +180,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         ulong? originalCopyFlags = null;
         copyFlagsMutationStarted = false;
         layoutMeasurements = null;
-        if ((selected.Suite is "cache-read-misses" or "tree-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((selected.Suite is "cache-read-misses" or "tree-decision" or "read-tail-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -218,11 +218,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var treeDecision = VerificationPlan.TreeDecision(options);
+        var readTailDecision = ReadTailDecision.Cases(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
         expected.AddRange(drainDecision.Select(c => c.Id));
         expected.AddRange(treeDecision.Select(c => c.Id));
+        expected.AddRange(readTailDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
@@ -237,9 +239,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + exercises.Count} cases, not the complete suite matrix.");
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + readTailDecision.Count + exercises.Count} cases, not the complete suite matrix.");
         if (drainDecision.Count > 0)
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
+        if (readTailDecision.Count > 0)
+            Log("Read-tail decision: 100,000 fixed operations per case; per-request latency samples and exact >50/100/250/500 ms counts; collection only.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -250,6 +254,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
             TreeDecisionCases = treeDecision,
+            ReadTailDecisionCases = readTailDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
@@ -342,7 +347,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision")
+            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision")
             {
                 originalCopyFlags = original.CopyFlags
                     ?? throw new InvalidDataException("Missing original runtime copy flags; refusing to start a suite that changes them.");
@@ -561,7 +566,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 deadline.Token.ThrowIfCancellationRequested();
                 await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
             }
-            if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
+            if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 var preparing = Stopwatch.StartNew();
@@ -575,6 +580,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     }, deadline.Token, 900);
                 }
                 finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }
+                foreach (var scenario in readTailDecision)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureReadTailDecision(scenario, deadline.Token));
+                }
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -669,6 +679,24 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
         var finalizing = Stopwatch.StartNew();
         var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: AllowsSkips(options.Suite));
+        if (complete && readTailDecision.Count > 0)
+        {
+            try
+            {
+                var evidence = readTailDecision.Select(test =>
+                    JsonSerializer.Deserialize<ReadTailEvidence>(File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))
+                    ?? throw new InvalidDataException("Missing finalized read-tail evidence for " + test.Id)).ToArray();
+                var summary = ReadTailDecision.AggregateEvidence(evidence);
+                storage.Write("read-tail-aggregates.json", summary);
+                File.WriteAllText(storage.PathFor("read-tail-summary.md"), ReadTailDecision.RenderSummary(summary));
+            }
+            catch (Exception ex)
+            {
+                complete = false;
+                failure = "Read-tail final evidence/aggregate validation failed; no complete matrix report was emitted.\n" + ex;
+                Log("ERROR: " + failure);
+            }
+        }
         // A completed run no longer needs its multi-GiB workload files; a failed one keeps them for inspection.
         if (complete && RemovesWorkloads(options) && workDirectory.Length > 0 &&
             Path.GetFileName(workDirectory) == Path.GetFileName(storage.DirectoryPath))
@@ -915,6 +943,94 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         storage.Write(scenario.Id + "-evidence.json", evidence);
         caseChecks = [new("Seeded file-tree byte and SHA-256 oracle", "PASS",
             $"{tree.Files} files / {tree.Bytes} bytes; create {tree.CreateSeconds:F2}s, copy {tree.CopySeconds:F2}s, read/hash {tree.ReadSeconds:F2}s, delete {tree.DeleteSeconds:F2}s. Collection only; see per-phase memory and cache snapshots.")];
+        return null;
+    }
+
+    private async Task<DiskSpdScore?> MeasureReadTailDecision(ReadTailCase scenario, CancellationToken token)
+    {
+        ReadTailDecision.ValidateCase(scenario);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, true)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true,
+                LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000, IdleMs: 250,
+                BatchKiB: 256, Parallelism: 2)
+        };
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        copyFlagsMutationStarted = true;
+        await Control(WriteCacheAction.LabCopyFlags, token, scenario.CopyFlags);
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var settlePath = await Worker(Job("tree-settle") with { Seconds = 30 }, token, 360);
+        var settle = JsonSerializer.Deserialize<SettleResult>(await File.ReadAllTextAsync(settlePath, token))
+            ?? throw new InvalidDataException("Missing read-tail precondition settle evidence.");
+        TreeDecisionEvidenceContract.ValidateSettle(settle, 30);
+
+        if (scenario.Resident)
+        {
+            var warmPath = await Worker(Job("read-tail-warm") with
+            {
+                WorkDirectory = workDirectory,
+                Value = checked((ulong)scenario.FileBytes)
+            }, token, 900);
+            var warm = JsonSerializer.Deserialize<ReadTailWarmResult>(await File.ReadAllTextAsync(warmPath, token))
+                ?? throw new InvalidDataException("Missing read-tail resident warm-up evidence.");
+            if (warm.Bytes != scenario.FileBytes || warm.CompletedOperations != scenario.FileBytes / (1 << 20) ||
+                !double.IsFinite(warm.Seconds) || warm.Seconds <= 0)
+                throw new InvalidDataException(scenario.Id + ": resident warm-up did not cover the exact declared file.");
+            storage.Write(scenario.Id + "-warm.json", warm);
+        }
+
+        var beforePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
+        var before = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))
+            ?? throw new InvalidDataException("Missing read-tail start snapshot.");
+        var resultPath = await Worker(Job("read-tail") with
+        {
+            WorkDirectory = workDirectory,
+            TailDecision = scenario,
+            Reply = storage.PathFor(scenario.Id + "-result.json")
+        }, token, 1800);
+        var result = JsonSerializer.Deserialize<ReadTailResult>(await File.ReadAllTextAsync(resultPath, token))
+            ?? throw new InvalidDataException("Missing exact-operation read-tail evidence.");
+        var afterPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
+        var after = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(afterPath, token))
+            ?? throw new InvalidDataException("Missing read-tail end snapshot.");
+        var evidence = new ReadTailEvidence(scenario, before, result, after);
+        ReadTailDecision.ValidateEvidence(evidence);
+        storage.Write(scenario.Id + "-evidence.json", evidence);
+
+        if (scenario.Writes)
+        {
+            await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+            await Worker(Job("flush-volume"), token, 180);
+            await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+            await Control(WriteCacheAction.DropClean, token);
+            var durablePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-durable.json") }, token);
+            var durable = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(durablePath, token))
+                ?? throw new InvalidDataException("Missing post-flush write state.");
+            if (durable.State.DirtyBytes != 0 || durable.State.InFlightBytes != 0 || durable.State.Faulted ||
+                durable.State.Suspended || durable.State.Removed || durable.State.LastError != 0 ||
+                durable.State.Instance != before.State.Instance || durable.State.Generation != before.State.Generation)
+                throw new IOException(scenario.Id + ": foreground write set did not reach a clean, healthy state before disk verification.");
+            var verifyPath = await Worker(Job("read-tail-verify") with
+            {
+                WorkDirectory = workDirectory,
+                TailDecision = scenario,
+                Reply = storage.PathFor(scenario.Id + "-write-verification.json")
+            }, token, 1800);
+            var verification = JsonSerializer.Deserialize<ReadTailWriteVerification>(await File.ReadAllTextAsync(verifyPath, token))
+                ?? throw new InvalidDataException("Missing read-tail durable write oracle.");
+            if (verification.CompletedOperations != scenario.OperationCount || verification.Bytes != result.Bytes ||
+                verification.OrderedBlockSha256.Length != 64)
+                throw new InvalidDataException(scenario.Id + ": durable write oracle did not verify the complete declared operation set.");
+            storage.Write(scenario.Id + "-write-verification.json", verification);
+        }
+
+        caseChecks = [new("Fixed-operation read/write tail samples and cache accounting", "PASS",
+            $"{result.CompletedOperations:N0} operations; p50/p99/p99.9/max {result.P50Milliseconds:F3}/{result.P99Milliseconds:F3}/{result.P999Milliseconds:F3}/{result.MaxMilliseconds:F3} ms; " +
+            $">50/100/250/500 ms: {result.Over50Milliseconds}/{result.Over100Milliseconds}/{result.Over250Milliseconds}/{result.Over500Milliseconds}. Collection only.")];
         return null;
     }
 
@@ -1366,7 +1482,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
             var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
                 ?? throw new InvalidDataException("The run manifest has no suite.");
-            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision";
+            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision";
             ulong? recoveryCopyFlags = null;
             if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")
             {

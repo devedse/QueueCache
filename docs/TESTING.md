@@ -123,6 +123,7 @@ ones in use:
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
 | `cache-read-misses` | Same-build flags 7/15, cold 4K Q32 and 1M Q8 on a file twice the cache plus fully cached controls; three alternated repetitions (24 windows), plan 127 | Reports throughput, p99 and worst-read latency; restores original flags |
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
+| `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle; collection only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -248,6 +249,23 @@ qcache developer verify Q: --suite tree-decision --budget-mib 2048 --repeats 3 -
 
 `--case-filter` can collect a diagnostic subset, but a subset is not a complete
 matrix or a basis for a decision.
+
+Plan 135 adds `read-tail-decision` for equal-operation latency comparisons. It
+uses the same 100,000-operation address sequence for each repeated arm, reports
+all samples and exact threshold counts, and separately checks cold reads,
+fully resident random/sequential controls, and fitting foreground writes. The
+write cases are flushed, evicted from clean cache, and verified against their
+deterministic per-operation data oracle before they pass. The run requires the
+standard preflight, an idle 2 GiB Fast cache, timing OFF and exclusive target
+ownership; it does not use DiskSpd or accept a case filter:
+
+```powershell
+qcache developer verify Q: --suite read-tail-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\read-tail-decision
+```
+
+This suite records evidence and does not declare a latency SLA or performance
+win. Compare each paired repetition and inspect its full samples and cache
+counters; do not infer threshold counts from percentiles.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

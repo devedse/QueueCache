@@ -44,7 +44,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 134;
+    public const int Version = 135;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -84,6 +84,7 @@ public static class VerificationPlan
         "pressure",
         "drain-decision",
         "tree-decision",
+        "read-tail-decision",
         "volumes",
         "trim-cache",
         "trim-diagnostic",
@@ -508,10 +509,13 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
-            throw new ArgumentException("Resident sequential, tree and layout suites require --budget-mib 2048 for their fixed workload size.");
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" or "read-tail-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+            throw new ArgumentException("Resident sequential, tree, read-tail and layout suites require --budget-mib 2048 for their fixed workload size.");
         if (options.Suite == "tree-decision" && options.Repeats != 3)
             throw new ArgumentException("tree-decision requires exactly three alternated repetitions.");
+        if (options.Suite == "read-tail-decision" &&
+            (options.Repeats != ReadTailDecision.RequiredRepeats || options.DiskSpd is not null || options.CaseFilter is not null))
+            throw new ArgumentException("read-tail-decision requires exactly three repetitions and does not accept DiskSpd or case filters.");
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
         if (options.Suite == "cache-recall" && options.BudgetMiB < 1024)

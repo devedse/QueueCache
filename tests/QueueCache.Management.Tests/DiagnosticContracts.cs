@@ -14,7 +14,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 134, "plan 134 captures copy flags and the file-tree measurement contract");
+        Check(VerificationPlan.Version == 135, "plan 135 versions copy-flag recovery, file-tree and read-tail measurement contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -32,6 +32,7 @@ internal static class DiagnosticContracts
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         RunTreeDecisionContracts(Check, Reject);
+        RunReadTailDecisionContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -364,6 +365,108 @@ internal static class DiagnosticContracts
         reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
             tree with { AfterReadCache = Cache(106, 205, 31) }, snapshot)));
         Console.WriteLine("Tree-decision plan, start-state, counter coverage and hash/settle contracts passed (no driver access).");
+    }
+
+    private static void RunReadTailDecisionContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        static void RejectOptions(Action action)
+        {
+            try { action(); } catch (ArgumentException) { return; }
+            throw new Exception("Expected read-tail option rejection.");
+        }
+
+        var options = new VerificationOptions("Q:", "read-tail-decision", BudgetMiB: 2048, Repeats: 3);
+        VerificationPlan.Validate(options);
+        var cases = ReadTailDecision.Cases(options);
+        check(cases.Count == 24 && cases.Select(test => test.Id).Distinct().Count() == 24 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 8 &&
+                group.Select(test => test.Position).SequenceEqual([1, 1, 2, 2, 3, 3, 4, 4]) &&
+                group.Select(test => (test.Workload, test.CopyFlags)).Distinct().Count() == 8),
+            "read-tail plan records 24 unique cases with paired flags and rotated workload order");
+        check(cases.Select(test => test.Workload).Distinct().Count() == 4 &&
+            cases.GroupBy(test => test.Workload).All(group => group.Count() == 6 &&
+                group.Select(test => test.CopyFlags).Order().SequenceEqual([7UL, 7UL, 7UL, 15UL, 15UL, 15UL])) &&
+            cases.All(test => test.OperationCount == 100_000 && !test.Writes || test.FileBytes / test.BlockBytes >= test.OperationCount),
+            "read-tail plan fixes cold/resident/write shapes, 100,000 operations and fitting unique write space");
+        foreach (var test in cases) ReadTailDecision.ValidateCase(test);
+        var write = cases.First(test => test.Workload == "foreground-write");
+        var writeOffsets = ReadTailDecision.AddressOffsets(write);
+        check(writeOffsets.Distinct().Count() == write.OperationCount &&
+            writeOffsets.All(offset => offset >= 0 && offset % write.BlockBytes == 0 && offset + write.BlockBytes <= write.FileBytes),
+            "foreground-write offsets are aligned, in-bounds and unique for the durable oracle");
+        check(ReadTailDecision.AddressSequenceSha256(write) == ReadTailDecision.AddressSequenceSha256(write),
+            "read-tail address sequence has a stable recorded SHA-256");
+        RejectOptions(() => VerificationPlan.Validate(options with { Repeats = 2 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { BudgetMiB = 1024 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { DiskSpd = "fixture" }));
+        RejectOptions(() => VerificationPlan.Validate(options with { CaseFilter = "tail-r01" }));
+
+        var ticks = Enumerable.Repeat(Math.Max(1, System.Diagnostics.Stopwatch.Frequency / 100), write.OperationCount).ToArray();
+        ticks[^1] = Math.Max(1, System.Diagnostics.Stopwatch.Frequency);
+        ticks[^2] = ticks[^3] = Math.Max(1, System.Diagnostics.Stopwatch.Frequency * 3 / 10);
+        var result = ReadTailDecision.Summarize(write, ticks, 12.5);
+        ReadTailDecision.ValidateResult(write, result);
+        check(result.CompletedOperations == 100_000 && result.Bytes == 409_600_000 &&
+            result.Over50Milliseconds == 3 && result.Over100Milliseconds == 3 &&
+            result.Over250Milliseconds == 3 && result.Over500Milliseconds == 1 &&
+            result.LatencyTicks.Length == 100_000,
+            "read-tail percentile and exact latency-threshold counts derive from every per-operation sample");
+        reject(() => ReadTailDecision.ValidateResult(write, result with { Over100Milliseconds = 0 }));
+        reject(() => ReadTailDecision.ValidateResult(write, result with { LatencyTicks = ticks[..^1] }));
+        var workerJob = new WorkerJob("read-tail", "Q:", "reply", TailDecision: write);
+        check(JsonSerializer.Deserialize<WorkerJob>(JsonSerializer.Serialize(workerJob))!.TailDecision == write,
+            "immutable read-tail case crosses the owned-worker JSON boundary");
+
+        var cacheOptions = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true,
+            PromoteOnRead: true, BatchKiB: 256, Parallelism: 2);
+        var state = new WriteCacheState(1, 0, 16UL << 30, 2UL << 30, 2UL << 30,
+            0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
+        { Options = cacheOptions, Instance = 77, Generation = 9 };
+        var performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheLayoutSnapshot Snapshot(ulong hits, ulong misses, ulong accepted, ulong reads, ulong writes, ulong flushes, ulong flags) =>
+            new(state with { ReadHitBytes = hits, ReadMissBytes = misses, AcceptedBytes = accepted }, performance,
+                new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                {
+                    Attribution = new(reads, writes, flushes, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                    CopyFlags = flags
+                });
+        var cold = cases.First(test => test.Workload == "cold-random");
+        ReadTailDecision.ValidateEvidence(new(cold, Snapshot(0, 0, 0, 100, 100, 20, cold.CopyFlags), result with { CaseId = cold.Id,
+            Bytes = 409_600_000, AddressSequenceSha256 = ReadTailDecision.AddressSequenceSha256(cold) },
+            Snapshot(0, 4096, 0, 101, 100, 20, cold.CopyFlags)));
+        var resident = cases.First(test => test.Workload == "resident-random");
+        var residentResult = ReadTailDecision.Summarize(resident, ticks, 12.5);
+        ReadTailDecision.ValidateEvidence(new(resident, Snapshot(0, 0, 0, 100, 100, 20, resident.CopyFlags), residentResult,
+            Snapshot((ulong)residentResult.Bytes, 0, 0, 100, 100, 20, resident.CopyFlags)));
+        var accepted = cases.First(test => test.Workload == "foreground-write");
+        var writeResult = ReadTailDecision.Summarize(accepted, ticks, 12.5);
+        ReadTailDecision.ValidateEvidence(new(accepted, Snapshot(0, 0, 0, 100, 100, 20, accepted.CopyFlags), writeResult,
+            Snapshot(0, 0, (ulong)writeResult.Bytes, 100, 100, 20, accepted.CopyFlags)));
+        var throttled = Snapshot(0, 0, (ulong)writeResult.Bytes, 100, 100, 20, accepted.CopyFlags);
+        reject(() => ReadTailDecision.ValidateEvidence(new(accepted, Snapshot(0, 0, 0, 100, 100, 20, accepted.CopyFlags),
+            writeResult, throttled with { State = throttled.State with { ThrottleWaits = 1 } })));
+        reject(() => ReadTailDecision.ValidateEvidence(new(resident, Snapshot(0, 0, 0, 100, 100, 20, resident.CopyFlags), residentResult,
+            Snapshot((ulong)residentResult.Bytes, 1, 0, 101, 100, 20, resident.CopyFlags))));
+        ReadTailEvidence MakeEvidence(ReadTailCase test)
+        {
+            var measured = ReadTailDecision.Summarize(test, ticks, 12.5);
+            var before = Snapshot(0, 0, 0, 100, 100, 20, test.CopyFlags);
+            var after = test.Workload switch
+            {
+                "cold-random" => Snapshot(0, 4096, 0, 101, 100, 20, test.CopyFlags),
+                "resident-random" or "resident-sequential" => Snapshot((ulong)measured.Bytes, 0, 0, 100, 100, 20, test.CopyFlags),
+                _ => Snapshot(0, 0, (ulong)measured.Bytes, 100, 100, 20, test.CopyFlags)
+            };
+            return new(test, before, measured, after);
+        }
+        var aggregate = ReadTailDecision.AggregateEvidence(cases.Select(MakeEvidence));
+        var rendered = ReadTailDecision.RenderSummary(aggregate);
+        check(aggregate.CaseCount == 24 && aggregate.Cases.Count == 24 && aggregate.Pairs.Count == 12 &&
+            rendered.Contains("Flags 15 minus flags 7", StringComparison.Ordinal) &&
+            rendered.Contains(">50/>100/>250/>500 ms", StringComparison.Ordinal),
+            "read-tail final report requires the complete paired matrix and retains exact threshold counts");
+        reject(() => ReadTailDecision.AggregateEvidence(cases.Take(23).Select(MakeEvidence)));
+        Console.WriteLine("Read-tail plan, operation samples, address and cache-accounting contracts passed (no driver access).");
     }
 
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>

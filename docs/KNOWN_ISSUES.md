@@ -184,22 +184,22 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
 ## Not yet proven on the VM
 
 - **Interrupted verifier recovery of copy flags:** 0.4.687.1 recovery snapshots
-  do not persist the runtime copy flags. `cache-read-misses` normally restores
-  its original value in cleanup, but an interruption after changing flags can
-  leave miss offload disabled while `verify-recover` reports success. The
-  related `cache-read-bookkeeping` cleanup restores product value 15 rather than
-  a captured nondefault value. Completed comparisons restored normally. The
-  follow-up branch is adding durable capture and readback checks; this remains
-  unqualified until those changes pass host and Windows checks.
+  did not persist runtime copy flags, so an interrupted flags-7 run could leave
+  miss offload disabled while `verify-recover` reported success. The follow-up
+  branch now captures the original value, restores it through the shared
+  recovery path and checks the driver's readback. Host contracts and CI pass;
+  the Windows normal-cleanup and fresh-process recovery smoke checks remain
+  before this recovery fix is qualified.
 - **40,000-file read/hash time and random-read tails:** on 0.4.687.1, the tree
   read/hash step took 154.2 s versus 4.9 s in the 0.4.604.1 session, with the
   cause not established. The same-build cold miss-offload screen improved
   throughput and p99 but observed a random-read maximum of 568.7 ms versus
-  46.2 ms. Plan 134 adds the maintained `tree-decision` matrix with per-phase
-  memory/system-cache samples, cache snapshots, lower-I/O attempt counters and
-  disk-idle settles; no result has been collected yet. Equal-operation and
-  threshold-count evidence is still needed to determine whether the tail
-  reflects the changed scheduling.
+  46.2 ms. Plan 134's maintained `tree-decision` matrix is now collecting its
+  15-case same-build run, with per-phase memory/system-cache samples, cache
+  snapshots, lower-I/O attempts and disk-idle settles. Plan 135 adds the
+  maintained `read-tail-decision` fixed-operation screen with exact threshold
+  counts and resident/write controls; its VM measurements have not started.
+  Neither comparison has a performance verdict yet.
 - **Drain defaults under active background work:** existing comparisons support
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off
