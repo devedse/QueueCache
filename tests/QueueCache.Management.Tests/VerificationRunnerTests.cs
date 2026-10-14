@@ -1327,7 +1327,7 @@ internal static class VerificationRunnerTests
         catch (IOException ex) { Check(ex is not QueueCache.Operations.CacheDrainingException, "faults must never be retried as transient drains"); }
         var healthy = draining with
         {
-            Flags = 0, DeviceBytes = 8UL << 30, Instance = 4, Generation = 3
+            Flags = 0
         };
         var original = new RecoverySnapshot(1, identity, healthy, false, "[]", epoch, "fixture");
         var flushOrder = new List<string>();
@@ -1426,21 +1426,23 @@ internal static class VerificationRunnerTests
                 copyFlags: 7, copyFlagsRestoreRequired: true)
             .SequenceEqual(["CopyFlags: original value unavailable for this legacy run; actual 7"]),
             "a legacy flag-mutating run without trustworthy original evidence cannot claim complete recovery");
+        var legacyState = healthy with { DeviceBytes = 8UL << 30, Instance = 4, Generation = 3 };
+        var legacyOriginal = original with { State = legacyState };
         var legacyCopyEvidence = layoutBefore with
         {
-            State = healthy,
+            State = legacyState,
             Diagnostics = layoutDiagnostics with { CopyFlags = 0 }
         };
-        Check(VerificationWorker.ValidateLegacyCopyFlags(original, legacyCopyEvidence) == 0,
+        Check(VerificationWorker.ValidateLegacyCopyFlags(legacyOriginal, legacyCopyEvidence) == 0,
             "legacy read-miss evidence accepts a valid zero from the matching cache generation");
         try
         {
-            VerificationWorker.ValidateLegacyCopyFlags(original,
-                legacyCopyEvidence with { State = healthy with { Instance = healthy.Instance + 1 } });
+            VerificationWorker.ValidateLegacyCopyFlags(legacyOriginal,
+                legacyCopyEvidence with { State = legacyState with { Instance = legacyState.Instance + 1 } });
             throw new Exception("Mismatched legacy copy-flags evidence accepted.");
         }
         catch (IOException) { }
-        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(original,
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(legacyOriginal,
             legacyCopyEvidence with { Diagnostics = layoutDiagnostics }));
         var copyFlagsRoundTrip = JsonSerializer.Deserialize<RecoverySnapshot>(JsonSerializer.Serialize(copyFlagsOriginal));
         Check(copyFlagsRoundTrip?.CopyFlags == 11 &&
