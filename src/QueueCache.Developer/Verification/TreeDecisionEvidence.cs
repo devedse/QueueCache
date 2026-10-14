@@ -44,10 +44,10 @@ public static class TreeBuildDecisionEvidenceContract
             throw new InvalidDataException("Loaded QueueCache driver identity is unavailable or contains an unexpected module set.");
         var names = observation.Modules.Select(module => FileName(module.FilePath)).ToArray();
         if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2 ||
-            !names.Contains("qcachelab.sys", StringComparer.OrdinalIgnoreCase) ||
-            !names.Contains("qcramdisk.sys", StringComparer.OrdinalIgnoreCase))
-            throw new InvalidDataException("Expected exactly one loaded qcachelab.sys and one qcramdisk.sys module.");
-        var filter = observation.Modules.Single(module => FileName(module.FilePath).Equals("qcachelab.sys", StringComparison.OrdinalIgnoreCase));
+            observation.Modules.Count(module => IsFilter(FileName(module.FilePath))) != 1 ||
+            observation.Modules.Count(module => FileName(module.FilePath).Equals("qcramdisk.sys", StringComparison.OrdinalIgnoreCase)) != 1)
+            throw new InvalidDataException("Expected exactly one loaded QueueCache filter module and one qcramdisk.sys module.");
+        var filter = observation.Modules.Single(module => IsFilter(FileName(module.FilePath)));
         var provider = observation.Modules.Single(module => FileName(module.FilePath).Equals("qcramdisk.sys", StringComparison.OrdinalIgnoreCase));
         if (filter.FileError is not null || provider.FileError is not null ||
             !ValidHash(filter.FileSha256) || !ValidHash(provider.FileSha256))
@@ -63,6 +63,8 @@ public static class TreeBuildDecisionEvidenceContract
         .ToArray();
 
     private static string FileName(string path) => path.Replace('\\', '/').Split('/').Last();
+    private static bool IsFilter(string name) => name.Equals("qcachelab.sys", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith("QueueCache-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase);
     private static bool ValidHash(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 }
 public sealed record TreePhaseIoAttempts(ulong Read, ulong Write, ulong Flush);

@@ -398,7 +398,7 @@ internal static class DiagnosticContracts
 
         var loaded604 = new LoadedDriverObservation(true, null,
         [
-            new("\\SystemRoot\\System32\\drivers\\qcachelab.sys", "C:/Windows/System32/drivers/qcachelab.sys",
+            new("\\SystemRoot\\System32\\drivers\\QueueCache-0.4.604.1-D9416B70A3A3.sys", "C:/Windows/System32/drivers/QueueCache-0.4.604.1-D9416B70A3A3.sys",
                 firstBuild.ExpectedFilterSha256, "0.4.604.1", null),
             new("\\SystemRoot\\System32\\drivers\\qcramdisk.sys", "C:/Windows/System32/drivers/qcramdisk.sys",
                 firstBuild.ExpectedProviderSha256, "0.4.604.1", null)
@@ -420,7 +420,7 @@ internal static class DiagnosticContracts
             "cross-build tree evidence round-trips driver hashes and tree-phase evidence");
         var movedPath = loaded604 with
         {
-            Modules = [loaded604.Modules[0] with { FilePath = "D:/alternate/qcachelab.sys" }, loaded604.Modules[1]]
+            Modules = [loaded604.Modules[0] with { FilePath = "D:/alternate/QueueCache-0.4.604.1-D9416B70A3A3.sys" }, loaded604.Modules[1]]
         };
         reject(() => TreeBuildDecisionEvidenceContract.Validate(buildEvidence with { DriversAfter = movedPath }));
         Console.WriteLine("Tree-decision plan, start-state, counter coverage and hash/settle contracts passed (no driver access).");
