@@ -76,7 +76,7 @@ machine's physical RAM.
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
 default test (1 GiB, 5 passes), the better of two runs per column. Both Q: columns:
-QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
+QueueCache 0.4.687.1 (2026-10-14); RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|
@@ -91,10 +91,10 @@ QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-1
 
 | MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 692 | 39,702 | 47,583 |
-| Sequential write (SEQ1M Q8T1) | 269 | 21,249 | 24,434 |
-| Random 4K read (RND4K Q1T1) | 19.6 | 1,297 | 1,657 |
-| Random 4K write (RND4K Q1T1) | 4.8 | 1,034 | 1,310 |
+| Sequential read (SEQ1M Q8T1) | 602 | 37,375 | 47,583 |
+| Sequential write (SEQ1M Q8T1) | 230 | 19,981 | 24,434 |
+| Random 4K read (RND4K Q1T1) | 18.8 | 1,298 | 1,657 |
+| Random 4K write (RND4K Q1T1) | 4.7 | 1,029 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data already
 in its cache. Ordinary read misses spanning at most 256 cache blocks can now

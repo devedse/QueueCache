@@ -160,7 +160,10 @@ clean, healthy and back at the original 256 KiB × 2 profile; saved profiles
 were identical. The lab volume's three injected fault counts remained in its
 lifetime counter, with no active fault or pending data. This completes collection
 and correctness qualification, not a speed verdict for every measured case.
-The comparison refresh remains pending.
+The generic cached-volume and empty-cache comparisons also completed on this
+build; their measurements and remaining slow workloads are in
+[the comparison](COMPARISON.md). The README captures the real CrystalDiskMark
+results separately.
 
 The sustained measurements retain limits: the first Q1 reread after churn had
 no cache hits and ran at 152–202 MiB/s; the following Q8 reread reached
@@ -208,6 +211,8 @@ recovery: a faulted cache must be inspected and recovered explicitly.
 
 | What you would have seen | Fixed in |
 |---|---|
+| Ordinary cache misses reached the disk one at a time, and requeued service reads could repeatedly delay older misses | 0.4.687.1 qualification: bounded ordinary misses overlap and reinsertion preserves arrival order; throughput/p99 improve, with worst-latency limits recorded above (#14) |
+| New cache tasks drained adjacent data in small 256 KiB batches with two writes in flight | 0.4.687.1 qualification: new-task defaults are 1024 KiB × 4, with repeated drain-time gains; saved profiles keep their settings and general write IOPS are not qualified as invariant (#15) |
 | With "keep written data" off, a program re-reading a large file (reads over 1 MiB) while QueueCache was still writing it to disk could get an older version of a 256 KiB piece; the disk itself was always right | 0.4.601.1 (found by the new `stress-races` suite) |
 | One program reading a RAM disk topped out at about 26 GB/s whatever its queue depth (CrystalDiskMark SEQ1M Q8T1 25,353 MB/s) | 0.4.583.1: queued reads overlap, 47,583 MB/s ([findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)) |
 | Sequential cached reads up to 45% slower after drop-clean and refill | 0.4.431.1 chunk allocator; 0.4.434.1 prefetch and coalesced copies |

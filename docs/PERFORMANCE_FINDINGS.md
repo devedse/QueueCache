@@ -40,7 +40,9 @@ miss offload improves cold random/sequential throughput 9.4×/3.35× with better
 p99, though random worst latency increases. Larger drain batches and four
 drainers improve the cold-read target and repeated write-drain times. Fixed-window
 foreground write IOPS are not qualified as invariant. The final release campaign
-completed all 11 phases; the benchmark refresh remains pending.
+completed all 11 phases; the refreshed generic cached-volume and empty-cache
+comparisons are also complete. Real CrystalDiskMark captures are recorded
+separately in the README.
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
 
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
@@ -195,7 +197,7 @@ stages took at most 3.892 ms. The original 2 GiB Fast/Idle 256 KiB × 2 profile
 was restored with zero errors, dirty or in-flight bytes. Full raw evidence and
 XML byte totals were reviewed; no samples from incomplete runs were aggregated.
 The final cold-read screen, complete drain comparison and release campaign below
-are finished. The refreshed product comparison remains pending.
+are finished. The refreshed product comparison is recorded below.
 
 **Final-build read-miss screen (plan 131).** Signed 0.4.685.1 completed 24/24
 windows with the same budget, file sizes, alternated three repetitions and
@@ -336,7 +338,36 @@ in every pair: about 6–7% at Q1 and 9–10% at Q32. Keep timing off for produc
 scores and match it between comparisons. Sequential and cache-Off results varied
 substantially. These measurements do not infer a causal old-build gain or accept
 every latency tail; all windows had completions. The original settings were
-restored and the refreshed generic product comparison is the remaining step.
+restored; the refreshed generic product comparison follows.
+
+**Generic comparison refresh (2026-10-14, 0.4.687.1).** `compare-cache` completed
+with three repetitions under its maintained contract (larger-file and tree
+steps intentionally use two, the five-minute mix one), run
+`20261014-103546-64b8c94e36eb475084cf48d92c58a5a4`. `compare-cache-cold`
+completed once after checked flush and drop-clean, run
+`20261014-113824-70b3db176e494efea4f7823e9199e453`. Both used the same signed
+drivers and DiskSpd as the release campaign, normal priority, timing off,
+Fast 2 GiB with 1024 KiB × 4, closed indexers and no competing workloads.
+All 475 evidence files were copied with SHA-256 verification; all 49 raw scored
+XML files matched their byte totals with completions. The owned hypervisor
+sampler recorded 3,938 actual per-disk samples, covered every step, had no missing
+read/write counters and a maximum 1.036-second gap; it stopped after the cold run.
+
+Hot DiskSpd 1M Q8 median read/write was 34,775 / 20,655 MB/s. Larger 8 GiB file
+reads were 80.90 MB/s random 4K Q32 and 621.88 MB/s sequential 1M Q8. The emptied
+cache's first/second 1 GiB reads were 570.54 / 19,637.80 MB/s. Sustained 8 GiB
+writes averaged 259.62 MB/s, with a 177.73 MB/s median slowest second. The file
+tree's median create/copy/read-and-hash/delete times were
+50.23 / 13.68 / 154.23 / 15.90 seconds. These do not establish an improvement in
+every workload: cached large reads and tree reads remain slower in this session
+than some historical comparison rows. Shared storage and different dates prevent
+attributing those changes to code from these rows alone. The repeated same-build
+screens above support the causal miss-offload and drain-time decisions.
+Fast application flushes still return in volatile RAM; the near-zero measured
+flush is not a durable-save claim. Original 0.4.604.1 and competitor rows,
+including their power-cut results, retain their evidence and dates. No power-cut
+qualification was repeated on this build. Full rows and ranges:
+[comparison](COMPARISON.md).
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1203,7 +1234,7 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
-| Read misses one at a time | **Throughput screen accepted; release qualification pending** (plan 131, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated. Every cold p99 improved; random maximum increased to 568.738 ms. Both arms use the new pool and queue order. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; representative worst-latency evidence. |
+| Read misses one at a time | **Throughput/p99 qualified; final release campaign complete** (plans 131/132, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated. Every cold p99 improved; random maximum increased to 568.738 ms. Both arms use the new pool and queue order. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; representative worst-latency evidence. |
 | Drain batch size and parallelism | **Default 1024 KiB × 4; drain-time target qualified** (plan 132, issue #15): complete 42-case comparison and separate 18-case write repeat. Cold-read flush median 3.86 against 6.52 s for 256 × 2; write-repeat flush 92.16 against 127.61 s, every pair improves and ranges separate. Fixed-window foreground write IOPS remain variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, or a repeated foreground-control loss under a measurement that isolates its active interval. |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |

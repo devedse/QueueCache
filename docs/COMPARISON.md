@@ -1,10 +1,12 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> All 12 RAM-disk and 5 cache configurations measured, 2026-10-12 to 2026-10-13.
+> All 12 RAM-disk and 6 cache configurations measured, 2026-10-12 to 2026-10-14.
 
 Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
-feature. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise.
+feature. The historical QueueCache 0.4.604.1 and competitor rows retain their original 2026-10-12 to 2026-10-13 measurement dates.
+QueueCache 0.4.687.1 Fast is a separate 2026-10-14 refresh; the RAM-disk and power-cut evidence was not repeated.
+Cross-date figures are descriptive; causal gains require alternated same-build A/B measurements. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise.
 
 **Summary.**
 
@@ -15,15 +17,27 @@ feature. Scores are MB/s (1 MB = 1,000,000 bytes) unless a column says otherwise
   copies and deletes files two to four times as fast as any disk. With four programs reading at once the faster disks all land between
   20 and 31 GB/s (QueueCache 25). AIM Toolkit and ManagedDrive were much slower (3 to 4.5 GB/s for large reads, against
   15 to 45 GB/s for the others).
-- **RAM caches.** QueueCache Fast serves cached data the fastest: 39 GB/s reads and 21 GB/s writes, against 17 and
-  19 GB/s for PrimoCache with Defer-Write. It has three weaknesses that PrimoCache does not have:
-  - Data that is not in the cache yet is read more slowly than without any cache (217 MB/s against 560 for the
-    bare disk and 512 for PrimoCache), because QueueCache fetches it one request at a time ([#14](https://github.com/devedse/QueueCache/issues/14)).
-  - Pending writes reach the disk slowly (105 to 130 MB/s, about half of what the disk takes), because QueueCache
-    writes them in 256 KiB pieces; PrimoCache's larger pieces reached 150 to 370 MB/s ([#15](https://github.com/devedse/QueueCache/issues/15)).
-  - Strict mode, the safe setting, made writing and file operations 5 to 11 times slower than no cache, with
-    complete write stops of 100 seconds or more ([#16](https://github.com/devedse/QueueCache/issues/16)).
-- **Power cuts.** On every product everything that had been flushed survived. The two settings that answer flushes
+- **RAM caches.** In the original comparison, QueueCache 0.4.604.1 Fast served cached data at 39 GB/s reads and
+  21 GB/s writes, against 17 and 19 GB/s for PrimoCache with Defer-Write. It exposed three weaknesses:
+  - Missing data was read one request at a time: 217 MB/s against 560 for the bare disk and 512 for PrimoCache
+    ([#14](https://github.com/devedse/QueueCache/issues/14)). The fix branch overlaps bounded ordinary misses.
+    A same-build flags 7/15 screen measured 9.4× cold random and 3.35× cold sequential throughput, with improved
+    p99 and no repeated resident-control loss. Both arms use the new read pool and queue order; this isolates
+    miss offload, not the complete old driver. Some maximum latency samples increased.
+  - The old 256 KiB × 2 default wrote pending data at 105–130 MB/s. New-task defaults are 1024 KiB × 4
+    ([#15](https://github.com/devedse/QueueCache/issues/15)); saved profiles keep their settings.
+    Complete same-build drain tests reduced cold-read flush median 6.52 to 3.86 seconds; a separate write-only
+    repeat reduced flush median 127.61 to 92.16 seconds, with every pair improving and separated ranges.
+    Fixed-window write IOPS varied with administrative-flush timing and are not qualified as invariant.
+    The completed 0.4.687.1 Fast comparison (2026-10-14) measured first/second 1 GiB reads at
+    571 / 19,638 MB/s, larger-file random/sequential reads at 80.90 / 621.88 MB/s, and sustained writes
+    at 259.62 MB/s (slowest-second median 177.73 MB/s). Tree read and hash took 154.23 seconds.
+    These results do not establish a win in every workload or a causal gain over the historical rows;
+    the cold suite has one repetition, larger-file, sustained and tree steps two, and hot shapes three.
+  - Strict mode made writing and file operations 5 to 11 times slower than no cache, with stops exceeding
+    100 seconds ([#16](https://github.com/devedse/QueueCache/issues/16)). The fix branch preserves its durability
+    boundary; bounded Strict writes remain open.
+- **Power cuts (original 0.4.604.1 comparison, not repeated on the fix build).** On every product everything that had been flushed survived. The two settings that answer flushes
   from RAM (QueueCache Fast and PrimoCache Defer-Write) lost far more of the newest, unflushed files, and QueueCache
   Fast also left the file system needing a repair ([#13](https://github.com/devedse/QueueCache/issues/13)).
   PrimoCache's did not there, because it had written none of the newest work yet. Cut while part of its held work
@@ -78,6 +92,7 @@ shows what happens when they have to reach the disk.
 |---|---|---:|---:|---:|---:|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | <a href="images/comparison/C00-no-cache.png"><img src="images/comparison/C00-no-cache.png" width="300" alt="CrystalDiskMark, Q: without any cache Windows 11, baseline"></a> | 628 / 259 | 278 / 123 | 117 / 11 | 20 / 5 |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | <a href="images/comparison/C01-queuecache-fast.png"><img src="images/comparison/C01-queuecache-fast.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Fast, 2 GiB"></a> | 40,322 / 21,471 | 19,534 / 13,560 | 1,701 / 1,327 | 1,307 / 1,028 |
+| [QueueCache 0.4.687.1, Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | <a href="images/comparison/C01-queuecache-fast-fix687.png"><img src="images/comparison/C01-queuecache-fast-fix687.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.687.1, Fast, 2 GiB, 1024 KiB × 4"></a> | 37,375 / 19,981 | 19,875 / 13,576 | 1,704 / 1,411 | 1,298 / 1,029 |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | <a href="images/comparison/C01-queuecache-strict.png"><img src="images/comparison/C01-queuecache-strict.png" width="300" alt="CrystalDiskMark, QueueCache 0.4.604.1, Strict, 2 GiB"></a> | 39,989 / 21,310 | 19,414 / 12,937 | 1,659 / 331 | 1,267 / 871 |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | <a href="images/comparison/C02-primocache-defer.png"><img src="images/comparison/C02-primocache-defer.png" width="300" alt="CrystalDiskMark, PrimoCache 4.4.1, L1 2 GiB, Defer-Write"></a> | 16,445 / 18,035 | 14,087 / 4,139 | 505 / 336 | 1,003 / 776 |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | <a href="images/comparison/C02-primocache-through.png"><img src="images/comparison/C02-primocache-through.png" width="300" alt="CrystalDiskMark, PrimoCache 4.4.1, L1 2 GiB, no Defer-Write"></a> | 17,304 / 261 | 14,656 / 123 | 474 / 12 | 1,044 / 5 |
@@ -129,6 +144,7 @@ Cached work first, then what the cache does with data that has to reach the disk
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|---|
 | [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md) | 571 / 251 | 12.1 / 4.1 | 560 / 573 | 86.2 / 668.6 | 256 | 2 / 230 | 242.5 / 218.6 | 251 | 0.001 | 100% / 100%, file system clean | 11.0 | 31.9 / 28.3 / 4.9 / 23.9 | None | Measured |
 | [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md) | 39,487 / 21,214 | 1,294.6 / 982.4 | 217 / 26,416 | 11.8 / 262.0 | 2,665 | 10 / 105 | 178.3 / 116.9 | 21,077 | 0.000 | 100% / 100%, file system needs repair (chkdsk 13) | 11.7 | 12.1 / 8.6 / 4.9 / 16.9 | ⚠ File system needed an offline repair (chkdsk /f) after a simulated power cut; expected for Fast mode (as designed for now); tracked in GitHub issue [#13](https://github.com/devedse/QueueCache/issues/13); Reads of data not yet in the cache are 2.5 to 6 times slower than without any cache (first read of 1 GiB 217 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14); Pending writes reach the disk at about half the disk's speed (105-130 MB/s in 256 KiB pieces), so long writes are slower than without a cache; GitHub issue [#15](https://github.com/devedse/QueueCache/issues/15) | Measured |
+| [QueueCache 0.4.687.1, Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | 34,775 / 20,655 | 1,297.2 / 1,008.0 | 571 / 19,638 | 80.9 / 621.9 | 2,960 | 7 / 153 | 259.6 / 177.7 | 20,630 | 0.000 | - | 34.4 | 50.2 / 13.7 / 154.2 / 15.9 | None | Measured |
 | [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md) | 40,874 / 3,477 | 1,300.3 / 0.0 | 187 / 16,409 | 6.0 / 221.4 | 1,112 | 25 / 41 | 52.9 / 0.0 | 52 | 12.564 | 100% / 100%, file system clean | 4.1 | 212.9 / 129.8 / 4.9 / 263.8 | ⚠ 6 measurement window(s) completed nothing in 10 s (stalled): hot-r1-rnd4k-q1t1-write, hot-r1-rnd4k-q32t1-write, hot-r2-rnd4k-q1t1-write, hot-r3-rnd4k-q1t1-write, hot-r3-rnd4k-q32t1-write, hot-r3-seq1m-q8t1-write; Writes stop completely for 100 seconds or more after a burst of writes: every flush or write-through request from Windows makes all writes wait until everything queued in RAM is on the disk (confirmed with the driver's counters); GitHub issue [#16](https://github.com/devedse/QueueCache/issues/16); Writing and file operations are 5 to 11 times slower than without any cache (creating 40,000 files 213 against 32 s; 8 GiB write 53 against 242 MB/s; write-through 52 against 251 MB/s); Reads of data not yet in the cache are 3 to 6 times slower than without any cache (first read of 1 GiB 187 against 560 MB/s; random 4 KiB 11 against 65 MB/s): QueueCache fetches missing data one request at a time; GitHub issue [#14](https://github.com/devedse/QueueCache/issues/14) | Measured |
 | [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md) | 17,172 / 19,036 | 1,020.5 / 522.1 | 512 / 13,883 | 129.9 / 384.0 | 8,444 | 7 / 149 | 486.2 / 374.9 | 19,013 | 0.001 | 100% / 100%, file system clean | 23.7 | 21.4 / 8.4 / 4.9 / 14.9 | ⚠ All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write; Power cuts while part of its held writes were on the disk (churn test): in 1 of 5 checked cuts NTFS needed an offline repair (volume bitmap corruption) and in another NTFS reported a file "corrupted and unreadable"; in the others files written 10-20 s earlier came back with zeros or another file's data, and deleted files came back | Measured |
 | [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md) | 17,253 / 250 | 1,056.1 / 4.1 | 409 / 16,775 | 128.9 / 413.9 | 259 | 2 / 289 | 259.4 / 237.5 | 255 | 0.001 | 100% / 100%, file system clean | 12.7 | 28.1 / 23.1 / 4.9 / 24.2 | None | Measured |
@@ -185,6 +201,7 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - [ManagedDrive 2.3.0, WinFsp 2.1](comparison/R10-manageddrive.md): Measured
 - [Q: without any cache Windows 11, baseline](comparison/C00-no-cache.md): Measured
 - [QueueCache 0.4.604.1, Fast, 2 GiB](comparison/C01-queuecache-fast.md): Measured
+- [QueueCache 0.4.687.1, Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md): Measured
 - [QueueCache 0.4.604.1, Strict, 2 GiB](comparison/C01-queuecache-strict.md): Measured
 - [PrimoCache 4.4.1, L1 2 GiB, Defer-Write](comparison/C02-primocache-defer.md): Measured
 - [PrimoCache 4.4.1, L1 2 GiB, no Defer-Write](comparison/C02-primocache-through.md): Measured
@@ -241,5 +258,6 @@ the timed steps, memory snapshots and the drivers that were loaded.
 - **Caches**: 2 GiB of RAM, no SSD tier, no prefetch at start-up. Each cache was emptied before its empty-cache runs.
 - **Limits.** A virtual machine with four processors, whose processor model hides some copy features (ERMS), so a
   physical PC can be faster for every product. Q: sits on shared network storage, so numbers that depend on the disk
-  (first reads, drains, sustained writes) vary between sessions; compare them within one table only. Trial versions
+  (first reads, drains, sustained writes) vary between sessions. Product rows from different dates describe their
+  recorded sessions; causal speedup claims come from the alternated same-build comparisons in the findings. Trial versions
   were used where a product is paid. File systems in RAM (marked as such) are a different design from RAM disks.
