@@ -1,0 +1,583 @@
+{
+ "id": "R06-primo-directio",
+ "window": "R",
+ "entry": {
+  "id": "R06-primo-directio",
+  "product": "Primo Ramdisk",
+  "version": "6.6.0",
+  "mode": "Direct-IO",
+  "price": "$24.95-54.95 (30-day trial used)",
+  "kind": "Block device",
+  "column": "06-primo-directio"
+ },
+ "cdm": {
+  "kept": "run2",
+  "runs": {
+   "run1": {
+    "Column": "06-primo-directio",
+    "Run": "run1",
+    "Drive": "T: 1% (35/4095MiB)",
+    "Comment": "Primo Ramdisk 6.6.0 T: (4 GiB, Direct-IO)",
+    "CapturedUtc": "2026-10-12T13:22:13.5456498Z",
+    "Scores": [
+     {
+      "Test": "SEQ1M Q8T1",
+      "Read": 27336.38,
+      "Write": 20977.13
+     },
+     {
+      "Test": "SEQ1M Q1T1",
+      "Read": 17656.65,
+      "Write": 17313.53
+     },
+     {
+      "Test": "RND4K Q32T1",
+      "Read": 545.38,
+      "Write": 296.6
+     },
+     {
+      "Test": "RND4K Q1T1",
+      "Read": 1476.31,
+      "Write": 1203.17
+     }
+    ]
+   },
+   "run2": {
+    "Column": "06-primo-directio",
+    "Run": "run2",
+    "Drive": "T: 1% (35/4095MiB)",
+    "Comment": "Primo Ramdisk 6.6.0 T: (4 GiB, Direct-IO)",
+    "CapturedUtc": "2026-10-12T13:27:31.0616506Z",
+    "Scores": [
+     {
+      "Test": "SEQ1M Q8T1",
+      "Read": 27747.59,
+      "Write": 21574.25
+     },
+     {
+      "Test": "SEQ1M Q1T1",
+      "Read": 17625,
+      "Write": 17357.83
+     },
+     {
+      "Test": "RND4K Q32T1",
+      "Read": 624.23,
+      "Write": 328.73
+     },
+     {
+      "Test": "RND4K Q1T1",
+      "Read": 1456.41,
+      "Write": 1227.88
+     }
+    ]
+   }
+  }
+ },
+ "runs": {
+  "compare-snapshot": {
+   "run": "QueueCache-Verify-20261012-131620-7a3b67797cf64927a992634e3be7157e",
+   "comparison": {
+    "SchemaVersion": 1,
+    "Suite": "compare-snapshot",
+    "Product": "Primo Ramdisk 6.6.0 Direct-IO",
+    "PlanVersion": 121,
+    "Shapes": [],
+    "Steps": [],
+    "Memory": [
+     {
+      "Id": "snapshot-memory",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:16:23.9207719+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 13907120128,
+       "CommitBytes": 2342268928,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 188567552,
+       "KernelPagedBytes": 171327488,
+       "SystemCacheBytes": 2273783808
+      }
+     }
+    ],
+    "Durability": null
+   },
+   "memory": {
+    "Utc": "2026-10-12T13:16:23.9207719+00:00",
+    "TotalPhysicalBytes": 16706351104,
+    "AvailablePhysicalBytes": 13907120128,
+    "CommitBytes": 2342268928,
+    "CommitLimitBytes": 17780092928,
+    "KernelNonpagedBytes": 188567552,
+    "KernelPagedBytes": 171327488,
+    "SystemCacheBytes": 2273783808
+   },
+   "environment": {
+    "windows": {
+     "Build": "28000",
+     "Revision": "2956",
+     "Release": "26H1"
+    },
+    "target": {
+     "Letter": "Q",
+     "Root": "Q:\\",
+     "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+     "FileSystem": "NTFS",
+     "Label": "QueueCacheLab",
+     "ClusterBytes": 4096,
+     "TotalBytes": 214730534912,
+     "FreeBytes": 174489903104,
+     "DriveType": "Fixed",
+     "DiskNumber": 1
+    },
+    "drivers": [
+     {
+      "Name": "fancyrd.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\drivers\\fancyrd.sys",
+      "FileSha256": "495A10B0EE378A2D33FEC80C6762FCC4E10F2DFEFF6FC8ABDB8FBE33A447959F",
+      "FileVersion": "6.6.0",
+      "Company": "Romex Software",
+      "Product": "Primo Ramdisk",
+      "FileError": null
+     },
+     {
+      "Name": "RXBSKNL.SYS",
+      "FilePath": "C:\\WINDOWS\\System32\\drivers\\RXBSKNL.SYS",
+      "FileSha256": "D0135F5EDA0E2CB666F2902BE7B56610519F073E79B38AE8BC0156C9EA66C26D",
+      "FileVersion": "1.2.0",
+      "Company": "Windows (R) Win 7 DDK provider",
+      "Product": "Windows (R) Win 7 DDK driver",
+      "FileError": null
+     },
+     {
+      "Name": "vioscsi.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+      "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO SCSI pass-through controller",
+      "FileError": null
+     },
+     {
+      "Name": "balloon.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+      "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Balloon controller",
+      "FileError": null
+     },
+     {
+      "Name": "netkvm.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+      "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Ethernet Adapter",
+      "FileError": null
+     },
+     {
+      "Name": "fwcfg.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+      "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "QEMU FwCfg Device",
+      "FileError": null
+     }
+    ],
+    "queuecache": []
+   },
+   "steps": {},
+   "stalls": []
+  },
+  "compare-ram": {
+   "run": "QueueCache-Verify-20261012-132742-609c2939628c497d8bdc55992d90310d",
+   "comparison": {
+    "SchemaVersion": 1,
+    "Suite": "compare-ram",
+    "Product": "Primo Ramdisk 6.6.0 Direct-IO",
+    "PlanVersion": 121,
+    "Shapes": [
+     {
+      "Shape": "ram-seq1m-q1t1-read",
+      "Samples": 3,
+      "MBPerSecond": 17966.825472,
+      "MinMBPerSecond": 17939.134580619382,
+      "MaxMBPerSecond": 18063.37145734266,
+      "Iops": 17134.5,
+      "ReadP50Ms": 0.055,
+      "ReadP99Ms": 0.088,
+      "ReadP999Ms": 0.16,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 25.2
+     },
+     {
+      "Shape": "ram-seq1m-q8t1-read",
+      "Samples": 3,
+      "MBPerSecond": 27547.58948571429,
+      "MinMBPerSecond": 26823.956817582417,
+      "MaxMBPerSecond": 27679.4703872,
+      "Iops": 26271.428571428572,
+      "ReadP50Ms": 0.124,
+      "ReadP99Ms": 0.189,
+      "ReadP999Ms": 0.256,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 61.66
+     },
+     {
+      "Shape": "ram-seq1m-q8t4-read",
+      "Samples": 3,
+      "MBPerSecond": 27211.176345599997,
+      "MinMBPerSecond": 27139.6634624,
+      "MaxMBPerSecond": 27444.903936,
+      "Iops": 25950.6,
+      "ReadP50Ms": 0.16,
+      "ReadP99Ms": 0.585,
+      "ReadP999Ms": 1.383,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 100
+     },
+     {
+      "Shape": "ram-rnd4k-q1t1-read",
+      "Samples": 3,
+      "MBPerSecond": 1479.518208,
+      "MinMBPerSecond": 1478.8190207999999,
+      "MaxMBPerSecond": 1481.6223232,
+      "Iops": 361210.5,
+      "ReadP50Ms": 0.002,
+      "ReadP99Ms": 0.004,
+      "ReadP999Ms": 0.021,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 25.27
+     },
+     {
+      "Shape": "ram-rnd4k-q32t1-read",
+      "Samples": 3,
+      "MBPerSecond": 587.3099316683316,
+      "MinMBPerSecond": 547.1932416000001,
+      "MaxMBPerSecond": 608.6598656,
+      "Iops": 143386.21378621378,
+      "ReadP50Ms": 0.017,
+      "ReadP99Ms": 0.091,
+      "ReadP999Ms": 0.132,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 38.05
+     },
+     {
+      "Shape": "ram-rnd4k-q32t4-read",
+      "Samples": 3,
+      "MBPerSecond": 2881.7477632,
+      "MinMBPerSecond": 2847.4033486513486,
+      "MaxMBPerSecond": 2905.159403796204,
+      "Iops": 703551.7,
+      "ReadP50Ms": 0.003,
+      "ReadP99Ms": 0.061,
+      "ReadP999Ms": 0.117,
+      "WriteP50Ms": null,
+      "WriteP99Ms": null,
+      "WriteP999Ms": null,
+      "CpuPercent": 99.84
+     },
+     {
+      "Shape": "ram-seq1m-q1t1-write",
+      "Samples": 3,
+      "MBPerSecond": 17793.4958592,
+      "MinMBPerSecond": 17351.31136,
+      "MaxMBPerSecond": 17886.1899776,
+      "Iops": 16969.2,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.055,
+      "WriteP99Ms": 0.085,
+      "WriteP999Ms": 0.168,
+      "CpuPercent": 25.31
+     },
+     {
+      "Shape": "ram-seq1m-q8t1-write",
+      "Samples": 3,
+      "MBPerSecond": 20957.993369599997,
+      "MinMBPerSecond": 20948.975616,
+      "MaxMBPerSecond": 20965.23482917083,
+      "Iops": 19987.1,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.171,
+      "WriteP99Ms": 0.22,
+      "WriteP999Ms": 0.321,
+      "CpuPercent": 67.07
+     },
+     {
+      "Shape": "ram-seq1m-q8t4-write",
+      "Samples": 3,
+      "MBPerSecond": 25343.557632,
+      "MinMBPerSecond": 25213.953638400002,
+      "MaxMBPerSecond": 25429.486916283717,
+      "Iops": 24169.5,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.17,
+      "WriteP99Ms": 0.546,
+      "WriteP999Ms": 1.038,
+      "CpuPercent": 100
+     },
+     {
+      "Shape": "ram-rnd4k-q1t1-write",
+      "Samples": 3,
+      "MBPerSecond": 1208.2913566433565,
+      "MinMBPerSecond": 1206.433792,
+      "MaxMBPerSecond": 1211.2412672,
+      "Iops": 294993.006993007,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.003,
+      "WriteP99Ms": 0.007,
+      "WriteP999Ms": 0.024,
+      "CpuPercent": 25.31
+     },
+     {
+      "Shape": "ram-rnd4k-q32t1-write",
+      "Samples": 3,
+      "MBPerSecond": 342.2941184,
+      "MinMBPerSecond": 337.90238719999996,
+      "MaxMBPerSecond": 343.18955924075925,
+      "Iops": 83567.9,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.031,
+      "WriteP99Ms": 0.069,
+      "WriteP999Ms": 0.117,
+      "CpuPercent": 35.92
+     },
+     {
+      "Shape": "ram-rnd4k-q32t4-write",
+      "Samples": 3,
+      "MBPerSecond": 2135.2177664,
+      "MinMBPerSecond": 2089.1922432,
+      "MaxMBPerSecond": 2138.3155712000002,
+      "Iops": 521293.4,
+      "ReadP50Ms": null,
+      "ReadP99Ms": null,
+      "ReadP999Ms": null,
+      "WriteP50Ms": 0.004,
+      "WriteP99Ms": 0.072,
+      "WriteP999Ms": 0.12,
+      "CpuPercent": 99.77
+     }
+    ],
+    "Steps": [
+     {
+      "Shape": "fill",
+      "Samples": 1,
+      "Measure": "MB/s",
+      "Median": 12410.438416884104,
+      "Min": 12410.438416884104,
+      "Max": 12410.438416884104
+     },
+     {
+      "Shape": "tree",
+      "Samples": 3,
+      "Measure": "create seconds",
+      "Median": 4.5678304,
+      "Min": 4.2512118,
+      "Max": 4.7849218
+     },
+     {
+      "Shape": "tree",
+      "Samples": 3,
+      "Measure": "copy seconds (4 threads)",
+      "Median": 4.8775967,
+      "Min": 4.6436114,
+      "Max": 4.8840932
+     },
+     {
+      "Shape": "tree",
+      "Samples": 3,
+      "Measure": "read and hash seconds",
+      "Median": 2.9726747,
+      "Min": 2.9316344,
+      "Max": 2.9771839
+     },
+     {
+      "Shape": "tree",
+      "Samples": 3,
+      "Measure": "delete seconds",
+      "Median": 4.5613164,
+      "Min": 4.5601034,
+      "Max": 4.8002913
+     }
+    ],
+    "Memory": [
+     {
+      "Id": "memory-start",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:27:51.4079071+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 9636425728,
+       "CommitBytes": 6646730752,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 209367040,
+       "KernelPagedBytes": 176717824,
+       "SystemCacheBytes": 2383659008
+      }
+     },
+     {
+      "Id": "memory-before-fill",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:35:12.5916225+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 9696509952,
+       "CommitBytes": 6562566144,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 209596416,
+       "KernelPagedBytes": 177426432,
+       "SystemCacheBytes": 2422665216
+      }
+     },
+     {
+      "Id": "memory-filled",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:35:12.7743033+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 9697345536,
+       "CommitBytes": 6564261888,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 209604608,
+       "KernelPagedBytes": 177455104,
+       "SystemCacheBytes": 2423709696
+      }
+     },
+     {
+      "Id": "memory-after-delete",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:35:17.7783497+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 9703673856,
+       "CommitBytes": 6558347264,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 209522688,
+       "KernelPagedBytes": 177360896,
+       "SystemCacheBytes": 2423668736
+      }
+     },
+     {
+      "Id": "memory-end",
+      "Snapshot": {
+       "Utc": "2026-10-12T13:36:27.5966887+00:00",
+       "TotalPhysicalBytes": 16706351104,
+       "AvailablePhysicalBytes": 9282416640,
+       "CommitBytes": 6947270656,
+       "CommitLimitBytes": 17780092928,
+       "KernelNonpagedBytes": 305045504,
+       "KernelPagedBytes": 275767296,
+       "SystemCacheBytes": 2526089216
+      }
+     }
+    ],
+    "Durability": null
+   },
+   "environment": {
+    "windows": {
+     "Build": "28000",
+     "Revision": "2956",
+     "Release": "26H1"
+    },
+    "target": {
+     "Letter": "T",
+     "Root": "T:\\",
+     "VolumeName": null,
+     "FileSystem": "NTFS",
+     "Label": "QCBENCH",
+     "ClusterBytes": 4096,
+     "TotalBytes": 4293914624,
+     "FreeBytes": 4257075200,
+     "DriveType": "Fixed",
+     "DiskNumber": null
+    },
+    "drivers": [
+     {
+      "Name": "fancyrd.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\drivers\\fancyrd.sys",
+      "FileSha256": "495A10B0EE378A2D33FEC80C6762FCC4E10F2DFEFF6FC8ABDB8FBE33A447959F",
+      "FileVersion": "6.6.0",
+      "Company": "Romex Software",
+      "Product": "Primo Ramdisk",
+      "FileError": null
+     },
+     {
+      "Name": "RXBSKNL.SYS",
+      "FilePath": "C:\\WINDOWS\\System32\\drivers\\RXBSKNL.SYS",
+      "FileSha256": "D0135F5EDA0E2CB666F2902BE7B56610519F073E79B38AE8BC0156C9EA66C26D",
+      "FileVersion": "1.2.0",
+      "Company": "Windows (R) Win 7 DDK provider",
+      "Product": "Windows (R) Win 7 DDK driver",
+      "FileError": null
+     },
+     {
+      "Name": "vioscsi.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+      "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO SCSI pass-through controller",
+      "FileError": null
+     },
+     {
+      "Name": "balloon.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+      "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Balloon controller",
+      "FileError": null
+     },
+     {
+      "Name": "netkvm.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+      "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "Red Hat VirtIO Ethernet Adapter",
+      "FileError": null
+     },
+     {
+      "Name": "fwcfg.sys",
+      "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+      "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+      "FileVersion": "100.100.104.27100",
+      "Company": "Red Hat, Inc.",
+      "Product": "QEMU FwCfg Device",
+      "FileError": null
+     }
+    ],
+    "queuecache": []
+   },
+   "steps": {
+    "fill": {
+     "Bytes": 2147483648,
+     "Seconds": 0.1730385,
+     "MBPerSecond": 12410.438416884104,
+     "FlushSeconds": null,
+     "BytesPerSecond": null
+    }
+   },
+   "stalls": []
+  }
+ },
+ "status": "Measured",
+ "notes": "The run went fine. Large reads from one program reach about 27 GB/s. One odd result: random 4 KiB reads get slower when one program queues many of them (about 0.6 GB/s with 32 queued against 1.5 GB/s one at a time); the SCSI mode does not show this.",
+ "problems": []
+}

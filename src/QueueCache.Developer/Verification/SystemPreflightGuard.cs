@@ -9,7 +9,8 @@ public static class SystemPreflightGuard
     {
         if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session"))
         {
-            if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm || options.OraclePath is not null)
+            if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm ||
+                options.OraclePath is not null && options.Suite != "compare-durability-verify")
                 throw new ArgumentException("System-disk opt-in arguments are only valid for guarded system suites.");
             return;
         }

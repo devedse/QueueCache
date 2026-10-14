@@ -97,8 +97,10 @@ QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-1
 | Random 4K write (RND4K Q1T1) | 4.8 | 1,034 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data that is
-in its cache. Work larger than the cache runs at the drive's own speed, which on
-this network storage varies (two days earlier it read 594 and wrote 112 MB/s);
+in its cache. Data that is not in the cache yet is currently read more slowly
+than without the cache, because QueueCache fetches it from the drive one request
+at a time. The drive's own speed on this network storage varies (two days earlier
+it read 594 and wrote 112 MB/s);
 both Q: columns were measured in one session, without a restart in between. In
 the same session the cache's previous read bookkeeping read 38,645 MB/s at
 SEQ1M Q8T1 and 18,962 MB/s at SEQ1M Q1T1 (now 39,702 and 19,564). The RAM disk
@@ -106,6 +108,9 @@ column was re-measured after RAM-disk reads became asynchronous: one program
 with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
 25,353 MB/s before).
 [How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
+
+How QueueCache compares with other RAM disks and RAM caches on the same machine,
+including where it is slower: [comparison](docs/COMPARISON.md).
 
 ## Getting started
 

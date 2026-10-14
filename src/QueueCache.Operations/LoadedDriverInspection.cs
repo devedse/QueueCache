@@ -10,6 +10,8 @@ namespace QueueCache.Operations;
 
 public sealed record LoadedDriverFile(string ModulePath, string FilePath, string? FileSha256, string? FileVersion, string? FileError);
 public sealed record LoadedDriverObservation(bool Available, string? Error, IReadOnlyList<LoadedDriverFile> Modules);
+public sealed record ThirdPartyDriver(string Name, string FilePath, string? FileSha256, string? FileVersion, string? Company,
+    string? Product, string? FileError);
 
 /// <summary>Loaded module paths from PSAPI, never inferred from SCM registration.
 /// File hashes describe the current on-disk file, not a hash of kernel memory.</summary>
@@ -51,6 +53,36 @@ public static class LoadedDriverInspection
             }
             catch (Exception ex) when (ex is Win32Exception or IOException or UnauthorizedAccessException)
             { return new(false, ex.Message, []); }
+        }
+    }
+    /// <summary>Every loaded driver whose file is not signed off as Microsoft's (by its version resource),
+    /// for comparisons of other storage products. A file that cannot be read is listed with its error.</summary>
+    public static IReadOnlyList<ThirdPartyDriver> CaptureThirdParty()
+    {
+        lock (gate)
+        {
+            using var privilege = new DebugPrivilege();
+            var drivers = new List<ThirdPartyDriver>();
+            foreach (var address in Addresses())
+            {
+                var path = new StringBuilder(32768);
+                var length = GetDeviceDriverFileNameW(address, path, (uint)path.Capacity);
+                if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "A loaded module path could not be read.");
+                if (length >= path.Capacity - 1) throw new IOException("A loaded module path was truncated.");
+                var module = path.ToString();
+                var file = NormalizePath(module);
+                try
+                {
+                    var info = FileVersionInfo.GetVersionInfo(file);
+                    if (info.CompanyName?.Contains("Microsoft", StringComparison.OrdinalIgnoreCase) == true) continue;
+                    using var stream = File.OpenRead(file);
+                    drivers.Add(new(Path.GetFileName(module), file, Convert.ToHexString(SHA256.HashData(stream)),
+                        info.FileVersion, info.CompanyName, info.ProductName, null));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { drivers.Add(new(Path.GetFileName(module), file, null, null, null, null, ex.Message)); }
+            }
+            return drivers;
         }
     }
     public static string NormalizePath(string value)

@@ -12,8 +12,9 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 120, "plan 120 reference suites have a new verification plan version on every host");
+        Check(VerificationPlan.Version == 124, "plan 124 records unreadable churn files instead of stopping; the version changes on every host");
         RunPlan120Contracts(Check, Reject);
+        RunComparisonContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -311,6 +312,198 @@ internal static class DiagnosticContracts
         reject(() => CacheReadReference.Row(timed, Snapshot(1, 0, 0, 0, 0, 0, 0, 0), Snapshot(1, 0, 0, 0, 0, 0, 0, 0), score with { Bytes = 999 }));
         RunBookkeepingContracts(check, reject);
         RunStressContracts(check, reject);
+    }
+
+    /// <summary>Plan 121 driver-independent comparisons with other RAM disks and RAM caches.</summary>
+    private static void RunComparisonContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var ram = ComparisonPlan.CasesFor("compare-ram", 3);
+        var ramWindows = ram.Where(c => c.Kind == "diskspd").ToArray();
+        check(ram.Select(c => c.Id).Distinct().Count() == ram.Count && ramWindows.Length == 36 &&
+            ramWindows.GroupBy(c => ComparisonPlan.Shape(c.Id)).Count() == 12 && ramWindows.GroupBy(c => ComparisonPlan.Shape(c.Id)).All(g => g.Count() == 3),
+            "compare-ram: twelve read and write shapes, each with three immutable repetitions");
+        check(ram.Take(3).Select(c => c.Kind).SequenceEqual(["canary", "memory", "prepare"]) && ram[^2].Kind == "integrity" && ram[^1].Kind == "memory" &&
+            ram.Count(c => c.Kind == "tree") == 3 && ram.Count(c => c.Kind == "memory") == 5,
+            "compare-ram starts with the canary and the test file, ends with the byte check and records memory around the fill");
+        check(ramWindows.All(c => c.Seconds == 10 && c.Buffering == ComparisonPlan.Unbuffered && c.File == "test-1g.dat"),
+            "RAM-disk windows are ten-second unbuffered windows on the 1 GiB test file");
+        var cache = ComparisonPlan.CasesFor("compare-cache", 3);
+        var cacheWindows = cache.Where(c => c.Kind == "diskspd").ToArray();
+        check(cache.Select(c => c.Id).Distinct().Count() == cache.Count && cacheWindows.Length == 47 &&
+            cacheWindows.Count(c => c.Buffering == ComparisonPlan.Buffered) == 12 && cacheWindows.Count(c => c.Buffering == ComparisonPlan.WriteThrough) == 6 &&
+            cache.Count(c => c.Kind == "absorb") == 3 && cache.Count(c => c.Kind == "flush") == 3 && cache.Count(c => c.Kind == "sustained") == 2 &&
+            cache.Count(c => c.Kind == "tree") == 2 && cacheWindows.Count(c => c.Access == 'M') == 1 &&
+            cache.Count(c => c.Id.StartsWith("hot-r1-warm", StringComparison.Ordinal)) == 3,
+            "compare-cache: hot, buffered, write-through, larger-than-cache and mixed windows plus absorb, flush, sustained and tree steps");
+        check(cache.Where(c => c.Kind is "absorb" or "flush" or "sustained" or "settle" or "tree").All(c => c.SettleSeconds >= 45) &&
+            cacheWindows.All(c => ComparisonPlan.CacheFiles.Any(f => f.Name == c.File)), "every cache write waits for write-back; windows use the kept files");
+        var cold = ComparisonPlan.CasesFor("compare-cache-cold", 3);
+        check(cold.Count(c => c.Kind == "warm") == 2 && cold.Count(c => c.Kind == "diskspd") == 2 && cold.All(c => c.Repeat == 1),
+            "the cold run happens once: first and second read, then two random-read windows");
+        check(ComparisonPlan.CasesFor("compare-durability-write", 1).Single().Kind == "durability-write" &&
+            ComparisonPlan.WorkDirectory("compare-ram", @"T:\", "Run") == Path.Combine(@"T:\", "Run") &&
+            ComparisonPlan.WorkDirectory("compare-cache", @"Q:\", "Run") == Path.Combine(@"Q:\", "QCBench") &&
+            ComparisonPlan.WorkDirectory("compare-snapshot", @"Q:\", "Run") is null, "comparison folders: run-owned for RAM disks, kept for caches");
+        check(ComparisonPlan.CasesFor("compare-durability-churn", 1).Single().Kind == "durability-churn" &&
+            ComparisonPlan.IsDurabilityWrite("compare-durability-churn") && ComparisonPlan.IsDurabilityWrite("compare-durability-write") &&
+            !ComparisonPlan.IsDurabilityWrite("compare-durability-verify") && !ComparisonPlan.UsesDiskSpd("compare-durability-churn") &&
+            ComparisonPlan.WorkDirectory("compare-durability-churn", @"Q:\", "Run") == Path.Combine(@"Q:\", "QCBench-churn"),
+            "the churn power-cut test writes an oracle and a durable FINISHED marker, without DiskSpd, in its own folder");
+        reject(() => { try { ComparisonPlan.CasesFor("compare-ram", 4); } catch (ArgumentOutOfRangeException) { throw new InvalidDataException(); } });
+
+        string[] Args(ComparisonCase c) => ComparisonPlan.Arguments(c, 1L << 30);
+        var q8t4 = ramWindows.First(c => !c.Random && c.Threads == 4 && c.Access == 'W');
+        var buffered = cacheWindows.First(c => c.Buffering == ComparisonPlan.Buffered && c.Access == 'R');
+        var through = cacheWindows.First(c => c.Buffering == ComparisonPlan.WriteThrough);
+        var random = ramWindows.First(c => c.Random && c.Access == 'R');
+        check(Args(q8t4).Contains("-si") && Args(q8t4).Contains("-Su") && Args(q8t4).Contains("-Z1M") && Args(q8t4).Contains("-w100") &&
+            Args(q8t4).Contains("-f1024M") && Args(q8t4).Contains("-W2") && Args(q8t4).Contains("-d10"),
+            "multi-threaded sequential writes share one cursor, unbuffered, with a fixed random source buffer");
+        check(Args(buffered).Contains("-Sb") && !Args(buffered).Contains("-Z1M") && Args(through).Contains("-Sh") &&
+            Args(random).Contains("-r4K") && Args(random).Contains("-z7") && !Args(random).Contains("-si"),
+            "buffered, write-through and random windows ask DiskSpd for exactly that");
+        reject(() => { try { ComparisonPlan.Arguments(ram[0], 1L << 30); } catch (ArgumentException) { throw new InvalidDataException(); } });
+
+        XElement Profile(ComparisonCase c, bool? disableOsCache, bool writeThrough, string? random = null) =>
+            new("Profile", new XElement("TimeSpans", new XElement("TimeSpan", new XElement("Duration", c.Seconds), new XElement("Warmup", 2),
+                new XElement("Targets", new XElement("Target", new XElement("BlockSize", c.BlockKiB * 1024L), new XElement("RequestCount", c.Queue),
+                    new XElement("ThreadsPerFile", c.Threads), new XElement("WriteRatio", c.WritePercent), new XElement("MaxFileSize", 1L << 30),
+                    disableOsCache is { } d ? new XElement("DisableOSCache", d ? "true" : "false") : null,
+                    writeThrough ? new XElement("WriteThrough", "true") : null,
+                    random is not null ? new XElement("Random", random) : new XElement("InterlockedSequential", c.Threads > 1 ? "true" : "false"))))));
+        ComparisonPlan.ValidateProfile(q8t4, new XElement("Results", Profile(q8t4, true, false)), 1L << 30);
+        ComparisonPlan.ValidateProfile(through, new XElement("Results", Profile(through, true, true)), 1L << 30);
+        ComparisonPlan.ValidateProfile(buffered, new XElement("Results", Profile(buffered, null, false)), 1L << 30);
+        ComparisonPlan.ValidateProfile(random, new XElement("Results", Profile(random, true, false, "4096")), 1L << 30);
+        reject(() => ComparisonPlan.ValidateProfile(through, new XElement("Results", Profile(through, true, false)), 1L << 30));
+        reject(() => ComparisonPlan.ValidateProfile(buffered, new XElement("Results", Profile(buffered, true, false)), 1L << 30));
+        reject(() => ComparisonPlan.ValidateProfile(q8t4, new XElement("Results", Profile(q8t4 with { Threads = 1 }, true, false)), 1L << 30));
+        reject(() => ComparisonPlan.ValidateProfile(q8t4, new XElement("Results", Profile(q8t4, true, false)), 2L << 30));
+
+        string Results(ComparisonCase c, long reads, long writes, bool cpu = true, bool p50 = true)
+        {
+            var block = c.BlockKiB * 1024L;
+            var threads = Enumerable.Range(0, c.Threads).Select(_ => new XElement("Thread", new XElement("Target",
+                new XElement("ReadBytes", reads / c.Threads * block), new XElement("ReadCount", reads / c.Threads),
+                new XElement("WriteBytes", writes / c.Threads * block), new XElement("WriteCount", writes / c.Threads),
+                new XElement("FileSize", 1L << 30))));
+            XElement Bucket(double percentile, double ms) => new("Bucket", new XElement("Percentile", percentile),
+                reads > 0 ? new XElement("ReadMilliseconds", ms) : null, writes > 0 ? new XElement("WriteMilliseconds", ms * 2) : null);
+            return new XElement("Results", Profile(c, c.Buffering == ComparisonPlan.Buffered ? null : true, c.Buffering == ComparisonPlan.WriteThrough,
+                    c.Random ? (c.BlockKiB * 1024L).ToString() : null),
+                new XElement("TimeSpan", new XElement("TestTimeSeconds", 10),
+                    cpu ? new XElement("CpuUtilization", new XElement("Average", new XElement("UsagePercent", 25.5))) : null,
+                    threads, new XElement("Latency", p50 ? Bucket(50, 0.1) : null, Bucket(99, 0.5), Bucket(99.9, 0.9), Bucket(100, 2)))).ToString();
+        }
+        var scored = ComparisonPlan.Score(q8t4, Results(q8t4, 0, 4000), 1L << 30);
+        check(Math.Abs(scored.MBPerSecond - 4000 * 1048576.0 / 10 / 1_000_000) < 1e-6 && scored.WriteP50Ms == 0.2 && scored.WriteP999Ms == 1.8 &&
+            scored.ReadP50Ms is null && scored.CpuPercent == 25.5 && scored.Iops == 400, "comparison scores carry decimal MB/s, p50/p99/p99.9 and CPU");
+        reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 0, 4000, cpu: false), 1L << 30));
+        reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 0, 4000, p50: false), 1L << 30));
+        reject(() => ComparisonPlan.Score(q8t4, Results(q8t4, 400, 4000), 1L << 30));
+        check(ComparisonPlan.Score(q8t4, Results(q8t4, 0, 0), 1L << 30) is { Operations: 0, MBPerSecond: 0, WriteP99Ms: null, ReadP99Ms: null },
+            "a window that completed nothing is a stall (0 MB/s, latency N/A), not a collection failure");
+        var mixed = cacheWindows.Single(c => c.Access == 'M');
+        check(ComparisonPlan.Score(mixed, Results(mixed, 700, 300), 4L << 30 >> 2).ReadP99Ms == 0.5, "a mixed window reports both directions");
+        reject(() => ComparisonPlan.Score(mixed, Results(mixed, 700, 0), 1L << 30));
+
+        check(ComparisonPlan.Shape("ram-r2-seq1m-q8t1-read") == "ram-seq1m-q8t1-read" && ComparisonPlan.Shape("absorb-r3") == "absorb" &&
+            ComparisonPlan.Shape("hot-r1-warm") == "hot-warm" && ComparisonPlan.Spread([3.0, 1, 2]).Median == 2 && ComparisonPlan.Spread([1.0, 2, 3, 4]) == (2.5, 1, 4),
+            "repetitions group by shape; medians of odd and even counts");
+        var two = ram.Take(2).ToArray();
+        ComparisonPlan.ValidateChecks(two, [new(two[0].Id, "PASS", ""), new(two[1].Id, "PASS", "")]);
+        reject(() => ComparisonPlan.ValidateChecks(two, [new(two[1].Id, "PASS", ""), new(two[0].Id, "PASS", "")]));
+        reject(() => ComparisonPlan.ValidateChecks(two, [new(two[0].Id, "PASS", "")]));
+        reject(() => ComparisonPlan.ValidateChecks(two, [new(two[0].Id, "PASS", ""), new(two[1].Id, "FAIL", "")]));
+
+        var options = new VerificationOptions("T:", "compare-ram", DiskSpd: Environment.ProcessPath, Product: "Example RAM Disk 1.0 static");
+        VerificationPlan.Validate(options);
+        VerificationPlan.Validate(options with { Suite = "compare-durability-verify", DiskSpd = null, OraclePath = "oracle.json" });
+        VerificationPlan.Validate(options with { Suite = "compare-snapshot", DiskSpd = null });
+        VerificationPlan.Validate(options with { Suite = "compare-durability-churn", DiskSpd = null });
+        foreach (var invalid in new[] { options with { Product = null }, options with { DiskSpd = null }, options with { Repeats = 4 },
+            options with { Suite = "compare-durability-write" }, options with { Suite = "compare-durability-verify", DiskSpd = null },
+            options with { Suite = "compare-durability-write", DiskSpd = null, OraclePath = "oracle.json" }, options with { Suite = "quick", DiskSpd = null },
+            options with { Suite = "compare-durability-churn" }, options with { Suite = "compare-durability-churn", DiskSpd = null, OraclePath = "oracle.json" },
+            options with { KeepWorkloads = true } })
+            try { VerificationPlan.Validate(invalid); throw new Exception("comparison options accepted: " + invalid); }
+            catch (ArgumentException) { }
+
+        var spec = ComparisonData.TreeSpec();
+        var bytes = spec.Sum(f => (long)f.Bytes);
+        check(spec.Count == ComparisonPlan.TreeFiles && spec.SequenceEqual(ComparisonData.TreeSpec()) && spec.Select(f => f.Path).Distinct().Count() == spec.Count &&
+            bytes is > 1L << 30 and < 3L << 29 && spec.All(f => f.Bytes is >= 1024 and <= 1 << 20) &&
+            spec.Select((f, i) => ComparisonData.TreeOffset(i, f.Bytes) + f.Bytes).Max() <= 4 << 20,
+            "the file tree is seeded, unique, 1.0-1.5 GiB and every file fits the shared content");
+        var sector = new byte[4096];
+        ComparisonData.FillSector(sector, 42, 2, 1, 7);
+        var older = new byte[4096];
+        ComparisonData.FillSector(older, 42, 1, 1, 7);
+        check(ComparisonData.Classify(sector, 42, 1, 7) == 2 && ComparisonData.Classify(older, 42, 1, 7) == 1 &&
+            ComparisonData.Classify(sector, 43, 1, 7) == 0 && ComparisonData.Classify(sector, 42, 1, 8) == 0 && !sector.AsSpan(32).SequenceEqual(older.AsSpan(32)),
+            "durability sectors identify their generation and nothing else");
+        sector[100] ^= 1;
+        check(ComparisonData.Classify(sector, 42, 1, 7) == 0, "a changed byte makes a sector 'other'");
+
+        // Churn power-cut test: deterministic file contents and schedule, and age groups from the oracle's timeline.
+        var churnFile = ComparisonData.ChurnFile(42, ComparisonData.ChurnSet, 5);
+        var changed = (byte[])churnFile.Clone(); changed[^1] ^= 1;
+        check(churnFile.Length == ComparisonData.ChurnSectors(ComparisonData.ChurnSet, 5) * 4096 && churnFile.Length is >= 4096 and <= 32768 &&
+            ComparisonData.ChurnIntact(churnFile, 42, ComparisonData.ChurnSet, 5) && !ComparisonData.ChurnIntact(changed, 42, ComparisonData.ChurnSet, 5) &&
+            !ComparisonData.ChurnIntact(churnFile.AsSpan(0, churnFile.Length - 4096), 42, ComparisonData.ChurnSet, 5) &&
+            !ComparisonData.ChurnIntact(churnFile, 42, ComparisonData.ChurnBaseSet, 5) && !ComparisonData.ChurnIntact(churnFile, 43, ComparisonData.ChurnSet, 5) &&
+            Enumerable.Range(0, 64).Select(i => ComparisonData.ChurnSectors(ComparisonData.ChurnSet, i)).Distinct().Count() == 8,
+            "churn files have fixed 4-32 KiB contents; a changed byte, a missing sector, another set or nonce is not intact");
+        var full = ComparisonData.ChurnFile(42, ComparisonData.ChurnSet, 13);
+        var foreign = (byte[])full.Clone();
+        ComparisonData.ChurnFile(42, ComparisonData.ChurnBaseSet, 2).AsSpan(0, 4096).CopyTo(foreign.AsSpan(full.Length - 4096));
+        check(ComparisonData.ChurnDamage([], ComparisonData.ChurnSet, 13) == "empty" &&
+            ComparisonData.ChurnDamage(full.AsSpan(0, full.Length - 4096), ComparisonData.ChurnSet, 13) == (full.Length > 4096 ? "short" : "empty") &&
+            ComparisonData.ChurnDamage(new byte[full.Length], ComparisonData.ChurnSet, 13) == "zeros" &&
+            ComparisonData.ChurnDamage(foreign, ComparisonData.ChurnSet, 13) == "another file" &&
+            ComparisonData.ChurnDamage(changed, ComparisonData.ChurnSet, 5) == "other",
+            "damaged churn files are classified as empty, short, zeros, another test file's data, or other");
+        var churnSteps = ComparisonData.ChurnSeconds * ComparisonData.ChurnFilesPerSecond;
+        var deletes = Enumerable.Range(0, churnSteps).Select(i => ComparisonData.ChurnDeletes(i)).ToArray();
+        var baseDeletes = deletes.Where(d => d.Base is not null).Select(d => d.Base!.Value).ToArray();
+        var churnDeletes = deletes.Where(d => d.Churn is not null).Select((d, n) => (d.Churn!.Value, n)).ToArray();
+        check(baseDeletes.Distinct().Count() == ComparisonData.ChurnBaseFiles / 2 && baseDeletes.Max() < ComparisonData.ChurnBaseFiles / 2 &&
+            churnDeletes.Length > 0 && Enumerable.Range(0, churnSteps).All(i => ComparisonData.ChurnDeletes(i).Churn is not { } c || c == i - 1000) &&
+            Enumerable.Range(0, 1000).All(i => ComparisonData.ChurnDeletes(i).Churn is null),
+            "a full churn deletes the first half of the base files once each and only churn files 1,000 steps old");
+        var t0 = DateTimeOffset.UnixEpoch;
+        var churnOracle = new ChurnOracle(2, 42, @"Q:\QCBench-churn", 2, t0, t0, t0.AddSeconds(40), [0, 5_000, 15_000, 25_000, 35_000, 39_000],
+            [-1, 100], [-1, -1, -1, -1, -1, 39_500], "Example");
+        check(ComparisonData.ChurnGroup(churnOracle, true, 0) == "base files kept" &&
+            ComparisonData.ChurnGroup(churnOracle, true, 1) == "base files deleted during the churn" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 0) == "churn files 30 s or older" && ComparisonData.ChurnGroup(churnOracle, false, 1) == "churn files 30 s or older" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 2) == "churn files 20-30 s old" && ComparisonData.ChurnGroup(churnOracle, false, 3) == "churn files 10-20 s old" &&
+            ComparisonData.ChurnGroup(churnOracle, false, 4) == "churn files under 10 s old" && ComparisonData.ChurnGroup(churnOracle, false, 5) == "churn files deleted again",
+            "churn files are grouped by their age when the churn ended; deleted files form their own groups");
+
+        var directory = Directory.CreateTempSubdirectory("qc-compare-").FullName;
+        try
+        {
+            var windows = ramWindows.Where(c => ComparisonPlan.Shape(c.Id) == "ram-seq1m-q8t1-read").ToArray();
+            var mbs = new[] { 30_000.0, 31_000, 29_000 };
+            for (var i = 0; i < 3; i++)
+                File.WriteAllText(Path.Combine(directory, $"compare.{windows[i].Id}.score.json"), JsonSerializer.Serialize(
+                    new ComparisonScore(windows[i].Id, 1, 1, 10, mbs[i], 100 + i, 0.1 * (i + 1), 1, 2, null, null, null, 10 + i)));
+            var absorb = cache.Where(c => c.Kind == "absorb").ToArray();
+            for (var i = 0; i < 3; i++)
+                File.WriteAllText(Path.Combine(directory, $"compare.{absorb[i].Id}.pass.json"), JsonSerializer.Serialize(new
+                {
+                    Pass = new SequentialPass(1L << 30, 1, 1000 + i, null, null), Settle = new SettleResult(60, 1L << 30, true, "test")
+                }));
+            var shapes = ComparisonReport.Shapes(directory, windows);
+            var steps = ComparisonReport.Steps(directory, absorb);
+            check(shapes.Single() is { Samples: 3, MBPerSecond: 30_000, MinMBPerSecond: 29_000, MaxMBPerSecond: 31_000, ReadP50Ms: 0.2, WriteP99Ms: null, CpuPercent: 11 } &&
+                steps.Single() is { Shape: "absorb", Measure: "MB/s", Median: 1001, Samples: 3 }, "the report takes medians and ranges from each step's own evidence");
+            File.Delete(Path.Combine(directory, $"compare.{windows[2].Id}.score.json"));
+            try { ComparisonReport.Shapes(directory, windows); throw new Exception("a missing score was summarized"); }
+            catch (IOException) { }
+        }
+        finally { Directory.Delete(directory, recursive: true); }
     }
 
     /// <summary>Plan 120 cached read candidate: copy flags 3 against 7 on one build.</summary>

@@ -18,7 +18,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
-    string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null);
+    string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null,
+    string? Product = null, string? Suite = null);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
@@ -231,6 +232,20 @@ public static class VerificationWorker
             Console.Error.Flush();
         }
         Stage("job loaded; validating target");
+        // Comparisons measure other products' volumes, which may have no disk number or QueueCache device.
+        if (job.Operation == "compare-target")
+        {
+            RunStorage.AtomicJson(job.Reply, ComparisonScenarios.Inspect(job.Volume, Path.GetDirectoryName(job.Reply)!,
+                job.Suite ?? throw new ArgumentException("Missing comparison suite.")));
+            return 0;
+        }
+        if (ComparisonPlan.IsComparison(job.Operation))
+        {
+            var comparison = await ComparisonScenarios.RunAsync(job);
+            RunStorage.AtomicJson(job.Reply, comparison);
+            ReportFailures(comparison, Console.Error);
+            return comparison.All(check => check.Result == "PASS") ? 0 : 1;
+        }
         DiskTarget target;
         if (job.Expected is { } expected)
         {

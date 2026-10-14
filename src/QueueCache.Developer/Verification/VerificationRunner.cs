@@ -18,6 +18,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     private RunStorage storage = null!;
     private RecoverySnapshot original = null!;
     private DiskTarget? fileTarget;
+    private ComparisonTarget? comparisonTarget;
     private VerificationOptions options = null!;
     private string workDirectory = "";
     private readonly object logGate = new();
@@ -242,6 +243,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             DrainDecisionCases = drainDecision,
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
+            ComparisonCases = ComparisonPlan.IsComparison(options.Suite) ? ComparisonPlan.CasesFor(options.Suite, options.Repeats) : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
                 ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity"
                 ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
@@ -267,8 +269,18 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var ownsSystemLease = false;
         try
         {
-            DiskTarget target;
-            if (IsSystemSuite(options.Suite))
+            DiskTarget target = null!;
+            var comparison = ComparisonPlan.IsComparison(options.Suite);
+            if (comparison)
+            {
+                // Other products' volumes: identity only. No QueueCache capture, configuration, hook or telemetry,
+                // so every product is measured the same way (see ComparisonPlan).
+                var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
+                comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
+                    ?? throw new InvalidDataException("Missing comparison target.");
+                storage.Write("restoration.json", new { Required = false, Reason = "External comparison: no QueueCache configuration, hooks or driver access." });
+            }
+            else if (IsSystemSuite(options.Suite))
             {
                 target = fileTarget!;
                 // Own the system disk before taking the recovery snapshot so no
@@ -312,15 +324,20 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 if (CampaignBaseline is not null) VerificationCampaignEvidence.ValidateConfiguration(CampaignBaseline, original);
                 target = original.Target;
             }
-            if (!IsSystemSuite(options.Suite))
+            if (!IsSystemSuite(options.Suite) && !comparison)
             {
                 var leases = LeaseDirectory;
                 Directory.CreateDirectory(leases);
                 if (!CampaignOwnsDiskLease)
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
-            captured = options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
+            captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
+            if (comparison)
+            {
+                workDirectory = ComparisonPlan.WorkDirectory(options.Suite, comparisonTarget!.Root, Path.GetFileName(storage.DirectoryPath)) ?? "";
+                storage.Write("workloads.json", new { Directory = workDirectory, Retained = options.Suite != "compare-ram" });
+            }
+            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
                 if (options.Suite == "system-app-session")
@@ -347,6 +364,21 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             foreach (var test in integrity)
                 await Case(test.Id, async () =>
                 {
+                    if (comparison)
+                    {
+                        var plan = ComparisonPlan.CasesFor(options.Suite, options.Repeats);
+                        var comparisonReply = await ExecuteWorker(new WorkerJob(test.Operation, options.Volume, "") with
+                        {
+                            WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
+                            ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
+                            OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
+                        }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
+                        caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))
+                            ?? throw new InvalidDataException("Missing comparison step results.");
+                        ComparisonPlan.ValidateChecks(plan, caseChecks);
+                        ComparisonReport.Write(storage.DirectoryPath, options.Suite, options.Product!, plan);
+                        return null;
+                    }
                     if (test.Operation == "disk-removal")
                     {
                         var oraclePath = storage.PathFor(test.Id + ".oracle.json");
@@ -710,7 +742,17 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         File.WriteAllText(storage.PathFor("results.csv"), csv.ToString());
         storage.Write("timing.json", new VerificationTiming(elapsed.Elapsed.TotalSeconds, preflightSeconds,
             preparationSeconds, storage.Results.Sum(r => r.Seconds), restorationSeconds, finalizing.Elapsed.TotalSeconds));
-        File.WriteAllText(storage.PathFor("FINISHED.txt"), $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n");
+        var finished = $"{status}\nFinished UTC: {DateTimeOffset.UtcNow:O}\nResults: {storage.DirectoryPath}\n";
+        if (ComparisonPlan.IsDurabilityWrite(options.Suite))
+        {
+            // The VM is reset right after this marker appears: everything written so far must already be on disk.
+            ComparisonScenarios.FlushVolume(storage.DirectoryPath[0]);
+            using var marker = new FileStream(storage.PathFor("FINISHED.txt"), FileMode.Create, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough);
+            marker.Write(Encoding.UTF8.GetBytes(finished));
+            marker.Flush(flushToDisk: true);
+        }
+        else
+            File.WriteAllText(storage.PathFor("FINISHED.txt"), finished);
         progressLabel = $"Finished | {storage.Results.Count}/{totalCases} recorded";
         Log($"{status}: {storage.Results.Count}/{expected.Count} cases. " + storage.PathFor("SUMMARY.md"));
         return complete ? 0 : token.IsCancellationRequested ? 130 : 1;

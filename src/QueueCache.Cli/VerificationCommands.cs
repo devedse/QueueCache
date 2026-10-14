@@ -121,6 +121,24 @@ internal static class VerificationCommands
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
 
+            Comparisons with other products (driver-independent; no QueueCache configuration, hooks or telemetry;
+            --product "<name> <version> <mode>" required; QueueCache must be loaded exactly when the product is QueueCache):
+              compare-snapshot   Memory, loaded third-party drivers and storage filters only (e.g. before creating a disk).
+              compare-ram        A 4 GiB RAM disk: 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes with latency and CPU,
+                                 memory before/after a 2 GiB fill, a 40,000-file tree (create, copy, read, delete), byte check.
+                                 DiskSpd; --repeats 1..3 (3 for reports).
+              compare-cache      A cached volume (files kept in <volume>\QCBench): hot CrystalDiskMark shapes, buffered and
+                                 write-through writes, an 8 GiB file larger than the cache, 1 GiB absorb, 512 MiB + flush,
+                                 8 GiB sustained writes, 5-minute 70/30 mix, file tree; waits for write-back after writes.
+              compare-cache-cold Needs a cache emptied beforehand (product command or restart): first and second read of a
+                                 1 GiB file, 60 s random reads of the 8 GiB file twice. Run compare-cache first.
+              compare-durability-write  Generation 1 flushed and settled, then a durable save, raw writes without a flush and
+                                 10,000 new small files; the evidence volume is flushed before FINISHED.txt. Reset the VM then.
+              compare-durability-churn  2,000 base files settled, then 40 s of file creation (200/s) with deletes and no flush;
+                                 FINISHED.txt as above. Reset the VM while the cache writes the churn out to the disk.
+              compare-durability-verify After the reset, with --oracle <write run>\durability-oracle.json: what survived (for the
+                                 churn test by file age) and chkdsk /scan. Measurement only.
+
             DiskSpd: download standard Microsoft DiskSpd from https://github.com/microsoft/diskspd/releases
             Extract DiskSpd.ZIP; use amd64\diskspd.exe on x64 Windows (also for Intel CPUs).
             Also supported: CrystalDiskMark's CdmResource\DiskSpd\DiskSpd64.exe on x64 Windows.
@@ -169,16 +187,17 @@ internal static class VerificationCommands
         var systemInstance = new Option<string?>("--system-instance") { Description = "System suites: exact expected C: physical-disk PnP instance ID." };
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
-        var oracle = new Option<string?>("--oracle") { Description = "system-post-restart only: prior system-files oracle.json on a separate physical disk." };
+        var oracle = new Option<string?>("--oracle") { Description = "system-post-restart: prior system-files oracle.json on a separate physical disk; compare-durability-verify: the write run's durability-oracle.json." };
         var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal suites only: exact PnP instance of the disposable physical disk to eject." };
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
         var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
+        var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -192,7 +211,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads), p.GetValue(traceSymbols));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))
