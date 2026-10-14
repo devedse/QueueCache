@@ -19,10 +19,12 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
     string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null,
-    string? Product = null, string? Suite = null);
+    string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
+    bool RequireCopyFlagsRestore = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
-    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
+    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
+    ulong? CallerBackoff = null, ulong? CopyFlags = null);
 public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 /// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
 public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
@@ -203,7 +205,8 @@ public static class VerificationWorker
     /// or in flight there. A restored cache that is enabled again (Fast or Strict) can already hold new writes
     /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
-        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null)
+        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null,
+        ulong? copyFlags = null, bool copyFlagsRestoreRequired = false)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -228,7 +231,33 @@ public static class VerificationWorker
         Compare(nameof(restored.Options), original.State.Options, restored.Options);
         Compare(nameof(original.Timing), original.Timing ? 1UL : 0UL, timing);
         if (original.CallerBackoff is not null) Compare(nameof(original.CallerBackoff), original.CallerBackoff, callerBackoff);
+        if (original.CopyFlags is { } expectedCopyFlags)
+            mismatches.AddRange(CopyFlagsMismatches(expectedCopyFlags, copyFlags));
+        else if (copyFlagsRestoreRequired)
+            mismatches.Add($"CopyFlags: original value unavailable for this legacy run; actual {FormatCopyFlags(copyFlags)}");
         return mismatches;
+    }
+    public static IReadOnlyList<string> CopyFlagsMismatches(ulong expected, ulong? actual) =>
+        actual == expected ? [] : [$"CopyFlags: expected {expected}, actual {FormatCopyFlags(actual)}"];
+    private static string FormatCopyFlags(ulong? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unavailable";
+
+    /// <summary>Validates the old read-miss suite's separate pre-mutation artifact before using it to recover
+    /// a snapshot written before CopyFlags became part of RecoverySnapshot.</summary>
+    public static ulong ValidateLegacyCopyFlags(RecoverySnapshot original, CacheLayoutSnapshot? evidence)
+    {
+        if (evidence?.State is null || evidence.Diagnostics is null)
+            throw new InvalidDataException("Legacy copy-flags evidence is missing its cache state or diagnostics.");
+        var value = evidence.Diagnostics.CopyFlags;
+        if (value is null || value.Value > 15)
+            throw new InvalidDataException("Legacy copy-flags evidence is missing or outside the supported 0..15 range.");
+        var before = original.State;
+        var observed = evidence.State;
+        if (before.Instance == 0 || observed.Instance != before.Instance ||
+            observed.DeviceBytes != before.DeviceBytes || observed.Generation != before.Generation ||
+            observed.BudgetBytes != before.BudgetBytes || observed.Enabled != before.Enabled ||
+            observed.Options != before.Options || observed.Errors != before.Errors || observed.LastError != before.LastError)
+            throw new IOException("Legacy copy-flags evidence does not match the recovery snapshot's cache instance and pre-mutation state.");
+        return value.Value;
     }
     public static async Task<int> ExecuteAsync(string jobPath)
     {
@@ -310,7 +339,7 @@ public static class VerificationWorker
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
                         systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName,
-                        diagnosticsBefore.ReadRecall?.Mode, diagnosticsBefore.CallerRouting?.Backoff));
+                        diagnosticsBefore.ReadRecall?.Mode, diagnosticsBefore.CallerRouting?.Backoff, diagnosticsBefore.CopyFlags));
                     return 0;
                 }
                 if (job.Operation == "system-restore")
@@ -331,6 +360,8 @@ public static class VerificationWorker
                     systemDevice.Control(WriteCacheAction.Release);
                     if (original.CallerBackoff is { } systemBackoff)
                         systemDevice.Control(WriteCacheAction.LabCallerBackoff, value: systemBackoff);
+                    if (original.CopyFlags is { } systemCopyFlags)
+                        systemDevice.Control(WriteCacheAction.LabCopyFlags, value: systemCopyFlags);
                     systemDevice.Control(WriteCacheAction.FlushPolicy, value: original.State.UnsafeDefer ? 1UL : 0UL);
                     if (original.State.Options is not null)
                         systemDevice.SetOptions(original.State.Options);
@@ -338,8 +369,10 @@ public static class VerificationWorker
                     RunStorage.AtomicJson(job.Reply, restored);
                     var systemRestoredBackoff = systemDevice.GetDiagnostics().CallerRouting?.Backoff;
                     RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = systemRestoredBackoff });
+                    var systemRestoredCopyFlags = systemDevice.GetDiagnostics().CopyFlags;
+                    RunStorage.AtomicJson(job.Reply + ".copy-flags.json", new { Expected = original.CopyFlags, Actual = systemRestoredCopyFlags });
                     var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(),
-                        systemDevice.GetPerformance().TimingEnabled, systemRestoredBackoff);
+                        systemDevice.GetPerformance().TimingEnabled, systemRestoredBackoff, systemRestoredCopyFlags);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
                     var requiredOracles = job.ImageOraclePaths ?? [];
@@ -693,16 +726,21 @@ public static class VerificationWorker
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
                 if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
                     throw new IOException(NotCleanMessage);
+                var capturedDiagnostics = device.GetDiagnostics();
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
-                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
-                    device.GetDiagnostics().CallerRouting?.Backoff);
+                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, capturedDiagnostics.ReadRecall?.Mode,
+                    capturedDiagnostics.CallerRouting?.Backoff, capturedDiagnostics.CopyFlags);
                 if (job.Operation == "campaign-prepare")
                 {
                     var expectedPreparation = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))
                         ?? throw new InvalidDataException("Missing campaign preparation baseline.");
-                    result = await PrepareCampaignAsync(expectedPreparation, () => new RecoverySnapshot(1, target,
-                        device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow,
-                        Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode, device.GetDiagnostics().CallerRouting?.Backoff),
+                    result = await PrepareCampaignAsync(expectedPreparation, () =>
+                    {
+                        var diagnostics = device.GetDiagnostics();
+                        return new RecoverySnapshot(1, target, device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0,
+                            Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, diagnostics.ReadRecall?.Mode,
+                            diagnostics.CallerRouting?.Backoff, diagnostics.CopyFlags);
+                    },
                         () => { Stage("explicit phase preparation: flushing filesystem volume"); using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true); volume.Flush(); },
                         () => { Stage("explicit phase preparation: draining cache"); device.Control(WriteCacheAction.Flush); },
                         (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot), TimeSpan.FromSeconds(job.Seconds));
@@ -730,6 +768,9 @@ public static class VerificationWorker
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
                 if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName || original.Target != target)
                     throw new IOException("Recovery identity/version mismatch.");
+                var expectedCopyFlags = original.CopyFlags ?? job.RecoveryCopyFlags;
+                if (expectedCopyFlags is > 15)
+                    throw new InvalidDataException("Recovery copy flags are outside the supported 0..15 range.");
                 // This suite never sets fault injection. Clear only its delay and range-gate hooks;
                 // do not hide device faults. Older drivers without V9 have no gate to disarm.
                 device.Control(WriteCacheAction.LabDelay, value: 0);
@@ -804,17 +845,30 @@ public static class VerificationWorker
                     }
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
+                if (expectedCopyFlags is { } restoreCopyFlags)
+                    device.Control(WriteCacheAction.LabCopyFlags, value: restoreCopyFlags);
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
-                var restoredBackoff = device.GetDiagnostics().CallerRouting?.Backoff;
+                var restoredDiagnostics = device.GetDiagnostics();
+                var restoredBackoff = restoredDiagnostics.CallerRouting?.Backoff;
+                var restoredCopyFlags = restoredDiagnostics.CopyFlags;
                 RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = restoredBackoff });
-                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming, restoredBackoff);
+                RunStorage.AtomicJson(job.Reply + ".copy-flags.json", new
+                {
+                    Expected = expectedCopyFlags,
+                    Actual = restoredCopyFlags,
+                    Source = original.CopyFlags is not null ? "recovery snapshot" : job.RecoveryCopyFlags is not null ? "validated legacy artifact" : "legacy value unavailable"
+                });
+                var restorationBaseline = original with { CopyFlags = expectedCopyFlags };
+                var mismatches = RestorationMismatches(restorationBaseline, drainedState, restored, restoredProfiles,
+                    restoredTiming, restoredBackoff, restoredCopyFlags, job.RequireCopyFlagsRestore);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
                     {
-                        State = restored, Profiles = restoredProfiles, Timing = restoredTiming, Mismatches = mismatches
+                        State = restored, Profiles = restoredProfiles, Timing = restoredTiming,
+                        CopyFlags = restoredCopyFlags, Mismatches = mismatches
                     });
                     throw new IOException("Restoration/state/profile verification failed: " + string.Join("; ", mismatches));
                 }

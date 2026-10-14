@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 132, "plan 132 observes drain completion beyond the unchanged score window");
+        Check(VerificationPlan.Version == 133, "plan 133 captures and verifies runtime copy flags during recovery");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -1327,7 +1327,7 @@ internal static class VerificationRunnerTests
         catch (IOException ex) { Check(ex is not QueueCache.Operations.CacheDrainingException, "faults must never be retried as transient drains"); }
         var healthy = draining with
         {
-            Flags = 0
+            Flags = 0, DeviceBytes = 8UL << 30, Instance = 4, Generation = 3
         };
         var original = new RecoverySnapshot(1, identity, healthy, false, "[]", epoch, "fixture");
         var flushOrder = new List<string>();
@@ -1406,6 +1406,46 @@ internal static class VerificationRunnerTests
             "missing driver backoff cannot pass restoration");
         Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0, 256).Count == 0,
             "older snapshots do not invent a backoff requirement");
+        var copyFlagsOriginal = original with { CopyFlags = 11 };
+        Check(VerificationWorker.RestorationMismatches(copyFlagsOriginal, drained, healthy, "[]", 0,
+                copyFlags: 11).Count == 0,
+            "recovery accepts the captured nondefault copy flags after exact readback");
+        Check(VerificationWorker.RestorationMismatches(original with { CopyFlags = 0 }, drained, healthy, "[]", 0,
+                copyFlags: 0).Count == 0,
+            "zero copy flags are a captured value rather than missing evidence");
+        Check(VerificationWorker.RestorationMismatches(copyFlagsOriginal, drained, healthy, "[]", 0,
+                copyFlags: 7).SequenceEqual(["CopyFlags: expected 11, actual 7"]),
+            "a different copy-flags readback fails restoration with both values");
+        Check(VerificationWorker.RestorationMismatches(copyFlagsOriginal, drained, healthy, "[]", 0,
+                copyFlags: null).SequenceEqual(["CopyFlags: expected 11, actual unavailable"]),
+            "a missing copy-flags readback cannot pass restoration");
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0,
+                copyFlags: 7).Count == 0,
+            "legacy snapshots from suites that did not mutate copy flags do not invent a baseline");
+        Check(VerificationWorker.RestorationMismatches(original, drained, healthy, "[]", 0,
+                copyFlags: 7, copyFlagsRestoreRequired: true)
+            .SequenceEqual(["CopyFlags: original value unavailable for this legacy run; actual 7"]),
+            "a legacy flag-mutating run without trustworthy original evidence cannot claim complete recovery");
+        var legacyCopyEvidence = layoutBefore with
+        {
+            State = healthy,
+            Diagnostics = layoutDiagnostics with { CopyFlags = 0 }
+        };
+        Check(VerificationWorker.ValidateLegacyCopyFlags(original, legacyCopyEvidence) == 0,
+            "legacy read-miss evidence accepts a valid zero from the matching cache generation");
+        try
+        {
+            VerificationWorker.ValidateLegacyCopyFlags(original,
+                legacyCopyEvidence with { State = healthy with { Instance = healthy.Instance + 1 } });
+            throw new Exception("Mismatched legacy copy-flags evidence accepted.");
+        }
+        catch (IOException) { }
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(original,
+            legacyCopyEvidence with { Diagnostics = layoutDiagnostics }));
+        var copyFlagsRoundTrip = JsonSerializer.Deserialize<RecoverySnapshot>(JsonSerializer.Serialize(copyFlagsOriginal));
+        Check(copyFlagsRoundTrip?.CopyFlags == 11 &&
+              JsonSerializer.Deserialize<RecoverySnapshot>(JsonSerializer.Serialize(original))?.CopyFlags is null,
+            "recovery snapshot persists a numeric copy-flags value and reads a legacy missing field as unknown");
         var originalOptions = new QueueCache.Management.CacheOptions();
         Check(VerificationWorker.RestorationMismatches(original with { State = healthy with { Options = originalOptions } },
             drained, healthy with { Options = originalOptions with { } }, "[]", 0).Count == 0,
@@ -1979,6 +2019,8 @@ internal static class VerificationRunnerTests
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "unchanged", DateTimeOffset.UtcNow, "fixture");
         var pending = boundary with { State = boundary.State with { DirtyBytes = 4096 } };
         Reject(() => VerificationCampaignEvidence.ValidateConfiguration(boundary, pending));
+        Reject(() => VerificationCampaignEvidence.ValidateConfiguration(boundary with { CopyFlags = 15 },
+            boundary with { CopyFlags = 7 }));
         var preparationOrder = new List<string>(); var drainedBoundary = false;
         var preparedBoundary = await VerificationWorker.PrepareCampaignAsync(boundary, () => drainedBoundary ? boundary : pending,
             () => preparationOrder.Add("volume"), () => { preparationOrder.Add("cache"); drainedBoundary = true; },

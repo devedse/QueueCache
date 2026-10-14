@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using QueueCache.Developer.Verification;
 using QueueCache.Management;
@@ -13,7 +14,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 132, "plan 132 observes drain completion beyond the unchanged score window");
+        Check(VerificationPlan.Version == 133, "plan 133 captures copy flags in recovery evidence");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -95,6 +96,42 @@ internal static class DiagnosticContracts
         var target = new QueueCache.Operations.DiskTarget('Q', 99990, 8L << 30, "fixture");
         var recovery = new RecoverySnapshot(1, target, new(1, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             false, "unchanged profiles", DateTimeOffset.UtcNow, "fixture");
+        var copyFlagsState = recovery.State with { Instance = 7, Generation = 12 };
+        var copyFlagsRecovery = recovery with { State = copyFlagsState, CopyFlags = 11 };
+        var legacyJson = JsonNode.Parse(JsonSerializer.Serialize(copyFlagsRecovery))!.AsObject();
+        legacyJson.Remove(nameof(RecoverySnapshot.CopyFlags));
+        Check(JsonSerializer.Deserialize<RecoverySnapshot>(legacyJson.ToJsonString())?.CopyFlags is null &&
+              JsonSerializer.Deserialize<RecoverySnapshot>(JsonSerializer.Serialize(copyFlagsRecovery))?.CopyFlags == 11,
+            "recovery snapshots preserve nondefault copy flags and distinguish legacy missing evidence");
+        Check(VerificationWorker.CopyFlagsMismatches(11, 11).Count == 0 &&
+              VerificationWorker.CopyFlagsMismatches(0, 0).Count == 0 &&
+              VerificationWorker.CopyFlagsMismatches(11, 7).SequenceEqual(["CopyFlags: expected 11, actual 7"]) &&
+              VerificationWorker.CopyFlagsMismatches(11, null).SequenceEqual(["CopyFlags: expected 11, actual unavailable"]),
+            "copy-flags restoration requires exact numeric readback and accepts zero");
+        var legacyCopyEvidence = new CacheLayoutSnapshot(copyFlagsState,
+            JsonSerializer.Deserialize<CachePerformance>("{\"Frequency\":10000000}")!,
+            new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { CopyFlags = 0 });
+        Check(VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null }, legacyCopyEvidence) == 0,
+            "legacy read-miss flags can be recovered from matching pre-mutation cache identity evidence");
+        try
+        {
+            VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+                legacyCopyEvidence with { State = copyFlagsState with { Generation = 13 } });
+            throw new Exception("Legacy copy-flags evidence from another generation was accepted.");
+        }
+        catch (IOException) { }
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+            legacyCopyEvidence with { Diagnostics = legacyCopyEvidence.Diagnostics with { CopyFlags = null } }));
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null }, null));
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+            legacyCopyEvidence with { State = null! }));
+        try
+        {
+            VerificationCampaignEvidence.ValidateConfiguration(copyFlagsRecovery,
+                copyFlagsRecovery with { CopyFlags = 7 });
+            throw new Exception("Campaign baseline accepted changed copy flags.");
+        }
+        catch (IOException) { }
         var finalTarget = new CampaignTargetEvidence(CampaignTargetRole.Performance, recovery, "NTFS", "fixture", "fixture", null,
             false, null, null, new(true, null, []));
         var finalOrder = new List<string>(); var finalClean = false;

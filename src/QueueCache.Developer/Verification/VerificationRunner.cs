@@ -24,6 +24,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     private readonly object logGate = new();
     private IProgress<string>? progressSink;
     private string progressLabel = "Preflight";
+    private bool copyFlagsMutationStarted;
     public string? DirectoryPath => storage?.DirectoryPath;
     internal RecoverySnapshot? CampaignBaseline { get; init; }
     internal bool CampaignOwnsDiskLease { get; init; }
@@ -177,6 +178,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             throw new InvalidOperationException("Campaign ownership requires a captured baseline.");
         layoutGeneration = null;
         ulong? originalCopyFlags = null;
+        copyFlagsMutationStarted = false;
         layoutMeasurements = null;
         if ((selected.Suite == "cache-read-misses" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
@@ -337,10 +339,18 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite == "cache-read-misses")
+            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping")
             {
-                originalCopyFlags = (await LayoutSnapshot("copy-flags-original.json", deadline.Token)).Diagnostics.CopyFlags
-                    ?? throw new InvalidDataException("Missing runtime copy flags for the read-miss comparison.");
+                originalCopyFlags = original.CopyFlags
+                    ?? throw new InvalidDataException("Missing original runtime copy flags; refusing to start a suite that changes them.");
+                if (options.Suite == "cache-read-misses")
+                {
+                    var copyFlagsEvidence = await LayoutSnapshot("copy-flags-original.json", deadline.Token);
+                    if (copyFlagsEvidence.Diagnostics.CopyFlags != originalCopyFlags ||
+                        copyFlagsEvidence.State.Instance != original.State.Instance ||
+                        copyFlagsEvidence.State.Generation != original.State.Generation)
+                        throw new InvalidDataException("The read-miss pre-mutation copy-flags artifact disagrees with the recovery snapshot.");
+                }
             }
             if (comparison)
             {
@@ -608,10 +618,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
-                    if (originalCopyFlags is { } restoreFlags)
-                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, restoreFlags);
-                    if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
-                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.ProductFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
                     if (options.Suite == "stress-races" && File.Exists(storage.PathFor(StressOwnership)))
@@ -620,7 +626,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
-                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite)
+                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite),
+                        RequireCopyFlagsRestore = copyFlagsMutationStarted
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
@@ -907,7 +914,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
         if (scenario.CopyFlags is { } copyFlags)
+        {
+            copyFlagsMutationStarted = true;
             await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
+        }
         if (scenario.Layout != CacheLayoutStage.None)
         {
             await WaitForQuiet(scenario.Id + "-start", token);
@@ -1301,6 +1311,49 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
             var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
                 ?? throw new InvalidDataException("The run manifest has no suite.");
+            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping";
+            ulong? recoveryCopyFlags = null;
+            if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")
+            {
+                var evidencePath = Path.Combine(path, "copy-flags-original.json");
+                if (File.Exists(evidencePath))
+                {
+                    try
+                    {
+                        var evidence = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(evidencePath, token))
+                            ?? throw new InvalidDataException("Legacy copy-flags evidence is empty.");
+                        recoveryCopyFlags = VerificationWorker.ValidateLegacyCopyFlags(original, evidence);
+                        storage.Write("copy-flags-recovery-source.json", new
+                        {
+                            Status = "VALIDATED",
+                            Source = "copy-flags-original.json",
+                            SourceSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(evidencePath, token))),
+                            Target = original.Target,
+                            OriginalInstance = original.State.Instance,
+                            OriginalGeneration = original.State.Generation,
+                            CopyFlags = recoveryCopyFlags
+                        });
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is InvalidDataException ||
+                                               ex is UnauthorizedAccessException || ex is JsonException)
+                    {
+                        storage.Write("copy-flags-recovery-source.json", new
+                        {
+                            Status = "REJECTED",
+                            Source = "copy-flags-original.json",
+                            Target = original.Target,
+                            Reason = ex.Message
+                        });
+                    }
+                }
+                else storage.Write("copy-flags-recovery-source.json", new
+                {
+                    Status = "MISSING",
+                    Source = "copy-flags-original.json",
+                    Target = original.Target,
+                    Reason = "No trustworthy pre-mutation copy-flags evidence is available."
+                });
+            }
             var operation = systemRecovery ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
@@ -1315,6 +1368,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),
                 AcceptsLabErrors = !systemRecovery && VerificationPlan.InjectsLabFaults(suite),
+                RecoveryCopyFlags = recoveryCopyFlags,
+                RequireCopyFlagsRestore = mutatesCopyFlags,
                 ImageOraclePaths = systemRecovery ? PassedSystemImageOracles(path, priorResults) : null
             }, token, 300);
             storage.Write("recovery-result.json", new

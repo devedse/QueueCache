@@ -27,9 +27,12 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 
 ## How requests are served (since 0.4.153.1-0.4.162.1)
 
-Every cached volume has one ordered request worker, a pool of three offloaded-request
-threads and the drainers. The order of requests that could affect each other is
-decided in one place, while copies of independent requests run in parallel.
+Every cached volume has one ordered request worker, sixteen offloaded-read threads
+and the drainers. The sixteen threads are created when the volume cache is
+initialized, even while caching is disabled. Their bounded table has 64 entries;
+each request can pin at most 256 4 KiB cache blocks. Request order is decided in
+one place, while independent lower reads and eligible large resident copies can
+run in parallel.
 
 | Request | Where it runs |
 |---|---|
@@ -37,7 +40,7 @@ decided in one place, while copies of independent requests run in parallel.
 | Several requests outstanding (queue depth > 1) | Queued to the worker, which overlaps with the submitting thread and polls 30 us before sleeping. After finding it busy, the next 256 candidates follow; every 1024th caller-path candidate is sent to the worker to detect a deep queue. |
 | Read of 256 KiB or more fully in RAM; payload copy of a fitting write that size | Admitted in order by the worker, copied on an offloaded-request thread. Overlapping writes and reads wait for it; controls wait for all of them. |
 | Paging read that needs the disk | Offloaded-request thread, as before. |
-| Ordinary read that needs the disk, up to 1 MiB (since plan 125) | Found by the worker, then read and kept on one of 16 offloaded-request threads, allowing concurrent disk reads. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the offload table is full the worker reads it as before. |
+| Ordinary read that needs the disk, up to 256 cache blocks (since plan 125) | Found by the worker, then read and kept on an offloaded-read thread, allowing concurrent disk reads. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the 64-entry offload table is full the worker reads it as before. An unaligned request of 1 MiB or less can span more than 256 blocks and uses the ordered worker. |
 | Paging-file I/O | Forwarded from dispatch, as before. |
 | Larger misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
 

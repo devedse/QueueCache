@@ -183,6 +183,28 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
 
 ## Not yet proven on the VM
 
+- **Interrupted verifier recovery of copy flags:** 0.4.687.1 recovery snapshots
+  do not persist the runtime copy flags. `cache-read-misses` normally restores
+  its original value in cleanup, but an interruption after changing flags can
+  leave miss offload disabled while `verify-recover` reports success. The
+  related `cache-read-bookkeeping` cleanup restores product value 15 rather than
+  a captured nondefault value. Completed comparisons restored normally. The
+  follow-up branch is adding durable capture and readback checks; this remains
+  unqualified until those changes pass host and Windows checks.
+- **40,000-file read/hash time and random-read tails:** on 0.4.687.1, the tree
+  read/hash step took 154.2 s versus 4.9 s in the 0.4.604.1 session, with the
+  cause not established. The same-build cold miss-offload screen improved
+  throughput and p99 but observed a random-read maximum of 568.7 ms versus
+  46.2 ms. Equal-operation and threshold-count evidence is still needed to
+  determine whether the tail reflects the changed scheduling.
+- **Drain defaults under active background work:** existing comparisons support
+  shorter complete drainage, but timing was enabled and the foreground score
+  started before an administrative flush whose startup time varied. A timing-off
+  comparison with verified overlap between foreground I/O and default Idle
+  draining, plus a focused Strict-mode check, remains open.
+- **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
+  fix build. Existing 0.4.604.1 and competitor results remain historical and do
+  not establish the newer build's crash behavior.
 - **Removal and power:** Windows eject with pending writes passes; live reconnect
   failed in Proxmox hotplug and stays unqualified. Surprise removal under load,
   FAT32/ReFS removal, sleep, hibernate, Fast Startup and crash-dump handling have

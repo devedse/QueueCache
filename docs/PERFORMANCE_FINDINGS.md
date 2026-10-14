@@ -107,7 +107,9 @@ entry eviction. The first cache-concurrency attempt on 0.4.673.1 failed its
 RAM-only guard (36 lower reads, 27 KiB of misses); restoration succeeded. The tray
 was left open, so the failure needs a clean repeat and cannot be counted as a
 passing correctness or performance result. The completed same-build comparisons
-and concurrency matrix follow; final release qualification remains pending.
+and concurrency matrix follow. Final release qualification on 0.4.687.1 is
+complete; the file-tree, latency-tail and drain-overlap questions recorded below
+remain open.
 
 **Read-miss speed screen (plan 127).** Signed 0.4.677.1 completed all 24 windows
 of `cache-read-misses`, three alternated repetitions of flags 7/15, timing off,
@@ -368,6 +370,16 @@ flush is not a durable-save claim. Original 0.4.604.1 and competitor rows,
 including their power-cut results, retain their evidence and dates. No power-cut
 qualification was repeated on this build. Full rows and ranges:
 [comparison](COMPARISON.md).
+
+The same seeded 40,000-file tree contains 1,290,078,507 bytes in both sessions.
+Its read-and-hash median was 4.914 seconds on 0.4.604.1 and 154.226 seconds on
+0.4.687.1 (31.4× slower); the two 0.4.687.1 repetitions were 154.160 and 154.292
+seconds. Creation rose from 12.091 to 50.230 seconds, copy from 8.602 to 13.679,
+and deletion changed from 16.898 to 15.898. The read/hash timer excludes the
+settling wait. Windows changed from build 28000.2956 to 28000.3231 and disk use
+from about 19% to 43%; shared storage and file-cache residency also differed.
+These cross-date numbers identify a large repeated observation in the new
+session, not its cause. A controlled maintained comparison remains open.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1053,7 +1065,9 @@ created and removed 23 RAM disks. Fault and Retry passed at drain parallelism
 1, 2 and 4; the shared reservation returned exactly to its starting value.
 The native filter hash was `4EA5DCACCFFC09DB362C6BB5361764676D5090300DFE0737777142812549F744`,
 the RAM provider hash `A5510BEB87D3190739021A3A4D99BD931259831F795BED7DF86E2064415D2905`;
-Verifier flags `0x209bb` targeted both. Final performance qualification is pending.
+Verifier flags `0x209bb` targeted both. Final performance qualification on
+0.4.687.1 was completed under plan 132; this paragraph records the older plan-126
+campaign only.
 
 The first non-Verifier stress attempt on 0.4.677.1 passed the 302-second busy
 window but stopped at the first Retry check with 8 KiB dirty. Between the faulted

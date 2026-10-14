@@ -224,6 +224,16 @@ hold its last outstanding I/O after scoring ends. The manifest records the
 process/flush deadlines and observer duration. Telemetry covers the complete
 process interval with the same two-second gap limit; byte checks, preparation
 deadlines, other suites and independent restoration limits are unchanged.
+Plan 133 adds the original runtime copy flags to each recovery snapshot. Normal
+cleanup and `verify-recover` restore that exact value and check the driver's
+readback before recording successful restoration. Campaign phase checks also
+compare copy flags. For older interrupted `cache-read-misses` runs, recovery may
+use the existing `copy-flags-original.json` only when its cache instance,
+generation and configuration match the recovery snapshot. Older
+`cache-read-bookkeeping` runs without a recorded original value cannot be
+reported fully restored; recovery records that gap after restoring the other
+known settings. Numeric zero remains a valid recorded value; missing evidence is
+not treated as zero.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a
