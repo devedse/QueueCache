@@ -1121,6 +1121,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             storage.Write(scenario.Id + "-warm.json", warm);
         }
 
+        // A stray filesystem metadata write must not leave dirty bytes in the start snapshot and fail a long matrix.
+        await WaitForQuiet(scenario.Id + "-start", token);
         var beforePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
         var before = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))
             ?? throw new InvalidDataException("Missing read-tail start snapshot.");

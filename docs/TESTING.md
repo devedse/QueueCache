@@ -261,8 +261,9 @@ fully resident random/sequential controls, and fitting foreground writes. The
 write cases are flushed, evicted from clean cache, and verified against their
 deterministic per-operation data oracle before they pass. Plan 140 waits for the
 cache to stay clean with unchanged lower-I/O counters for two seconds after the
-volume flush (up to five recorded attempts); it still fails if the cache does
-not settle. The run requires the standard preflight, an idle 2 GiB Fast cache,
+volume flush (up to five recorded attempts); plan 141 applies the same wait
+before each case's start snapshot, so one stray metadata write cannot fail a
+long matrix. It still fails if the cache does not settle. The run requires the standard preflight, an idle 2 GiB Fast cache,
 timing OFF and exclusive target ownership; it does not use DiskSpd or accept a
 case filter:
 
