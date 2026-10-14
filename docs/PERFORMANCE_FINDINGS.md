@@ -377,7 +377,12 @@ Its read-and-hash median was 4.914 seconds on 0.4.604.1 and 154.226 seconds on
 seconds. Creation rose from 12.091 to 50.230 seconds, copy from 8.602 to 13.679,
 and deletion changed from 16.898 to 15.898. The read/hash timer excludes the
 settling wait. Windows changed from build 28000.2956 to 28000.3231 and disk use
-from about 19% to 43%; shared storage and file-cache residency also differed.
+from about 19% to 43%. At run start, Windows reported 3.31 GiB versus 2.06 GiB
+in `SystemCacheBytes`, while available physical memory was similar (10.75 versus
+10.36 GiB). Shared storage and file-cache residency also differed. Hypervisor
+read counters across each complete tree step were about 193/0 MiB on 604 and
+195/0 MiB on 687 (first/second repetition); those intervals include creation,
+settling, copy, read/hash and deletion, so they do not isolate read-phase traffic.
 These cross-date numbers identify a large repeated observation in the new
 session, not its cause. A controlled maintained comparison remains open.
 
