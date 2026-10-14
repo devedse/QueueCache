@@ -30,11 +30,17 @@ dropped by the owner.
 The maintained single-command campaign and durable completion event are
 implemented (plan 119, including the one-phase `experiment` profile).
 
-**Competitor comparison (2026-10-13).** QueueCache leads cached reads and
+**Competitor comparison and fix qualification (2026-10-14).** QueueCache leads cached reads and
 single-program RAM-disk reads, but the comparison with the bare disk and
 PrimoCache found three cache weaknesses: read misses do not overlap (#14), the drain
 writes small pieces (#15), and Strict stalls all writes behind whole-cache
 drains (#16).
+The fix branch has completed its correctness and concurrency checks. Same-build
+miss offload improves cold random/sequential throughput 9.4×/3.35× with better
+p99, though random worst latency increases. Larger drain batches and four
+drainers improve the cold-read target and repeated write-drain times. Fixed-window
+foreground write IOPS are not qualified as invariant. The final release campaign and benchmark refresh remain
+pending.
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
 
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
@@ -90,16 +96,16 @@ data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
   final-build qualification remains required. 256 x 4 alone was not faster, as in T050.
   **Branch defaults changed to 1024 KiB x 4** (plan 125).
 
-**Fix branch qualification (plan 126, in progress).** The initial concurrent-miss
-candidate built successfully but is not accepted yet. Review found that using the
+**Fix branch qualification history (plans 126–132).** The initial concurrent-miss
+candidate built successfully but needed a correctness fix before acceptance. Review found that using the
 old worker path without pin scratch allowed one overlapping miss to unpin a slot
 filled by another read. Every read now saves its original pin identities, and the
 maintained partial-read suite checks simultaneous cold/partial readers and clean
 entry eviction. The first cache-concurrency attempt on 0.4.673.1 failed its
 RAM-only guard (36 lower reads, 27 KiB of misses); restoration succeeded. The tray
 was left open, so the failure needs a clean repeat and cannot be counted as a
-passing correctness or performance result. Same-build comparisons and final
-release-performance qualification remain pending.
+passing correctness or performance result. The completed same-build comparisons
+and concurrency matrix follow; final release qualification remains pending.
 
 **Read-miss speed screen (plan 127).** Signed 0.4.677.1 completed all 24 windows
 of `cache-read-misses`, three alternated repetitions of flags 7/15, timing off,
@@ -144,21 +150,20 @@ The focused plan-129 repeat completed 2/2 selected cases and restored
 against the same signed 0.4.679.1 native driver). The write score completed
 144,997,089,280 bytes, all admitted; lower read/write/flush attempts, misses and
 drained-byte deltas were all zero. This qualifies that fixture correction for the
-affected window, not the complete 37-case concurrency matrix. The full repeat on
-the CI package is still required.
+affected window, not the complete 37-case concurrency matrix. The completed full
+repeat on the CI package is recorded below.
 
 The full 0.4.681.1 repeat completed the four read shapes and first RAM-only write
 window, whose lower read/write/flush attempts, misses and drained-byte deltas
 were zero. The next background-drain write score stopped on a 9.84-second
 telemetry gap; the two-second coverage guard remained intact. The 7/37 run
 (`20261013-235750-a2aa7d221f8740948a568a844368d11f`) restored the original
-256 KiB × 2 profile cleanly, with zero errors. Its gap needs investigation;
+256 KiB × 2 profile cleanly, with zero errors. Its gap prompted investigation;
 no aggregate or complete concurrency qualification is inferred from it.
 The unchanged focused background-drain repeat completed 2/2 selected cases
 (`20261014-001223-b6ada1ceaea74be0ba911244aa7b1392`), restored cleanly, and
 recorded 51 score-window samples with a maximum gap of 0.313 seconds. The
-9.84-second gap was not reproduced; its cause remains unproven. A complete
-unchanged matrix repeat is required.
+9.84-second gap was not reproduced; its individual cause remains unproven.
 That repeat completed the first 12 read/write windows, then stopped during the
 second repetition on a 3.04-second telemetry gap in a resident-read window
 (`20261014-001931-d4c4bb8d868c4d6187ba49c264af77f1`, 15/37, restored). In both
@@ -176,7 +181,8 @@ serialization/persistence through a bounded 256-sample buffer. It still rejects
 real coverage gaps and buffer exhaustion, publishes readiness after the first
 persisted sample, and waits for all observations to be written. Host contracts
 cover blocked persistence, order, overflow and failure ownership; VM validation
-of this correction is now complete for the concurrency matrix.
+of this correction is complete for the concurrency and read-miss matrices and
+the drain comparison.
 
 **Final-build concurrency (plan 131).** Signed 0.4.685.1 completed all 37 cases
 (`20261014-041653-4cf5d812f35744c1acf35af6647fa7ed`). All 12 resident-read and
@@ -188,7 +194,8 @@ interval covered its process window; the largest UTC/monotonic gap was
 stages took at most 3.892 ms. The original 2 GiB Fast/Idle 256 KiB × 2 profile
 was restored with zero errors, dirty or in-flight bytes. Full raw evidence and
 XML byte totals were reviewed; no samples from incomplete runs were aggregated.
-The final cold-read screen below is complete; the drain comparison and release campaign remain pending.
+The final cold-read screen and complete drain comparison below are finished;
+the release campaign remains pending.
 
 **Final-build read-miss screen (plan 131).** Signed 0.4.685.1 completed 24/24
 windows with the same budget, file sizes, alternated three repetitions and
@@ -226,7 +233,63 @@ run are used. Plan 132 gives this diagnostic an explicit 300-second completion
 allowance and an observer lasting beyond process completion and readiness.
 The scored duration, workload, complete 42-case matrix, coverage limit and
 persisted-byte checks are unchanged. Host contracts reject the old truncated
-interval and real sample gaps; the corrected VM run remains pending.
+interval and real sample gaps. The corrected complete run is recorded below.
+
+**Final-build drain comparison (plan 132).** All 42 cases completed
+(`20261014-053536-741edee09d044ee7b751ef2e8162c487`, standard CLI from clean
+`4b0e3c6`, signed 0.4.685.1 native drivers with the hashes above). This is one
+complete run: three alternated repetitions, a 1 GiB cache, deterministic 256 MiB
+backlogs and ten-second foreground scores. Every one of the 36 seeded backlogs
+was verified from disk. All raw XML byte totals and actual telemetry intervals
+were checked; the largest sample gap was 0.320 seconds. The original 2 GiB
+Fast/Idle 256 KiB × 2 profile was restored with zero errors or pending bytes.
+
+| Measurement | 256 KiB × 2, median (range) | 1024 KiB × 4, median (range) |
+|---|---:|---:|
+| Flush during cold reads, seconds | 6.517 (6.298–7.613) | 3.863 (3.846–3.868) |
+| Foreground cold reads, IOPS | 514.57 (476.00–596.81) | 1157.04 (988.31–1268.10) |
+| Cold-read p99, ms | 4.810 (4.058–7.053) | 3.808 (3.533–4.860) |
+| Flush during fitting writes, seconds | 101.153 (40.294–114.397) | 88.727 (29.099–90.784) |
+| Foreground fitting writes, IOPS | 15797.40 (14109.60–38916.48) | 14537.66 (14163.00–37758.40) |
+
+Cold-read flush time improved 40.7%, with every pair improving and separated
+ranges. Every foreground cold-read pair and p99 improved too. Fitting-write
+flush times improved 12.3%, 27.8% and 20.6% in their pairs, but their ranges
+overlap. Foreground write changes were +3.0%, −2.98% and −10.35%; this does not
+establish a fitting-write throughput gain. These flushes include additional
+writes admitted while draining (593–742 MiB total, not a fixed 256 MiB alone).
+Normalized drain throughput improved in every write pair, with no capacity waits.
+The write-only investigation follows; no selected cases are mixed into this
+42-case result.
+
+**Write-drain repeat (plan 132).** The maintained `fitting-write-b` selection
+completed all 18 selected cases, three alternated repetitions of every batch /
+parallelism setting (`20261014-071942-0428cc322079410ca84c019dd44983eb`), on
+the same CLI and native drivers. All 18 seed oracles matched from disk; raw XML
+totals and complete telemetry intervals were checked (largest gap 0.303 seconds).
+Original settings were restored cleanly.
+
+For 256 KiB × 2 versus 1024 KiB × 4, median flush time was 127.608 versus
+92.157 seconds, with ranges 111.768–133.770 versus 89.589–94.871. Every pair
+improved and ranges separated. Actual drained throughput was 4.692 versus
+6.439 MiB/s, again with every pair improving and separated ranges
+(4.420–5.379 versus 6.250–6.546). The completed write process improved in every
+pair too: scored bytes divided by its full recorded process interval, including
+the flush stall, gave 4.436 versus 5.918 MiB/s median, with separated ranges.
+These complete observations qualify the drain-time target; they are not combined
+with the earlier run's scores.
+
+Fixed ten-second write IOPS changed −6.30%, −4.22% and +0.99% in their pairs;
+the ratio of medians was −2.93%. In both complete runs all scored bytes had
+already been admitted by the first observed drain progress. The interval before
+that progress varied substantially because the requested flush launches an
+owned control worker and observer before entering the administrative barrier.
+The barrier then holds the outstanding write beyond the ten-second score.
+Consequently these IOPS values do not qualify general foreground throughput or
+an invariant write control; the raw drops remain recorded. No capacity waits
+occurred. Retain 1024 KiB × 4 for the repeated drain-time improvement, with this
+measurement limit and the unchanged explicit-flush blocking behavior. Final
+product-default release checks and comparison refresh remain required.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1094,7 +1157,7 @@ runs that found and fixed the issues described under
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
 | Read misses one at a time | **Throughput screen accepted; release qualification pending** (plan 131, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated. Every cold p99 improved; random maximum increased to 568.738 ms. Both arms use the new pool and queue order. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; representative worst-latency evidence. |
-| Drain batch size and parallelism | **Default 1024 KiB x 4** (plan 125, issue #15): `drain-decision` medians of three, 256 MiB backlog 1.86 against 2.67 s (reads) and 8.4 against 18.2 s (writes) for 256 x 2; 256 x 4 alone no faster. | Storage with a different latency profile, or drain-thread changes (more than one write in flight per thread, more than 4 threads). |
+| Drain batch size and parallelism | **Default 1024 KiB × 4; drain-time target qualified** (plan 132, issue #15): complete 42-case comparison and separate 18-case write repeat. Cold-read flush median 3.86 against 6.52 s for 256 × 2; write-repeat flush 92.16 against 127.61 s, every pair improves and ranges separate. Fixed-window foreground write IOPS remain variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, or a repeated foreground-control loss under a measurement that isolates its active interval. |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 

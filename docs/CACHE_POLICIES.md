@@ -98,7 +98,19 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes (default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4 since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain thread waits for its write before gathering the next. Overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Plan 125 `drain-decision` (medians of three, alternated): a 256 MiB backlog drained in 1.86 s at 1024 x 4 against 2.67 s at 256 x 2 while cold reads ran, and in 8.4 against 18.2 s while random writes ran, with 3.5x the foreground write rate; 256 x 4 alone was not faster ([findings](PERFORMANCE_FINDINGS.md)).
+Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes
+(default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4
+since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain
+thread waits for its write before gathering the next. Overlapping versions remain
+ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Saved
+profiles keep their configured settings. The complete plan-132 comparison
+(three alternated repetitions) reduced median drain time during cold reads from
+6.52 to 3.86 seconds at 1024 KiB × 4 versus 256 KiB × 2. A separate write-only
+repeat reduced median flush time from 127.61 to 92.16 seconds, with every pair
+improving and separated ranges. Fixed-window write IOPS varied with the interval
+before the administrative flush began; this is not a general write-IOPS gain.
+See [findings](PERFORMANCE_FINDINGS.md)
+for the exact workloads and qualification limits.
 
 ## CLI examples
 

@@ -132,8 +132,23 @@ improving and no repeated resident-control loss. Every cold p99 improved.
 Random worst latency increased from 46.219 to 568.738 ms; worst-read latency is
 not qualified as improved. The screen isolates miss offload: both arms use the
 new read pool and queue order
-(`20261014-044032-7009cf8578ec4b178648b13f18e38a2e`). The drain comparison and
-final release campaign remain pending.
+(`20261014-044032-7009cf8578ec4b178648b13f18e38a2e`).
+
+The complete plan-132 drain comparison finished 42/42 cases using the standard
+CLI from `4b0e3c6` and signed 0.4.685.1 native drivers. All 36 seeded backlogs
+matched from disk. Against 256 KiB × 2, 1024 KiB × 4 reduced median flush time
+during cold reads by 40.7%, with every pair improving and separated ranges.
+Fitting-write flush times improved in every pair, but their ranges overlapped;
+foreground write changes included one 10.35% loss
+(`20261014-053536-741edee09d044ee7b751ef2e8162c487`). A complete 18-case
+write-only repeat reduced median flush time 127.61 to 92.16 seconds, with every
+pair improving and separated ranges; full process completion improved too
+(`20261014-071942-0428cc322079410ca84c019dd44983eb`). Ten-second write IOPS
+changed −6.30%, −4.22% and +0.99%. All scored writes had been admitted before
+the first observed drain progress, and that interval varied with control-worker
+startup. General foreground write throughput is not qualified as improved or
+invariant by this diagnostic. The final release campaign
+and comparison refresh remain pending.
 
 Qualification exposed two fixture problems and a recorder delay. Plans 128/129
 settle filesystem metadata and prime writable-file access before strict measured
