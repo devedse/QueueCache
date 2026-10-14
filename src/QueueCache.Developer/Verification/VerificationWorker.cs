@@ -27,7 +27,10 @@ public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 /// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
 public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
     double PerformanceMilliseconds, double DiagnosticsMilliseconds,
-    double PreviousPersistenceMilliseconds, double PreviousDelayMilliseconds);
+    double? PreviousPersistenceMilliseconds, double? PreviousDelayMilliseconds);
+public sealed record TelemetrySnapshot(DateTimeOffset Utc, double ElapsedSeconds,
+    WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics,
+    TelemetryStageTiming StageTiming);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
 [SupportedOSPlatform("windows")]
@@ -1025,8 +1028,9 @@ public static class VerificationWorker
                 await using (var writer = new StreamWriter(job.Reply, append: false))
                 {
                     var timer = Stopwatch.StartNew();
-                    double persistenceMilliseconds = 0, delayMilliseconds = 0;
-                    while (timer.Elapsed.TotalSeconds < job.Seconds)
+                    double? persistenceMilliseconds = null;
+                    var readyPublished = false;
+                    TelemetryCapture<TelemetrySnapshot> Capture(double? delayMilliseconds)
                     {
                         // On stop, take one final sample covering workload completion.
                         var stage = Stopwatch.StartNew();
@@ -1041,31 +1045,27 @@ public static class VerificationWorker
                         stage.Restart();
                         var observedDiagnostics = device.GetDiagnostics();
                         var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        stage.Restart();
-                        await writer.WriteLineAsync(JsonSerializer.Serialize(new
-                        {
-                            Utc = DateTimeOffset.UtcNow,
-                            ElapsedSeconds = timer.Elapsed.TotalSeconds,
-                            State = observedState,
-                            Performance = observedPerformance,
-                            Diagnostics = observedDiagnostics,
-                            StageTiming = new TelemetryStageTiming(stopMilliseconds, stateMilliseconds,
-                                performanceMilliseconds, diagnosticsMilliseconds, persistenceMilliseconds,
-                                delayMilliseconds)
-                        }));
-                        await writer.FlushAsync();
+                        return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
+                            observedPerformance, observedDiagnostics, new(stopMilliseconds, stateMilliseconds,
+                                performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds)), stopping);
+                    }
+                    async Task Persist(TelemetrySnapshot sample, CancellationToken token)
+                    {
+                        var stage = Stopwatch.StartNew();
+                        var output = sample with { StageTiming = sample.StageTiming with
+                            { PreviousPersistenceMilliseconds = persistenceMilliseconds } };
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(output).AsMemory(), token);
+                        await writer.FlushAsync(token);
                         persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
+                        if (!readyPublished && job.ReadyFile is not null)
                             RunStorage.AtomicJson(job.ReadyFile, new
                             {
                                 Ready = true
                             });
-                        if (stopping)
-                            break;
-                        stage.Restart();
-                        await Task.Delay(200);
-                        delayMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        readyPublished = true;
                     }
+                    await TelemetryRecorder.RecordAsync(Capture, Persist, TimeSpan.FromSeconds(job.Seconds),
+                        TimeSpan.FromMilliseconds(200));
                 }
                 return 0;
             default:

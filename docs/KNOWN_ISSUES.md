@@ -159,6 +159,10 @@ telemetry gap of 0.313 seconds. The next full repeat later stopped at a differen
 window, on a 3.04-second gap (`20261014-001931-d4c4bb8d868c4d6187ba49c264af77f1`,
 15/37, restored). Both gaps also occurred on the monotonic clock. Plan 130 adds
 observer-stage timing evidence; the complete concurrency matrix is still open.
+The instrumented repeat located a 3.367-second gap in serialization/persistence:
+3147.796 ms there versus at most 2.163 ms querying the driver. Plan 131 now
+samples independently through a bounded buffer and still rejects missing
+coverage or overflow. Its host contracts pass; the full VM repeat is pending.
 
 ## Not yet proven on the VM
 

@@ -162,6 +162,18 @@ second repetition on a 3.04-second telemetry gap in a resident-read window
 failed runs the UTC and monotonic gaps agreed, excluding a clock adjustment.
 Plan 130 records observer-stage timings to locate the actual delay; coverage
 requirements remain unchanged. Neither incomplete matrix is aggregated.
+The instrumented plan-130 run reached 20/37 cases, then stopped on a
+3.367-second gap (`20261014-005352-afae0a6dbf324a669460071287c75c4a`, signed
+0.4.681.1 native driver with the standard CLI built from clean `f9f4c89`). The
+next sample recorded 3147.796 ms spent serializing/persisting the previous sample
+and 214.456 ms awaiting its delay; driver queries took at most 2.163 ms. The gap
+began before the scored process, across the readiness boundary. Restoration was
+healthy and clean. Plan 131 separates the actual sampling thread from
+serialization/persistence through a bounded 256-sample buffer. It still rejects
+real coverage gaps and buffer exhaustion, publishes readiness after the first
+persisted sample, and waits for all observations to be written. Host contracts
+cover blocked persistence, order, overflow and failure ownership; VM validation
+of this correction remains pending.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and

@@ -20,6 +20,7 @@ if (args.Length > 0 && args[0] == "--runner-child")
 }
 if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
 CacheExerciseTests.Run();
+TelemetryRecorderTests.Run();
 await ManagedDiskTests.RunAsync();
 ManagedLifecycleTests.Run();
 

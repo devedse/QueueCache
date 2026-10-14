@@ -212,6 +212,12 @@ Plan 130 telemetry includes actual time spent checking the stop file, querying
 each driver snapshot, persisting the previous sample and awaiting its delay.
 These fields help attribute a coverage gap; the two-second gap limit, complete
 process interval and ready handshake remain unchanged.
+Plan 131 samples on an owned thread at a 200 ms cadence, independently of
+serialization and evidence writes. Its buffer holds at most 256 actual samples;
+exhaustion fails the run. The first persisted sample publishes readiness, and
+the worker waits for every collected sample to be persisted before exiting.
+Timestamps are recorded during collection and never filled across a gap.
+Persistence timing describes the writer; absent previous stages are null.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

@@ -13,7 +13,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 130, "plan 130 attributes observer gaps without changing telemetry coverage");
+        Check(VerificationPlan.Version == 131, "plan 131 samples independently of persistence without changing coverage");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
