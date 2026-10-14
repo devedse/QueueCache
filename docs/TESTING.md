@@ -215,9 +215,15 @@ process interval and ready handshake remain unchanged.
 Plan 131 samples on an owned thread at a 200 ms cadence, independently of
 serialization and evidence writes. Its buffer holds at most 256 actual samples;
 exhaustion fails the run. The first persisted sample publishes readiness, and
-the worker waits for every collected sample to be persisted before exiting.
+successful completion waits for every collected sample to be persisted before exiting.
 Timestamps are recorded during collection and never filled across a gap.
 Persistence timing describes the writer; absent previous stages are null.
+Plan 132 gives `drain-decision` a separate 300-second completion allowance:
+the requested DiskSpd score duration is unchanged, but an explicit drain may
+hold its last outstanding I/O after scoring ends. The manifest records the
+process/flush deadlines and observer duration. Telemetry covers the complete
+process interval with the same two-second gap limit; byte checks, preparation
+deadlines, other suites and independent restoration limits are unchanged.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

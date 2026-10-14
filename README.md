@@ -96,14 +96,15 @@ QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-1
 | Random 4K read (RND4K Q1T1) | 19.6 | 1,297 | 1,657 |
 | Random 4K write (RND4K Q1T1) | 4.8 | 1,034 | 1,310 |
 
-The test file fits in RAM, so this shows what QueueCache does for data that is
-in its cache. Data that is not in the cache yet is currently read more slowly
-than without the cache, because QueueCache fetches it from the drive one request
-at a time. The drive's own speed on this network storage varies (two days earlier
-it read 594 and wrote 112 MB/s);
-both Q: columns were measured in one session, without a restart in between. In
-the same session the cache's previous read bookkeeping read 38,645 MB/s at
-SEQ1M Q8T1 and 18,962 MB/s at SEQ1M Q1T1 (now 39,702 and 19,564). The RAM disk
+The test file fits in RAM, so this shows what QueueCache does for data already
+in its cache. Ordinary read misses spanning at most 256 cache blocks can now
+overlap. A separate same-build comparison on 0.4.685.1 measured 9.4× cold random
+and 3.35× cold sequential throughput, with every cold p99 improving and no
+repeated resident-control loss. Random worst latency increased from 46 to 569 ms;
+this does not establish a gain for every latency metric
+([results and scope](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
+The drive's speed on this shared network storage varies; both Q: columns are
+measured in one session, without a restart in between. The RAM disk
 column was re-measured after RAM-disk reads became asynchronous: one program
 with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
 25,353 MB/s before).

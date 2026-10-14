@@ -13,7 +13,20 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 131, "plan 131 samples independently of persistence without changing coverage");
+        Check(VerificationPlan.Version == 132, "plan 132 observes drain completion beyond the unchanged score window");
+        var drainTiming = DrainDecisionTiming.ForScore(10);
+        Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
+            drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
+            drainTiming.TelemetrySeconds > 45 + drainTiming.ProcessDeadlineSeconds &&
+            drainTiming.TelemetryDeadlineSeconds > drainTiming.TelemetrySeconds,
+            "the recorded 140-second pending-drain completion fits without ending its observer first, including readiness delay");
+        var drainStart = DateTimeOffset.UtcNow;
+        var completeDrain = Enumerable.Range(0, 146).Select(i => drainStart.AddSeconds(i)).ToArray();
+        TelemetryCoverage.Validate(completeDrain, drainStart.AddMilliseconds(250), drainStart.AddSeconds(140));
+        Reject(() => TelemetryCoverage.Validate(completeDrain.Take(131).ToArray(),
+            drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
+        Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
+            drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);

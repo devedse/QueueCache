@@ -1,7 +1,8 @@
 # Known issues and verification gaps
 
-What is known to be limited or not yet proven in the current QueueCache build
-(0.4.604.1, 2026-10-12). Fixed defects are listed at the end with the build that
+What is known to be limited or not yet proven in the current QueueCache source.
+The latest VM checks use 0.4.685.1 (2026-10-14); their scope is recorded below.
+Fixed defects are listed at the end with the build that
 fixed them; do not report them as current bugs without a reproduction on the
 current driver. Performance results and decisions are in
 [performance findings](PERFORMANCE_FINDINGS.md); how things are tested is in
@@ -105,64 +106,41 @@ cache or a disk.
 
 ## Fix branch verification (#14 / #15)
 
-The concurrent-miss implementation and 1024 KiB × 4 drain defaults on
-`fix/read-misses-drain` are still undergoing VM qualification. The initial
-0.4.673.1 candidate omitted a stable pin snapshot for ordinary offloaded misses:
-concurrent fills could make a read release a slot it never pinned. The branch now
-uses exact pin identities for every read. Plan 126 adds overlapping cold/partial
-read byte checks and verifies that clean entries can be evicted afterwards.
-The signed 0.4.675.1 Driver Verifier campaign completed all six phases and
-98 correctness checks, including 12 overlapping-read rounds and a 304-second
-stress window on both lab volumes. Every check passed and restoration succeeded
-(`20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`). Performance and final release
-regression results are pending.
+The branch overlaps ordinary read misses, preserves each read's exact original
+pin identities, and uses 1024 KiB × 4 drain defaults for new tasks. Saved profiles
+keep their settings. Misses spanning more than 256 cache blocks (1 MiB when
+aligned), or arriving when the offload table is full, use the ordered worker.
 
-The 0.4.677.1 same-build read-miss screen completed 24/24 windows: cold random
-reads improved 6.0× and sequential reads 3.4×, with every pair improving and no
-repeated 3% loss in resident controls. Cold p99 latency improved, but some
-worst-read samples increased; worst-read latency is not qualified as improved.
-Read misses covering more than the bounded 1 MiB offload range, or arriving when
-its table is full, still use the ordered worker.
+- Signed 0.4.675.1 completed six Driver Verifier phases and 98 correctness
+  checks, including 12 overlapping cold/partial-read rounds, pin-retirement
+  checks and a 304-second stress window on both lab volumes
+  (`20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`).
+- The corrected retry fixture completed five checks without Verifier on
+  0.4.679.1, with all bytes matching from disk and zero pending bytes after
+  retry at parallelism 1, 2 and 4
+  (`20261013-225440-cf15f15164264cbcb2b63c3886f8b2c8`).
+- Signed 0.4.685.1 completed the full 37-case concurrency matrix on plan 131.
+  All 24 RAM-only windows (12 reads and 12 writes) recorded zero lower read,
+  write and flush attempts, misses and drained bytes; all scored bytes were
+  accounted for. The largest telemetry gap was 0.215 seconds. Restoration was
+  healthy and returned the original 2 GiB Fast profile with 256 KiB × 2 settings
+  (`20261014-041653-4cf5d812f35744c1acf35af6647fa7ed`).
 
-The first non-Verifier stress attempt on 0.4.677.1 was incomplete at Retry:
-16 KiB of new writes arrived after the fault snapshot and 8 KiB remained dirty.
-Plan 128 now flushes filesystem metadata around that fixture and additionally
-requires proof that the retained bytes drained; it still rejects any dirty
-result. The corrected fixture completed all five checks on 0.4.679.1 without
-Verifier: retry left zero dirty/in-flight bytes at all three concurrency settings,
-every region matched from disk, and restoration succeeded
-(`20261013-225440-cf15f15164264cbcb2b63c3886f8b2c8`).
+The final 0.4.685.1 same-build read-miss screen completed 24/24 windows. Cold
+random throughput improved 9.4× and sequential throughput 3.35×, with every pair
+improving and no repeated resident-control loss. Every cold p99 improved.
+Random worst latency increased from 46.219 to 568.738 ms; worst-read latency is
+not qualified as improved. The screen isolates miss offload: both arms use the
+new read pool and queue order
+(`20261014-044032-7009cf8578ec4b178648b13f18e38a2e`). The drain comparison and
+final release campaign remain pending.
 
-The first 0.4.673.1 `cache-concurrency` run was incomplete: a RAM-only window
-recorded 36 lower reads / 27 KiB of misses. Restoration succeeded; it is not a
-passing result. The tray was still open during that attempt. A clean repeat is
-required to distinguish environmental activity from a driver defect.
-
-The clean 0.4.679.1 repeat passed the four resident-read shapes, then stopped at
-the first fitting write window: three lower reads / 24 KiB of misses, with all
-scored writes admitted and no lower writes, flushes or drains. Plan 129 now primes
-writable-file access before the measurement boundary; it still rejects any
-lower I/O during a RAM-only score. The focused repeat passed with all 145 GB of
-scored writes admitted and zero lower reads, writes, flushes, misses or drained
-bytes (`20261013-233136-2fe8cbd5ec9244a09b0c8cf685caf66d`). The complete matrix
-remains unqualified pending the full repeat on the CI package.
-
-The full 0.4.681.1 repeat completed all four first-repetition read shapes and
-the first RAM-only write window with zero lower I/O. It then stopped at the
-background-drain write window because telemetry had a 9.84-second gap, exceeding
-the two-second coverage requirement. Restoration succeeded with zero errors and
-no dirty/in-flight bytes (`20261013-235750-a2aa7d221f8740948a568a844368d11f`).
-That 7/37 run remains incomplete; the coverage gap is under investigation and
-does not supply a performance aggregate.
-An unchanged focused repeat completed the affected window with a maximum
-telemetry gap of 0.313 seconds. The next full repeat later stopped at a different
-window, on a 3.04-second gap (`20261014-001931-d4c4bb8d868c4d6187ba49c264af77f1`,
-15/37, restored). Both gaps also occurred on the monotonic clock. Plan 130 adds
-observer-stage timing evidence; the complete concurrency matrix is still open.
-The instrumented repeat located a 3.367-second gap in serialization/persistence:
-3147.796 ms there versus at most 2.163 ms querying the driver. Plan 131 now
-samples independently through a bounded buffer and still rejects missing
-coverage or overflow. Its host contracts pass; the full VM repeat is pending.
+Qualification exposed two fixture problems and a recorder delay. Plans 128/129
+settle filesystem metadata and prime writable-file access before strict measured
+windows. Plan 131 separates actual sampling from serialization/persistence
+through a bounded buffer; it still rejects real coverage gaps and overflow.
+The full concurrency result above supersedes the incomplete attempts, whose
+evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
 
 ## Not yet proven on the VM
 

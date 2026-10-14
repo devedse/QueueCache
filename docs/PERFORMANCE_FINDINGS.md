@@ -1,7 +1,7 @@
 # QueueCache performance findings
 
 This is the consolidated reference for performance findings and decisions from
-the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-13.
+the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-14.
 Read it before proposing another experiment. Detailed methods and raw-evidence
 identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
@@ -84,8 +84,11 @@ data is fastest with QueueCache (hot 1M Q8 39,487 / 21,214 MB/s Fast; PrimoCache
   cold random reads: 256 KiB x 1/2/4 = 3.88/2.67/3.07, 1024 KiB x 1/2/4 = 3.08/3.68/1.86. During fitting random
   writes (the flush also drains writes admitted meanwhile): 256 x 1/2/4 = 32.6/18.2/17.7 s at 14,202/14,413/13,202
   foreground IOPS; 1024 x 1/2/4 = 18.8/15.3/8.4 s at 37,342/26,412/50,859 IOPS. 1024 x 4 beat 256 x 2 in every
-  write pairing (11.4/8.4/6.3 against 18.2/19.3/8.8 s) and in two of three read pairings (third equal); p99 latency
-  was unchanged. 256 x 4 alone was not faster, as in T050. **Default changed to 1024 KiB x 4** (plan 125).
+  write pairing (11.4/8.4/6.3 against 18.2/19.3/8.8 s) and in two of three read pairings (third equal); median p99
+  was unchanged. Foreground write IOPS improved in two pairings but fell 3.7% in the first, and the flush-time
+  ranges overlapped. This exploratory decision does not meet the separated-range acceptance bar by itself;
+  final-build qualification remains required. 256 x 4 alone was not faster, as in T050.
+  **Branch defaults changed to 1024 KiB x 4** (plan 125).
 
 **Fix branch qualification (plan 126, in progress).** The initial concurrent-miss
 candidate built successfully but is not accepted yet. Review found that using the
@@ -173,7 +176,57 @@ serialization/persistence through a bounded 256-sample buffer. It still rejects
 real coverage gaps and buffer exhaustion, publishes readiness after the first
 persisted sample, and waits for all observations to be written. Host contracts
 cover blocked persistence, order, overflow and failure ownership; VM validation
-of this correction remains pending.
+of this correction is now complete for the concurrency matrix.
+
+**Final-build concurrency (plan 131).** Signed 0.4.685.1 completed all 37 cases
+(`20261014-041653-4cf5d812f35744c1acf35af6647fa7ed`). All 12 resident-read and
+12 fitting-write windows required zero lower read/write/flush attempts, misses
+and drained bytes and accounted for every scored byte; all passed. The other
+12 windows exercised writes with background draining. Every actual telemetry
+interval covered its process window; the largest UTC/monotonic gap was
+0.215076/0.215075 seconds. Writer persistence reached 247.289 ms while capture
+stages took at most 3.892 ms. The original 2 GiB Fast/Idle 256 KiB × 2 profile
+was restored with zero errors, dirty or in-flight bytes. Full raw evidence and
+XML byte totals were reviewed; no samples from incomplete runs were aggregated.
+The final cold-read screen below is complete; the drain comparison and release campaign remain pending.
+
+**Final-build read-miss screen (plan 131).** Signed 0.4.685.1 completed 24/24
+windows with the same budget, file sizes, alternated three repetitions and
+20-second scores as the plan-127 screen
+(`20261014-044032-7009cf8578ec4b178648b13f18e38a2e`). The result was
+ACCEPT_SCREEN. Both arms still use the 16-thread pool and corrected queue order.
+
+| Read shape | Serial misses, median MiB/s (range) | Offloaded misses, median MiB/s (range) | Median change | Median p99, serial / offloaded (ms) |
+|---|---:|---:|---:|---:|
+| Cold random 4K Q32 | 10.44 (9.72–11.69) | 98.05 (55.03–98.98) | +839.7% | 19.080 / 7.374 |
+| Cold sequential 1M Q8 | 340.50 (338.83–342.80) | 1140.58 (1140.08–1141.20) | +235.0% | 49.879 / 28.576 |
+| Resident random 4K Q32 | 1621.66 (1587.31–1635.31) | 1618.97 (1610.94–1629.27) | −0.17% | 0.106 / 0.107 |
+| Resident sequential 1M Q8 | 36623.09 (36562.55–36952.67) | 36770.55 (36739.15–36800.40) | +0.40% | 0.451 / 0.446 |
+
+Every cold pair improved, candidate throughput ranges were above the serial
+ranges, and every cold p99 improved. No resident pair lost 3%; all resident
+windows had zero misses and zero lower reads. The largest random-read sample
+increased from 46.219 to 568.738 ms; sequential maximum decreased from 60.706 to
+41.321 ms. This accepts throughput and p99, not a blanket worst-latency gain.
+The largest telemetry gap was 0.258 seconds. Original settings and copy flags
+15 were restored cleanly. All raw XML byte totals and telemetry intervals were
+reviewed. Loaded filter:
+`894509CAB30A6CE4856B4837905A62AD2FC835C808B43199C663897429658891`;
+provider: `7ABCE03E9CBB7ABEB0BF816BA427865150D604EDEDCD43484EA40FE1599EB579`;
+DiskSpd: `7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079`.
+
+**Drain completion budget (plan 132).** The first final-build 42-case drain
+repeat stopped at 27/42 (`20261014-045632-97825e31882149d89fbb3ecd56f3cbb2`).
+The generic ten-second-score plus 120-second process deadline expired while
+the parallelism-1 administrative flush was still draining small, scattered
+writes. Telemetry showed 589.8 MiB drained in 129.9 seconds, 27,365 lower-write
+attempts and zero driver errors, with 8.6 MiB still dirty when its old observer
+duration expired. Restoration succeeded. No aggregates from that incomplete
+run are used. Plan 132 gives this diagnostic an explicit 300-second completion
+allowance and an observer lasting beyond process completion and readiness.
+The scored duration, workload, complete 42-case matrix, coverage limit and
+persisted-byte checks are unchanged. Host contracts reject the old truncated
+interval and real sample gaps; the corrected VM run remains pending.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1040,7 +1093,7 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
-| Read misses one at a time | **Open weakness** (plan 121, issue #14): first read of 1 GiB 217 MB/s against 560 bare and 512 PrimoCache; cold RND4K Q32 11 against 65 MB/s; slowest read 41-59 s with 32 queued misses (service-lane head reinsertion). | Before changing the miss path: stop the reordering, then several misses in flight. |
+| Read misses one at a time | **Throughput screen accepted; release qualification pending** (plan 131, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated. Every cold p99 improved; random maximum increased to 568.738 ms. Both arms use the new pool and queue order. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; representative worst-latency evidence. |
 | Drain batch size and parallelism | **Default 1024 KiB x 4** (plan 125, issue #15): `drain-decision` medians of three, 256 MiB backlog 1.86 against 2.67 s (reads) and 8.4 against 18.2 s (writes) for 256 x 2; 256 x 4 alone no faster. | Storage with a different latency profile, or drain-thread changes (more than one write in flight per thread, more than 4 threads). |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |

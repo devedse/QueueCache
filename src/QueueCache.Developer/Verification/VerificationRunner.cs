@@ -160,12 +160,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                                 result.Status == "PASS")
             .Select(result => Path.Combine(runDirectory, SystemImageArtifacts(runDirectory, result.Id).OracleFile))
             .ToArray();
-    private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0) =>
+    private Task<string> Control(WriteCacheAction action, CancellationToken token, ulong value = 0,
+        int? timeoutSeconds = null) =>
         Worker(Job("control") with
         {
             Action = action,
             Value = value
-        }, token, action == WriteCacheAction.Flush ? options.PreparationFlushSeconds : 180);
+        }, token, timeoutSeconds ?? (action == WriteCacheAction.Flush ? options.PreparationFlushSeconds : 180));
 
     public async Task<int> RunAsync(VerificationOptions selected, IProgress<string>? progress, CancellationToken token)
     {
@@ -233,6 +234,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
             Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + exercises.Count} cases, not the complete suite matrix.");
+        if (drainDecision.Count > 0)
+            Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -242,6 +245,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             ExpectedCases = expected,
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
+            DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
             ComparisonCases = ComparisonPlan.IsComparison(options.Suite) ? ComparisonPlan.CasesFor(options.Suite, options.Repeats) : [],
@@ -839,11 +843,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         catch (Exception ex) { storage.Add(new(id, "FAIL", ex.Message, started, timer.Elapsed.TotalSeconds)); throw; }
     }
 
-    private async Task<DiskSpdScore> Disk(string id, string file, string[] arguments, CancellationToken token)
+    private async Task<DiskSpdScore> Disk(string id, string file, string[] arguments, CancellationToken token,
+        int? timeoutSeconds = null)
     {
         // Every command uses the same typed argument vector; shell parsing and automatic $args cannot interfere.
         var result = await RunProcess(id, options.DiskSpd!, [.. arguments, "-Rxml", "-L", "-S", file],
-            TimeSpan.FromSeconds(int.Parse(arguments.Single(a => a.StartsWith("-d", StringComparison.Ordinal))[2..], CultureInfo.InvariantCulture) + 120), token);
+            TimeSpan.FromSeconds(timeoutSeconds ?? (int.Parse(arguments.Single(a => a.StartsWith("-d", StringComparison.Ordinal))[2..], CultureInfo.InvariantCulture) + 120)), token);
         if (result.ExitCode != 0)
             throw new IOException($"DiskSpd XML-mode exit {result.ExitCode}: {ErrorDetail(result.Error)}. Both supported variants must return zero in XML mode. See {storage.PathFor(id)}.stderr.txt and stdout.txt.");
         var score = DiskSpdParser.Parse(result.Output);
@@ -1083,6 +1088,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
 
     private async Task<DiskSpdScore?> MeasureDrainDecision(DrainDecisionCase scenario, CancellationToken token)
     {
+        var timing = DrainDecisionTiming.ForScore(options.DurationSeconds);
         await Control(WriteCacheAction.LabDelay, token);
         await Control(WriteCacheAction.Flush, token);
         var cacheEnabled = scenario.PendingDrain || scenario.Workload == "fitting-write";
@@ -1128,8 +1134,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Reply = storage.PathFor(scenario.Id + "-telemetry.jsonl"),
             StopFile = stop,
             ReadyFile = ready,
-            Seconds = options.DurationSeconds + 120
-        }, children.Token, options.DurationSeconds + 130);
+            Seconds = timing.TelemetrySeconds
+        }, children.Token, timing.TelemetryDeadlineSeconds);
         Task<DateTimeOffset>? flush = null;
         Task<DiskSpdScore>? workload = null;
         try
@@ -1141,16 +1147,16 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             var path = scenario.Workload == "fitting-write" ?
                 Path.Combine(workDirectory, "resident.dat") : Path.Combine(workDirectory, "writer.dat");
             var arguments = scenario.Workload == "fitting-write"
-                ? new[] { "-b4K", "-r4K", "-o1", "-t1", "-w100", $"-d{options.DurationSeconds}", "-W0", "-Zr" }
-                : new[] { "-b4K", "-r4K", "-o1", "-t1", "-w0", $"-d{options.DurationSeconds}", "-W0" };
-            workload = Disk(scenario.Id + "-workload", path, arguments, children.Token);
+                ? new[] { "-b4K", "-r4K", "-o1", "-t1", "-w100", $"-d{timing.ScoreSeconds}", "-W0", "-Zr" }
+                : new[] { "-b4K", "-r4K", "-o1", "-t1", "-w0", $"-d{timing.ScoreSeconds}", "-W0" };
+            workload = Disk(scenario.Id + "-workload", path, arguments, children.Token, timing.ProcessDeadlineSeconds);
             DateTimeOffset? flushRequested = null;
             DateTimeOffset? flushCompleted = null;
             if (scenario.PendingDrain)
             {
                 await Task.Delay(250, token);
                 flushRequested = DateTimeOffset.UtcNow;
-                flush = FlushAndTimestamp(children.Token);
+                flush = FlushAndTimestamp(children.Token, timing.FlushDeadlineSeconds);
             }
             var score = await workload;
             var workloadEnd = DateTimeOffset.UtcNow;
@@ -1245,9 +1251,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
     }
 
-    private async Task<DateTimeOffset> FlushAndTimestamp(CancellationToken token)
+    private async Task<DateTimeOffset> FlushAndTimestamp(CancellationToken token, int? timeoutSeconds = null)
     {
-        await Control(WriteCacheAction.Flush, token);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: timeoutSeconds);
         return DateTimeOffset.UtcNow;
     }
 
