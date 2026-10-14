@@ -136,7 +136,32 @@ window correctly failed. Plan 129 primes the writable DiskSpd profile before
 the quiet wait and measurement boundary. The zero-lower-I/O guard is unchanged.
 The incomplete 6/37 run (`20261013-230517-9cd6a418dc51416c9ba8611511f3ba91`)
 restored successfully and supplies no complete matrix or performance aggregate.
-The corrected fixture still needs a full repeat.
+The focused plan-129 repeat completed 2/2 selected cases and restored
+(`20261013-233136-2fe8cbd5ec9244a09b0c8cf685caf66d`, managed runner `d0372d3`
+against the same signed 0.4.679.1 native driver). The write score completed
+144,997,089,280 bytes, all admitted; lower read/write/flush attempts, misses and
+drained-byte deltas were all zero. This qualifies that fixture correction for the
+affected window, not the complete 37-case concurrency matrix. The full repeat on
+the CI package is still required.
+
+The full 0.4.681.1 repeat completed the four read shapes and first RAM-only write
+window, whose lower read/write/flush attempts, misses and drained-byte deltas
+were zero. The next background-drain write score stopped on a 9.84-second
+telemetry gap; the two-second coverage guard remained intact. The 7/37 run
+(`20261013-235750-a2aa7d221f8740948a568a844368d11f`) restored the original
+256 KiB × 2 profile cleanly, with zero errors. Its gap needs investigation;
+no aggregate or complete concurrency qualification is inferred from it.
+The unchanged focused background-drain repeat completed 2/2 selected cases
+(`20261014-001223-b6ada1ceaea74be0ba911244aa7b1392`), restored cleanly, and
+recorded 51 score-window samples with a maximum gap of 0.313 seconds. The
+9.84-second gap was not reproduced; its cause remains unproven. A complete
+unchanged matrix repeat is required.
+That repeat completed the first 12 read/write windows, then stopped during the
+second repetition on a 3.04-second telemetry gap in a resident-read window
+(`20261014-001931-d4c4bb8d868c4d6187ba49c264af77f1`, 15/37, restored). In both
+failed runs the UTC and monotonic gaps agreed, excluding a clock adjustment.
+Plan 130 records observer-stage timings to locate the actual delay; coverage
+requirements remain unchanged. Neither incomplete matrix is aggregated.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and

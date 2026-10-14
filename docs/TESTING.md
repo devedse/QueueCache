@@ -91,6 +91,9 @@ it finish. Results go to a new folder under `--output`.
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
+From plan 126, the retained correctness suites contain 93 subchecks: 22 partial
+reads, 8 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
+`stress-races` campaign adds its five checks, for 98 in total.
 
 **Long runs from an agent.** Start the foreground campaign command with the
 harness's built-in background-task mechanism. Wait for completion, then read that
@@ -204,6 +207,11 @@ then read the run folder:
 | `manifest.json`, `recovery.json` | Plan, options, expected cases, identities; the settings to restore |
 | `restoration.json` / `restored.json` | Independent restoration result |
 | per-case `*-before/after.json`, `*.score.json`, `*-telemetry.jsonl`, `*-interval.json`, raw DiskSpd output | The evidence behind each number |
+
+Plan 130 telemetry includes actual time spent checking the stop file, querying
+each driver snapshot, persisting the previous sample and awaiting its delay.
+These fields help attribute a coverage gap; the two-second gap limit, complete
+process interval and ready handshake remain unchanged.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

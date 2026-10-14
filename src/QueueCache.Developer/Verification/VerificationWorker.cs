@@ -24,6 +24,10 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
 public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
+/// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
+public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
+    double PerformanceMilliseconds, double DiagnosticsMilliseconds,
+    double PreviousPersistenceMilliseconds, double PreviousDelayMilliseconds);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
 [SupportedOSPlatform("windows")]
@@ -1021,22 +1025,36 @@ public static class VerificationWorker
                 await using (var writer = new StreamWriter(job.Reply, append: false))
                 {
                     var timer = Stopwatch.StartNew();
+                    double persistenceMilliseconds = 0, delayMilliseconds = 0;
                     while (timer.Elapsed.TotalSeconds < job.Seconds)
                     {
                         // On stop, take one final sample covering workload completion.
+                        var stage = Stopwatch.StartNew();
                         var stopping = File.Exists(job.StopFile);
+                        var stopMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedState = device.GetWriteCacheState();
+                        var stateMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedPerformance = device.GetPerformance();
+                        var performanceMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedDiagnostics = device.GetDiagnostics();
+                        var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         await writer.WriteLineAsync(JsonSerializer.Serialize(new
                         {
                             Utc = DateTimeOffset.UtcNow,
                             ElapsedSeconds = timer.Elapsed.TotalSeconds,
                             State = observedState,
                             Performance = observedPerformance,
-                            Diagnostics = observedDiagnostics
+                            Diagnostics = observedDiagnostics,
+                            StageTiming = new TelemetryStageTiming(stopMilliseconds, stateMilliseconds,
+                                performanceMilliseconds, diagnosticsMilliseconds, persistenceMilliseconds,
+                                delayMilliseconds)
                         }));
                         await writer.FlushAsync();
+                        persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
                         if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
                             RunStorage.AtomicJson(job.ReadyFile, new
                             {
@@ -1044,7 +1062,9 @@ public static class VerificationWorker
                             });
                         if (stopping)
                             break;
+                        stage.Restart();
                         await Task.Delay(200);
+                        delayMilliseconds = stage.Elapsed.TotalMilliseconds;
                     }
                 }
                 return 0;

@@ -31,6 +31,16 @@ copies. Health and SMART tools are unaffected, and backups through shadow copies
 are consistent. Flush or pause the cache before a tool reads the raw disk, and
 never write raw to a disk under a cached volume.
 
+### Strict mode can stall writes while an unrelated backlog drains (performance)
+
+Strict honors each write-through write and application flush by draining the
+whole dirty cache and flushing the lower disk. The ordered request worker keeps
+later writes waiting meanwhile. After a burst of random writes, the comparison
+on 0.4.604.1 measured stops of more than 100 seconds and file operations several
+times slower than the bare disk. The read-miss and drain-default fixes do not
+change this durability boundary. Bounded Strict admission and overlapping-version
+ordering remain open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
+
 ### Low-priority programs read cached data slower (performance)
 
 A program started below normal priority (Task Scheduler's default) read 1 MiB Q8
@@ -132,8 +142,23 @@ The clean 0.4.679.1 repeat passed the four resident-read shapes, then stopped at
 the first fitting write window: three lower reads / 24 KiB of misses, with all
 scored writes admitted and no lower writes, flushes or drains. Plan 129 now primes
 writable-file access before the measurement boundary; it still rejects any
-lower I/O during a RAM-only score. That matrix remains incomplete pending a full
-repeat of the corrected fixture.
+lower I/O during a RAM-only score. The focused repeat passed with all 145 GB of
+scored writes admitted and zero lower reads, writes, flushes, misses or drained
+bytes (`20261013-233136-2fe8cbd5ec9244a09b0c8cf685caf66d`). The complete matrix
+remains unqualified pending the full repeat on the CI package.
+
+The full 0.4.681.1 repeat completed all four first-repetition read shapes and
+the first RAM-only write window with zero lower I/O. It then stopped at the
+background-drain write window because telemetry had a 9.84-second gap, exceeding
+the two-second coverage requirement. Restoration succeeded with zero errors and
+no dirty/in-flight bytes (`20261013-235750-a2aa7d221f8740948a568a844368d11f`).
+That 7/37 run remains incomplete; the coverage gap is under investigation and
+does not supply a performance aggregate.
+An unchanged focused repeat completed the affected window with a maximum
+telemetry gap of 0.313 seconds. The next full repeat later stopped at a different
+window, on a 3.04-second gap (`20261014-001931-d4c4bb8d868c4d6187ba49c264af77f1`,
+15/37, restored). Both gaps also occurred on the monotonic clock. Plan 130 adds
+observer-stage timing evidence; the complete concurrency matrix is still open.
 
 ## Not yet proven on the VM
 
