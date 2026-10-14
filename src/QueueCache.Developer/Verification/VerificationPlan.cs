@@ -31,10 +31,20 @@ public sealed record DrainDecisionCase(
     bool PendingDrain,
     int BatchKiB = 256);
 
+public sealed record TreeDecisionCase(
+    string Id,
+    int Repeat,
+    int Position,
+    string Arm,
+    bool CacheEnabled,
+    ulong? CopyFlags,
+    int BatchKiB,
+    int Parallelism);
+
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 133;
+    public const int Version = 134;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -73,6 +83,7 @@ public static class VerificationPlan
         "app-write-profile",
         "pressure",
         "drain-decision",
+        "tree-decision",
         "volumes",
         "trim-cache",
         "trim-diagnostic",
@@ -137,6 +148,32 @@ public static class VerificationPlan
         }
         return options.CaseFilter is null ? cases :
             cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
+    }
+
+    public static IReadOnlyList<TreeDecisionCase> TreeDecision(VerificationOptions options)
+    {
+        if (options.Suite != "tree-decision") return [];
+        TreeDecisionCase[] arms =
+        [
+            new("", 0, 0, "cache-off", false, null, 1024, 4),
+            new("", 0, 0, "flags7-b256-p2", true, 7, 256, 2),
+            new("", 0, 0, "flags15-b256-p2", true, 15, 256, 2),
+            new("", 0, 0, "flags7-b1024-p4", true, 7, 1024, 4),
+            new("", 0, 0, "flags15-b1024-p4", true, 15, 1024, 4)
+        ];
+        var cases = new List<TreeDecisionCase>();
+        for (var repeat = 1; repeat <= options.Repeats; repeat++)
+        {
+            var offset = (repeat - 1) % arms.Length;
+            for (var position = 0; position < arms.Length; position++)
+            {
+                var arm = arms[(position + offset) % arms.Length];
+                var id = $"tree-r{repeat:D2}-p{position + 1:D2}-{arm.Arm}";
+                cases.Add(arm with { Id = id, Repeat = repeat, Position = position + 1 });
+            }
+        }
+        return options.CaseFilter is null ? cases :
+            cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToArray();
     }
 
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
@@ -471,8 +508,10 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
-            throw new ArgumentException("Resident sequential/layout suites require --budget-mib 2048 for their fixed 1 GiB prewarmed file.");
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+            throw new ArgumentException("Resident sequential, tree and layout suites require --budget-mib 2048 for their fixed workload size.");
+        if (options.Suite == "tree-decision" && options.Repeats != 3)
+            throw new ArgumentException("tree-decision requires exactly three alternated repetitions.");
         if (CacheExercisePlan.Contains(options.Suite) && options.BudgetMiB % 8 != 0)
             throw new ArgumentException("Cache exercises require --budget-mib divisible by eight for complete fitting stream files.");
         if (options.Suite == "cache-recall" && options.BudgetMiB < 1024)
@@ -487,7 +526,7 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "tree-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity") || string.IsNullOrWhiteSpace(options.CaseFilter)))
             throw new ArgumentException("--case-filter requires a focused performance suite and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
@@ -509,7 +548,7 @@ public static class VerificationPlan
             throw new ArgumentException("stress-races runs once (--repeats 1) with a busy window of 60..3600 seconds (--soak-seconds, default 240).");
 
         if (options.CaseFilter is not null &&
-            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : DrainDecision(options).Count) == 0)
+            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : options.Suite == "tree-decision" ? TreeDecision(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)

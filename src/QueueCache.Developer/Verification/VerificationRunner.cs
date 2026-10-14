@@ -180,7 +180,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         ulong? originalCopyFlags = null;
         copyFlagsMutationStarted = false;
         layoutMeasurements = null;
-        if ((selected.Suite == "cache-read-misses" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((selected.Suite is "cache-read-misses" or "tree-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -217,10 +217,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
+        var treeDecision = VerificationPlan.TreeDecision(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
         expected.AddRange(drainDecision.Select(c => c.Id));
+        expected.AddRange(treeDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
@@ -235,7 +237,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + exercises.Count} cases, not the complete suite matrix.");
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + exercises.Count} cases, not the complete suite matrix.");
         if (drainDecision.Count > 0)
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
         storage.Write("manifest.json", new
@@ -247,6 +249,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             ExpectedCases = expected,
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
+            TreeDecisionCases = treeDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
@@ -339,7 +342,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping")
+            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision")
             {
                 originalCopyFlags = original.CopyFlags
                     ?? throw new InvalidDataException("Missing original runtime copy flags; refusing to start a suite that changes them.");
@@ -553,6 +556,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.CasesFor(options), caseChecks!);
                     return null;
                 });
+            foreach (var scenario in treeDecision)
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
+            }
             if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
@@ -861,6 +869,53 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var score = DiskSpdParser.Parse(result.Output);
         storage.Write(id + ".score.json", score);
         return score;
+    }
+
+    private async Task<DiskSpdScore?> MeasureTreeDecision(TreeDecisionCase scenario, CancellationToken token)
+    {
+        await Control(WriteCacheAction.Flush, token);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token);
+        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.CacheEnabled)
+        {
+            Options = new CacheOptions(CacheAllocation.Automatic, 50, RetainWrites: true, PromoteOnRead: true,
+                Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000, IdleMs: 250,
+                BatchKiB: scenario.BatchKiB, Parallelism: scenario.Parallelism)
+        };
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        if (scenario.CopyFlags is { } copyFlags)
+        {
+            copyFlagsMutationStarted = true;
+            await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
+        }
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var settlePath = await Worker(Job("tree-settle") with { Seconds = 30 }, token, 360);
+        var preconditionSettle = JsonSerializer.Deserialize<SettleResult>(await File.ReadAllTextAsync(settlePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision precondition settle evidence.");
+        TreeDecisionEvidenceContract.ValidateSettle(preconditionSettle, 30);
+
+        var beforePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
+        var before = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision start snapshot.");
+        TreeDecisionEvidenceContract.ValidateStart(scenario, before);
+        var treePath = await Worker(Job("tree-decision") with
+        {
+            WorkDirectory = Path.Combine(workDirectory, scenario.Id),
+            Seconds = 120,
+            Reply = storage.PathFor(scenario.Id + "-tree.json")
+        }, token, 1800);
+        var tree = JsonSerializer.Deserialize<TreeResult>(await File.ReadAllTextAsync(treePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision byte/hash and timing evidence.");
+        var afterPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
+        var after = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(afterPath, token))
+            ?? throw new InvalidDataException("Missing tree-decision end snapshot.");
+        var evidence = new TreeDecisionEvidence(scenario, before, tree, after);
+        TreeDecisionEvidenceContract.Validate(evidence);
+        storage.Write(scenario.Id + "-evidence.json", evidence);
+        caseChecks = [new("Seeded file-tree byte and SHA-256 oracle", "PASS",
+            $"{tree.Files} files / {tree.Bytes} bytes; create {tree.CreateSeconds:F2}s, copy {tree.CopySeconds:F2}s, read/hash {tree.ReadSeconds:F2}s, delete {tree.DeleteSeconds:F2}s. Collection only; see per-phase memory and cache snapshots.")];
+        return null;
     }
 
     private const string StressOwnership = "stress-races-owned.json";
@@ -1311,7 +1366,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
             var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
                 ?? throw new InvalidDataException("The run manifest has no suite.");
-            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping";
+            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision";
             ulong? recoveryCopyFlags = null;
             if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")
             {

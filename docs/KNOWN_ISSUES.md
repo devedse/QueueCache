@@ -195,8 +195,11 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   read/hash step took 154.2 s versus 4.9 s in the 0.4.604.1 session, with the
   cause not established. The same-build cold miss-offload screen improved
   throughput and p99 but observed a random-read maximum of 568.7 ms versus
-  46.2 ms. Equal-operation and threshold-count evidence is still needed to
-  determine whether the tail reflects the changed scheduling.
+  46.2 ms. Plan 134 adds the maintained `tree-decision` matrix with per-phase
+  memory/system-cache samples, cache snapshots, lower-I/O attempt counters and
+  disk-idle settles; no result has been collected yet. Equal-operation and
+  threshold-count evidence is still needed to determine whether the tail
+  reflects the changed scheduling.
 - **Drain defaults under active background work:** existing comparisons support
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off

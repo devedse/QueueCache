@@ -122,6 +122,7 @@ ones in use:
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
 | `cache-read-misses` | Same-build flags 7/15, cold 4K Q32 and 1M Q8 on a file twice the cache plus fully cached controls; three alternated repetitions (24 windows), plan 127 | Reports throughput, p99 and worst-read latency; restores original flags |
+| `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -234,6 +235,19 @@ generation and configuration match the recovery snapshot. Older
 reported fully restored; recovery records that gap after restoring the other
 known settings. Numeric zero remains a valid recorded value; missing evidence is
 not treated as zero.
+Plan 134 adds the maintained `tree-decision` experiment. It uses five arms in
+three rotated repetitions, captures cache snapshots and system memory/system
+cache at the tree phases, and requires the exact seeded file count, byte count,
+SHA-256, disk-counter settles and lower-I/O attempt counters. Missing counters
+remain unavailable; collection does not assign a performance verdict. Run it
+only after the standard preflight and with exclusive ownership of the target:
+
+```powershell
+qcache developer verify Q: --suite tree-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\tree-decision
+```
+
+`--case-filter` can collect a diagnostic subset, but a subset is not a complete
+matrix or a basis for a decision.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

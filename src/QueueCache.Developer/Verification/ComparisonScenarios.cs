@@ -19,12 +19,20 @@ public sealed record MemorySnapshot(DateTimeOffset Utc, long TotalPhysicalBytes,
     long CommitBytes, long CommitLimitBytes, long KernelNonpagedBytes, long KernelPagedBytes, long SystemCacheBytes);
 
 public sealed record SettleResult(double Seconds, long? DiskBytesWritten, bool IdleObserved, string Source, long[]? DiskBytesPerSecond = null);
+public sealed record TreeCacheSnapshot(WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics);
 
 public sealed record SequentialPass(long Bytes, double Seconds, double MBPerSecond, double? FlushSeconds, long[]? BytesPerSecond,
     DateTimeOffset? Started = null, DateTimeOffset? Ended = null);
 
 public sealed record TreeResult(int Files, long Bytes, double CreateSeconds, double CopySeconds, double ReadSeconds, double DeleteSeconds,
-    SettleResult? AfterCreate, SettleResult? AfterCopy);
+    SettleResult? AfterCreate, SettleResult? AfterCopy, bool HashVerified,
+    MemorySnapshot? StartMemory, MemorySnapshot? AfterCreateWorkMemory, MemorySnapshot? AfterCreateMemory,
+    MemorySnapshot? AfterCopyWorkMemory, MemorySnapshot? AfterCopyMemory,
+    MemorySnapshot? BeforeReadMemory, MemorySnapshot? AfterReadMemory,
+    TreeCacheSnapshot? BeforeCreateCache, TreeCacheSnapshot? AfterCreateCache, TreeCacheSnapshot? AfterCreateSettleCache,
+    TreeCacheSnapshot? BeforeCopyCache, TreeCacheSnapshot? AfterCopyCache, TreeCacheSnapshot? AfterCopySettleCache,
+    TreeCacheSnapshot? BeforeReadCache, TreeCacheSnapshot? AfterReadCache,
+    TreeCacheSnapshot? BeforeDeleteCache, TreeCacheSnapshot? AfterDeleteCache);
 
 public sealed record DurabilityOracle(int SchemaVersion, ulong Nonce, string Directory, int SetMiB, int SmallFiles,
     DateTimeOffset Generation1Utc, DateTimeOffset CompletedUtc, double FlushedSetFlushSeconds, string Product);
@@ -379,8 +387,14 @@ internal static class ComparisonScenarios
             : $"Created {string.Join(", ", missing.Select(m => m.Name))}; kept the others.";
     }
 
-    private static TreeResult Tree(string root, int? diskNumber, int settleSeconds)
+    internal static TreeResult RunTreeDecision(string root, int? diskNumber, int settleSeconds, CacheDevice device) =>
+        Tree(root, diskNumber, settleSeconds, device);
+
+    private static TreeResult Tree(string root, int? diskNumber, int settleSeconds, CacheDevice? device = null)
     {
+        var startMemory = Memory();
+        TreeCacheSnapshot? CacheSnapshot() => device is null ? null :
+            new(device.GetWriteCacheState(), device.GetPerformance(), device.GetDiagnostics());
         var spec = ComparisonData.TreeSpec();
         var content = ComparisonData.TreeContent();
         var copy = root + "-copy";
@@ -389,6 +403,7 @@ internal static class ComparisonScenarios
             for (var i = 0; i < spec.Count; i++) expected.AppendData(content, ComparisonData.TreeOffset(i, spec[i].Bytes), spec[i].Bytes);
             var expectedHash = expected.GetHashAndReset();
             var directories = spec.Select(s => Path.GetDirectoryName(s.Path)!).Distinct().ToArray();
+            var beforeCreateCache = CacheSnapshot();
             var timer = Stopwatch.StartNew();
             foreach (var directory in directories) Directory.CreateDirectory(Path.Combine(root, directory));
             for (var i = 0; i < spec.Count; i++)
@@ -397,7 +412,12 @@ internal static class ComparisonScenarios
                 file.Write(content, ComparisonData.TreeOffset(i, spec[i].Bytes), spec[i].Bytes);
             }
             var create = timer.Elapsed.TotalSeconds;
+            var afterCreateCache = CacheSnapshot();
+            var afterCreateWorkMemory = Memory();
             var afterCreate = settleSeconds > 0 ? Settle(diskNumber, settleSeconds) : null;
+            var afterCreateSettleCache = CacheSnapshot();
+            var afterCreateMemory = Memory();
+            var beforeCopyCache = CacheSnapshot();
             timer.Restart();
             foreach (var directory in directories) Directory.CreateDirectory(Path.Combine(copy, directory));
             var copiers = Enumerable.Range(0, 4).Select(t => Task.Factory.StartNew(() =>
@@ -406,7 +426,13 @@ internal static class ComparisonScenarios
             }, TaskCreationOptions.LongRunning)).ToArray();
             Task.WaitAll(copiers);
             var copySeconds = timer.Elapsed.TotalSeconds;
+            var afterCopyCache = CacheSnapshot();
+            var afterCopyWorkMemory = Memory();
             var afterCopy = settleSeconds > 0 ? Settle(diskNumber, settleSeconds) : null;
+            var afterCopySettleCache = CacheSnapshot();
+            var afterCopyMemory = Memory();
+            var beforeReadCache = CacheSnapshot();
+            var beforeReadMemory = Memory();
             timer.Restart();
             using var actual = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             var buffer = new byte[1 << 20];
@@ -419,10 +445,20 @@ internal static class ComparisonScenarios
             }
             var read = timer.Elapsed.TotalSeconds;
             if (!actual.GetHashAndReset().AsSpan().SequenceEqual(expectedHash)) throw new InvalidDataException("The copied file tree differs from the original.");
+            var afterReadCache = CacheSnapshot();
+            var afterReadMemory = Memory();
+            var beforeDeleteCache = CacheSnapshot();
             timer.Restart();
             Directory.Delete(root, recursive: true);
             Directory.Delete(copy, recursive: true);
-            return new(spec.Count, spec.Sum(s => (long)s.Bytes), create, copySeconds, read, timer.Elapsed.TotalSeconds, afterCreate, afterCopy);
+            var delete = timer.Elapsed.TotalSeconds;
+            var afterDeleteCache = CacheSnapshot();
+            return new(spec.Count, spec.Sum(s => (long)s.Bytes), create, copySeconds, read, delete,
+                afterCreate, afterCopy, true, startMemory, afterCreateWorkMemory, afterCreateMemory,
+                afterCopyWorkMemory, afterCopyMemory, beforeReadMemory, afterReadMemory,
+                beforeCreateCache, afterCreateCache, afterCreateSettleCache,
+                beforeCopyCache, afterCopyCache, afterCopySettleCache,
+                beforeReadCache, afterReadCache, beforeDeleteCache, afterDeleteCache);
         }
     }
 

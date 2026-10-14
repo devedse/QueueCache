@@ -940,6 +940,20 @@ public static class VerificationWorker
                     Diagnostics = device.GetDiagnostics()
                 };
                 break;
+            case "flush-volume":
+                using (var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true))
+                    volume.Flush();
+                result = new { Target = target, Flushed = DateTimeOffset.UtcNow };
+                break;
+            case "tree-settle":
+                result = ComparisonScenarios.Settle(target.Number, job.Seconds);
+                break;
+            case "tree-decision":
+                var treeRoot = Path.GetFullPath(job.WorkDirectory ?? throw new ArgumentException("Tree-decision work directory is required."));
+                if (!treeRoot.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(treeRoot) || Directory.Exists(treeRoot + "-copy"))
+                    throw new IOException("Tree-decision requires fresh source and copy directories on the selected target volume.");
+                result = ComparisonScenarios.RunTreeDecision(treeRoot, target.Number, job.Seconds, device);
+                break;
             case "files":
                 var report = await DiskWorkloads.TestAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, report);

@@ -14,7 +14,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 133, "plan 133 captures copy flags in recovery evidence");
+        Check(VerificationPlan.Version == 134, "plan 134 captures copy flags and the file-tree measurement contract");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -31,6 +31,7 @@ internal static class DiagnosticContracts
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
+        RunTreeDecisionContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -284,6 +285,85 @@ internal static class DiagnosticContracts
         finally { Directory.Delete(root, true); }
         Console.WriteLine("Attribution and priority/affinity contracts passed (no driver access).");
         TraceToolSmoke.RunOptional();
+    }
+
+    private static void RunTreeDecisionContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        static void RejectOptions(Action action)
+        {
+            try { action(); } catch (ArgumentException) { return; }
+            throw new Exception("Expected tree-decision option rejection.");
+        }
+        var options = new VerificationOptions("Q:", "tree-decision", BudgetMiB: 2048, Repeats: 3);
+        VerificationPlan.Validate(options);
+        var cases = VerificationPlan.TreeDecision(options);
+        check(cases.Count == 15 && cases.Select(test => test.Id).Distinct().Count() == 15 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 5 && group.Select(test => test.Position).Order().SequenceEqual([1, 2, 3, 4, 5])) &&
+            cases.GroupBy(test => test.Repeat).Select(group => string.Join(",", group.OrderBy(test => test.Position).Select(test => test.Arm))).Distinct().Count() == 3,
+            "tree-decision creates five fixed arms in three rotated repetitions with immutable unique IDs");
+        check(cases.Select(test => test.Arm).Distinct().Count() == 5 &&
+            cases.Count(test => !test.CacheEnabled) == 3 &&
+            cases.Where(test => test.CacheEnabled).Select(test => (test.CopyFlags, test.BatchKiB, test.Parallelism)).Distinct().Count() == 4,
+            "tree-decision compares a cache-off control with flags 7/15 at 256x2 and 1024x4");
+        var selected = VerificationPlan.TreeDecision(options with { CaseFilter = "r02-p01" });
+        check(selected.Count == 1 && selected[0].Repeat == 2 && selected[0].Position == 1,
+            "tree-decision case filter records a focused subset without changing case identity");
+        RejectOptions(() => VerificationPlan.Validate(options with { Repeats = 2 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { BudgetMiB = 1024 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { CaseFilter = "no-such-case" }));
+
+        var cached = cases.First(test => test.Arm == "flags7-b256-p2");
+        var cacheOptions = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true,
+            BatchKiB: cached.BatchKiB, Parallelism: cached.Parallelism);
+        var state = new WriteCacheState(1, 0, 1UL << 30, 2048UL << 20, 1UL << 30, 0, 0, 1UL << 30,
+            0, 0, 0, 0, 0, 0, 0, 0) { Options = cacheOptions, Instance = 77, Generation = 9 };
+        var perf = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var attribution = new CacheAttribution(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var diagnostics = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { Attribution = attribution, CopyFlags = 7 };
+        var snapshot = new CacheLayoutSnapshot(state, perf, diagnostics);
+        TreeDecisionEvidenceContract.ValidateStart(cached, snapshot);
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Diagnostics = diagnostics with { CopyFlags = 15 } }));
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Performance = perf with { TimingEnabled = 1 } }));
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Diagnostics = diagnostics with { Attribution = null } }));
+
+        var now = DateTimeOffset.UtcNow;
+        MemorySnapshot Memory(int second) => new(now.AddSeconds(second), 16L << 30, 8L << 30, 0, 0, 0, 0, 2L << 30);
+        var treeSpec = ComparisonData.TreeSpec();
+        var settle = new SettleResult(120, 0, true, "IOCTL_DISK_PERFORMANCE");
+        TreeCacheSnapshot Cache(ulong reads, ulong writes, ulong flushes) => new(state, perf,
+            diagnostics with { Attribution = new(reads, writes, flushes, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) });
+        var beforeCreate = Cache(100, 200, 30);
+        var afterCreate = Cache(101, 202, 30);
+        var afterCreateSettle = Cache(103, 202, 30);
+        var afterCopy = Cache(105, 205, 31);
+        var afterCopySettle = Cache(107, 205, 31);
+        var afterRead = Cache(110, 205, 31);
+        var afterDelete = Cache(111, 206, 31);
+        var tree = new TreeResult(treeSpec.Count, treeSpec.Sum(file => (long)file.Bytes), 1, 1, 1, 1, settle, settle, true,
+            Memory(0), Memory(1), Memory(2), Memory(3), Memory(4), Memory(5), Memory(6),
+            beforeCreate, afterCreate, afterCreateSettle, afterCreateSettle, afterCopy, afterCopySettle,
+            afterCopySettle, afterRead, afterRead, afterDelete);
+        var completeEvidence = new TreeDecisionEvidence(cached, snapshot, tree, snapshot);
+        TreeDecisionEvidenceContract.Validate(completeEvidence);
+        check(completeEvidence.LowerIoAttempts.Create == new TreePhaseIoAttempts(1, 2, 0) &&
+            completeEvidence.LowerIoAttempts.CreateSettle == new TreePhaseIoAttempts(2, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Copy == new TreePhaseIoAttempts(2, 3, 1) &&
+            completeEvidence.LowerIoAttempts.CopySettle == new TreePhaseIoAttempts(2, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Read == new TreePhaseIoAttempts(3, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Delete == new TreePhaseIoAttempts(1, 1, 0),
+            "tree-decision reports separate create/copy/read/delete and settle lower-I/O attempt deltas");
+        var roundTrip = JsonSerializer.Deserialize<TreeDecisionEvidence>(JsonSerializer.Serialize(completeEvidence))!;
+        TreeDecisionEvidenceContract.Validate(roundTrip);
+        check(roundTrip.LowerIoAttempts.Read == new TreePhaseIoAttempts(3, 0, 0),
+            "tree-decision case evidence round-trips all phase snapshots and derived lower-I/O deltas");
+        reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
+            tree with { AfterCopy = settle with { IdleObserved = false } }, snapshot)));
+        reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
+            tree with { AfterReadCache = Cache(106, 205, 31) }, snapshot)));
+        Console.WriteLine("Tree-decision plan, start-state, counter coverage and hash/settle contracts passed (no driver access).");
     }
 
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>
