@@ -123,7 +123,8 @@ ones in use:
 | `cache-read-reference` | Cached 1M reads from one and four programs, with lock and queue time per read | Attribution only |
 | `cache-read-misses` | Same-build flags 7/15, cold 4K Q32 and 1M Q8 on a file twice the cache plus fully cached controls; three alternated repetitions (24 windows), plan 127 | Reports throughput, p99 and worst-read latency; restores original flags |
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
-| `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle; collection only |
+| `tree-build-decision` | One fixed flags-7, 256 KiB × 2 tree observation per invocation; six alternated observations across loaded 0.4.604.1 and 0.4.687.1 drivers | Requires one exact full `--case-filter` ID and `--repeats 1`; checks loaded filter/provider file hashes before and after, plus tree byte/hash oracle and lower-I/O counters; six separate complete run folders are required for the comparison |
+| `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle after a stable clean-cache wait; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
 | `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
 | `strict-impact-decision` | Strict-mode application Flush and write-through boundaries after sequential and scattered 512 MiB dirty seeds; 256 KiB × 2 and 1024 KiB × 4, three rotated repetitions (24 cases) | Timing OFF; age-only Deferred scheduling prevents incidental Idle drains; scattered 1 MiB blocks span a prepared 4 GiB file; requires the intended barrier and successful Flush counters, drops clean entries before the oracle, then requires at least 512 lower-read attempts and zero QueueCache read-hit bytes; collection only |
@@ -258,9 +259,12 @@ uses the same 100,000-operation address sequence for each repeated arm, reports
 all samples and exact threshold counts, and separately checks cold reads,
 fully resident random/sequential controls, and fitting foreground writes. The
 write cases are flushed, evicted from clean cache, and verified against their
-deterministic per-operation data oracle before they pass. The run requires the
-standard preflight, an idle 2 GiB Fast cache, timing OFF and exclusive target
-ownership; it does not use DiskSpd or accept a case filter:
+deterministic per-operation data oracle before they pass. Plan 140 waits for the
+cache to stay clean with unchanged lower-I/O counters for two seconds after the
+volume flush (up to five recorded attempts); it still fails if the cache does
+not settle. The run requires the standard preflight, an idle 2 GiB Fast cache,
+timing OFF and exclusive target ownership; it does not use DiskSpd or accept a
+case filter:
 
 ```powershell
 qcache developer verify Q: --suite read-tail-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\read-tail-decision
@@ -342,6 +346,40 @@ The complete report is `strict-impact-summary.md`; per-case raw snapshots,
 derived deltas, worker identity and oracle evidence are retained in the run
 folder. Inspect all 24 paired samples. No VM results are implied by adding the
 suite or passing its host contracts.
+
+Plan 139 adds `tree-build-decision` to check whether the historical 0.4.604.1 /
+0.4.687.1 file-tree gap survives a controlled same-machine comparison. It reuses
+the 40,000-file, 1,290,078,507-byte tree/hash workload and fixes the cache to
+Fast, flags 7, 256 KiB × 2, Idle draining, and timing OFF. The six immutable
+observation IDs alternate driver builds in three paired repetitions:
+
+```text
+tree-build-r01-p01-604-flags7-b256-p2
+tree-build-r01-p02-687-flags7-b256-p2
+tree-build-r02-p01-687-flags7-b256-p2
+tree-build-r02-p02-604-flags7-b256-p2
+tree-build-r03-p01-604-flags7-b256-p2
+tree-build-r03-p02-687-flags7-b256-p2
+```
+
+Run each ID in its own invocation, using the same controller binary and
+preflight checklist throughout. Each invocation requires a clean 2 GiB cache,
+`--repeats 1`, and the complete ID as `--case-filter`; its `1/1` result is one
+complete observation, not a six-case comparison. Before changing cache
+settings, the runner checks that the loaded filter/provider file hashes match
+the selected build and that required lower-I/O diagnostics are available. It
+checks the same driver identity again after the workload. If the 0.4.604.1
+driver lacks the diagnostic protocol, the run must stop before mutating cache
+settings and the gap remains unresolved. The six run folders must all be
+complete and audited before comparing the paired tree-phase times; keep the
+controller SHA-256 identical across them.
+
+Example for one observation (replace the case ID and output folder for each
+planned observation):
+
+```powershell
+qcache developer verify Q: --suite tree-build-decision --budget-mib 2048 --repeats 1 --case-filter tree-build-r01-p01-604-flags7-b256-p2 --output C:\QCResults\tree-build-r01-p01-604-flags7-b256-p2
+```
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

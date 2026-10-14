@@ -187,7 +187,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         ulong? originalCopyFlags = null;
         copyFlagsMutationStarted = false;
         layoutMeasurements = null;
-        if ((selected.Suite is "cache-read-misses" or "tree-decision" or "read-tail-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((selected.Suite is "cache-read-misses" or "tree-decision" or "tree-build-decision" or "read-tail-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -228,6 +228,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var drainOverlap = DrainOverlapDecision.Cases(options);
         var strictImpact = StrictImpactDecision.Cases(options);
         var treeDecision = VerificationPlan.TreeDecision(options);
+        var treeBuildDecision = VerificationPlan.TreeBuildDecision(options);
         var readTailDecision = ReadTailDecision.Cases(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
@@ -237,6 +238,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         expected.AddRange(drainOverlap.Select(c => c.Id));
         expected.AddRange(strictImpact.Select(c => c.Id));
         expected.AddRange(treeDecision.Select(c => c.Id));
+        expected.AddRange(treeBuildDecision.Select(c => c.Id));
         expected.AddRange(readTailDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
         totalCases = expected.Count;
@@ -252,13 +254,15 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + readTailDecision.Count + exercises.Count} cases, not the complete suite matrix.");
+            Log($"Selected case ID: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + treeBuildDecision.Count + readTailDecision.Count + exercises.Count} cases, not the complete suite matrix.");
         if (drainDecision.Count > 0)
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
         if (drainFlush.Count > 0)
             Log($"Explicit-drain comparison: fixed {DrainFlushDecision.SeedBytes} byte seed; timing diagnostics OFF; worker-ready/start handshake; timestamped Flush call; three alternated pairs.");
         if (strictImpact.Count > 0)
             Log($"Strict-impact matrix: {StrictImpactDecision.RequiredCases} cases; 512 MiB deterministic seeds in a prepared 4 GiB file; timing diagnostics OFF; age-only Deferred scheduling; ready/start worker times each durability boundary.");
+        if (treeBuildDecision.Count > 0)
+            Log($"Tree build comparison observation: {treeBuildDecision[0].Id}; this invocation covers one of six planned observations and is not the complete cross-build comparison.");
         if (drainOverlap.Count > 0)
             Log($"Drain-overlap score: {options.DurationSeconds}s; default Idle triggers; timing diagnostics OFF; 75% dirty seed; at least 1 MiB verified foreground/drain progress in shared telemetry intervals.");
         if (readTailDecision.Count > 0)
@@ -280,6 +284,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             StrictImpactSeedBytes = strictImpact.Count == 0 ? (int?)null : StrictImpactDecision.SeedPayloadBytes,
             StrictImpactPreparedFileBytes = strictImpact.Count == 0 ? (long?)null : StrictImpactDecision.PreparedFileBytes,
             TreeDecisionCases = treeDecision,
+            TreeBuildDecisionPlan = VerificationPlan.TreeBuildDecisionPlan(),
+            TreeBuildDecisionSelectedCases = treeBuildDecision,
             ReadTailDecisionCases = readTailDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
@@ -373,7 +379,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision")
+            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "tree-build-decision" or "read-tail-decision")
             {
                 originalCopyFlags = original.CopyFlags
                     ?? throw new InvalidDataException("Missing original runtime copy flags; refusing to start a suite that changes them.");
@@ -591,6 +597,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
+            }
+            foreach (var scenario in treeBuildDecision)
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                await Case(scenario.Id, () => MeasureTreeBuildDecision(scenario, deadline.Token));
             }
             if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || drainOverlap.Count > 0 || strictImpact.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
             {
@@ -886,6 +897,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             report.AppendLine("\nComplete drain-overlap matrix: `drain-overlap-summary.md` and `drain-overlap-aggregates.json`. The comparison is collection-only; use the paired raw evidence to judge the result.\n");
         if (complete && drainFlush.Count > 0)
             report.AppendLine("\nComplete explicit-drain matrix: `drain-flush-summary.md` and `drain-flush-aggregates.json`. Timing starts at the recorded Flush call, not worker launch.\n");
+        if (treeBuildDecision.Count > 0)
+            report.AppendLine($"\nThis is one complete observation ({treeBuildDecision.Count}/1) for `{treeBuildDecision[0].Id}`. The six-observation 604/687 cross-build comparison is complete only after all six distinct planned run folders have passed audit.\n");
         if (complete && strictImpact.Count > 0)
             report.AppendLine("\nComplete Strict-impact matrix: `strict-impact-summary.md` and `strict-impact-aggregates.json`. Boundary timings and state/counter deltas are diagnostic only.\n");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
@@ -1001,8 +1014,23 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         return score;
     }
 
-    private async Task<DiskSpdScore?> MeasureTreeDecision(TreeDecisionCase scenario, CancellationToken token)
+    private async Task<DiskSpdScore?> MeasureTreeDecision(TreeDecisionCase scenario, CancellationToken token) =>
+        await MeasureTreeDecisionCore(scenario, null, token);
+
+    private async Task<DiskSpdScore?> MeasureTreeBuildDecision(TreeBuildDecisionCase scenario, CancellationToken token) =>
+        await MeasureTreeDecisionCore(scenario.TreeCase, scenario, token);
+
+    private async Task<DiskSpdScore?> MeasureTreeDecisionCore(TreeDecisionCase scenario, TreeBuildDecisionCase? buildCase, CancellationToken token)
     {
+        var driversBefore = buildCase is null ? null : LoadedDriverInspection.Capture();
+        if (buildCase is not null)
+        {
+            TreeBuildDecisionEvidenceContract.ValidateStart(buildCase, driversBefore!);
+            var capabilityPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-capabilities.json") }, token);
+            var capabilities = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(capabilityPath, token))
+                ?? throw new InvalidDataException("Missing read-only tree-build driver capability snapshot.");
+            TreeBuildDecisionEvidenceContract.ValidateCapabilities(capabilities);
+        }
         await Control(WriteCacheAction.Flush, token);
         await Worker(Job("flush-volume"), token, 180);
         await Control(WriteCacheAction.Flush, token);
@@ -1037,12 +1065,20 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }, token, 1800);
         var tree = JsonSerializer.Deserialize<TreeResult>(await File.ReadAllTextAsync(treePath, token))
             ?? throw new InvalidDataException("Missing tree-decision byte/hash and timing evidence.");
+        var driversAfter = buildCase is null ? null : LoadedDriverInspection.Capture();
         var afterPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
         var after = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(afterPath, token))
             ?? throw new InvalidDataException("Missing tree-decision end snapshot.");
         var evidence = new TreeDecisionEvidence(scenario, before, tree, after);
         TreeDecisionEvidenceContract.Validate(evidence);
-        storage.Write(scenario.Id + "-evidence.json", evidence);
+        if (buildCase is null)
+            storage.Write(scenario.Id + "-evidence.json", evidence);
+        else
+        {
+            var buildEvidence = new TreeBuildDecisionEvidence(buildCase, driversBefore!, evidence, driversAfter!);
+            TreeBuildDecisionEvidenceContract.Validate(buildEvidence);
+            storage.Write(scenario.Id + "-evidence.json", buildEvidence);
+        }
         caseChecks = [new("Seeded file-tree byte and SHA-256 oracle", "PASS",
             $"{tree.Files} files / {tree.Bytes} bytes; create {tree.CreateSeconds:F2}s, copy {tree.CopySeconds:F2}s, read/hash {tree.ReadSeconds:F2}s, delete {tree.DeleteSeconds:F2}s. Collection only; see per-phase memory and cache snapshots.")];
         return null;
@@ -1108,6 +1144,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
             await Worker(Job("flush-volume"), token, 180);
             await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+            // Filesystem metadata can arrive immediately after the volume flush. Before the unbuffered
+            // oracle, require a clean cache whose lower-I/O counters remain stable for two seconds.
+            await WaitForQuiet(scenario.Id + "-durable", token);
             await Control(WriteCacheAction.DropClean, token);
             var durablePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-durable.json") }, token);
             var durable = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(durablePath, token))
@@ -1983,7 +2022,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
             var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
                 ?? throw new InvalidDataException("The run manifest has no suite.");
-            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision";
+            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "tree-build-decision" or "read-tail-decision";
             ulong? recoveryCopyFlags = null;
             if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")
             {

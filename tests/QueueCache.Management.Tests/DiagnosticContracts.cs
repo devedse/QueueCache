@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 138, "plan 138 versions copy-flag recovery, file-tree, read-tail, timed drain and Strict-impact measurement contracts");
+        Check(VerificationPlan.Version == 140, "plan 140 versions copy-flag recovery, file-tree, read-tail durability settling, timed drain, Strict-impact and cross-build tree contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -368,6 +368,61 @@ internal static class DiagnosticContracts
             tree with { AfterCopy = settle with { IdleObserved = false } }, snapshot)));
         reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
             tree with { AfterReadCache = Cache(106, 205, 31) }, snapshot)));
+        check(CacheLayoutEvidence.IsQuiet(snapshot, snapshot) &&
+            !CacheLayoutEvidence.IsQuiet(snapshot, snapshot with { State = state with { DirtyBytes = 4096 } }) &&
+            !CacheLayoutEvidence.IsQuiet(snapshot, snapshot with
+            {
+                Diagnostics = diagnostics with
+                { Attribution = attribution with { LowerWriteAttempts = attribution.LowerWriteAttempts + 1 } }
+            }), "quiet-cache oracle requires zero dirty bytes and unchanged lower-I/O counters across the wait");
+        var buildPlan = VerificationPlan.TreeBuildDecisionPlan();
+        check(buildPlan.Count == 6 && buildPlan.Select(test => test.Id).Distinct().Count() == 6 &&
+            buildPlan.Select(test => test.Build).SequenceEqual(["604", "687", "687", "604", "604", "687"]) &&
+            buildPlan.All(test => test.TreeCase.CopyFlags == 7 && test.TreeCase.BatchKiB == 256 && test.TreeCase.Parallelism == 2),
+            "cross-build tree plan freezes six alternated 604/687 observations at flags 7 and 256 KiB × 2");
+        var firstBuild = buildPlan[0];
+        var buildOptions = new VerificationOptions("Q:", "tree-build-decision", BudgetMiB: 2048,
+            Repeats: 1, CaseFilter: firstBuild.Id);
+        VerificationPlan.Validate(buildOptions);
+        check(VerificationPlan.TreeBuildDecision(buildOptions).SequenceEqual([firstBuild]),
+            "cross-build tree invocation selects exactly one complete immutable observation ID");
+        void RejectBuildOptions(VerificationOptions candidate)
+        {
+            try { VerificationPlan.Validate(candidate); } catch (ArgumentException) { return; }
+            throw new Exception("Expected tree-build-decision option rejection.");
+        }
+        RejectBuildOptions(buildOptions with { Repeats = 2 });
+        RejectBuildOptions(buildOptions with { CaseFilter = "tree-build-r01" });
+        RejectBuildOptions(buildOptions with { CaseFilter = null });
+        RejectBuildOptions(buildOptions with { BudgetMiB = 1024 });
+
+        var loaded604 = new LoadedDriverObservation(true, null,
+        [
+            new("\\SystemRoot\\System32\\drivers\\qcachelab.sys", "C:/Windows/System32/drivers/qcachelab.sys",
+                firstBuild.ExpectedFilterSha256, "0.4.604.1", null),
+            new("\\SystemRoot\\System32\\drivers\\qcramdisk.sys", "C:/Windows/System32/drivers/qcramdisk.sys",
+                firstBuild.ExpectedProviderSha256, "0.4.604.1", null)
+        ]);
+        TreeBuildDecisionEvidenceContract.ValidateCapabilities(snapshot);
+        reject(() => TreeBuildDecisionEvidenceContract.ValidateCapabilities(snapshot with
+            { Diagnostics = diagnostics with { Attribution = null } }));
+        TreeBuildDecisionEvidenceContract.ValidateStart(firstBuild, loaded604);
+        reject(() => TreeBuildDecisionEvidenceContract.ValidateStart(firstBuild,
+            loaded604 with { Modules = [loaded604.Modules[0] with { FileSha256 = new string('A', 64) }, loaded604.Modules[1]] }));
+        reject(() => TreeBuildDecisionEvidenceContract.ValidateStart(firstBuild,
+            loaded604 with { Modules = [loaded604.Modules[0]] }));
+        var buildEvidence = new TreeBuildDecisionEvidence(firstBuild, loaded604,
+            completeEvidence with { Case = firstBuild.TreeCase }, loaded604);
+        TreeBuildDecisionEvidenceContract.Validate(buildEvidence);
+        var buildRoundTrip = JsonSerializer.Deserialize<TreeBuildDecisionEvidence>(JsonSerializer.Serialize(buildEvidence))!;
+        TreeBuildDecisionEvidenceContract.Validate(buildRoundTrip);
+        check(buildRoundTrip.Case.Id == firstBuild.Id && buildRoundTrip.DriversBefore.Modules.Count == 2,
+            "cross-build tree evidence round-trips driver hashes and tree-phase evidence");
+        var movedPath = loaded604 with
+        {
+            Modules = [loaded604.Modules[0] with { FilePath = "D:/alternate/qcachelab.sys" }, loaded604.Modules[1]]
+        };
+        reject(() => TreeBuildDecisionEvidenceContract.Validate(buildEvidence with { DriversAfter = movedPath }));
         Console.WriteLine("Tree-decision plan, start-state, counter coverage and hash/settle contracts passed (no driver access).");
     }
 
@@ -976,7 +1031,7 @@ internal static class DiagnosticContracts
             first.Oracle with { OverwrittenBlockVerified = first.Case.Boundary == StrictImpactDecision.WriteThrough ? false : true }));
 
         var complete = StrictImpactDecision.BuildSummary(evidence);
-        check(complete.PlanVersion == 138 && complete.CaseCount == 24 && complete.Rows.Count == 8 &&
+        check(complete.PlanVersion == VerificationPlan.Version && complete.CaseCount == 24 && complete.Rows.Count == 8 &&
             complete.Rows.All(row => row.Samples == 3) &&
             StrictImpactDecision.RenderSummary(complete).Contains("Collection only", StringComparison.Ordinal) &&
             StrictImpactDecision.RenderSummary(complete).Contains("512 MiB", StringComparison.Ordinal),

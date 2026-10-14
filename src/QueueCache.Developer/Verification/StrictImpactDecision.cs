@@ -140,7 +140,7 @@ public static class StrictImpactDecision
         var expected = Cases(new VerificationOptions("Q:", "strict-impact-decision",
             BudgetMiB: RequiredBudgetMiB, Repeats: RequiredRepeats));
         if (string.IsNullOrWhiteSpace(test.Id) || !expected.Contains(test))
-            throw new InvalidDataException("Strict-impact case is outside the immutable plan-138 matrix.");
+            throw new InvalidDataException("Strict-impact case is outside the fixed 24-case matrix.");
     }
 
     public static long SeedOffset(StrictImpactCase test, int blockIndex)
@@ -364,7 +364,7 @@ public static class StrictImpactDecision
         {
             _ = ValidateEvidence(row, row.Seed.Before.State.Instance, row.Seed.Before.State.Errors);
             if (!expectedById.TryGetValue(row.Case.Id, out var test) || test != row.Case)
-                throw new InvalidDataException("Strict-impact summary contains a case outside the immutable plan-138 matrix.");
+                throw new InvalidDataException("Strict-impact summary contains a case outside the fixed 24-case matrix.");
         }
         if (evidence.Count != RequiredCases || evidence.Select(row => row.Case.Id)
                 .Distinct(StringComparer.Ordinal).Count() != RequiredCases)
@@ -406,7 +406,7 @@ public static class StrictImpactDecision
     public static string RenderSummary(StrictImpactSummary summary)
     {
         if (summary.PlanVersion != VerificationPlan.Version || summary.CaseCount != RequiredCases || summary.Rows.Count != 8)
-            throw new InvalidDataException("Strict-impact report requires its complete plan-138 aggregate.");
+            throw new InvalidDataException("Strict-impact report requires its complete 24-case aggregate.");
         var text = new System.Text.StringBuilder($"# Strict durability-impact comparison\n\nPlan {summary.PlanVersion}; {summary.CaseCount}/24 cases. Collection only: no performance verdict or driver-default change. All arms use Strict mode, timing diagnostics OFF and the same age-only Deferred trigger (one-hour maximum dirty age) to keep incidental idle drains out. Each case seeds 512 MiB in 1 MiB blocks across the sequential prefix or across a 4 GiB file at 8 MiB spacing.\n\n");
         text.AppendLine("| Drain batch × parallelism | Seed shape | Boundary | Cases | Seed ms median | Boundary ms median (range) | Drained MiB median | Drain batches median | Mean batch KiB median |");
         text.AppendLine("|---:|---|---|---:|---:|---:|---:|---:|---:|");

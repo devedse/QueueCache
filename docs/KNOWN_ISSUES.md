@@ -199,11 +199,19 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   read attempts. The result does not implicate read-miss scheduling or drain
   settings, but it also does not explain the cross-date difference or isolate
   Windows per-file, NTFS, hashing, security-filter and cache-residency costs.
-  No driver change is supported by this evidence. The same-build cold
+  Plan 139 adds a six-observation cross-build comparison using exact 0.4.604.1
+  and 0.4.687.1 loaded-driver hashes, one complete observation per run folder;
+  those VM measurements remain outstanding. No driver change is supported by
+  the existing same-build evidence. The same-build cold
   miss-offload screen improved throughput and p99 but observed a random-read
   maximum of 568.7 ms versus 46.2 ms. Plan 135's maintained
   `read-tail-decision` fixed-operation screen adds exact threshold counts and
   resident/write controls; its VM measurements remain outstanding.
+  A fresh retry stopped at 13/24 after its foreground-write case drained all
+  but 16 KiB before the durable oracle; restoration completed cleanly. Plan 140
+  now waits for two seconds of clean, unchanged cache/I/O counters after the
+  volume flush, with a finite recorded retry bound. That incomplete run is not
+  combined with later measurements.
 - **Drain defaults under active background work:** existing comparisons support
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off
