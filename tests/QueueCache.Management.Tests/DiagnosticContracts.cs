@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using QueueCache.Developer.Verification;
 using QueueCache.Management;
+using QueueCache.Operations;
 
 internal static class DiagnosticContracts
 {
@@ -14,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 135, "plan 135 versions copy-flag recovery, file-tree and read-tail measurement contracts");
+        Check(VerificationPlan.Version == 136, "plan 136 versions copy-flag recovery, file-tree, read-tail and drain-overlap contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -33,6 +34,8 @@ internal static class DiagnosticContracts
         RunComparisonContracts(Check, Reject);
         RunTreeDecisionContracts(Check, Reject);
         RunReadTailDecisionContracts(Check, Reject);
+        RunDrainFlushContracts(Check, Reject);
+        RunDrainOverlapContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -467,6 +470,259 @@ internal static class DiagnosticContracts
             "read-tail final report requires the complete paired matrix and retains exact threshold counts");
         reject(() => ReadTailDecision.AggregateEvidence(cases.Take(23).Select(MakeEvidence)));
         Console.WriteLine("Read-tail plan, operation samples, address and cache-accounting contracts passed (no driver access).");
+    }
+
+    private static void RunDrainOverlapContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "drain-overlap-decision", DiskSpd: Environment.ProcessPath,
+            BudgetMiB: DrainOverlapDecision.RequiredBudgetMiB, Repeats: DrainOverlapDecision.RequiredRepeats);
+        DrainOverlapDecision.ValidateOptions(options);
+        VerificationPlan.Validate(options);
+        var cases = DrainOverlapDecision.Cases(options);
+        check(cases.Count == 12 && cases.Select(test => test.Id).Distinct().Count() == 12 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 4 &&
+                group.Select(test => test.Position).SequenceEqual([1, 2, 3, 4])) &&
+            cases.GroupBy(test => test.Workload).All(group => group.Count() == 6 &&
+                group.Count(test => test.BatchKiB == 256 && test.Parallelism == 2) == 3 &&
+                group.Count(test => test.BatchKiB == 1024 && test.Parallelism == 4) == 3),
+            "drain-overlap plan alternates both workloads and settings across three complete paired repetitions");
+        check(DrainOverlapDecision.SeedBytes(2048) == 1536 * (1 << 20),
+            "drain-overlap uses the same fitting 75% dirty backlog in every comparison arm");
+        foreach (var test in cases) DrainOverlapDecision.ValidateCase(test);
+
+        CacheOptions Policy(DrainOverlapCase test) => new(WritePercent: 100, RetainWrites: true, PromoteOnRead: true,
+            Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
+            IdleMs: 250, BatchKiB: test.BatchKiB, Parallelism: test.Parallelism);
+        const ulong instance = 77, errors = 0;
+        const ulong seedBytes = 1536UL << 20, drainStartBytes = 100;
+        const ulong mib = 1UL << 20;
+        var flags = 1U | 32U | 256U | 512U;
+        WriteCacheState State(DrainOverlapCase test, ulong accepted, ulong drained, ulong dirty,
+            ulong hits, ulong misses, ulong throttles) =>
+            new(flags, 0, 16UL << 30, 2UL << 30, 2UL << 30, dirty, 0, 2UL << 30,
+                dirty / 4096, accepted, drained, throttles, hits + misses, errors, 0, dirty)
+            {
+                Options = Policy(test),
+                Instance = instance,
+                Generation = 9,
+                ReadHitBytes = hits,
+                ReadMissBytes = misses
+            };
+        CachePerformance Performance(ulong timing = 0, ulong batches = 0, ulong drainBytes = 0) =>
+            new(1_000_000, timing, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                batches, drainBytes, 0, 0);
+        CacheAttribution Attribution(ulong writes, ulong reads = 0) => new(reads, writes, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheDiagnostics Diagnostics(ulong writes) => new(0, 0, 0, 0, 0, 0, 0, 0, 0)
+            { Attribution = Attribution(writes) };
+
+        var epoch = new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero);
+        var processStart = epoch.AddSeconds(2);
+        var processEnd = epoch.AddSeconds(3.25);
+        var seedCompleted = epoch.AddSeconds(0.75);
+        var drainStarted = epoch.AddSeconds(1);
+        var process = new ProcessIdentity(42, DateTime.SpecifyKind(processStart.UtcDateTime, DateTimeKind.Utc));
+        const string diskHash = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        var writeScore = new DiskSpdScore(8L << 20, 2000, 10, 0.8, 200, null, 3, null, null);
+        var readScore = new DiskSpdScore(8L << 20, 2000, 10, 0.8, 200, 2, null, 2.5, 4);
+        var verified = new List<(DrainOverlapCase Case, DrainSeedResult Seed, DrainOverlapMetrics Metrics,
+            DiskSpdScore Score, CacheLayoutSnapshot IdleCompletion)>();
+        foreach (var test in cases)
+        {
+            var seedBefore = State(test, 0, drainStartBytes, 0, 0, 0, 0);
+            var seedAfter = State(test, seedBytes, drainStartBytes, seedBytes, 0, 0, 0);
+            var seedPerf = Performance();
+            var seed = new DrainSeedResult(104730 + test.Repeat, checked((int)seedBytes), seedBytes,
+                seedBefore, seedAfter, seedPerf, seedPerf, Attribution(10), Attribution(10));
+            var samples = new List<TelemetrySnapshot>();
+            foreach (var seconds in new[] { 0d, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5 })
+            {
+                var accepted = seconds < 0.5 ? 0UL : seedBytes;
+                var hits = 0UL;
+                var misses = 0UL;
+                var foreground = seconds < 2.5 ? 0UL : (ulong)((seconds - 2) * 8 * mib);
+                if (test.Workload == "random-write") accepted += foreground;
+                else misses += foreground;
+                var drained = drainStartBytes + (seconds < 1 ? 0UL : mib);
+                if (seconds >= 2.5 && seconds <= 3)
+                    drained += (ulong)((seconds - 2) * 8 * mib);
+                if (seconds >= 3.5)
+                    drained = drainStartBytes + seedBytes + (test.Workload == "random-write" ? 8 * mib : 0);
+                var dirty = seconds < 0.5 ? 0UL :
+                    seconds >= 3.5 ? 0UL : seedBytes + (test.Workload == "random-write" ? foreground : 0) - (drained - drainStartBytes);
+                var batches = seconds < 2.5 ? 0UL : seconds <= 3 ? (ulong)((seconds - 2) * 2) : 4UL;
+                var performanceDrainBytes = seconds < 2.5 ? 0UL : seconds <= 3
+                    ? (ulong)((seconds - 2) * 8 * mib) : seedBytes + (test.Workload == "random-write" ? 8 * mib : 0);
+                var lowerWrites = seconds < 2.5 ? 10UL : seconds <= 3 ? (ulong)(10 + (seconds - 2) * 2) : 20UL;
+                var state = State(test, accepted, drained, dirty, hits, misses, 0);
+                samples.Add(new(epoch.AddSeconds(seconds), seconds, state,
+                    Performance(0, batches, performanceDrainBytes), Diagnostics(lowerWrites),
+                    new(0, 0, 0, 0, null, null)));
+            }
+            var score = test.Workload == "random-write" ? writeScore : readScore;
+            var backgroundCompleted = epoch.AddSeconds(4);
+            var completionSample = samples.Single(sample => sample.Utc == backgroundCompleted);
+            var idleCompletion = new CacheLayoutSnapshot(completionSample.State, completionSample.Performance,
+                completionSample.Diagnostics);
+            var metrics = DrainOverlapDecision.ValidateEvidence(test, seed, seedCompleted, drainStarted,
+                process, processEnd, backgroundCompleted, idleCompletion, score, samples, instance, errors);
+            verified.Add((test, seed, metrics, score, idleCompletion));
+            check(metrics.SharedTelemetryIntervals > 0 && metrics.ForegroundBytesDuringDrain >= mib &&
+                metrics.DrainedBytesDuringForeground >= mib && metrics.LowerWriteAttemptsDuringOverlap > 0 &&
+                metrics.DrainBatchesDuringForeground > 0 && metrics.BackgroundDrainCompletionSeconds > 0,
+                "drain-overlap requires foreground and drain progress co-observed in shared 200 ms intervals");
+        }
+        var first = verified[0];
+        reject(() => DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed, seedCompleted, drainStarted,
+            process, processEnd, epoch.AddSeconds(4), first.IdleCompletion, writeScore,
+            Enumerable.Range(0, 10).Select(i => new TelemetrySnapshot(epoch.AddSeconds(i / 2d), i / 2d,
+                State(first.Case, seedBytes, drainStartBytes, seedBytes, 0, 0, 0), Performance(1), Diagnostics(10),
+                new(0, 0, 0, 0, null, null))).ToArray(), instance, errors));
+        reject(() => DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed, seedCompleted, drainStarted,
+            process, processEnd, epoch.AddSeconds(4), first.IdleCompletion, writeScore,
+            Enumerable.Range(0, 10).Select(i => new TelemetrySnapshot(epoch.AddSeconds(i / 2d), i / 2d,
+                State(first.Case, seedBytes, drainStartBytes, seedBytes, 0, 0, 0), Performance(), Diagnostics(10),
+                new(0, 0, 0, 0, null, null))).ToArray(), instance, errors));
+        reject(() => DrainOverlapDecision.ValidateEvidence(first.Case, first.Seed, seedCompleted, drainStarted,
+            process, processEnd, epoch.AddSeconds(4), first.IdleCompletion, first.Score,
+            Enumerable.Range(0, 10).Select(i => MakeSampleForNoForeground(i / 2d)).ToArray(), instance, errors));
+        var readAttemptSeed = first.Seed with
+        {
+            AttributionAfter = Attribution(writes: 10, reads: 1)
+        };
+        reject(() => DrainOverlapDecision.ValidateEvidence(first.Case, readAttemptSeed, seedCompleted, drainStarted,
+            process, processEnd, epoch.AddSeconds(4), first.IdleCompletion, first.Score,
+            Enumerable.Range(0, 10).Select(i => new TelemetrySnapshot(epoch.AddSeconds(i / 2d), i / 2d,
+                State(first.Case, seedBytes, drainStartBytes, seedBytes, 0, 0, 0), Performance(), Diagnostics(10),
+                new(0, 0, 0, 0, null, null))).ToArray(), instance, errors));
+        reject(() => DrainOverlapDecision.ValidateIdleCompletion(first.Case, first.Seed,
+            first.IdleCompletion with { State = first.IdleCompletion.State with { DirtyBytes = 4096 } }, instance, errors));
+        var evidence = verified.Select(row => new DrainOverlapEvidence(row.Case, row.Seed, true,
+            row.IdleCompletion, process, seedCompleted, processEnd, drainStarted,
+            epoch.AddSeconds(4), "workload.process.json", diskHash, "telemetry.jsonl", 10,
+            row.Score, row.Metrics)).ToArray();
+        var summary = DrainOverlapDecision.BuildSummary(evidence);
+        var rendered = DrainOverlapDecision.RenderSummary(summary);
+        check(summary.PlanVersion == VerificationPlan.Version && summary.CaseCount == 12 && summary.Rows.Count == 4,
+            "drain-overlap aggregation only renders a complete 12-case timing-off matrix");
+        check(rendered.Contains("same 200 ms telemetry intervals", StringComparison.Ordinal) &&
+            rendered.Contains("no explicit Flush in between", StringComparison.Ordinal),
+            "drain-overlap report states its sampling resolution and explicit-flush-free byte-oracle order");
+        reject(() => DrainOverlapDecision.BuildSummary(evidence[..^1]));
+        reject(() => DrainOverlapDecision.BuildSummary(evidence.Select((row, index) => index == 0
+            ? row with { Case = evidence[1].Case } : row).ToArray()));
+        reject(() => DrainOverlapDecision.BuildSummary(evidence.Select((row, index) => index == 0
+            ? row with { SeedVerified = false } : row).ToArray()));
+        reject(() => DrainOverlapDecision.BuildSummary(evidence.Select((row, index) => index == 0
+            ? row with { DiskSpdSha256 = new string('B', 64) } : row).ToArray()));
+        Console.WriteLine("Drain-overlap plan, timing-off telemetry, shared foreground/drain progress and complete-matrix contracts passed (no driver access).");
+
+        TelemetrySnapshot MakeSampleForNoForeground(double seconds)
+        {
+            var drainingStarted = seconds >= 1;
+            var completed = seconds >= 3.5;
+            var state = State(first.Case, seedBytes,
+                drainStartBytes + (completed ? seedBytes : drainingStarted ? mib : 0UL),
+                completed ? 0UL : seconds >= 0.5 ? seedBytes - (drainingStarted ? mib : 0UL) : 0UL,
+                0, 0, 0);
+            return new(epoch.AddSeconds(seconds), seconds, state,
+                Performance(0, drainingStarted ? 1UL : 0UL, drainingStarted ? mib : 0UL),
+                Diagnostics(drainingStarted ? 11UL : 10UL), new(0, 0, 0, 0, null, null));
+        }
+    }
+
+    private static void RunDrainFlushContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "drain-flush-decision", BudgetMiB: 2048, Repeats: 3);
+        DrainFlushDecision.ValidateOptions(options);
+        VerificationPlan.Validate(options);
+        var cases = DrainFlushDecision.Cases(options);
+        check(cases.Count == 6 && cases.Select(test => test.Id).Distinct().Count() == 6 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 2 &&
+                group.Select(test => test.Position).SequenceEqual([1, 2]) &&
+                group.Select(test => (test.BatchKiB, test.Parallelism)).Distinct().Count() == 2),
+            "explicit-drain plan alternates both batch settings across three complete pairs");
+        const ulong instance = 78, errors = 0, seedBytes = 512UL << 20, baselineDrained = 100;
+        var flags = 1U | 32U | 256U | 512U;
+        CacheOptions Policy(DrainFlushCase test) => new(WritePercent: 100, RetainWrites: true, PromoteOnRead: true,
+            Drain: DrainAlgorithm.Deferred, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 3_600_000,
+            IdleMs: 250, BatchKiB: test.BatchKiB, Parallelism: test.Parallelism);
+        WriteCacheState State(DrainFlushCase test, ulong accepted, ulong drained, ulong dirty, ulong lowerWrites) =>
+            new(flags, 0, 16UL << 30, 2UL << 30, 2UL << 30, dirty, 0, 2UL << 30,
+                dirty / 4096, accepted, drained, 0, 0, errors, 0, dirty)
+            {
+                Options = Policy(test), Instance = instance, Generation = 9, LowerWrites = lowerWrites
+            };
+        CachePerformance Performance(ulong timing = 0, ulong batches = 0, ulong drainBytes = 0) =>
+            new(1_000_000, timing, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                batches, drainBytes, 0, 0);
+        CacheAttribution Attribution(ulong writes, ulong flushes, ulong reads = 0) => new(reads, writes, flushes,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheDiagnostics Diagnostics(ulong writes, ulong flushes) => new(0, 0, 0, 0, 0, 0, 0, 0, 0)
+            { Attribution = Attribution(writes, flushes) };
+
+        var epoch = new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero);
+        var verified = new List<DrainFlushEvidence>();
+        foreach (var test in cases)
+        {
+            var before = State(test, 0, baselineDrained, 0, 0);
+            var seeded = State(test, seedBytes, baselineDrained, seedBytes, 0);
+            var attribution = Attribution(10, 2);
+            var seed = new DrainSeedResult(108000 + test.Repeat, checked((int)seedBytes), seedBytes,
+                before, seeded, Performance(), Performance(), attribution, attribution);
+            var controlBefore = State(test, seedBytes, baselineDrained, seedBytes, 0);
+            var controlAfter = State(test, seedBytes, baselineDrained + seedBytes, 0, 1);
+            var control = new DrainFlushControlResult(epoch.AddSeconds(1.2), epoch.AddSeconds(1.5), 300, 1000,
+                controlBefore, controlAfter, Performance(), Performance(0, 1, seedBytes),
+                Diagnostics(10, 2), Diagnostics(11, 3));
+            var process = new ProcessIdentity(45 + test.Repeat, DateTime.SpecifyKind(
+                epoch.AddSeconds(0.8).UtcDateTime, DateTimeKind.Utc));
+            var seedCompleted = epoch.AddSeconds(0.5);
+            var ready = epoch.AddSeconds(1);
+            var release = epoch.AddSeconds(1.1);
+            var metrics = DrainFlushDecision.ValidateEvidence(test, seed, process,
+                seedCompleted, ready, release, control, instance, errors);
+            check(Math.Abs(metrics.DurationMilliseconds - 300) < 0.01 && metrics.DrainBatches == 1 &&
+                metrics.DriverDrainBytes == seedBytes && metrics.LowerWriteAttempts == 1 &&
+                metrics.LowerFlushAttempts == 1 && metrics.PendingBytesAfter == 0,
+                $"explicit-drain evidence times the actual flush call and verifies writes, flushes, batches and a clean seed: {metrics}");
+            verified.Add(new(test, seed, true, process, seedCompleted, ready, release, control,
+                "worker.process.json", "seed-verification.json", metrics));
+        }
+        var first = verified[0];
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { PerformanceAfter = Performance(1, 1, seedBytes) }, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { DiagnosticsAfter = Diagnostics(11, 2) }, instance, errors));
+        var readAttemptSeed = first.Seed with
+        {
+            AttributionAfter = Attribution(writes: 10, flushes: 2, reads: 1)
+        };
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, readAttemptSeed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc, first.Control, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { Before = first.Control.Before with
+                { DirtyBytes = seedBytes + 4096, AcceptedBytes = seedBytes + 4096 } }, instance, errors));
+        var clockAdjustedControl = first.Control with
+        {
+            CompletedUtc = first.Control.EnteredUtc.AddMilliseconds(-100)
+        };
+        var monotonicMetrics = DrainFlushDecision.ValidateEvidence(first.Case, first.Seed,
+            first.WorkerProcess, first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            clockAdjustedControl, instance, errors);
+        check(Math.Abs(monotonicMetrics.DurationMilliseconds - 300) < 0.01,
+            "explicit Flush duration uses monotonic ticks when wall-clock timestamps move backwards");
+        var summary = DrainFlushDecision.BuildSummary(verified);
+        check(summary.CaseCount == 6 && summary.Rows.Count == 2 &&
+            DrainFlushDecision.RenderSummary(summary).Contains("monotonic timer", StringComparison.Ordinal),
+            "explicit-drain report requires both complete three-case arms and the timestamp contract");
+        reject(() => DrainFlushDecision.BuildSummary(verified[..^1]));
+        reject(() => DrainFlushDecision.BuildSummary(verified.Select((row, index) => index == 0
+            ? row with { SeedVerified = false } : row).ToArray()));
+        Console.WriteLine("Explicit-drain plan, ready/start handshake timestamps, timing-off counters and full-matrix contracts passed (no driver access).");
     }
 
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>

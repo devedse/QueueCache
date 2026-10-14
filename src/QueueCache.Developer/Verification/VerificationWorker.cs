@@ -20,7 +20,9 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
     string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null,
     string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
-    bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null);
+    bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
+    long? DrainSeedBytes = null, string? StartFile = null,
+    string? ProcessEvidence = null);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
@@ -940,6 +942,23 @@ public static class VerificationWorker
                     Diagnostics = device.GetDiagnostics()
                 };
                 break;
+            case "timed-cache-flush":
+                if (job.ReadyFile is null || job.StartFile is null)
+                    throw new ArgumentException("Timed cache flush requires ready and start-signal paths.");
+                var flushBefore = device.GetWriteCacheState();
+                var flushPerformanceBefore = device.GetPerformance();
+                var flushDiagnosticsBefore = device.GetDiagnostics();
+                RunStorage.AtomicJson(job.ReadyFile, new { Ready = true, At = DateTimeOffset.UtcNow });
+                while (!File.Exists(job.StartFile)) await Task.Delay(25);
+                var flushEnteredUtc = DateTimeOffset.UtcNow;
+                var flushStartTimestamp = Stopwatch.GetTimestamp();
+                device.Control(WriteCacheAction.Flush);
+                var flushElapsedTicks = Stopwatch.GetTimestamp() - flushStartTimestamp;
+                var flushCompletedUtc = DateTimeOffset.UtcNow;
+                result = new DrainFlushControlResult(flushEnteredUtc, flushCompletedUtc, flushElapsedTicks, Stopwatch.Frequency,
+                    flushBefore, device.GetWriteCacheState(), flushPerformanceBefore,
+                    device.GetPerformance(), flushDiagnosticsBefore, device.GetDiagnostics());
+                break;
             case "flush-volume":
                 using (var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true))
                     volume.Flush();
@@ -1043,13 +1062,13 @@ public static class VerificationWorker
                     Console.Error.WriteLine("Pressure suite returned no checks.");
                 return pressureChecks.Count > 0 && pressureChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "seed-drain":
-                var seedBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                var seedBytes = checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20))));
                 result = DrainDecisionScenarios.PrepareDirtySet(device,
                     Path.Combine(job.WorkDirectory!, "drain.dat"), seedBytes,
                     checked((int)job.Value));
                 break;
             case "verify-drain":
-                var verifyBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                var verifyBytes = checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20))));
                 DrainDecisionScenarios.VerifyDirtySet(
                     Path.Combine(job.WorkDirectory!, "drain.dat"), verifyBytes,
                     checked((int)job.Value));
@@ -1060,8 +1079,14 @@ public static class VerificationWorker
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
                     throw new IOException("Workload directory must be a new directory on the selected volume.");
                 // Value 1 adds stream files; 2 prepares recall files; 3 only the caller experiment's fitting file.
+                var defaultDrainMiB = job.BudgetMiB / 4;
+                var requestedDrainMiB = job.DrainSeedBytes is { } requestedDrainBytes
+                    ? checked((int)(requestedDrainBytes / (1 << 20))) : defaultDrainMiB;
+                if (requestedDrainMiB < defaultDrainMiB || job.DrainSeedBytes is { } unaligned && unaligned % (1 << 20) != 0)
+                    throw new ArgumentException("Requested drain seed file must be a whole-MiB size no smaller than the suite default.");
                 var requiredMiB = job.Value == 3 ? job.BudgetMiB / 2L + 1024 :
                     (long)job.BudgetMiB * (job.Value is 1 ? 5 : job.Value is 2 ? 4 : 3) + 1024;
+                requiredMiB = checked(requiredMiB + requestedDrainMiB - defaultDrainMiB);
                 if (new DriveInfo(target.Root).AvailableFreeSpace < requiredMiB * 1024 * 1024)
                     throw new IOException("Insufficient free space for unique workloads and headroom.");
                 Directory.CreateDirectory(directory);
@@ -1071,7 +1096,7 @@ public static class VerificationWorker
                     ? CacheExercisePlan.Targets(job.BudgetMiB, 1).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
                     : job.Value == 2
                     ? CacheExercisePlan.RecallTargets(job.BudgetMiB).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
-                    : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
+                    : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", requestedDrainMiB), ("flush.dat", 1) };
                 if (job.Value == 1)
                     workloadFiles.AddRange(CacheExercisePlan.AllTargets(job.BudgetMiB).Select(file => (file.Name, file.MiB)));
                 foreach (var (name, length) in workloadFiles)

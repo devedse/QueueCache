@@ -192,19 +192,30 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   before this recovery fix is qualified.
 - **40,000-file read/hash time and random-read tails:** on 0.4.687.1, the tree
   read/hash step took 154.2 s versus 4.9 s in the 0.4.604.1 session, with the
-  cause not established. The same-build cold miss-offload screen improved
-  throughput and p99 but observed a random-read maximum of 568.7 ms versus
-  46.2 ms. Plan 134's maintained `tree-decision` matrix is now collecting its
-  15-case same-build run, with per-phase memory/system-cache samples, cache
-  snapshots, lower-I/O attempts and disk-idle settles. Plan 135 adds the
-  maintained `read-tail-decision` fixed-operation screen with exact threshold
-  counts and resident/write controls; its VM measurements have not started.
-  Neither comparison has a performance verdict yet.
+  cause not established. The completed 15-case plan-134 matrix
+  (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.1–170.5 s
+  across cache-off and all four cache-setting arms. During that phase the driver
+  reported zero read-hit bytes, zero lower writes/flushes and at most 33 lower
+  read attempts. The result does not implicate read-miss scheduling or drain
+  settings, but it also does not explain the cross-date difference or isolate
+  Windows per-file, NTFS, hashing, security-filter and cache-residency costs.
+  No driver change is supported by this evidence. The same-build cold
+  miss-offload screen improved throughput and p99 but observed a random-read
+  maximum of 568.7 ms versus 46.2 ms. Plan 135's maintained
+  `read-tail-decision` fixed-operation screen adds exact threshold counts and
+  resident/write controls; its VM measurements remain outstanding.
 - **Drain defaults under active background work:** existing comparisons support
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off
   comparison with verified overlap between foreground I/O and default Idle
-  draining, plus a focused Strict-mode check, remains open.
+  draining, plus a focused Strict-mode check, remains open. Plan 136 adds a
+  six-case timing-off explicit-Flush repeat with an owned worker ready/start
+  gate and timestamps around the actual driver call, plus a maintained 12-case
+  background comparison. The latter must show foreground I/O and driver drain
+  progress in the same telemetry intervals, then prove that default Idle
+  draining persisted the seed before explicit cleanup. Both new suites have
+  host contracts but have not yet run on the VM; the Strict check also remains
+  open.
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
   fix build. Existing 0.4.604.1 and competitor results remain historical and do
   not establish the newer build's crash behavior.

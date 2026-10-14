@@ -52,17 +52,22 @@ public static class DrainDecisionScenarios
         var accepted = after.AcceptedBytes - before.AcceptedBytes;
         if (accepted != after.DirtyBytes || accepted < (ulong)bytes || accepted > (ulong)bytes + (64 << 10) ||
             after.InFlightBytes != 0 ||
+            attributionAfter.LowerReadAttempts != attributionBefore.LowerReadAttempts ||
             attributionAfter.LowerWriteAttempts != attributionBefore.LowerWriteAttempts ||
             attributionAfter.LowerFlushAttempts != attributionBefore.LowerFlushAttempts)
             throw new IOException("Dirty-set preparation was not an isolated fitting RAM admission: " +
                 $"requested={bytes}, acceptedDelta={after.AcceptedBytes - before.AcceptedBytes}, " +
                 $"dirty={after.DirtyBytes}, inFlight={after.InFlightBytes}, " +
-                $"lowerAttemptDelta={attributionAfter.LowerReadAttempts - attributionBefore.LowerReadAttempts}/" +
-                $"{attributionAfter.LowerWriteAttempts - attributionBefore.LowerWriteAttempts}/" +
-                $"{attributionAfter.LowerFlushAttempts - attributionBefore.LowerFlushAttempts}.");
+                $"lowerAttemptDelta={AttemptDelta(attributionAfter.LowerReadAttempts, attributionBefore.LowerReadAttempts)}/" +
+                $"{AttemptDelta(attributionAfter.LowerWriteAttempts, attributionBefore.LowerWriteAttempts)}/" +
+                $"{AttemptDelta(attributionAfter.LowerFlushAttempts, attributionBefore.LowerFlushAttempts)}.");
 
         return new(seed, bytes, accepted, before, after, performanceBefore, performanceAfter,
             attributionBefore, attributionAfter);
+
+        static string AttemptDelta(ulong after, ulong before) => after >= before
+            ? (after - before).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : "counter-decreased";
     }
 
     public static void VerifyDirtySet(string path, int bytes, int seed,

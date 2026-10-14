@@ -384,7 +384,36 @@ read counters across each complete tree step were about 193/0 MiB on 604 and
 195/0 MiB on 687 (first/second repetition); those intervals include creation,
 settling, copy, read/hash and deletion, so they do not isolate read-phase traffic.
 These cross-date numbers identify a large repeated observation in the new
-session, not its cause. A controlled maintained comparison remains open.
+session, not its cause.
+
+**Maintained tree diagnosis (2026-10-14, plan 134).** The complete 15-case run
+`20261014-175457-b7459c972da24d5a809c98512e31245b` passed every file-count,
+byte-count and SHA-256 check and restored the original 256 KiB × 2 configuration
+with zero dirty or in-flight bytes. It used CLI 0.4.702.1 on Windows build
+28000.0 and the loaded 0.4.687.1 filter hash recorded in the run manifest;
+diagnostic timing was off. Across three repetitions, median create/copy/read+hash/
+delete seconds were:
+
+| Arm | Create | Copy | Read + hash | Delete |
+| --- | ---: | ---: | ---: | ---: |
+| Cache disabled | 51.68 | 30.67 | 161.68 | 19.12 |
+| Flags 7, 256 KiB × 2 | 50.98 | 10.61 | 169.30 | 17.68 |
+| Flags 15, 256 KiB × 2 | 52.03 | 10.44 | 160.88 | 15.00 |
+| Flags 7, 1024 KiB × 4 | 52.44 | 10.55 | 161.01 | 17.36 |
+| Flags 15, 1024 KiB × 4 | 50.77 | 10.51 | 160.94 | 15.80 |
+
+Read+hash took 160.07–170.45 s across all arms. The paired 1024 KiB × 4 arms
+were effectively identical; the smaller-batch flags-7 arm was noisier, but its
+three paired differences did not repeat. During read+hash, driver lower-write and
+flush attempts and cache read-hit bytes were zero in every case; lower-read
+attempts were 0–33. Windows reported 5.49–6.32 GiB of system cache around this
+phase. This points away from QueueCache's read-miss scheduling and drain settings
+as the cause of the measured slow phase. The run does not distinguish per-file
+open/NTFS work, hashing, security filters, or actual Windows cache residency, and
+it cannot explain the cross-date 604/687 difference. No driver change is justified
+by this matrix; the historical tree regression remains open at the Windows/file-
+tree attribution level. Do not treat the near-zero QueueCache read-hit counter as
+proof that all file data was resident in physical memory.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1256,7 +1285,7 @@ runs that found and fixed the issues described under
 | Read misses one at a time | **Throughput/p99 qualified; final release campaign complete** (plans 131/132, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated. Every cold p99 improved; random maximum increased to 568.738 ms. Both arms use the new pool and queue order. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; representative worst-latency evidence. |
 | 40,000-file create/copy/read/hash slowdown | **Cause open; comparison scenario added in plan 134.** Historical 604/687 sessions differ in system-cache residency and OS revision; whole-interval host reads do not isolate the read/hash phase. The maintained five-arm, three-rotation `tree-decision` matrix captures per-phase memory/cache state and requires disk-idle settles and byte/hash verification. No complete new matrix verdict is available yet. | Complete plan-134 matrix on the same loaded build and clean target, followed by a candidate-specific repeat only if the measurements isolate a reproducible cause. |
 | Random-read latency tails | **Still open after the throughput/p99 screen.** Plan 135 adds 100,000-operation paired samples at flags 7/15 with exact >50/100/250/500 ms counts and resident random/sequential plus fitting-write controls; no result has yet qualified the tail behavior. | Complete the 24-case plan-135 matrix; if tails implicate shared-pool contention, use a separate controlled diagnostic before changing native scheduling. |
-| Drain batch size and parallelism | **Default 1024 KiB × 4; drain-time target qualified** (plan 132, issue #15): complete 42-case comparison and separate 18-case write repeat. Cold-read flush median 3.86 against 6.52 s for 256 × 2; write-repeat flush 92.16 against 127.61 s, every pair improves and ranges separate. Fixed-window foreground write IOPS remain variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, or a repeated foreground-control loss under a measurement that isolates its active interval. |
+| Drain batch size and parallelism | **Default 1024 KiB × 4; drain-time target qualified** (plan 132, issue #15): complete 42-case comparison and separate 18-case write repeat. Cold-read flush median 3.86 against 6.52 s for 256 × 2; write-repeat flush 92.16 against 127.61 s, every pair improves and ranges separate. Fixed-window foreground write IOPS remain variable and are not qualified as invariant. Plan 136 adds a timing-off six-case explicit-Flush repeat with a ready/start gate and actual driver-call timestamps, plus an independent foreground-overlap check under default Idle. Neither new plan-136 matrix has run yet and neither changes the qualified drain-time result. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or complete plan-136 explicit-flush and overlap evidence. |
 | Strict durability barriers | **Open weakness** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. | Before tuning Strict; owner decision 2026-09-27 left Strict untuned. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 

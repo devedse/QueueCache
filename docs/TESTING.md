@@ -124,6 +124,8 @@ ones in use:
 | `cache-read-misses` | Same-build flags 7/15, cold 4K Q32 and 1M Q8 on a file twice the cache plus fully cached controls; three alternated repetitions (24 windows), plan 127 | Reports throughput, p99 and worst-read latency; restores original flags |
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle; collection only |
+| `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
+| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; 200 ms telemetry requires at least 1 MiB of foreground I/O and background drain progress co-observed in shared intervals (the ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -266,6 +268,35 @@ qcache developer verify Q: --suite read-tail-decision --budget-mib 2048 --repeat
 This suite records evidence and does not declare a latency SLA or performance
 win. Compare each paired repetition and inspect its full samples and cache
 counters; do not infer threshold counts from percentiles.
+
+Plan 136 separates explicit-flush duration from foreground interference. First,
+`drain-flush-decision` compares the former 256 KiB × 2 setting with 1024 KiB × 4
+for a deterministic 512 MiB dirty seed. An owned worker is ready before the
+coordinator releases it, and duration starts immediately before the driver's
+Flush call. Timing diagnostics stay off; the run records drain batches/bytes,
+lower write/flush attempts, and verifies the persisted seed:
+
+```powershell
+qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\drain-flush-decision
+```
+
+Then `drain-overlap-decision` measures foreground random writes and cold random
+reads while the default Idle policy drains. It seeds 75% of the 2 GiB Fast
+cache, waits for real drain progress, and requires 200 ms telemetry to show at
+least 1 MiB of foreground and drain progress co-observed in the same intervals;
+the order within an interval is unresolved. It records a clean Idle snapshot
+before disabling the cache, then checks the seed with unbuffered reads without
+an explicit Flush between those steps. All 12 cases use the same DiskSpd binary,
+whose hash is recorded:
+
+```powershell
+qcache developer verify Q: --suite drain-overlap-decision --budget-mib 2048 --repeats 3 --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output C:\QCResults\drain-overlap-decision
+```
+
+Both reports are collection-only. Read `drain-flush-summary.md` and
+`drain-overlap-summary.md` only after their respective complete matrices, and
+compare paired cases plus raw worker, telemetry and byte-oracle evidence. The
+general `SUMMARY.md` links to an aggregate only for a complete matrix.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a
