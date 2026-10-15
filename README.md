@@ -99,14 +99,12 @@ QueueCache 0.4.687.1 (2026-10-14); RAM disk column: QueueCache 0.4.583.1 (2026-1
 The test file fits in RAM, so this shows what QueueCache does for data already
 in its cache. These CrystalDiskMark scores retain their original sessions;
 the issue-fix checks below use separate workloads.
-Ordinary read misses spanning at most 256 cache blocks can now
-overlap. A same-build comparison on 0.4.687.1 with Defender/Search disabled
-measured 9.95× cold random and 3.13× cold sequential throughput, with every cold
-p99 improving and no repeated resident-control loss. That fixed-duration screen observed random-read
-maxima of 112 versus 175 ms while the faster arm completed much more work. A
-comparison of 100,000 operations per case on the same native build improved
-cold-random p99.9 from 192 to 61 ms and the median of per-case maxima from 272 to 124 ms; every pair improved
-([results and scope](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
+Ordinary misses spanning at most 256 cache blocks can overlap. A same-build
+comparison with Defender/Search disabled measured 9.95× cold random and 3.13×
+cold sequential throughput, better p99 and no repeated resident-control loss.
+A separate equal-work test improved cold-random p99.9 from 192 to 61 ms and the
+median case maximum from 272 to 124 ms
+([results, controls and limits](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
 The drive's speed on this shared network storage varies; both Q: columns are
 measured in one session, without a restart in between. The RAM disk
 column was re-measured after RAM-disk reads became asynchronous: one program

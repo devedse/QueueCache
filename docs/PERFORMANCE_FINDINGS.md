@@ -7,7 +7,7 @@ identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
 are run is in [testing](TESTING.md); current gaps in [known issues](KNOWN_ISSUES.md).
 
-**Current conclusion (2026-10-11): two speedups accepted, writes at the machine limit.**
+**RAM-path findings (2026-10-11): two speedups accepted; RAM-disk writes reach memory bandwidth.**
 Asynchronous split reads (PR #9) raise single-thread queued 1 MiB RAM-disk reads
 (the CrystalDiskMark SEQ1M Q8T1 shape) from a median **24,234 to 43,583 MiB/s
 (+79.8%)**; default for new RAM disks from plan 119. Lighter read-hit bookkeeping
@@ -371,30 +371,22 @@ Every pair improved (−37.6%, −47.9%, −18.6%), the median improved 37.0%, a
 ranges separated (6.6–9.4 s against 11.5–12.8 s): the 5% target for explicit-drain
 time is met on this sequential seed, consistent with the earlier cold-read flush
 result (6.52 → 3.86 s). Only explicit drain time is qualified by this run.
+This does not establish parity with the bare disk: its 63.9 MiB/s timed 512 MiB
+Flush and the historical bare-disk 230 MB/s post-burst observation have different
+workloads, timing boundaries and sessions. A matched baseline and actual backing
+I/O are needed; application write completion alone can include RAM admission.
 
-**Held-seed fixture correction (plan 145, 2026-10-15).** Repeating the six-case
-comparison with Defender/Search disabled stopped at case 1 and case 5
-(`20261015-152403-4df1148acefc487cb8f8585f98016874` and
-`20261015-152550-f94d0a83a1094d84a17d653575ea537b`). The first admitted another
-12 KiB between the seed snapshot and Flush; the second had another 8 KiB
-accepted and dirty in the post-Flush snapshot. Both restored without driver errors;
-neither supplies a complete performance result. The source of these writes was
-not traced. Plan 145 tried keeping the writable seed handle open in the timed worker
-until its Flush/end-state snapshots finish, moving handle closure outside the
-measured interval. Seed generation stays outside the timer, and all existing
-backlog, lower-I/O, health, clean-end and byte-oracle checks remain required.
-Evidence must explicitly confirm the held handle; older evidence cannot be
-accepted under that contract. Its VM run
-`20261015-154542-30466d022cae4ed4bd7a351f60a3d451` also stopped at case 1:
-The post-Flush snapshot had another 4 KiB accepted and dirty, despite the held
-handle. The drained-byte counter advanced by the recorded backlog size and there
-were no driver errors, but the clean end-state contract was not met. The failed
-case did not reach its byte oracle; these counters do not prove its contents or
-the precise arrival time/source of the extra write. Restoration succeeded. Holding the file open
-therefore did not solve the fixture interference; plan 146 removes that change
-and restores the original measurement. All three incomplete runs are excluded
-from aggregates. No further fixture redesign is part of this focused task;
-the current environment has no newly qualified drain time.
+**Disabled-baseline drain repeat: incomplete (plans 144–146).** Runs
+`20261015-152403-4df1148acefc487cb8f8585f98016874` and
+`20261015-152550-f94d0a83a1094d84a17d653575ea537b` stopped at cases 1 and 5:
+12 KiB was admitted between seed and Flush snapshots, or another 8 KiB was
+accepted/dirty in the post-Flush snapshot. Plan 145 held the seed handle through
+Flush/end snapshots, but `20261015-154542-30466d022cae4ed4bd7a351f60a3d451`
+also failed with another 4 KiB dirty. Its drained-byte counter matched the seed
+amount, but the failed case never reached its byte oracle. All three restored
+without driver errors; source/precise arrival time remain untraced. Plan 146
+removed the ineffective held-handle trial, retaining the original measurement
+and all guards. No complete fresh drain aggregate exists.
 
 **Read-miss repeat with Defender/Search disabled (2026-10-15).** The complete
 24/24 `cache-read-misses` run
@@ -451,44 +443,21 @@ errors. Lab V:'s three deliberate lifetime-error increments were accounted for,
 with no remaining active fault. These independent suite results cannot turn
 the original campaign into a completed one.
 
-**Foreground interference and Strict impact: not measured (plans 142/143; suites
-removed).** The two suites meant to answer these questions each failed twice at
-case 1 of the VM run, so no overlap or Strict-impact result exists. Both were
-removed in commit `206c5e8`; a redesign (or a driver option change while dirty) is
-needed, see Git history at commit `206c5e8`. The evidence is kept under the run IDs
-below; none is combined or used as a performance number.
+**Foreground interference and Strict impact: unmeasured (plans 142/143).**
+Both proposed suites failed at their first seed twice and were removed in
+`206c5e8`. They supply no performance result:
 
-- `drain-overlap-decision`. Attempt 1 (`20261015-003236-c69bd0f31004430dabe56f4cc0a4c494`,
-  runner 0.4.718.1): 20 KiB of dirty data (source unattributed, most likely NTFS
-  metadata) was present when the configured snapshot was taken. A bounded quiet
-  wait (plan 143) fixed that: attempt 2's configured snapshot was clean. Attempt 2
-  (`20261015-004735-c183d0de9ee34efdb9e9fe051c23679f`, runner 0.4.720.1): the 75%
-  seed (1,610,612,736 bytes) under the default Idle options was rejected because it was
-  not an isolated RAM admission — accepted 1,610,651,136, dirty 1,549,039,104,
-  in flight 524,288, 238 lower writes — i.e. about 61 MB drained during the roughly
-  7-second seed, after the 5-second maximum dirty age. This is a design
-  contradiction, not noise: a seed that takes longer than the default 5-second age
-  cannot satisfy a no-drain check under those options. The alternative (seed under
-  held-off options, then switch to Idle) is impossible on this driver: the options
-  IOCTL returns `STATUS_DEVICE_BUSY` while the cache is enabled or holds dirty data
-  (`driver/qcache/writecache.cpp`, `IOCTL_QCACHE_OPTIONS_V1`), and the supported
-  configure path drains and disables first. Removed after its second failure; it
-  needs either a native option-change-while-dirty capability or a redesigned
-  (smaller or faster) seed.
-- `strict-impact-decision`. Attempt 1 (`20261015-005332-2141cd24785c42e9bca1ebaf931cb810`,
-  runner 0.4.720.1) failed in seed validation without naming a counter; its
-  restoration snapshots show 536,889,856 accepted bytes of which 344,989,696 had
-  drained and 191,900,160 remained dirty. The rejection message was then changed to
-  list the moved counters. Attempt 2 (`20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861`, runner
-  0.4.722.1, loaded 0.4.687.1) named them: during the 512 MiB seed (accepted
-  536,890,368) the cache saw 2 application flushes, 1 write-through write,
-  2 application barriers and 1 Strict write barrier, 3 lower flushes and 1,072 drain
-  batches, which drained 280,502,272 bytes and left 256,388,096 dirty. These
-  barriers were not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata. The counters have no process attribution. **Finding: in
-  Strict mode a large dirty backlog does not survive between such barriers,
-  because each barrier drains the whole cache.** This is the known
-  whole-cache-barrier weakness (issue #16), not a fault of the new defaults. The
-  suite was not redesigned and was removed after its second failure.
+| Fixture | Failed runs | Why it cannot answer the question |
+|---|---|---|
+| `drain-overlap-decision` | `20261015-003236-c69bd0f31004430dabe56f4cc0a4c494`; `20261015-004735-c183d0de9ee34efdb9e9fe051c23679f` | A quiet wait removed an initial 20 KiB dirty start. The second 75% seed took about 7 s, exceeding the default 5 s dirty age: 238 lower writes drained about 61 MB before measurement. A no-drain seed contradicts those options. |
+| `strict-impact-decision` | `20261015-005332-2141cd24785c42e9bca1ebaf931cb810`; `20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861` | In the second attempt, 2 application flushes and 1 write-through write (not issued by the seed worker) caused 2 application barriers, 1 Strict barrier, 3 lower flushes and 1,072 drain batches. Of 536,890,368 accepted bytes, 280,502,272 drained and 256,388,096 remained dirty. Sources are unattributed. |
+
+The driver refuses option changes while enabled or dirty
+(`IOCTL_QCACHE_OPTIONS_V1`, `driver/qcache/writecache.cpp`), so seeding under
+held-off options and then switching to Idle is unsupported. Overlap needs a
+smaller/faster seed or a native capability change. Strict's result exposes its
+known whole-cache barrier cost (#16), not a regression of the new defaults;
+there is no measured Strict boundary latency.
 
 **Final release campaign (plan 132).** Signed 0.4.687.1 from functional commit
 `4b0e3c6` completed `release-performance` in 7918.2 seconds (2 h 12 min), all

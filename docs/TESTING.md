@@ -225,104 +225,54 @@ then read the run folder:
 | `restoration.json` / `restored.json` | Independent restoration result |
 | per-case `*-before/after.json`, `*.score.json`, `*-telemetry.jsonl`, `*-interval.json`, raw DiskSpd output | The evidence behind each number |
 
-Plan 130 telemetry includes actual time spent checking the stop file, querying
-each driver snapshot, persisting the previous sample and awaiting its delay.
-These fields help attribute a coverage gap; the two-second gap limit, complete
-process interval and ready handshake remain unchanged.
-Plan 131 samples on an owned thread at a 200 ms cadence, independently of
-serialization and evidence writes. Its buffer holds at most 256 actual samples;
-exhaustion fails the run. The first persisted sample publishes readiness, and
-successful completion waits for every collected sample to be persisted before exiting.
-Timestamps are recorded during collection and never filled across a gap.
-Persistence timing describes the writer; absent previous stages are null.
-Plan 132 gives `drain-decision` a separate 300-second completion allowance:
-the requested DiskSpd score duration is unchanged, but an explicit drain may
-hold its last outstanding I/O after scoring ends. The manifest records the
-process/flush deadlines and observer duration. Telemetry covers the complete
-process interval with the same two-second gap limit; byte checks, preparation
-deadlines, other suites and independent restoration limits are unchanged.
-Plan 133 adds the original runtime copy flags to each recovery snapshot. Normal
-cleanup and `verify-recover` restore that exact value and check the driver's
-readback before recording successful restoration. Campaign phase checks also
-compare copy flags. For older interrupted `cache-read-misses` runs, recovery may
-use the existing `copy-flags-original.json` only when its cache instance,
-generation and configuration match the recovery snapshot. Older
-`cache-read-bookkeeping` runs without a recorded original value cannot be
-reported fully restored; recovery records that gap after restoring the other
-known settings. Numeric zero remains a valid recorded value; missing evidence is
-not treated as zero.
-Plan 134 adds the maintained `tree-decision` experiment. It uses five arms in
-three rotated repetitions, captures cache snapshots and system memory/system
-cache at the tree phases, and requires the exact seeded file count, byte count,
-SHA-256, disk-counter settles and lower-I/O attempt counters. Missing counters
-remain unavailable; collection does not assign a performance verdict. Run it
-only after the standard preflight and with exclusive ownership of the target:
+Current contracts (plan 146):
+
+- **Telemetry (plans 130/131):** an owned thread samples every 200 ms, separately
+  from persistence, with a bounded 256-sample buffer. The first persisted sample
+  publishes readiness; completion waits for every sample to persist. Cover the
+  full process interval with no gap over two seconds. Buffer overflow, a real
+  coverage gap or missing counters fails collection; timestamps are never filled.
+  Per-stage timings distinguish collection delay from serialization/persistence.
+- **Drain completion (plan 132):** `drain-decision` allows 300 seconds for process
+  completion because an explicit flush may hold the final I/O beyond the unchanged
+  score window. Full-process telemetry and independent restoration still apply.
+- **Copy flags (plan 133):** capture, restore and read back the exact original
+  value, including zero. Legacy read-miss recovery may use its recorded
+  `copy-flags-original.json` only when identity/generation/configuration match.
+  Missing original evidence or wrong readback cannot produce RESTORED.
+- **File tree (plan 134):** five arms, three rotated repetitions, exact file/byte
+  counts and hashes, disk-idle settles, system-cache memory and lower-I/O attempts.
+  A `--case-filter` selection is diagnostic, not a complete matrix. To attribute
+  scanning costs, use Defender's performance recorder/report and process CPU;
+  keep the documented environment fixed across arms. Findings belong in
+  [performance findings](PERFORMANCE_FINDINGS.md).
+- **Equal-work tails (plans 135/140/141):** 100,000 operations per case, exact
+  latency samples/threshold counts, cold and resident controls, and deterministic
+  foreground-write content checks after flush/eviction. Before each start and
+  write oracle, require two clean seconds with unchanged lower-I/O counters,
+  allowing at most five recorded attempts. Timing OFF; no DiskSpd or case filter.
+- **Explicit drain (plans 137/142/146):** three alternated pairs of 256 KiB × 2
+  versus 1024 KiB × 4, each with a deterministic 512 MiB dirty seed. An owned
+  worker is ready before release and times the Flush call itself. Timing stays
+  OFF; require seed, lower-I/O, health, clean-end and byte-oracle evidence. The
+  byte oracle follows cache Disable, an additional control that must remain
+  visible when judging durability. Plan 146 removed the ineffective held-handle
+  trial. The disabled-baseline repeat is incomplete; do not aggregate its samples.
 
 ```powershell
 qcache developer verify Q: --suite tree-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\tree-decision
-```
-
-`--case-filter` can collect a diagnostic subset, but a subset is not a complete
-matrix or a basis for a decision. The read/hash phase opens 40,000 freshly
-written files, so Windows Defender's real-time scan of each first open dominates
-it (about 3.8 ms of antimalware CPU per file on the lab VM) and the time is
-about the same with the cache off. To attribute such a result, observe an
-otherwise unchanged case with `New-MpPerformanceRecording` / `Get-MpPerformanceReport`
-and per-process CPU time. That diagnosis used Defender enabled. The dedicated
-VM now uses the disabled baseline in section 2; a new measurement must identify
-that environment and keep it fixed across every arm. One current-settings
-observation under the new baseline read/hashed the files in 6.86 seconds with
-the hash oracle passing; it is not a complete matrix. Details and limits are in
-[performance findings](PERFORMANCE_FINDINGS.md).
-
-Plan 135 adds `read-tail-decision` for equal-operation latency comparisons. It
-uses the same 100,000-operation address sequence for each repeated arm, reports
-all samples and exact threshold counts, and separately checks cold reads,
-fully resident random/sequential controls, and fitting foreground writes. The
-write cases are flushed, evicted from clean cache, and verified against their
-deterministic per-operation data oracle before they pass. Plan 140 waits for the
-cache to stay clean with unchanged lower-I/O counters for two seconds after the
-volume flush (up to five recorded attempts); plan 141 applies the same wait
-before each case's start snapshot, so one stray metadata write cannot fail a
-long matrix. It still fails if the cache does not settle. The run requires the standard preflight, an idle 2 GiB Fast cache,
-timing OFF and exclusive target ownership; it does not use DiskSpd or accept a
-case filter:
-
-```powershell
 qcache developer verify Q: --suite read-tail-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 900 --output C:\QCResults\read-tail-decision
-```
-
-The foreground-write cases flush 100,000 scattered 4 KiB writes (about 400 MiB)
-before their durable oracle; on a slow backing disk that took 251–258 s, longer
-than the 180-second default, so use the larger preparation deadline above.
-
-This suite records evidence and does not declare a latency SLA or performance
-win. Compare each paired repetition and inspect its full samples and cache
-counters; do not infer threshold counts from percentiles.
-
-Plan 137 adds `drain-flush-decision`, which compares the former 256 KiB × 2
-setting with 1024 KiB × 4 for the explicit-flush time of a deterministic 512 MiB
-dirty seed. An owned worker is ready before the coordinator releases it, and
-duration starts immediately before the driver's Flush call. Timing diagnostics
-stay off; the run records drain batches/bytes, lower write/flush attempts, and
-verifies the persisted seed. Plan 145 tried holding the seed handle open, but
-another late write still failed the unchanged clean-end-state check; plan 146
-restores the original fixture. The Defender/Search-off repeat is incomplete,
-so its partial samples cannot establish a new performance result.
-
-```powershell
 qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 900 --output C:\QCResults\drain-flush-decision
 ```
 
-The report is collection-only. Read `drain-flush-summary.md` only after the
-complete six-case matrix, and compare paired cases plus raw worker, telemetry
-and byte-oracle evidence. The general `SUMMARY.md` links to an aggregate only for
-a complete matrix. The VM result is `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`.
+These suites collect evidence, not a performance verdict or latency SLA. Compare
+all paired repetitions, raw samples/counters and content checks. Read-tail's
+scattered write oracle took 251–258 seconds on slow storage, hence the larger
+preparation deadline above. `drain-flush-summary.md` requires all six cases;
+partial runs cannot produce an accepted aggregate.
 
-There is no maintained suite for foreground interference under default Idle
-draining or for Strict-mode barrier cost: the suites written for them
-(`drain-overlap-decision`, `strict-impact-decision`) each failed twice at their
-first seed on the VM and were removed. Their run IDs, counters and reasons are in
+There is no maintained foreground-overlap or Strict-impact suite: both failed
+their seed contracts and were removed. Reasons and run identities remain in
 [performance findings](PERFORMANCE_FINDINGS.md).
 
 A campaign folder holds one child run per phase plus `completion.json`.
