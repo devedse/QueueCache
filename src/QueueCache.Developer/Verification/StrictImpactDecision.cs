@@ -430,6 +430,9 @@ public static class StrictImpactDecision
         ValidateCase(test);
         if (!File.Exists(path) || new FileInfo(path).Length != PreparedFileBytes)
             throw new IOException("Strict-impact seed requires the prepared 4 GiB writer file.");
+        // Establish the baseline in the worker that writes the seed: a late metadata write after the
+        // coordinator's check would otherwise be measured as part of the seed.
+        device.Control(WriteCacheAction.Flush);
         var before = Capture(device);
         if (before.State.DirtyBytes != 0 || before.State.InFlightBytes != 0)
             throw new IOException("Strict-impact seed requires a clean cache after configuration.");

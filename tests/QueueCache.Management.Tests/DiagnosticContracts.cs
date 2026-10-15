@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 142, "plan 142 versions copy-flag recovery, file-tree, read-tail start/durability settling, timed drain and Strict-impact contracts");
+        Check(VerificationPlan.Version == 143, "plan 143 versions copy-flag recovery, file-tree, read-tail start/durability settling, timed drain, and quiet-start drain-overlap and Strict-impact contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&

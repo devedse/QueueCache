@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 142, "plan 142 versions recovery, tree, read-tail start/durability settling, bounded/monotonic drain and Strict-impact contracts");
+        Check(VerificationPlan.Version == 143, "plan 143 versions recovery, tree, read-tail start/durability settling, bounded/monotonic drain, and quiet-start drain-overlap and Strict-impact contracts");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&

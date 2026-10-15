@@ -309,6 +309,12 @@ whose hash is recorded:
 qcache developer verify Q: --suite drain-overlap-decision --budget-mib 2048 --repeats 3 --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output C:\QCResults\drain-overlap-decision
 ```
 
+Plan 143 adds the same bounded quiet-cache wait to the start of each overlap and
+Strict-impact case: the first overlap attempt stopped at case 1 because 20 KiB of
+filesystem metadata was still dirty when the configured snapshot was taken. The
+Strict seed worker now also flushes before capturing its baseline, as the drain
+seed already did.
+
 Both reports are collection-only. Read `drain-flush-summary.md` and
 `drain-overlap-summary.md` only after their respective complete matrices, and
 compare paired cases plus raw worker, telemetry and byte-oracle evidence. The

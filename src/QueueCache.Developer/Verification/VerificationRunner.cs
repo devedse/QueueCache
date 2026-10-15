@@ -1469,6 +1469,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         await Worker(Job("configure") with { Configuration = configuration }, token, 300);
         await Control(WriteCacheAction.PerformanceTiming, token, 0);
         await Control(WriteCacheAction.DropClean, token);
+        // A late filesystem metadata write must not fail the case before its seed baseline is taken.
+        await WaitForQuiet(scenario.Id + "-configured", token);
         var configured = await LayoutSnapshot(scenario.Id + "-configured.json", token);
         if (!configured.State.Operational || !configured.State.Enabled || !configured.State.UnsafeDefer ||
             configured.State.Options != configuration.Options || configured.State.DirtyBytes != 0 ||
@@ -1672,6 +1674,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         await Worker(Job("configure") with { Configuration = configuration }, token, 300);
         await Control(WriteCacheAction.PerformanceTiming, token, 0);
         await Control(WriteCacheAction.DropClean, token);
+        // A late filesystem metadata write must not fail the case before its seed baseline is taken.
+        await WaitForQuiet(scenario.Id + "-configured", token);
         var configuredPath = await Worker(Job("snapshot"), token, 120);
         var configured = JsonSerializer.Deserialize<StrictImpactSnapshot>(
             await File.ReadAllTextAsync(configuredPath, token))
