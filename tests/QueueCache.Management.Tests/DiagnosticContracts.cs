@@ -916,6 +916,19 @@ internal static class DiagnosticContracts
         reject(() => StrictImpactDecision.ValidateEvidence(first with
             { ReleaseUtc = first.WorkerReadyUtc.AddTicks(-1) }, instance, errors));
         reject(() => StrictImpactDecision.ValidateSeed(first.Seed with { PayloadBytes = 256 << 20 }, instance, errors));
+        try
+        {
+            StrictImpactDecision.ValidateSeed(first.Seed with
+            {
+                After = first.Seed.After with { State = first.Seed.After.State with { DrainedBytes = first.Seed.After.State.DrainedBytes + 4096 } }
+            }, instance, errors);
+            throw new Exception("Expected an incidental seed drain to be rejected.");
+        }
+        catch (InvalidDataException ex)
+        {
+            check(ex.Message.Contains("drained=4096") && ex.Message.Contains("strictWriteBarriers=0"),
+                "Strict-impact seed rejection names the moved counters, so a failed seed is diagnosable from its message");
+        }
         reject(() => StrictImpactDecision.ValidateSeed(first.Seed with
         {
             After = first.Seed.After with { Performance = first.Seed.After.Performance with { TimingEnabled = 1 } }

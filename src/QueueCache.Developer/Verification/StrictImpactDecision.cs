@@ -199,7 +199,12 @@ public static class StrictImpactDecision
             delta.ApplicationFlushes != 0 || delta.DeferredFlushes != 0 ||
             delta.WriteThroughWrites != 0 || delta.DeferredWriteThroughWrites != 0 ||
             delta.ApplicationBarriers != 0 || delta.StrictWriteBarriers != 0)
-            throw new InvalidDataException("Strict-impact seed was not the bounded, timing-off dirty set with incidental drains and durability boundaries held off.");
+            throw new InvalidDataException("Strict-impact seed was not the bounded, timing-off dirty set with incidental drains and durability boundaries held off: " +
+                $"payload={seed.PayloadBytes}, dirty {before.State.DirtyBytes}->{after.State.DirtyBytes}, inFlight {before.State.InFlightBytes}->{after.State.InFlightBytes}, " +
+                $"accepted={delta.AcceptedBytes}, drained={delta.DrainedBytes}, drainBatches={delta.DrainBatches}, drainBytes={delta.DrainBytes}, " +
+                $"applicationFlushes={delta.ApplicationFlushes}, deferredFlushes={delta.DeferredFlushes}, writeThroughWrites={delta.WriteThroughWrites}, " +
+                $"deferredWriteThroughWrites={delta.DeferredWriteThroughWrites}, applicationBarriers={delta.ApplicationBarriers}, " +
+                $"strictWriteBarriers={delta.StrictWriteBarriers}, lowerWriteAttempts={delta.LowerWriteAttempts}, lowerFlushAttempts={delta.LowerFlushAttempts}.");
     }
 
     public static StrictImpactMetrics ValidateEvidence(StrictImpactEvidence evidence,
