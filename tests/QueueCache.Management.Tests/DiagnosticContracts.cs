@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 144, "plan 144 versions copy-flag recovery, file-tree, read-tail start/durability settling and timed explicit-drain contracts");
+        Check(VerificationPlan.Version == 145, "plan 145 versions held-seed explicit drains, copy-flag recovery, file-tree, read-tail start/durability settling and timed explicit-drain contracts");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -521,9 +521,9 @@ internal static class DiagnosticContracts
             var controlAfter = State(test, seedBytes, baselineDrained + seedBytes, 0, 1);
             var control = new DrainFlushControlResult(epoch.AddSeconds(1.2), epoch.AddSeconds(1.5), 300, 1000,
                 controlBefore, controlAfter, Performance(), Performance(0, 1, seedBytes),
-                Diagnostics(10, 2), Diagnostics(11, 3));
+                Diagnostics(10, 2), Diagnostics(11, 3), SeedHandleHeld: true);
             var process = new ProcessIdentity(45 + test.Repeat, DateTime.SpecifyKind(
-                epoch.AddSeconds(0.8).UtcDateTime, DateTimeKind.Utc));
+                epoch.AddSeconds(0.2).UtcDateTime, DateTimeKind.Utc));
             var seedCompleted = epoch.AddSeconds(0.5);
             var ready = epoch.AddSeconds(1);
             var release = epoch.AddSeconds(1.1);
@@ -537,6 +537,16 @@ internal static class DiagnosticContracts
                 "worker.process.json", "seed-verification.json", metrics));
         }
         var first = verified[0];
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed,
+            first.WorkerProcess with { StartedUtc = first.SeedCompletedUtc.AddMilliseconds(1).UtcDateTime },
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc, first.Control, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { SeedHandleHeld = false }, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { After = first.Control.After with
+                { DirtyBytes = 8192, AcceptedBytes = seedBytes + 8192 } }, instance, errors));
         reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
             first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
             first.Control with { PerformanceAfter = Performance(1, 1, seedBytes) }, instance, errors));

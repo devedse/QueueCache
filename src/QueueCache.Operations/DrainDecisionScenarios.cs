@@ -14,7 +14,7 @@ public static class DrainDecisionScenarios
     private const int TransferBytes = 1 << 20;
 
     public static DrainSeedResult PrepareDirtySet(CacheDevice device, string path, int bytes,
-        int seed, CancellationToken token = default)
+        int seed, CancellationToken token = default, Action<DrainSeedResult>? measureWhileOpen = null)
     {
         if (bytes <= 0 || bytes % TransferBytes != 0)
             throw new ArgumentException("Drain seed size must be a positive whole number of MiB.");
@@ -43,27 +43,39 @@ public static class DrainDecisionScenarios
                 new Random(unchecked(seed * 397 ^ offset / TransferBytes)).NextBytes(block);
                 file.Write(offset, block);
             }
+            if (measureWhileOpen is not null)
+            {
+                // Closing a writable NTFS handle can admit metadata later. Keep
+                // that close outside the explicitly measured flush boundary.
+                var heldSeed = Capture();
+                measureWhileOpen(heldSeed);
+                return heldSeed;
+            }
         }
+        return Capture();
 
-        var after = device.GetWriteCacheState();
-        var performanceAfter = device.GetPerformance();
-        var attributionAfter = device.GetDiagnostics().Attribution ??
-            throw new NotSupportedException("Drain decision requires lower-I/O attempt counters.");
-        var accepted = after.AcceptedBytes - before.AcceptedBytes;
-        if (accepted != after.DirtyBytes || accepted < (ulong)bytes || accepted > (ulong)bytes + (64 << 10) ||
-            after.InFlightBytes != 0 ||
-            attributionAfter.LowerReadAttempts != attributionBefore.LowerReadAttempts ||
-            attributionAfter.LowerWriteAttempts != attributionBefore.LowerWriteAttempts ||
-            attributionAfter.LowerFlushAttempts != attributionBefore.LowerFlushAttempts)
-            throw new IOException("Dirty-set preparation was not an isolated fitting RAM admission: " +
-                $"requested={bytes}, acceptedDelta={after.AcceptedBytes - before.AcceptedBytes}, " +
-                $"dirty={after.DirtyBytes}, inFlight={after.InFlightBytes}, " +
-                $"lowerAttemptDelta={AttemptDelta(attributionAfter.LowerReadAttempts, attributionBefore.LowerReadAttempts)}/" +
-                $"{AttemptDelta(attributionAfter.LowerWriteAttempts, attributionBefore.LowerWriteAttempts)}/" +
-                $"{AttemptDelta(attributionAfter.LowerFlushAttempts, attributionBefore.LowerFlushAttempts)}.");
+        DrainSeedResult Capture()
+        {
+            var after = device.GetWriteCacheState();
+            var performanceAfter = device.GetPerformance();
+            var attributionAfter = device.GetDiagnostics().Attribution ??
+                throw new NotSupportedException("Drain decision requires lower-I/O attempt counters.");
+            var accepted = after.AcceptedBytes - before.AcceptedBytes;
+            if (accepted != after.DirtyBytes || accepted < (ulong)bytes || accepted > (ulong)bytes + (64 << 10) ||
+                after.InFlightBytes != 0 ||
+                attributionAfter.LowerReadAttempts != attributionBefore.LowerReadAttempts ||
+                attributionAfter.LowerWriteAttempts != attributionBefore.LowerWriteAttempts ||
+                attributionAfter.LowerFlushAttempts != attributionBefore.LowerFlushAttempts)
+                throw new IOException("Dirty-set preparation was not an isolated fitting RAM admission: " +
+                    $"requested={bytes}, acceptedDelta={after.AcceptedBytes - before.AcceptedBytes}, " +
+                    $"dirty={after.DirtyBytes}, inFlight={after.InFlightBytes}, " +
+                    $"lowerAttemptDelta={AttemptDelta(attributionAfter.LowerReadAttempts, attributionBefore.LowerReadAttempts)}/" +
+                    $"{AttemptDelta(attributionAfter.LowerWriteAttempts, attributionBefore.LowerWriteAttempts)}/" +
+                    $"{AttemptDelta(attributionAfter.LowerFlushAttempts, attributionBefore.LowerFlushAttempts)}.");
 
-        return new(seed, bytes, accepted, before, after, performanceBefore, performanceAfter,
-            attributionBefore, attributionAfter);
+            return new(seed, bytes, accepted, before, after, performanceBefore, performanceAfter,
+                attributionBefore, attributionAfter);
+        }
 
         static string AttemptDelta(ulong after, ulong before) => after >= before
             ? (after - before).ToString(System.Globalization.CultureInfo.InvariantCulture)

@@ -11,7 +11,10 @@ public sealed record DrainFlushControlResult(DateTimeOffset EnteredUtc, DateTime
     long ElapsedTicks, long TimestampFrequency,
     WriteCacheState Before, WriteCacheState After, CachePerformance PerformanceBefore,
     CachePerformance PerformanceAfter, CacheDiagnostics DiagnosticsBefore,
-    CacheDiagnostics DiagnosticsAfter);
+    CacheDiagnostics DiagnosticsAfter, bool SeedHandleHeld = false);
+
+public sealed record SeededDrainFlushResult(DrainSeedResult Seed, DateTimeOffset SeedCompletedUtc,
+    DrainFlushControlResult Control);
 
 public sealed record DrainFlushMetrics(double DurationMilliseconds, ulong DrainedBytes,
     ulong DrainBatches, ulong DriverDrainBytes, ulong LowerWriteAttempts,
@@ -105,7 +108,7 @@ public static class DrainFlushDecision
         var processStart = new DateTimeOffset(DateTime.SpecifyKind(process.StartedUtc, DateTimeKind.Utc));
         if (process.Pid <= 0 || processStart == default || workerReadyUtc == default ||
             seedCompletedUtc == default || releaseUtc == default || control.EnteredUtc == default ||
-            control.CompletedUtc == default || processStart > workerReadyUtc || workerReadyUtc < seedCompletedUtc ||
+            control.CompletedUtc == default || processStart > seedCompletedUtc || workerReadyUtc < seedCompletedUtc ||
             releaseUtc < workerReadyUtc)
             throw new InvalidDataException("The explicit-flush worker readiness and operation timestamps are invalid.");
 
@@ -115,7 +118,7 @@ public static class DrainFlushDecision
             throw new NotSupportedException("Explicit-drain comparison requires lower-I/O attempt counters.");
         var attributionAfter = control.DiagnosticsAfter.Attribution ??
             throw new NotSupportedException("Explicit-drain comparison requires lower-I/O attempt counters.");
-        if (before.Instance != expectedInstance || after.Instance != expectedInstance ||
+        if (!control.SeedHandleHeld || before.Instance != expectedInstance || after.Instance != expectedInstance ||
             before.Errors != expectedErrors || after.Errors != expectedErrors ||
             before.LastError != 0 || after.LastError != 0 || !MatchesPolicy(before) || !MatchesPolicy(after) ||
             before.DirtyBytes != seed.OwnedBytes || before.InFlightBytes != 0 ||

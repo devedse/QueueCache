@@ -58,8 +58,12 @@ read. Its captured read/write scores are 37,374.91 / 19,980.67 (SEQ1M Q8T1),
 19,874.66 / 13,575.57 (SEQ1M Q1T1), 1,704.05 / 1,411.14 (RND4K Q32T1), and
 1,297.95 / 1,029.48 (RND4K Q1T1). The screenshot is the original retained capture.
 
-This refresh does not establish a win in every workload. The file-tree read/hash
-cost remains material, and shared network-storage conditions vary across dates.
+This refresh does not establish a win in every workload. Later cache-off controls
+and tracing attributed the 160–170-second file-tree read/hash times to Defender
+scanning (151.6 seconds of on-open scans in a 164.2-second diagnostic phase).
+The numbers on this page retain their original environment; shared
+network-storage conditions also vary across dates. Follow-up measurements are
+recorded in [performance findings](../PERFORMANCE_FINDINGS.md).
 The cold suite is a single observation; larger-file, sustained and tree results
 have two repetitions rather than three. Fast acknowledges explicit flushes from
 volatile RAM (the measured 512 MiB flush median is 0.000131 seconds), so hot

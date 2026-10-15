@@ -943,21 +943,38 @@ public static class VerificationWorker
                 };
                 break;
             case "timed-cache-flush":
-                if (job.ReadyFile is null || job.StartFile is null)
-                    throw new ArgumentException("Timed cache flush requires ready and start-signal paths.");
-                var flushBefore = device.GetWriteCacheState();
-                var flushPerformanceBefore = device.GetPerformance();
-                var flushDiagnosticsBefore = device.GetDiagnostics();
-                RunStorage.AtomicJson(job.ReadyFile, new { Ready = true, At = DateTimeOffset.UtcNow });
-                while (!File.Exists(job.StartFile)) await Task.Delay(25);
-                var flushEnteredUtc = DateTimeOffset.UtcNow;
-                var flushStartTimestamp = Stopwatch.GetTimestamp();
-                device.Control(WriteCacheAction.Flush);
-                var flushElapsedTicks = Stopwatch.GetTimestamp() - flushStartTimestamp;
-                var flushCompletedUtc = DateTimeOffset.UtcNow;
-                result = new DrainFlushControlResult(flushEnteredUtc, flushCompletedUtc, flushElapsedTicks, Stopwatch.Frequency,
-                    flushBefore, device.GetWriteCacheState(), flushPerformanceBefore,
-                    device.GetPerformance(), flushDiagnosticsBefore, device.GetDiagnostics());
+                if (job.ReadyFile is null || job.StartFile is null || job.WorkDirectory is null)
+                    throw new ArgumentException("Timed cache flush requires seed directory, ready and start-signal paths.");
+                SeededDrainFlushResult? heldMeasurement = null;
+                DrainDecisionScenarios.PrepareDirtySet(device,
+                    Path.Combine(job.WorkDirectory, "drain.dat"),
+                    checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20)))),
+                    checked((int)job.Value), measureWhileOpen: heldSeed =>
+                    {
+                        var seedCompletedUtc = DateTimeOffset.UtcNow;
+                        RunStorage.AtomicJson(job.ReadyFile, new { Ready = true, At = DateTimeOffset.UtcNow });
+                        var startWait = Stopwatch.StartNew();
+                        while (!File.Exists(job.StartFile))
+                        {
+                            if (startWait.Elapsed > TimeSpan.FromSeconds(45))
+                                throw new TimeoutException("Timed cache flush start signal did not arrive.");
+                            Thread.Sleep(25);
+                        }
+                        var flushBefore = device.GetWriteCacheState();
+                        var flushPerformanceBefore = device.GetPerformance();
+                        var flushDiagnosticsBefore = device.GetDiagnostics();
+                        var flushEnteredUtc = DateTimeOffset.UtcNow;
+                        var flushStartTimestamp = Stopwatch.GetTimestamp();
+                        device.Control(WriteCacheAction.Flush);
+                        var flushElapsedTicks = Stopwatch.GetTimestamp() - flushStartTimestamp;
+                        var flushCompletedUtc = DateTimeOffset.UtcNow;
+                        var control = new DrainFlushControlResult(flushEnteredUtc, flushCompletedUtc,
+                            flushElapsedTicks, Stopwatch.Frequency, flushBefore, device.GetWriteCacheState(),
+                            flushPerformanceBefore, device.GetPerformance(), flushDiagnosticsBefore,
+                            device.GetDiagnostics(), SeedHandleHeld: true);
+                        heldMeasurement = new SeededDrainFlushResult(heldSeed, seedCompletedUtc, control);
+                    });
+                result = heldMeasurement ?? throw new InvalidDataException("Held-seed measurement did not run.");
                 break;
             case "flush-volume":
                 using (var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true))

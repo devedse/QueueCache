@@ -100,8 +100,10 @@ The test file fits in RAM, so this shows what QueueCache does for data already
 in its cache. Ordinary read misses spanning at most 256 cache blocks can now
 overlap. A separate same-build comparison on 0.4.685.1 measured 9.4× cold random
 and 3.35× cold sequential throughput, with every cold p99 improving and no
-repeated resident-control loss. Random worst latency increased from 46 to 569 ms;
-this does not establish a gain for every latency metric
+repeated resident-control loss. That fixed-duration screen observed random-read
+maxima of 46 versus 569 ms while the faster arm completed much more work. A later
+comparison of 100,000 operations per case improved cold-random p99.9 from 192 to
+61 ms and the median of per-case maxima from 272 to 124 ms; every pair improved
 ([results and scope](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
 The drive's speed on this shared network storage varies; both Q: columns are
 measured in one session, without a restart in between. The RAM disk

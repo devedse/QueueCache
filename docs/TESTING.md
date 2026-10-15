@@ -64,6 +64,20 @@ the drivers several times over.
 - Enough free space on `Q:`: preparation refuses below 3-5 times the cache budget.
 - No delay or fault hooks armed; the runner cannot read their original values.
 
+**Dedicated performance VM baseline (owner requested, 2026-10-15).** Microsoft
+Defender Antivirus and Windows Search indexing are disabled between runs as well
+as during them. Before measuring, verify that `WinDefend`, `WdNisSvc`, `MDCoreSvc`
+and `WSearch` are stopped with Disabled startup, the Defender `WdFilter` is absent
+from `fltmc filters`, and Defender's scheduled scan/maintenance tasks are disabled.
+Record these effective states with the result; policy values alone did not stop
+Defender on this Windows build. Do not restore these components to their former
+enabled state after a run. Recheck after Windows updates and restarts.
+
+This is a change to the test environment, not a measured QueueCache speedup.
+Historical figures keep their original environment. For a new comparison, measure
+every product/control under the same recorded Defender and indexing settings;
+do not combine the new baseline with old results to claim a driver improvement.
+
 ## 3. Running tests: one command
 
 `qcache developer verify` is the only supported runner. Pick a campaign (several
@@ -254,8 +268,10 @@ written files, so Windows Defender's real-time scan of each first open dominates
 it (about 3.8 ms of antimalware CPU per file on the lab VM) and the time is
 about the same with the cache off. To attribute such a result, observe an
 otherwise unchanged case with `New-MpPerformanceRecording` / `Get-MpPerformanceReport`
-and per-process CPU time; do not disable Defender or add exclusions to improve
-the number.
+and per-process CPU time. That diagnosis used Defender enabled. The dedicated
+VM now uses the disabled baseline in section 2; a new measurement must identify
+that environment and keep it fixed across every arm. No tree timing has yet been
+collected under the new baseline.
 
 Plan 135 adds `read-tail-decision` for equal-operation latency comparisons. It
 uses the same 100,000-operation address sequence for each repeated arm, reports
@@ -287,7 +303,12 @@ setting with 1024 KiB × 4 for the explicit-flush time of a deterministic 512 Mi
 dirty seed. An owned worker is ready before the coordinator releases it, and
 duration starts immediately before the driver's Flush call. Timing diagnostics
 stay off; the run records drain batches/bytes, lower write/flush attempts, and
-verifies the persisted seed:
+verifies the persisted seed. From plan 145, the same owned worker seeds and
+flushes while keeping the writable seed handle open through the end-state
+snapshots. Closing it earlier admitted late writes in two incomplete runs;
+the unchanged backlog, lower-I/O and clean-end-state guards still reject those
+writes. Readiness is published after seeding, and seed time is excluded from
+the Flush timer:
 
 ```powershell
 qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 900 --output C:\QCResults\drain-flush-decision

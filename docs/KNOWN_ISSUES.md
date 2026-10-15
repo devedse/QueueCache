@@ -106,6 +106,12 @@ cache or a disk.
 
 ## Fix branch verification (#14 / #15)
 
+The new Defender/Search-off explicit-drain repeat stopped on late small writes
+outside the recorded seed (12 KiB before Flush, and 8 KiB after Flush in two
+incomplete runs); both restored without driver errors. Plan 145 keeps the seed
+file handle open through the timed Flush and end snapshots, preserving the
+existing evidence guards. VM validation of that fixture correction is pending.
+
 The branch overlaps ordinary read misses, preserves each read's exact original
 pin identities, and uses 1024 KiB × 4 drain defaults for new tasks. Saved profiles
 keep their settings. Misses spanning more than 256 cache blocks (1 MiB when
@@ -209,7 +215,10 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   found Windows Defender's real-time scan of each freshly written file at its
   first open using 156.5 CPU-seconds of the 164.2-second phase (40,024 scans,
   151.6 s). This is attributed to the environment, not the driver; Defender was
-  left enabled. It is not known why the 0.4.604.1 session did not pay that cost,
+  left enabled for that measurement. The owner subsequently requested a
+  persistent Defender-off and Search-off baseline on the dedicated test VM
+  (2026-10-15; see [testing](TESTING.md)); no tree timing has been collected under
+  that baseline. It is not known why the 0.4.604.1 session did not pay that cost,
   because comparison environment records do not capture Defender state. A tree
   step in a Defender-scanned location is dominated by antimalware time and says
   nothing about the cache. The same-build cold miss-offload screen's 568.7 ms

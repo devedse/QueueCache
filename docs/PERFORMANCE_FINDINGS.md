@@ -354,7 +354,9 @@ provider `0B13C2F5…`, timing off, 2 GiB Fast, age-only Deferred) flushed a
 deterministic 512 MiB dirty seed. An owned worker was ready before release and
 the duration is a monotonic timer around the driver's Flush call, so process
 launch is excluded. Every case drained the exact 512 MiB, left no pending bytes,
-and its seed matched from disk without a further flush.
+and its seed matched through unbuffered reads after the runner disabled the cache.
+The byte oracle follows that additional control; it does not independently prove
+the contents immediately before the disable operation.
 
 | Setting | Flush ms per pair (1, 2, 3) | Median | Drain MiB/s | Lower writes |
 |---|---|---:|---:|---:|
@@ -365,6 +367,20 @@ Every pair improved (−37.6%, −47.9%, −18.6%), the median improved 37.0%, a
 ranges separated (6.6–9.4 s against 11.5–12.8 s): the 5% target for explicit-drain
 time is met on this sequential seed, consistent with the earlier cold-read flush
 result (6.52 → 3.86 s). Only explicit drain time is qualified by this run.
+
+**Held-seed fixture correction (plan 145, 2026-10-15).** Repeating the six-case
+comparison with Defender/Search disabled stopped at case 1 and case 5
+(`20261015-152403-4df1148acefc487cb8f8585f98016874` and
+`20261015-152550-f94d0a83a1094d84a17d653575ea537b`). The first admitted another
+12 KiB between the seed snapshot and Flush; the second admitted 8 KiB after the
+Flush, leaving a dirty end snapshot. Both restored without driver errors;
+neither supplies a complete performance result. The source of these writes was
+not traced. Plan 145 keeps the writable seed handle open in the timed worker
+until its Flush/end-state snapshots finish, moving handle closure outside the
+measured interval. Seed generation stays outside the timer, and all existing
+backlog, lower-I/O, health, clean-end and byte-oracle checks remain required.
+Evidence must explicitly confirm the held handle; older evidence cannot be
+accepted under the new contract. VM validation of this correction is pending.
 
 **Foreground interference and Strict impact: not measured (plans 142/143; suites
 removed).** The two suites meant to answer these questions each failed twice at
@@ -544,8 +560,8 @@ is therefore Windows Defender's real-time scan of each freshly written file at
 its first read-open (about 3.8 ms of antimalware CPU per file), above the volume
 filter; the cache-off arm of the earlier 15-case matrix had the same time.
 **Disposition: environmental, not a QueueCache regression.** Defender was left
-enabled with no exclusions on purpose, and no driver change is supported. The
-observer and recording added a small CPU load, so this case is not used as a
+enabled with no exclusions for that diagnosis, and no driver change is supported.
+The observer and recording added a small CPU load, so this case is not used as a
 timing result. What remains unproven is why the 0.4.604.1 session on 2026-10-12
 took only 4.9 s for the same step: the comparison's environment record does not
 capture Defender state, platform/signature versions or scan caching, and Windows
@@ -553,6 +569,14 @@ had moved from revision 2956 to 3231, so the older session's Defender behaviour
 cannot be reconstructed. The planned cross-build driver swap (`tree-build-decision`,
 four reboots) was therefore removed unrun: the cost does not depend on the filter,
 and the measurement could not separate the missing Defender state.
+
+**Later environment change (2026-10-15).** At the owner's request, the dedicated
+test VM now has Defender Antivirus and Windows Search indexing disabled as its
+persistent baseline; the effective-state checks are in [TESTING.md](TESTING.md).
+No performance workload was run for this administration change. The 164.2 s
+observation above remains a Defender-enabled diagnostic, and no Defender-off
+after-time or new driver speedup is established. Any refreshed README or product
+comparison must use matched measurements under the new recorded environment.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1422,7 +1446,7 @@ runs that found and fixed the issues described under
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
 | Read misses one at a time | **Qualified for throughput, p99 and equal-work tails** (plans 131/132/141, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated, every cold p99 improved. The 568.7 ms fixed-window maximum is not reproduced with equal work: the complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2` improved every cold-random pair (+541% to +617% IOPS, p99.9 −92 to −148 ms, no operation above 500 ms) and showed no flag-driven control loss (resident differences follow run order). Both arms use the new pool and queue order; the pool size was not varied. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; a backing store with a different latency profile; evidence that the 16-thread pool starves another workload. |
-| 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stays enabled; no exclusion or driver change. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
+| 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15), with no new tree timing yet. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
 | Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
