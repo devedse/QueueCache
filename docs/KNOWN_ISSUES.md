@@ -183,13 +183,23 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
 
 ## Not yet proven on the VM
 
-- **Interrupted verifier recovery of copy flags:** 0.4.687.1 recovery snapshots
-  did not persist runtime copy flags, so an interrupted flags-7 run could leave
-  miss offload disabled while `verify-recover` reported success. The follow-up
-  branch now captures the original value, restores it through the shared
-  recovery path and checks the driver's readback. Host contracts and CI pass;
-  the Windows normal-cleanup and fresh-process recovery smoke checks remain
-  before this recovery fix is qualified.
+- **Interrupted verifier recovery of copy flags (VM smoke passed):** 0.4.687.1
+  recovery snapshots did not persist runtime copy flags, so an interrupted
+  flags-7 run could leave miss offload disabled while `verify-recover` reported
+  success. The follow-up now captures the original value, restores it through the
+  shared recovery path and checks the driver's readback. On the VM (runner
+  0.4.718.1) the failed flags-7 case of read-tail attempt 1
+  (`20261014-225145-1a23c9a759e44d0e994ec22e0e1e6c0a`) was restored by normal
+  cleanup with readback 15/15, and an owned coordinator
+  (`20261015-003812-8f5335641ca5412d88593da6e436618f`) killed with its own
+  process tree while flags were 7 was recovered by `verify-recover`: flags read back
+  15, startup profiles and the cache configuration were identical to the
+  baseline, and the recovery result was `RESTORED`. Limits: only the
+  `read-tail-decision` path was interrupted on the VM; the other flag-mutating
+  suites rely on the same shared restore code and the host contracts (nondefault
+  original 11, zero, missing and wrong readback, legacy evidence), and a run whose recovery
+  snapshot predates this fix and has no `copy-flags-original.json` still cannot be
+  reported fully restored.
 - **40,000-file read/hash time (environmental) and random-read tails
   (accepted):** on 0.4.687.1 the tree read/hash step took 154–170 s, against
   4.9 s in the 0.4.604.1 session. The complete plan-134 matrix
@@ -208,25 +218,23 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   improved every cold-random pair (p99.9 −92 to −148 ms, none above 500 ms) with
   no flag-driven control loss. The comparison used one backing-store speed; the
   pool size was not varied.
-- **Drain defaults under active background work:** existing comparisons support
-  shorter complete drainage, but timing was enabled and the foreground score
-  started before an administrative flush whose startup time varied. A timing-off
-  comparison with verified overlap between foreground I/O and default Idle
-  draining, plus a focused Strict-mode check, remains open. Plan 137 adds a
-  six-case timing-off explicit-Flush repeat with an owned worker ready/start
-  gate and timestamps around the actual driver call, plus a maintained 12-case
-  background comparison. The latter counts foreground I/O and driver drain
-  progress only within telemetry intervals no longer than 500 ms, reports the
-  maximum credited interval, then proves that default Idle draining persisted
-  the seed before explicit cleanup. Plan 138 adds `strict-impact-decision`: a
-  24-case timing-off Strict comparison of 256 KiB × 2 and 1024 KiB × 4 across
-  sequential/scattered 512 MiB seeds and application Flush/write-through
-  boundaries. It captures state, performance and barrier-counter deltas,
-  requires both intended barrier and successful Flush counters, drops clean
-  entries, then proves the oracle reached the lower device with at least 512
-  read attempts and zero QueueCache read-hit bytes. The Plan 137 and 138 suites
-  have host contracts but have not run on the VM; this diagnostic does not
-  change Strict behavior or defaults.
+- **Drain defaults under active background work (foreground interference and
+  Strict impact unmeasured):** the 1024 KiB × 4 default is qualified only for
+  explicit drain time: the timing-off, ready/start-gated `drain-flush-decision`
+  run `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f` flushed a 512 MiB seed in
+  a median 8.0 s against 12.7 s, every pair better. The two suites meant to show
+  foreground interference and Strict-mode cost each failed twice at case 1 and
+  produced no measurement. `drain-overlap-decision` cannot seed its 75% backlog
+  under the default Idle options (the 5-second age drains it mid-seed: about 61 MB
+  and 238 lower writes in the second attempt) and cannot seed under held-off
+  options and then switch, because the driver refuses an options change while the
+  cache is enabled or dirty. `strict-impact-decision` cannot hold a 512 MiB dirty
+  backlog in Strict mode on NTFS: 2 application flushes and 1 write-through write
+  from the filesystem drained 280,502,272 of 536,890,368 seeded bytes during the
+  seed. Run IDs and counters are in [performance findings](PERFORMANCE_FINDINGS.md).
+  Neither suite should be rerun until its seed is redesigned (or the driver
+  supports an option change while dirty); the Strict result is the known
+  whole-cache barrier behaviour (#16), not a measured regression of the defaults.
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
   fix build. Existing 0.4.604.1 and competitor results remain historical and do
   not establish the newer build's crash behavior.

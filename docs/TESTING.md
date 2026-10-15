@@ -125,8 +125,8 @@ ones in use:
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle after a stable clean-cache wait; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
-| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only |
-| `strict-impact-decision` | Strict-mode application Flush and write-through boundaries after sequential and scattered 512 MiB dirty seeds; 256 KiB × 2 and 1024 KiB × 4, three rotated repetitions (24 cases) | Timing OFF; age-only Deferred scheduling prevents incidental Idle drains; scattered 1 MiB blocks span a prepared 4 GiB file; requires the intended barrier and successful Flush counters, drops clean entries before the oracle, then requires at least 512 lower-read attempts and zero QueueCache read-hit bytes; collection only |
+| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only. **Failed twice on the VM at its seed (see below); do not run until redesigned** |
+| `strict-impact-decision` | Strict-mode application Flush and write-through boundaries after sequential and scattered 512 MiB dirty seeds; 256 KiB × 2 and 1024 KiB × 4, three rotated repetitions (24 cases) | Timing OFF; age-only Deferred scheduling prevents incidental Idle drains; scattered 1 MiB blocks span a prepared 4 GiB file; requires the intended barrier and successful Flush counters, drops clean entries before the oracle, then requires at least 512 lower-read attempts and zero QueueCache read-hit bytes; collection only. **Failed twice on the VM at its first seed (filesystem barriers drain the Strict backlog); do not run until redesigned** |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -315,6 +315,13 @@ filesystem metadata was still dirty when the configured snapshot was taken. The
 Strict seed worker now also flushes before capturing its baseline, as the drain
 seed already did.
 
+VM status: `drain-flush-decision` completed (`20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`).
+`drain-overlap-decision` failed twice at case 1: after the quiet-wait fix its seed is
+rejected because the default Idle options' 5-second age drains a seed that takes
+longer than 5 seconds, and the driver refuses to change options while the cache is
+enabled or dirty, so the backlog cannot be seeded held-off and then released. The
+suite needs a redesigned seed before it can run.
+
 Both reports are collection-only. Read `drain-flush-summary.md` and
 `drain-overlap-summary.md` only after their respective complete matrices, and
 compare paired cases plus raw worker, telemetry and byte-oracle evidence. The
@@ -360,8 +367,16 @@ qcache developer verify Q: --suite strict-impact-decision --budget-mib 2048 --re
 
 The complete report is `strict-impact-summary.md`; per-case raw snapshots,
 derived deltas, worker identity and oracle evidence are retained in the run
-folder. Inspect all 24 paired samples. No VM results are implied by adding the
-suite or passing its host contracts.
+folder. Inspect all 24 paired samples.
+
+VM status: this suite failed twice at its first seed and has no results. In the
+second attempt (`20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861`) the
+rejection named the moved counters: 2 application flushes, 1 write-through write
+(2 application and 1 Strict write barriers) drained 280,502,272 of 536,890,368
+seeded bytes. The seed worker opens its file without write-through and never
+flushes, so Strict mode on NTFS cannot hold a 512 MiB dirty backlog between
+filesystem-issued barriers. The check is correct to reject such a seed; the suite
+needs a redesigned seed before it can run.
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a
