@@ -66,6 +66,16 @@ internal static class VerificationCommands
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
                                  256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
                                  Requires DiskSpd.
+              drain-flush-decision Timed Flush of a deterministic 512 MiB dirty seed: 256 KiB x 2 versus 1024 KiB x 4.
+                                 Timing off, owned ready/start handshake and persisted-byte oracle; six cases.
+                                 --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
+              tree-decision      Seeded 40,000-file / 1.2 GiB create/copy/read/hash/delete comparison: cache-off and
+                                 flags 7/15 at 256 KiB x 2 / 1024 KiB x 4; three rotated repetitions (15 cases).
+                                 Phase memory/lower-I/O snapshots, disk-idle settles and hash oracle.
+                                 Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd. Collection only.
+              read-tail-decision Same seeded 100,000 operations per case, flags 7/15: cold/resident reads and fitting writes.
+                                 p50/p99/p99.9/max, exact latency threshold counts and durable write-byte oracle; 24 cases.
+                                 Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
