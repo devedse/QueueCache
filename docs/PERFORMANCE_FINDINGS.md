@@ -1,7 +1,7 @@
 # QueueCache performance findings
 
 This is the consolidated reference for performance findings and decisions from
-the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-14.
+the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-15.
 Read it before proposing another experiment. Detailed methods and raw-evidence
 identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
@@ -30,18 +30,22 @@ dropped by the owner.
 The maintained single-command campaign and durable completion event are
 implemented (plan 119, including the one-phase `experiment` profile).
 
-**Competitor comparison and fix qualification (2026-10-14).** QueueCache leads cached reads and
+**Competitor comparison and fix qualification (2026-10-15).** QueueCache leads cached reads and
 single-program RAM-disk reads, but the comparison with the bare disk and
 PrimoCache found three cache weaknesses: read misses do not overlap (#14), the drain
 writes small pieces (#15), and Strict stalls all writes behind whole-cache
 drains (#16).
 The fix branch has completed its correctness and concurrency checks. Same-build
-miss offload improves cold random/sequential throughput 9.4×/3.35× with better
-p99, though random worst latency increases. Larger drain batches and four
+miss offload improves cold random/sequential throughput 9.95×/3.13× in the latest
+controlled repeat, with better p99. The earlier equal-work comparison also
+improved cold-random latency tails. Larger drain batches and four
 drainers improve the cold-read target and repeated write-drain times. Fixed-window
 foreground write IOPS are not qualified as invariant. The final release campaign
-completed all 11 phases; the refreshed generic cached-volume and empty-cache
-comparisons are also complete. Real CrystalDiskMark captures are recorded
+completed all 11 phases on October 14; the October 15 environment repeat stopped
+incomplete at 8/11 phases on a RAM-only guard. Its unchanged nine-case map-cost
+repeat completed separately, without reproducing that failure. The earlier
+refreshed generic cached-volume and empty-cache comparisons remain complete.
+Real CrystalDiskMark captures are recorded
 separately in the README.
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
 
@@ -345,7 +349,7 @@ Consequently these IOPS values do not qualify general foreground throughput or
 an invariant write control; the raw drops remain recorded. No capacity waits
 occurred. Retain 1024 KiB × 4 for the repeated drain-time improvement, with this
 measurement limit and the unchanged explicit-flush blocking behavior. Final
-product-default release checks are complete below; comparison refresh remains required.
+product-default release checks and the historical generic comparison refresh are recorded below. A new competitor refresh is not required for these focused checks.
 
 **Explicit-drain comparison, timing off (plan 142, 2026-10-15).** The complete
 6/6 `drain-flush-decision` run `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`
@@ -372,8 +376,8 @@ result (6.52 → 3.86 s). Only explicit drain time is qualified by this run.
 comparison with Defender/Search disabled stopped at case 1 and case 5
 (`20261015-152403-4df1148acefc487cb8f8585f98016874` and
 `20261015-152550-f94d0a83a1094d84a17d653575ea537b`). The first admitted another
-12 KiB between the seed snapshot and Flush; the second admitted 8 KiB after the
-Flush, leaving a dirty end snapshot. Both restored without driver errors;
+12 KiB between the seed snapshot and Flush; the second had another 8 KiB
+accepted and dirty in the post-Flush snapshot. Both restored without driver errors;
 neither supplies a complete performance result. The source of these writes was
 not traced. Plan 145 keeps the writable seed handle open in the timed worker
 until its Flush/end-state snapshots finish, moving handle closure outside the
@@ -382,9 +386,11 @@ backlog, lower-I/O, health, clean-end and byte-oracle checks remain required.
 Evidence must explicitly confirm the held handle; older evidence cannot be
 accepted under that contract. Its VM run
 `20261015-154542-30466d022cae4ed4bd7a351f60a3d451` also stopped at case 1:
-4 KiB was admitted after Flush and remained dirty, despite the held handle.
-The exact seeded backlog drained and there were no driver errors, but the clean
-end-state contract was not met. Restoration succeeded. Holding the file open
+The post-Flush snapshot had another 4 KiB accepted and dirty, despite the held
+handle. The drained-byte counter advanced by the recorded backlog size and there
+were no driver errors, but the clean end-state contract was not met. The failed
+case did not reach its byte oracle; these counters do not prove its contents or
+the precise arrival time/source of the extra write. Restoration succeeded. Holding the file open
 therefore did not solve the fixture interference; plan 146 removes that change
 and restores the original measurement. All three incomplete runs are excluded
 from aggregates. No further fixture redesign is part of this focused task;
@@ -415,6 +421,25 @@ Fixed-window random maxima were 111.543 / 175.209 ms, sequential maxima
 100,000-operation comparison above addresses equal-work tails. Absolute scores
 across sessions cannot isolate an effect from disabling Defender/Search or a
 new driver speedup. This repeat confirms the existing #14 improvement.
+
+**New-environment release campaign (2026-10-15, incomplete).** Controller
+0.4.730.1 (`d1cf8d2`, plan 146), unchanged native 0.4.687.1 and pinned DiskSpd
+ran `release-performance` in
+`20261015-160320-a9813078abb44a13acb482133b8f53b4`. The first eight phases
+completed, including all 12 recall cases and six five-minute sustained cases.
+Map-cost case `0007-r3-random-read-s1-q8-drainFalse-map0` then failed the RAM-only
+guard: six lower reads / 4,608 miss bytes, zero lower writes/flushes, zero drained
+bytes and zero driver errors. Hit bytes increased by 15,433,596,928 against
+15,433,564,160 scored bytes. The first extra read was observed about five seconds
+into the score. This is consistent with metadata activity, but its source was
+not traced; it is not a passing RAM-only window. The campaign stopped at 8/11
+phases / 31 recorded cases and restored successfully. No complete campaign
+performance verdict or aggregate is produced. A focused unchanged map-cost
+repeat completed all nine cases in
+`20261015-173103-968c4d0558e14a24ad3a223508cfacf0` and restored, without changing
+the guard or reproducing the lower reads. This does not identify their source.
+The remaining write/fault suites are being run separately; they cannot turn
+this campaign into a completed one.
 
 **Foreground interference and Strict impact: not measured (plans 142/143; suites
 removed).** The two suites meant to answer these questions each failed twice at
@@ -607,10 +632,28 @@ and the measurement could not separate the missing Defender state.
 **Later environment change (2026-10-15).** At the owner's request, the dedicated
 test VM now has Defender Antivirus and Windows Search indexing disabled as its
 persistent baseline; the effective-state checks are in [TESTING.md](TESTING.md).
-No performance workload was run for this administration change. The 164.2 s
-observation above remains a Defender-enabled diagnostic, and no Defender-off
-after-time or new driver speedup is established. Any refreshed README or product
-comparison must use matched measurements under the new recorded environment.
+No performance workload was run during that administration change. A subsequent
+single current-settings `tree-decision` observation completed on controller
+0.4.728.1 (`cfd0713`) and unchanged native 0.4.687.1:
+`20261015-155033-d0d1032a62954ca7be893e4f6ce05e66`, case
+`tree-r01-p05-flags15-b1024-p4`. All 40,000 files / 1,290,078,507 payload bytes
+passed the hash oracle and the original runtime settings/flags were restored.
+
+| Phase | Defender-active diagnostic, seconds | Disabled-baseline observation, seconds |
+|---|---:|---:|
+| Create | 57.2 | 8.691 |
+| Copy | 17.4 | 9.346 |
+| Read/hash | 164.2 | 6.857 |
+| Delete | 41.7 | 40.971 |
+
+The current after-create/copy settles lasted 161.3 / 170.4 seconds and observed
+disk idle. Read/hash added 1,300,009,984 cache-hit bytes with zero lower
+read/write/flush attempts, whereas the earlier diagnostic stayed in the Windows
+file cache. This is one observation in a changed environment/cache path, not a
+complete paired matrix, an isolated Defender percentage, a new driver speedup or
+a replacement for historical product/CrystalDiskMark scores. It is consistent
+with removal of the previously observed scanning cost. The 164.2-second figure
+remains a diagnostic with observer overhead.
 
 Power loss (VM reset 0.03 s after a write test): flushed and earlier raw data
 survived for every product. New unflushed small files: bare disk 698 missing and
@@ -1479,8 +1522,8 @@ runs that found and fixed the issues described under
 | Missing-span reads | Not built: overlap 0.788% / 0.449% of lower traffic in churn. | Representative evidence of material waste. |
 | Low-priority cache slowdown | Benchmark-setup effect; launch benchmarks at normal priority (Task Scheduler priority 4). | An observed normal-priority problem. |
 | 100 ms map refresh cost | Not measured further at the owner's request; native map reads take milliseconds. | Owner request. |
-| Read misses one at a time | **Qualified for throughput, p99 and equal-work tails** (plans 131/132/141, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated, every cold p99 improved. The 568.7 ms fixed-window maximum is not reproduced with equal work: the complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2` improved every cold-random pair (+541% to +617% IOPS, p99.9 −92 to −148 ms, no operation above 500 ms) and showed no flag-driven control loss (resident differences follow run order). Both arms use the new pool and queue order; the pool size was not varied. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; a backing store with a different latency profile; evidence that the 16-thread pool starves another workload. |
-| 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15), with no new tree timing yet. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
+| Read misses one at a time | **Qualified for throughput, p99 and equal-work tails** (plans 131/132/141, issue #14): arrival order retained, ordinary misses offloaded; latest October 15 same-build repeat: cold random 9.95×, sequential 3.13×, all pairs up and ranges separated, every cold p99 improved, no resident pair loses 3%. The 568.7 ms fixed-window maximum is not reproduced with equal work: the complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2` improved every cold-random pair (+541% to +617% IOPS, p99.9 −92 to −148 ms, no operation above 500 ms) and showed no flag-driven control loss (resident differences follow run order). Both arms use the new pool and queue order; the pool size was not varied. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; a backing store with a different latency profile; evidence that the 16-thread pool starves another workload. |
+| 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15); one subsequent observation completed read/hash in 6.86 s with every hash verified. The cache path also changed, so this is not an isolated driver gain or a complete matrix. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
 | Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |

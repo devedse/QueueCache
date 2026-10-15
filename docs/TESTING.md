@@ -270,8 +270,10 @@ about the same with the cache off. To attribute such a result, observe an
 otherwise unchanged case with `New-MpPerformanceRecording` / `Get-MpPerformanceReport`
 and per-process CPU time. That diagnosis used Defender enabled. The dedicated
 VM now uses the disabled baseline in section 2; a new measurement must identify
-that environment and keep it fixed across every arm. No tree timing has yet been
-collected under the new baseline.
+that environment and keep it fixed across every arm. One current-settings
+observation under the new baseline read/hashed the files in 6.86 seconds with
+the hash oracle passing; it is not a complete matrix. Details and limits are in
+[performance findings](PERFORMANCE_FINDINGS.md).
 
 Plan 135 adds `read-tail-decision` for equal-operation latency comparisons. It
 uses the same 100,000-operation address sequence for each repeated arm, reports
@@ -324,6 +326,12 @@ first seed on the VM and were removed. Their run IDs, counters and reasons are i
 [performance findings](PERFORMANCE_FINDINGS.md).
 
 A campaign folder holds one child run per phase plus `completion.json`.
+When copying a campaign from Windows, verify every file against a guest-side
+SHA-256 manifest. A plain recursive SFTP copy omitted long case filenames in the
+nested campaign output while returning success. Archive using Windows extended
+paths (`\\?\`) and verify the archive entries/hashes after extraction; a
+successful transfer exit alone does not prove that the evidence is complete.
+
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a
 run without touching the driver. Never combine incomplete repetitions into a
 result. If restoration fails, stop: check the recorded owned processes have

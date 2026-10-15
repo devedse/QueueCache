@@ -97,7 +97,9 @@ QueueCache 0.4.687.1 (2026-10-14); RAM disk column: QueueCache 0.4.583.1 (2026-1
 | Random 4K write (RND4K Q1T1) | 4.7 | 1,029 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data already
-in its cache. Ordinary read misses spanning at most 256 cache blocks can now
+in its cache. These CrystalDiskMark scores retain their original sessions;
+the issue-fix checks below use separate workloads.
+Ordinary read misses spanning at most 256 cache blocks can now
 overlap. A same-build comparison on 0.4.687.1 with Defender/Search disabled
 measured 9.95× cold random and 3.13× cold sequential throughput, with every cold
 p99 improving and no repeated resident-control loss. That fixed-duration screen observed random-read

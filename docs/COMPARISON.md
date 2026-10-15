@@ -57,6 +57,27 @@ Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram
 [Power cut while the cache is writing](#power-cut-while-the-cache-is-writing) ·
 [Results per tool](#results-per-tool) · [Not tested](#not-tested) · [How this was measured](#how-this-was-measured)
 
+## Focused fix checks (2026-10-15)
+
+These checks use the unchanged 0.4.687.1 native driver with Defender/Search
+disabled. Read/drain pairs change only miss offload or drain settings within
+each session. The earlier read screen used 0.4.685.1; these are controlled
+behavior comparisons, rather than a rerun of every historical product workload.
+The generic product and CrystalDiskMark rows below retain their original scores.
+
+| Check | Earlier observation | Current observation | What it establishes |
+|---|---|---|---|
+| Cold random 4 KiB Q32, offload off → on | 10.435 → 98.054 MiB/s | 8.802 → 87.568 MiB/s | 9.95× current gain; all three pairs improve throughput and p99, ranges separate. |
+| Cold sequential 1 MiB Q8, offload off → on | 340.500 → 1140.580 MiB/s | 310.095 → 970.115 MiB/s | 3.13× current gain; all three pairs improve throughput and p99, ranges separate. |
+| Cached random / sequential controls | −0.17% / +0.40% | −0.23% / −0.58% | No current pair loses 3%; all resident controls have zero misses/lower reads. |
+| Explicit Flush of 512 MiB, 256 KiB × 2 → 1024 KiB × 4 | 12.713 → 8.012 seconds, complete three pairs | Incomplete: late small writes invalidate start/end evidence | Earlier 37% less drain time remains qualified; no accepted current aggregate. A held-handle fixture attempt also failed and was removed. |
+| 40,000-file read/hash | 164.2 seconds with Defender active, diagnostic | 6.857 seconds with Defender/Search disabled, one observation | Hash oracle passes; consistent with removing scan overhead. Different date/cache path, not an isolated driver gain or full matrix. |
+| General foreground interference / Strict impact | Unqualified | Unqualified | Existing limits remain open. |
+
+The read repeat completed 24/24 cases and restored. The one-case tree observation
+also restored; incomplete drain runs are excluded from aggregates. Exact runs,
+methods and limits are in [performance findings](PERFORMANCE_FINDINGS.md).
+
 ## Problems found
 
 Failed runs, data loss and other problems worth knowing. They are also marked in the Problems column of both

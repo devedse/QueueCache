@@ -107,14 +107,25 @@ cache or a disk.
 ## Fix branch verification (#14 / #15)
 
 The new Defender/Search-off explicit-drain repeat stopped on late small writes
-outside the recorded seed (12 KiB before Flush, and 8 KiB after Flush in two
-incomplete runs); both restored without driver errors. Plan 145 keeps the seed
+outside the recorded seed (12 KiB before Flush, and 8 KiB dirty in the post-Flush
+snapshot in two incomplete runs); both restored without driver errors. Plan 145 tried keeping the seed
 file handle open through the timed Flush and end snapshots, preserving the
-existing evidence guards. It also failed at case 1 when another 4 KiB arrived
-after Flush. The seeded backlog drained without driver errors and restoration
-succeeded; the late write's source is untraced. Plan 146 removes the ineffective
+existing evidence guards. It also failed at case 1 with another 4 KiB dirty in
+the post-Flush snapshot. The drained-byte counter advanced by the seeded amount
+without driver errors and restoration succeeded; the failed case did not reach
+its byte oracle. The extra writes' precise arrival time/source is untraced. Plan 146 removes the ineffective
 held-handle change. The new environment has no complete drain comparison;
 the earlier accepted 512 MiB result (12.7 → 8.0 s) remains historical evidence.
+
+The new-environment release campaign also stopped incomplete at 8/11 phases
+in map-cost case 7/9: six lower reads / 4,608 miss bytes appeared in a RAM-only
+window, with all scored bytes covered by hit accounting and no driver errors,
+writes, flushes or draining. The source is untraced; this remains a failed guard,
+not a qualified RAM-only result. The first eight phases, including all six
+sustained segments, completed; campaign restoration succeeded. An unchanged
+nine-case map-cost repeat completed and restored without reproducing the lower
+reads; their source remains unknown. Standalone checks do not replace a complete
+campaign result.
 
 The branch overlaps ordinary read misses, preserves each read's exact original
 pin identities, and uses 1024 KiB × 4 drain defaults for new tasks. Saved profiles
@@ -221,8 +232,10 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   151.6 s). This is attributed to the environment, not the driver; Defender was
   left enabled for that measurement. The owner subsequently requested a
   persistent Defender-off and Search-off baseline on the dedicated test VM
-  (2026-10-15; see [testing](TESTING.md)); no tree timing has been collected under
-  that baseline. It is not known why the 0.4.604.1 session did not pay that cost,
+  (2026-10-15; see [testing](TESTING.md)). A single current-settings observation
+  (`20261015-155033-d0d1032a62954ca7be893e4f6ce05e66`) completed read/hash in
+  6.86 seconds with every hash verified and clean restoration. It is not a full
+  matrix or an isolated driver gain. It is not known why the 0.4.604.1 session did not pay that cost,
   because comparison environment records do not capture Defender state. A tree
   step in a Defender-scanned location is dominated by antimalware time and says
   nothing about the cache. The same-build cold miss-offload screen's 568.7 ms
