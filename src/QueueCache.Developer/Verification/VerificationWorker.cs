@@ -22,7 +22,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
     bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
     long? DrainSeedBytes = null, string? StartFile = null,
-    string? ProcessEvidence = null, StrictImpactCase? StrictImpactCase = null);
+    string? ProcessEvidence = null);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
@@ -1067,27 +1067,6 @@ public static class VerificationWorker
                     Path.Combine(job.WorkDirectory!, "drain.dat"), seedBytes,
                     checked((int)job.Value));
                 break;
-            case "prepare-strict-impact":
-                var impactDirectory = Path.GetFullPath(job.WorkDirectory ?? throw new ArgumentException("Strict-impact workload directory is required."));
-                var targetRoot = Path.GetFullPath(target.Root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-                if (!impactDirectory.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase) || Directory.Exists(impactDirectory))
-                    throw new IOException("Strict-impact workload directory must be a new directory on the selected data volume.");
-                if (new DriveInfo(target.Root).AvailableFreeSpace < StrictImpactDecision.PreparedFileBytes + (1L << 30))
-                    throw new IOException("Strict-impact preparation requires its 4 GiB file plus 1 GiB of target-volume headroom.");
-                Directory.CreateDirectory(impactDirectory);
-                var impactPath = Path.Combine(impactDirectory, "writer.dat");
-                var impactBlock = new byte[StrictImpactDecision.SeedBlockBytes];
-                new Random(0x51C7_138).NextBytes(impactBlock);
-                using (var impactFile = new FileStream(impactPath, FileMode.CreateNew, FileAccess.Write,
-                    FileShare.Read, StrictImpactDecision.SeedBlockBytes, FileOptions.SequentialScan))
-                {
-                    for (var offset = 0L; offset < StrictImpactDecision.PreparedFileBytes; offset += impactBlock.Length)
-                        await impactFile.WriteAsync(impactBlock);
-                    impactFile.Flush(true);
-                }
-                result = new { Directory = impactDirectory, File = impactPath,
-                    Bytes = new FileInfo(impactPath).Length, SeedBlockBytes = impactBlock.Length };
-                break;
             case "verify-drain":
                 var verifyBytes = checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20))));
                 DrainDecisionScenarios.VerifyDirtySet(
@@ -1095,36 +1074,13 @@ public static class VerificationWorker
                     checked((int)job.Value));
                 result = new { Seed = job.Value, Bytes = verifyBytes, Verified = true };
                 break;
-            case "strict-impact-seed":
-                var impactSeedCase = job.StrictImpactCase ?? throw new ArgumentException("Strict-impact seed is missing its immutable case.");
-                result = StrictImpactDecision.Seed(impactSeedCase,
-                    WorkloadFile(target, job.WorkDirectory, "writer.dat"), device);
-                break;
-            case "strict-impact-verify":
-                var impactVerifyCase = job.StrictImpactCase ?? throw new ArgumentException("Strict-impact oracle is missing its immutable case.");
-                result = StrictImpactDecision.VerifySeed(impactVerifyCase,
-                    WorkloadFile(target, job.WorkDirectory, "writer.dat"));
-                break;
-            case "strict-impact-boundary":
-                var impactBoundaryCase = job.StrictImpactCase ?? throw new ArgumentException("Strict-impact boundary is missing its immutable case.");
-                result = await RunStrictImpactBoundary(impactBoundaryCase,
-                    WorkloadFile(target, job.WorkDirectory, "writer.dat"), device,
-                    job.ReadyFile ?? throw new ArgumentException("Strict-impact boundary requires a ready-file path."),
-                    job.StartFile ?? throw new ArgumentException("Strict-impact boundary requires a start-file path."));
-                break;
             case "prepare":
                 var directory = Path.GetFullPath(job.WorkDirectory!);
                 if (!directory.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(directory))
                     throw new IOException("Workload directory must be a new directory on the selected volume.");
                 // Value 1 adds stream files; 2 prepares recall files; 3 only the caller experiment's fitting file.
-                var defaultDrainMiB = job.BudgetMiB / 4;
-                var requestedDrainMiB = job.DrainSeedBytes is { } requestedDrainBytes
-                    ? checked((int)(requestedDrainBytes / (1 << 20))) : defaultDrainMiB;
-                if (requestedDrainMiB < defaultDrainMiB || job.DrainSeedBytes is { } unaligned && unaligned % (1 << 20) != 0)
-                    throw new ArgumentException("Requested drain seed file must be a whole-MiB size no smaller than the suite default.");
                 var requiredMiB = job.Value == 3 ? job.BudgetMiB / 2L + 1024 :
                     (long)job.BudgetMiB * (job.Value is 1 ? 5 : job.Value is 2 ? 4 : 3) + 1024;
-                requiredMiB = checked(requiredMiB + requestedDrainMiB - defaultDrainMiB);
                 if (new DriveInfo(target.Root).AvailableFreeSpace < requiredMiB * 1024 * 1024)
                     throw new IOException("Insufficient free space for unique workloads and headroom.");
                 Directory.CreateDirectory(directory);
@@ -1134,7 +1090,7 @@ public static class VerificationWorker
                     ? CacheExercisePlan.Targets(job.BudgetMiB, 1).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
                     : job.Value == 2
                     ? CacheExercisePlan.RecallTargets(job.BudgetMiB).Select(file => (Name: file.Name, Length: file.MiB)).ToList()
-                    : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", requestedDrainMiB), ("flush.dat", 1) };
+                    : new List<(string Name, int Length)> { ("hot.dat", job.BudgetMiB / 4), ("writer.dat", job.BudgetMiB * 2), ("resident.dat", job.BudgetMiB / 2), ("drain.dat", job.BudgetMiB / 4), ("flush.dat", 1) };
                 if (job.Value == 1)
                     workloadFiles.AddRange(CacheExercisePlan.AllTargets(job.BudgetMiB).Select(file => (file.Name, file.MiB)));
                 foreach (var (name, length) in workloadFiles)
@@ -1218,43 +1174,6 @@ public static class VerificationWorker
         }
         RunStorage.AtomicJson(job.Reply, result);
         return 0;
-    }
-
-    private static async Task<StrictImpactBoundaryControlResult> RunStrictImpactBoundary(
-        StrictImpactCase test, string path, CacheDevice device, string readyPath, string startPath)
-    {
-        StrictImpactDecision.ValidateCase(test);
-        var overwriteOffset = test.Boundary == StrictImpactDecision.WriteThrough
-            ? StrictImpactDecision.SeedOffset(test, 0) : -1;
-        using var file = test.Boundary == StrictImpactDecision.ApplicationFlush
-            ? new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read,
-                4096, FileOptions.None)
-            : test.Boundary == StrictImpactDecision.WriteThrough
-                ? new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read,
-                    1, FileOptions.WriteThrough)
-                : throw new InvalidDataException("Unknown Strict-impact boundary.");
-        if (test.Boundary == StrictImpactDecision.WriteThrough)
-            file.Position = overwriteOffset;
-
-        var before = StrictImpactDecision.Capture(device);
-        StrictImpactDecision.ValidateSnapshot(before, test, before.State.Instance, before.State.Errors);
-        if (before.State.DirtyBytes < (ulong)StrictImpactDecision.SeedPayloadBytes || before.State.InFlightBytes != 0)
-            throw new IOException("Strict-impact ready/start worker did not observe the complete dirty seed before its boundary.");
-        RunStorage.AtomicJson(readyPath, new { Ready = true, At = DateTimeOffset.UtcNow });
-        while (!File.Exists(startPath))
-            await Task.Delay(20);
-
-        var enteredUtc = DateTimeOffset.UtcNow;
-        var started = Stopwatch.GetTimestamp();
-        if (test.Boundary == StrictImpactDecision.ApplicationFlush)
-            file.Flush(true);
-        else
-            await file.WriteAsync(StrictImpactDecision.WriteThroughPayload());
-        var elapsedTicks = Stopwatch.GetTimestamp() - started;
-        var completedUtc = DateTimeOffset.UtcNow;
-        var after = StrictImpactDecision.Capture(device);
-        return new(test.Boundary, overwriteOffset, enteredUtc, completedUtc,
-            elapsedTicks, Stopwatch.Frequency, before, after);
     }
 
     private static string WorkloadFile(DiskTarget target, string? workDirectory, string fileName)

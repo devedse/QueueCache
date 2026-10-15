@@ -125,8 +125,6 @@ ones in use:
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle after a stable clean-cache wait; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
-| `drain-overlap-decision` | Random 4 KiB writes and cold random 4 KiB reads at 256 KiB × 2 and 1024 KiB × 4, three alternated paired repetitions (12 cases) | 75% dirty seed in a 2 GiB Fast cache; timing OFF; requires at least 1 MiB of foreground I/O and background drain progress co-observed in telemetry intervals no longer than 500 ms, and reports the maximum credited interval (ordering within an interval is unresolved); records a clean Idle snapshot before disabling the cache, then checks the seed with unbuffered reads without an explicit Flush; collection only. **Failed twice on the VM at its seed (see below); do not run until redesigned** |
-| `strict-impact-decision` | Strict-mode application Flush and write-through boundaries after sequential and scattered 512 MiB dirty seeds; 256 KiB × 2 and 1024 KiB × 4, three rotated repetitions (24 cases) | Timing OFF; age-only Deferred scheduling prevents incidental Idle drains; scattered 1 MiB blocks span a prepared 4 GiB file; requires the intended barrier and successful Flush counters, drops clean entries before the oracle, then requires at least 512 lower-read attempts and zero QueueCache read-hit bytes; collection only. **Failed twice on the VM at its first seed (filesystem barriers drain the Strict backlog); do not run until redesigned** |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
@@ -284,99 +282,27 @@ This suite records evidence and does not declare a latency SLA or performance
 win. Compare each paired repetition and inspect its full samples and cache
 counters; do not infer threshold counts from percentiles.
 
-Plan 137 separates explicit-flush duration from foreground interference. First,
-`drain-flush-decision` compares the former 256 KiB × 2 setting with 1024 KiB × 4
-for a deterministic 512 MiB dirty seed. An owned worker is ready before the
-coordinator releases it, and duration starts immediately before the driver's
-Flush call. Timing diagnostics stay off; the run records drain batches/bytes,
-lower write/flush attempts, and verifies the persisted seed:
+Plan 137 adds `drain-flush-decision`, which compares the former 256 KiB × 2
+setting with 1024 KiB × 4 for the explicit-flush time of a deterministic 512 MiB
+dirty seed. An owned worker is ready before the coordinator releases it, and
+duration starts immediately before the driver's Flush call. Timing diagnostics
+stay off; the run records drain batches/bytes, lower write/flush attempts, and
+verifies the persisted seed:
 
 ```powershell
-qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --output C:\QCResults\drain-flush-decision
+qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 900 --output C:\QCResults\drain-flush-decision
 ```
 
-Then `drain-overlap-decision` measures foreground random writes and cold random
-reads while the default Idle policy drains. It seeds 75% of the 2 GiB Fast
-cache, waits for real drain progress, and requires at least 1 MiB of foreground
-and drain progress co-observed within credited telemetry intervals no longer
-than 500 ms. It reports the maximum credited interval; ordering within an
-interval remains unresolved. It records a clean Idle snapshot
-before disabling the cache, then checks the seed with unbuffered reads without
-an explicit Flush between those steps. All 12 cases use the same DiskSpd binary,
-whose hash is recorded:
+The report is collection-only. Read `drain-flush-summary.md` only after the
+complete six-case matrix, and compare paired cases plus raw worker, telemetry
+and byte-oracle evidence. The general `SUMMARY.md` links to an aggregate only for
+a complete matrix. The VM result is `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`.
 
-```powershell
-qcache developer verify Q: --suite drain-overlap-decision --budget-mib 2048 --repeats 3 --diskspd "C:\Tools\DiskSpd\amd64\diskspd.exe" --output C:\QCResults\drain-overlap-decision
-```
-
-Plan 143 adds the same bounded quiet-cache wait to the start of each overlap and
-Strict-impact case: the first overlap attempt stopped at case 1 because 20 KiB of
-filesystem metadata was still dirty when the configured snapshot was taken. The
-Strict seed worker now also flushes before capturing its baseline, as the drain
-seed already did.
-
-VM status: `drain-flush-decision` completed (`20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`).
-`drain-overlap-decision` failed twice at case 1: after the quiet-wait fix its seed is
-rejected because the default Idle options' 5-second age drains a seed that takes
-longer than 5 seconds, and the driver refuses to change options while the cache is
-enabled or dirty, so the backlog cannot be seeded held-off and then released. The
-suite needs a redesigned seed before it can run.
-
-Both reports are collection-only. Read `drain-flush-summary.md` and
-`drain-overlap-summary.md` only after their respective complete matrices, and
-compare paired cases plus raw worker, telemetry and byte-oracle evidence. The
-general `SUMMARY.md` links to an aggregate only for a complete matrix.
-
-Plan 138 adds `strict-impact-decision` to characterize the open Strict durability
-barrier cost without changing driver behavior or defaults. It compares 256 KiB ×
-2 with 1024 KiB × 4 across sequential/scattered seeds and application Flush/write-
-through boundaries, with three rotated repetitions (24 cases). Each case seeds
-exactly 512 MiB as 512 deterministic 1 MiB blocks. Scattered blocks are placed
-every 8 MiB from 7 MiB through the end of a fully prepared 4 GiB file, so the
-seed spans the file rather than merely changing submission order. All other
-settings are held fixed in Strict mode. The age-only Deferred scheduler with a
-one-hour dirty age suppresses incidental idle drains in every arm; explicit
-durability barriers still drain normally. Driver timing diagnostics remain OFF.
-
-The owned boundary worker opens the file and captures its baseline before the
-ready/start gate, then uses Stopwatch around the actual application Flush or a
-write-through overwrite of one complete seeded 1 MiB block. The runner requires
-the matching ApplicationBarriers or StrictWriteBarriers counter and the
-successful Flush counter to advance, and the cache to be clean. It then drops
-clean entries while Strict mode remains enabled, snapshots the cache, and runs
-the unbuffered oracle. The oracle must account for at least 512 lower-read
-attempts with no QueueCache read-hit bytes, so retained clean writes cannot
-silently satisfy the byte check from RAM. It checks the newest overwritten
-block plus all other seeded blocks; disabling or cleanup cannot make a failed
-boundary pass. State, performance and diagnostic snapshots and their deltas are
-retained for seed admission, the boundary and the oracle. The suite accepts no
-case filter and reports collection only, not a speed verdict or Strict-mode
-recommendation.
-
-The suite writes 4 GiB once during preparation, then performs 12 GiB of total
-seed writes and 12 GiB of unbuffered oracle reads across its 24 cases. It needs
-at least 5 GiB free on a clean non-OS target. Seed, boundary and oracle workers
-have 600-second limits; the overall run has no deadline unless
-`--deadline-minutes` is supplied. Existing Strict measurements include a 12.6 s
-flush of 512 MiB and random-write drain rates near 10 MiB/s, so allow for a long
-run and preserve incomplete evidence rather than aggregating partial cases.
-
-```powershell
-qcache developer verify Q: --suite strict-impact-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 600 --output C:\QCResults\strict-impact-decision
-```
-
-The complete report is `strict-impact-summary.md`; per-case raw snapshots,
-derived deltas, worker identity and oracle evidence are retained in the run
-folder. Inspect all 24 paired samples.
-
-VM status: this suite failed twice at its first seed and has no results. In the
-second attempt (`20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861`) the
-rejection named the moved counters: 2 application flushes, 1 write-through write
-(2 application and 1 Strict write barriers) drained 280,502,272 of 536,890,368
-seeded bytes. The seed worker opens its file without write-through and never
-flushes, so Strict mode on NTFS cannot hold a 512 MiB dirty backlog between
-filesystem-issued barriers. The check is correct to reject such a seed; the suite
-needs a redesigned seed before it can run.
+There is no maintained suite for foreground interference under default Idle
+draining or for Strict-mode barrier cost: the suites written for them
+(`drain-overlap-decision`, `strict-impact-decision`) each failed twice at their
+first seed on the VM and were removed. Their run IDs, counters and reasons are in
+[performance findings](PERFORMANCE_FINDINGS.md).
 
 A campaign folder holds one child run per phase plus `completion.json`.
 `qcache developer verify-status <run>` and `verify-completion <campaign>` read a

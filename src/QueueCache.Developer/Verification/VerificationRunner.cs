@@ -225,8 +225,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var drainFlush = DrainFlushDecision.Cases(options);
-        var drainOverlap = DrainOverlapDecision.Cases(options);
-        var strictImpact = StrictImpactDecision.Cases(options);
         var treeDecision = VerificationPlan.TreeDecision(options);
         var readTailDecision = ReadTailDecision.Cases(options);
         var integrity = VerificationPlan.Integrity(options);
@@ -234,8 +232,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         expected.AddRange(performance.Select(c => c.Id));
         expected.AddRange(drainDecision.Select(c => c.Id));
         expected.AddRange(drainFlush.Select(c => c.Id));
-        expected.AddRange(drainOverlap.Select(c => c.Id));
-        expected.AddRange(strictImpact.Select(c => c.Id));
         expected.AddRange(treeDecision.Select(c => c.Id));
         expected.AddRange(readTailDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
@@ -257,10 +253,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
         if (drainFlush.Count > 0)
             Log($"Explicit-drain comparison: fixed {DrainFlushDecision.SeedBytes} byte seed; timing diagnostics OFF; worker-ready/start handshake; timestamped Flush call; three alternated pairs.");
-        if (strictImpact.Count > 0)
-            Log($"Strict-impact matrix: {StrictImpactDecision.RequiredCases} cases; 512 MiB deterministic seeds in a prepared 4 GiB file; timing diagnostics OFF; age-only Deferred scheduling; ready/start worker times each durability boundary.");
-        if (drainOverlap.Count > 0)
-            Log($"Drain-overlap score: {options.DurationSeconds}s; default Idle triggers; timing diagnostics OFF; 75% dirty seed; at least 1 MiB verified foreground/drain progress in shared telemetry intervals.");
         if (readTailDecision.Count > 0)
             Log("Read-tail decision: 100,000 fixed operations per case; per-request latency samples and exact >50/100/250/500 ms counts; collection only.");
         storage.Write("manifest.json", new
@@ -274,11 +266,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             DrainDecisionCases = drainDecision,
             DrainFlushDecisionCases = drainFlush,
             DrainFlushSeedBytes = drainFlush.Count == 0 ? (int?)null : DrainFlushDecision.SeedBytes,
-            DrainOverlapDecisionCases = drainOverlap,
-            DrainOverlapSeedBytes = drainOverlap.Count == 0 ? (int?)null : DrainOverlapDecision.SeedBytes(options.BudgetMiB),
-            StrictImpactDecisionCases = strictImpact,
-            StrictImpactSeedBytes = strictImpact.Count == 0 ? (int?)null : StrictImpactDecision.SeedPayloadBytes,
-            StrictImpactPreparedFileBytes = strictImpact.Count == 0 ? (long?)null : StrictImpactDecision.PreparedFileBytes,
             TreeDecisionCases = treeDecision,
             ReadTailDecisionCases = readTailDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
@@ -592,26 +579,18 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 deadline.Token.ThrowIfCancellationRequested();
                 await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
             }
-            if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || drainOverlap.Count > 0 || strictImpact.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
+            if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 var preparing = Stopwatch.StartNew();
                 try
                 {
-                    if (strictImpact.Count > 0)
+                    await Worker(Job("prepare") with
                     {
-                        await Worker(Job("prepare-strict-impact") with { WorkDirectory = workDirectory }, deadline.Token, 900);
-                    }
-                    else
-                    {
-                        await Worker(Job("prepare") with
-                        {
-                            WorkDirectory = workDirectory,
-                            BudgetMiB = options.BudgetMiB,
-                            Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity" ? 3UL : 1UL,
-                            DrainSeedBytes = drainOverlap.Count == 0 ? null : DrainOverlapDecision.SeedBytes(options.BudgetMiB)
-                        }, deadline.Token, 900);
-                    }
+                        WorkDirectory = workDirectory,
+                        BudgetMiB = options.BudgetMiB,
+                        Value = exercises.Count == 0 ? 0UL : options.Suite == "cache-recall" ? 2UL : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity" ? 3UL : 1UL
+                    }, deadline.Token, 900);
                 }
                 finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }
                 foreach (var scenario in readTailDecision)
@@ -649,16 +628,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => MeasureDrainFlush(scenario, deadline.Token));
-                }
-                foreach (var scenario in drainOverlap)
-                {
-                    deadline.Token.ThrowIfCancellationRequested();
-                    await Case(scenario.Id, () => MeasureDrainOverlap(scenario, deadline.Token));
-                }
-                foreach (var scenario in strictImpact)
-                {
-                    deadline.Token.ThrowIfCancellationRequested();
-                    await Case(scenario.Id, () => MeasureStrictImpact(scenario, deadline.Token));
                 }
             }
         }
@@ -813,21 +782,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     CaseIds = group.Select(c => c.Id).ToArray()
                 }).ToArray());
         }
-        if (complete && drainOverlap.Count > 0)
-        {
-            var evidence = drainOverlap.Select(test =>
-            {
-                var row = JsonSerializer.Deserialize<DrainOverlapEvidence>(
-                    File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))
-                    ?? throw new InvalidDataException("Missing completed drain-overlap evidence for " + test.Id);
-                if (row.Case != test || !row.SeedVerified)
-                    throw new InvalidDataException("Drain-overlap evidence does not match its immutable case or byte oracle.");
-                return row;
-            }).ToArray();
-            var summary = DrainOverlapDecision.BuildSummary(evidence);
-            storage.Write("drain-overlap-aggregates.json", summary);
-            File.WriteAllText(storage.PathFor("drain-overlap-summary.md"), DrainOverlapDecision.RenderSummary(summary));
-        }
         if (complete && drainFlush.Count > 0)
         {
             var evidence = drainFlush.Select(test =>
@@ -842,23 +796,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             var summary = DrainFlushDecision.BuildSummary(evidence);
             storage.Write("drain-flush-aggregates.json", summary);
             File.WriteAllText(storage.PathFor("drain-flush-summary.md"), DrainFlushDecision.RenderSummary(summary));
-        }
-        if (complete && strictImpact.Count > 0)
-        {
-            try
-            {
-                var evidence = strictImpact.Select(test => StrictImpactDecision.ParseEvidence(
-                    File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))).ToArray();
-                var summary = StrictImpactDecision.BuildSummary(evidence);
-                storage.Write("strict-impact-aggregates.json", summary);
-                File.WriteAllText(storage.PathFor("strict-impact-summary.md"), StrictImpactDecision.RenderSummary(summary));
-            }
-            catch (Exception ex)
-            {
-                complete = false;
-                failure = "Strict-impact final evidence/aggregate validation failed; no complete matrix report was emitted.\n" + ex;
-                Log("ERROR: " + failure);
-            }
         }
         var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
             token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
@@ -882,12 +819,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             report.AppendLine("\n## Failure\n\n```text\n" + failure + "\n```");
         if (restorationFailure is not null)
             report.AppendLine("\n## Restoration failure\n\n```text\n" + restorationFailure + "\n```");
-        if (complete && drainOverlap.Count > 0)
-            report.AppendLine("\nComplete drain-overlap matrix: `drain-overlap-summary.md` and `drain-overlap-aggregates.json`. The comparison is collection-only; use the paired raw evidence to judge the result.\n");
         if (complete && drainFlush.Count > 0)
             report.AppendLine("\nComplete explicit-drain matrix: `drain-flush-summary.md` and `drain-flush-aggregates.json`. Timing starts at the recorded Flush call, not worker launch.\n");
-        if (complete && strictImpact.Count > 0)
-            report.AppendLine("\nComplete Strict-impact matrix: `strict-impact-summary.md` and `strict-impact-aggregates.json`. Boundary timings and state/counter deltas are diagnostic only.\n");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
         var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs,WriteP99Ms,MBPerSecond\n");
         foreach (var r in storage.Results)
@@ -1374,200 +1307,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
     }
 
-    private static IReadOnlyList<TelemetrySnapshot> ReadCompleteTelemetry(string path)
-    {
-        var text = File.ReadAllText(path);
-        var lastCompleteLine = text.LastIndexOf('\n');
-        if (lastCompleteLine < 0) return [];
-        return text[..lastCompleteLine].Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => JsonSerializer.Deserialize<TelemetrySnapshot>(line)
-                ?? throw new InvalidDataException("Telemetry contains an empty sample."))
-            .ToArray();
-    }
-
-    private static IReadOnlyList<TelemetrySnapshot> ReadNewTelemetry(string path,
-        ref long byteOffset, StringBuilder incompleteLine)
-    {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        stream.Position = byteOffset;
-        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: false,
-            bufferSize: 4096, leaveOpen: true);
-        incompleteLine.Append(reader.ReadToEnd());
-        byteOffset = stream.Position;
-        var text = incompleteLine.ToString();
-        var end = text.LastIndexOf('\n');
-        if (end < 0) return [];
-        var complete = text[..end];
-        incompleteLine.Clear();
-        incompleteLine.Append(text[(end + 1)..]);
-        return complete.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => JsonSerializer.Deserialize<TelemetrySnapshot>(line)
-                ?? throw new InvalidDataException("Telemetry contains an empty sample."))
-            .ToArray();
-    }
-
-    private async Task<TelemetrySnapshot> WaitForDrainOverlapStart(string telemetryPath,
-        DrainSeedResult seed, DateTimeOffset seedCompletedUtc, CancellationToken token)
-    {
-        var timer = Stopwatch.StartNew();
-        while (timer.Elapsed < TimeSpan.FromSeconds(DrainOverlapDecision.DrainStartDeadlineSeconds))
-        {
-            token.ThrowIfCancellationRequested();
-            var samples = ReadCompleteTelemetry(telemetryPath);
-            var first = samples.FirstOrDefault(sample => sample.Utc >= seedCompletedUtc &&
-                sample.State.AcceptedBytes >= seed.After.AcceptedBytes &&
-                sample.State.DrainedBytes > seed.After.DrainedBytes &&
-                sample.State.DirtyBytes + sample.State.InFlightBytes > 0);
-            if (first is not null) return first;
-            await Task.Delay(50, token);
-        }
-        throw new TimeoutException("Default Idle drain did not begin within 30 seconds of the fitting dirty seed.");
-    }
-
-    private async Task<TelemetrySnapshot> WaitForBackgroundDrainCompletion(string telemetryPath,
-        DrainSeedResult seed, DateTimeOffset workloadFinishedUtc, CancellationToken token)
-    {
-        var timer = Stopwatch.StartNew();
-        TelemetrySnapshot? firstClean = null;
-        long byteOffset = 0;
-        var incompleteLine = new StringBuilder();
-        while (timer.Elapsed < TimeSpan.FromSeconds(DrainOverlapDecision.CompletionAllowanceSeconds))
-        {
-            token.ThrowIfCancellationRequested();
-            foreach (var sample in ReadNewTelemetry(telemetryPath, ref byteOffset, incompleteLine)
-                .Where(sample => sample.Utc >= workloadFinishedUtc))
-            {
-                var drainedSeed = sample.State.DrainedBytes >= seed.After.DrainedBytes &&
-                    sample.State.DrainedBytes - seed.After.DrainedBytes >= seed.OwnedBytes;
-                if (sample.State.DirtyBytes == 0 && sample.State.InFlightBytes == 0 && drainedSeed)
-                {
-                    if (firstClean is not null && sample.Utc - firstClean.Utc >= TimeSpan.FromMilliseconds(200))
-                        return sample;
-                    firstClean = sample;
-                }
-                else firstClean = null;
-            }
-            await Task.Delay(50, token);
-        }
-        throw new TimeoutException("Default Idle drain did not persist the seeded backlog and remain clean within 300 seconds after foreground I/O.");
-    }
-
-    private async Task<DiskSpdScore?> MeasureDrainOverlap(DrainOverlapCase scenario, CancellationToken token)
-    {
-        DrainOverlapDecision.ValidateCase(scenario);
-        await Control(WriteCacheAction.LabDelay, token);
-        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
-        await Worker(Job("flush-volume"), token, 180);
-        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
-
-        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, true)
-        {
-            Options = new CacheOptions(CacheAllocation.Automatic, 100, RetainWrites: true, PromoteOnRead: true,
-                Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000, IdleMs: 250,
-                BatchKiB: scenario.BatchKiB, Parallelism: scenario.Parallelism)
-        };
-        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
-        await Control(WriteCacheAction.PerformanceTiming, token, 0);
-        await Control(WriteCacheAction.DropClean, token);
-        // A late filesystem metadata write must not fail the case before its seed baseline is taken.
-        await WaitForQuiet(scenario.Id + "-configured", token);
-        var configured = await LayoutSnapshot(scenario.Id + "-configured.json", token);
-        if (!configured.State.Operational || !configured.State.Enabled || !configured.State.UnsafeDefer ||
-            configured.State.Options != configuration.Options || configured.State.DirtyBytes != 0 ||
-            configured.State.InFlightBytes != 0 || configured.Performance.TimingEnabled != 0 ||
-            configured.Diagnostics.Attribution is null)
-            throw new InvalidDataException("Drain-overlap precondition does not match the timing-off Fast Idle configuration.");
-
-        var telemetryPath = storage.PathFor(scenario.Id + "-telemetry.jsonl");
-        var stopPath = storage.PathFor(scenario.Id + ".stop");
-        var readyPath = storage.PathFor(scenario.Id + ".ready.json");
-        var telemetrySeconds = checked(DrainOverlapDecision.SeedPreparationTimeoutSeconds + options.DurationSeconds +
-            DrainOverlapDecision.DrainStartDeadlineSeconds + DrainOverlapDecision.CompletionAllowanceSeconds + 60);
-        using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var telemetry = Worker(Job("telemetry") with
-        {
-            Reply = telemetryPath,
-            StopFile = stopPath,
-            ReadyFile = readyPath,
-            Seconds = telemetrySeconds
-        }, children.Token, telemetrySeconds + 10);
-        Task<DiskSpdScore>? workload = null;
-        try
-        {
-            await TelemetryCoverage.WaitReadyAsync(readyPath, telemetry, TimeSpan.FromSeconds(45), token);
-            var seed = JsonSerializer.Deserialize<DrainSeedResult>(await File.ReadAllTextAsync(
-                await Worker(Job("seed-drain") with
-                {
-                    WorkDirectory = workDirectory,
-                    BudgetMiB = options.BudgetMiB,
-                    Value = checked((ulong)(104729 + scenario.Repeat)),
-                    DrainSeedBytes = DrainOverlapDecision.SeedBytes(options.BudgetMiB)
-                }, token, DrainOverlapDecision.SeedPreparationTimeoutSeconds), token)) ??
-                throw new InvalidDataException("Missing drain-overlap dirty-seed evidence.");
-            var seedCompletedUtc = DateTimeOffset.UtcNow;
-            var drainStarted = await WaitForDrainOverlapStart(telemetryPath, seed, seedCompletedUtc, token);
-            Log($"Default Idle drain observed before foreground launch at {drainStarted.Utc:O}: {seed.After.DirtyBytes} seed bytes initially dirty.");
-
-            var diskId = scenario.Id + "-workload";
-            var workloadPath = Path.Combine(workDirectory, "writer.dat");
-            var access = scenario.Workload == "random-write" ? "-w100" : "-w0";
-            workload = Disk(diskId, workloadPath,
-                ["-b4K", "-r4K", "-o32", "-t1", access, $"-d{options.DurationSeconds}", "-W0", "-Zr"],
-                children.Token, options.DurationSeconds + DrainOverlapDecision.CompletionAllowanceSeconds);
-            var score = await workload;
-            var process = JsonSerializer.Deserialize<ProcessIdentity>(await File.ReadAllTextAsync(
-                storage.PathFor(diskId + ".process.json"), token)) ?? throw new InvalidDataException("Missing owned DiskSpd process identity.");
-            using var exitDocument = JsonDocument.Parse(await File.ReadAllTextAsync(storage.PathFor(diskId + ".exit.json"), token));
-            var processFinishedUtc = exitDocument.RootElement.GetProperty("FinishedUtc").GetDateTimeOffset();
-            var backgroundCompletion = await WaitForBackgroundDrainCompletion(telemetryPath, seed,
-                processFinishedUtc, token);
-            File.WriteAllText(stopPath, "stop");
-            await telemetry;
-
-            var samples = ReadCompleteTelemetry(telemetryPath);
-            var idleCompletion = await LayoutSnapshot(scenario.Id + "-idle-completion.json", token);
-            var metrics = DrainOverlapDecision.ValidateEvidence(scenario, seed, seedCompletedUtc,
-                drainStarted.Utc, process, processFinishedUtc, backgroundCompletion.Utc, idleCompletion, score, samples,
-                original.State.Instance, original.State.Errors);
-
-            await Control(WriteCacheAction.Disable, token, timeoutSeconds: options.PreparationFlushSeconds);
-            var verifyPath = await Worker(Job("verify-drain") with
-            {
-                WorkDirectory = workDirectory,
-                BudgetMiB = options.BudgetMiB,
-                Value = (ulong)seed.Seed,
-                DrainSeedBytes = seed.Bytes
-            }, token, 600);
-            using var verifyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(verifyPath, token));
-            if (!verifyDocument.RootElement.GetProperty("Verified").GetBoolean())
-                throw new InvalidDataException("Drain-overlap dirty-seed byte oracle did not pass.");
-
-            var evidence = new DrainOverlapEvidence(scenario, seed, true, idleCompletion,
-                process, seedCompletedUtc, processFinishedUtc, drainStarted.Utc, backgroundCompletion.Utc,
-                storage.PathFor(diskId + ".process.json"),
-                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(options.DiskSpd!))), telemetryPath,
-                samples.Count, score, metrics);
-            storage.Write(scenario.Id + "-evidence.json", evidence);
-            storage.Write(scenario.Id + "-before.json", configured);
-            storage.Write(scenario.Id + "-idle-completion.json", idleCompletion);
-            storage.Write(scenario.Id + "-seed-verification.json", verifyDocument.RootElement.Clone());
-            caseChecks = [new("Idle drain / foreground progress and persisted seed", "PASS",
-                $"{metrics.SharedTelemetryIntervals} credited intervals (maximum {metrics.MaximumSharedIntervalMilliseconds:F1} ms); foreground {metrics.ForegroundBytesDuringDrain} bytes and drained {metrics.DrainedBytesDuringForeground} bytes co-observed; timing off; Idle left the cache clean before disable and the unbuffered seed byte oracle passed without an explicit Flush.")];
-            return score;
-        }
-        finally
-        {
-            File.WriteAllText(stopPath, "stop");
-            children.Cancel();
-            foreach (var child in new Task?[] { telemetry, workload })
-                if (child is not null)
-                {
-                    try { await child; }
-                    catch (Exception) { /* original case failure retained */ }
-                }
-        }
-    }
-
     private async Task<DiskSpdScore?> MeasureDrainFlush(DrainFlushCase scenario, CancellationToken token)
     {
         DrainFlushDecision.ValidateCase(scenario);
@@ -1659,121 +1398,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             if (!released) workerCancellation.Cancel();
             try { await workerTask; }
             catch (Exception) { /* original case failure retained */ }
-        }
-    }
-
-    private async Task<DiskSpdScore?> MeasureStrictImpact(StrictImpactCase scenario, CancellationToken token)
-    {
-        StrictImpactDecision.ValidateCase(scenario);
-        await Control(WriteCacheAction.LabDelay, token);
-        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
-        await Worker(Job("flush-volume"), token, 180);
-        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
-
-        var configuration = StrictImpactDecision.Configuration(scenario);
-        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
-        await Control(WriteCacheAction.PerformanceTiming, token, 0);
-        await Control(WriteCacheAction.DropClean, token);
-        // A late filesystem metadata write must not fail the case before its seed baseline is taken.
-        await WaitForQuiet(scenario.Id + "-configured", token);
-        var configuredPath = await Worker(Job("snapshot"), token, 120);
-        var configured = JsonSerializer.Deserialize<StrictImpactSnapshot>(
-            await File.ReadAllTextAsync(configuredPath, token))
-            ?? throw new InvalidDataException("Missing Strict-impact configured snapshot.");
-        StrictImpactDecision.ValidateSnapshot(configured, scenario,
-            original.State.Instance, original.State.Errors);
-        if (configured.State.DirtyBytes != 0 || configured.State.InFlightBytes != 0)
-            throw new InvalidDataException("Strict-impact case did not begin with a clean cache.");
-
-        var seedPath = await Worker(Job("strict-impact-seed") with
-        {
-            WorkDirectory = workDirectory,
-            StrictImpactCase = scenario
-        }, token, StrictImpactDecision.WorkerTimeoutSeconds);
-        var seed = JsonSerializer.Deserialize<StrictImpactSeedResult>(
-            await File.ReadAllTextAsync(seedPath, token))
-            ?? throw new InvalidDataException("Missing Strict-impact seed snapshots.");
-        StrictImpactDecision.ValidateSeed(seed, original.State.Instance, original.State.Errors);
-
-        var workerId = scenario.Id + "-boundary-worker";
-        var readyPath = storage.PathFor(scenario.Id + ".boundary-ready.json");
-        var startPath = storage.PathFor(scenario.Id + ".boundary-start");
-        var processPath = storage.PathFor(workerId + ".process.json");
-        using var workerCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var workerTask = Worker(Job("strict-impact-boundary") with
-        {
-            WorkDirectory = workDirectory,
-            StrictImpactCase = scenario,
-            ReadyFile = readyPath,
-            StartFile = startPath,
-            ProcessEvidence = processPath
-        }, workerCancellation.Token, StrictImpactDecision.WorkerTimeoutSeconds);
-        var released = false;
-        try
-        {
-            await TelemetryCoverage.WaitReadyAsync(readyPath, workerTask, TimeSpan.FromSeconds(45), token);
-            using var readyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(readyPath, token));
-            var readyUtc = readyDocument.RootElement.GetProperty("At").GetDateTimeOffset();
-            var releaseUtc = DateTimeOffset.UtcNow;
-            File.WriteAllText(startPath, "start");
-            released = true;
-            var controlPath = await workerTask;
-            var control = JsonSerializer.Deserialize<StrictImpactBoundaryControlResult>(
-                await File.ReadAllTextAsync(controlPath, token))
-                ?? throw new InvalidDataException("Missing Strict-impact boundary snapshots and monotonic timing.");
-            var process = JsonSerializer.Deserialize<ProcessIdentity>(
-                await File.ReadAllTextAsync(processPath, token))
-                ?? throw new InvalidDataException("Missing owned Strict-impact boundary worker identity.");
-
-            // Evict retained clean writes while Strict stays enabled. The following unbuffered oracle
-            // must then read the persisted data from the lower device rather than the RAM cache.
-            await Control(WriteCacheAction.DropClean, token);
-            var beforeOraclePath = await Worker(Job("snapshot"), token, 120);
-            var beforeOracle = JsonSerializer.Deserialize<StrictImpactSnapshot>(
-                await File.ReadAllTextAsync(beforeOraclePath, token))
-                ?? throw new InvalidDataException("Missing pre-oracle Strict-impact snapshot after clean-entry eviction.");
-            StrictImpactDecision.ValidateSnapshot(beforeOracle, scenario,
-                original.State.Instance, original.State.Errors);
-            if (beforeOracle.State.DirtyBytes != 0 || beforeOracle.State.InFlightBytes != 0)
-                throw new InvalidDataException("Strict-impact clean-entry eviction did not leave a clean cache before the unbuffered oracle.");
-            var oraclePath = await Worker(Job("strict-impact-verify") with
-            {
-                WorkDirectory = workDirectory,
-                StrictImpactCase = scenario
-            }, token, StrictImpactDecision.WorkerTimeoutSeconds);
-            var oracle = JsonSerializer.Deserialize<StrictImpactOracleResult>(
-                await File.ReadAllTextAsync(oraclePath, token))
-                ?? throw new InvalidDataException("Missing Strict-impact unbuffered byte-oracle result.");
-            var afterOraclePath = await Worker(Job("snapshot"), token, 120);
-            var afterOracle = JsonSerializer.Deserialize<StrictImpactSnapshot>(
-                await File.ReadAllTextAsync(afterOraclePath, token))
-                ?? throw new InvalidDataException("Missing post-oracle Strict-impact cache snapshot.");
-            StrictImpactDecision.ValidateSnapshot(afterOracle, scenario,
-                original.State.Instance, original.State.Errors);
-            if (afterOracle.State.DirtyBytes != 0 || afterOracle.State.InFlightBytes != 0)
-                throw new InvalidDataException("Strict-impact unbuffered oracle did not leave a clean cache before case cleanup.");
-            var metrics = StrictImpactDecision.Metrics(seed, control, beforeOracle, afterOracle);
-            var evidence = new StrictImpactEvidence(scenario, seed, process, readyUtc,
-                releaseUtc, control, beforeOracle, afterOracle, oracle, metrics, processPath, seedPath);
-            _ = StrictImpactDecision.ValidateEvidence(evidence,
-                original.State.Instance, original.State.Errors);
-            storage.Write(scenario.Id + "-configured.json", configured);
-            storage.Write(scenario.Id + "-evidence.json", evidence);
-            storage.Write(scenario.Id + "-oracle.json", oracle);
-            storage.Write(scenario.Id + "-before-oracle.json", beforeOracle);
-            storage.Write(scenario.Id + "-after-oracle.json", afterOracle);
-            var overwrite = scenario.Boundary == StrictImpactDecision.WriteThrough
-                ? "newest 1 MiB overwrite and all 512 seeded blocks verified unbuffered"
-                : "all 512 seeded blocks verified unbuffered";
-            caseChecks = [new("Strict durability boundary and persisted-byte oracle", "PASS",
-                $"{scenario.Boundary} took {metrics.BoundaryMilliseconds:F1} ms; drained {metrics.Boundary.DrainedBytes / (double)(1 << 20):F1} MiB in {metrics.Boundary.DrainBatches} batches; {overwrite}.")];
-            return null;
-        }
-        finally
-        {
-            if (!released) workerCancellation.Cancel();
-            try { await workerTask; }
-            catch (Exception) { /* retain the primary case failure and raw worker evidence */ }
         }
     }
 
