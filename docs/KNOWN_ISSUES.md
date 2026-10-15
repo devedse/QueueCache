@@ -190,28 +190,24 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   recovery path and checks the driver's readback. Host contracts and CI pass;
   the Windows normal-cleanup and fresh-process recovery smoke checks remain
   before this recovery fix is qualified.
-- **40,000-file read/hash time and random-read tails:** on 0.4.687.1, the tree
-  read/hash step took 154.2 s versus 4.9 s in the 0.4.604.1 session, with the
-  cause not established. The completed 15-case plan-134 matrix
-  (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.1–170.5 s
-  across cache-off and all four cache-setting arms. During that phase the driver
-  reported zero read-hit bytes, zero lower writes/flushes and at most 33 lower
-  read attempts. The result does not implicate read-miss scheduling or drain
-  settings, but it also does not explain the cross-date difference or isolate
-  Windows per-file, NTFS, hashing, security-filter and cache-residency costs.
-  Plan 139 adds a six-observation cross-build comparison using exact 0.4.604.1
-  and 0.4.687.1 loaded-driver hashes, one complete observation per run folder;
-  those VM measurements remain outstanding. No driver change is supported by
-  the existing same-build evidence. The same-build cold
-  miss-offload screen improved throughput and p99 but observed a random-read
-  maximum of 568.7 ms versus 46.2 ms. Plan 135's maintained
-  `read-tail-decision` fixed-operation screen adds exact threshold counts and
-  resident/write controls; its VM measurements remain outstanding.
-  A fresh retry stopped at 13/24 after its foreground-write case drained all
-  but 16 KiB before the durable oracle; restoration completed cleanly. Plan 140
-  now waits for two seconds of clean, unchanged cache/I/O counters after the
-  volume flush, with a finite recorded retry bound. That incomplete run is not
-  combined with later measurements.
+- **40,000-file read/hash time (environmental) and random-read tails
+  (accepted):** on 0.4.687.1 the tree read/hash step took 154–170 s, against
+  4.9 s in the 0.4.604.1 session. The complete plan-134 matrix
+  (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured the same 160–170 s
+  in every arm, including cache-off, with zero read hits and almost no lower
+  reads. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`)
+  found Windows Defender's real-time scan of each freshly written file at its
+  first open using 156.5 CPU-seconds of the 164.2-second phase (40,024 scans,
+  151.6 s). This is attributed to the environment, not the driver; Defender was
+  left enabled. It is not known why the 0.4.604.1 session did not pay that cost,
+  because comparison environment records do not capture Defender state. A tree
+  step in a Defender-scanned location is dominated by antimalware time and says
+  nothing about the cache. The same-build cold miss-offload screen's 568.7 ms
+  random maximum came from fixed 20-second windows with unequal work: the
+  complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2`
+  improved every cold-random pair (p99.9 −92 to −148 ms, none above 500 ms) with
+  no flag-driven control loss. The comparison used one backing-store speed; the
+  pool size was not varied.
 - **Drain defaults under active background work:** existing comparisons support
   shorter complete drainage, but timing was enabled and the foreground score
   started before an administrative flush whose startup time varied. A timing-off

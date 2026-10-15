@@ -1,5 +1,4 @@
 using QueueCache.Management;
-using QueueCache.Operations;
 
 namespace QueueCache.Developer.Verification;
 
@@ -7,65 +6,6 @@ public sealed record TreeDecisionEvidence(TreeDecisionCase Case, CacheLayoutSnap
     TreeResult Tree, CacheLayoutSnapshot After)
 {
     public TreeDecisionAttemptDeltas LowerIoAttempts => TreeDecisionEvidenceContract.GetAttemptDeltas(this);
-}
-
-public sealed record TreeBuildDecisionEvidence(TreeBuildDecisionCase Case,
-    LoadedDriverObservation DriversBefore, TreeDecisionEvidence Tree, LoadedDriverObservation DriversAfter);
-
-public static class TreeBuildDecisionEvidenceContract
-{
-    public static void ValidateCapabilities(CacheLayoutSnapshot snapshot)
-    {
-        if (snapshot.Diagnostics.Attribution is null)
-            throw new InvalidDataException("This loaded driver does not expose the lower-I/O counters required by tree-build-decision; refusing to mutate cache settings.");
-    }
-
-    public static void ValidateStart(TreeBuildDecisionCase test, LoadedDriverObservation observation)
-    {
-        ValidateObservation(test, observation);
-    }
-
-    public static void Validate(TreeBuildDecisionEvidence evidence)
-    {
-        ArgumentNullException.ThrowIfNull(evidence);
-        if (evidence.Tree.Case.Id != evidence.Case.Id || evidence.Tree.Case.CopyFlags != 7 ||
-            evidence.Tree.Case.BatchKiB != 256 || evidence.Tree.Case.Parallelism != 2 || !evidence.Tree.Case.CacheEnabled)
-            throw new InvalidDataException("Tree build evidence does not match its fixed flags-7, 256 KiB × 2 workload case.");
-        TreeDecisionEvidenceContract.Validate(evidence.Tree);
-        ValidateObservation(evidence.Case, evidence.DriversBefore);
-        ValidateObservation(evidence.Case, evidence.DriversAfter);
-        if (!Identity(evidence.DriversBefore).SequenceEqual(Identity(evidence.DriversAfter), StringComparer.OrdinalIgnoreCase))
-            throw new InvalidDataException("The loaded QueueCache driver paths or file hashes changed during the tree workload.");
-    }
-
-    private static void ValidateObservation(TreeBuildDecisionCase test, LoadedDriverObservation observation)
-    {
-        if (!observation.Available || observation.Modules is null || observation.Modules.Count != 2)
-            throw new InvalidDataException("Loaded QueueCache driver identity is unavailable or contains an unexpected module set.");
-        var names = observation.Modules.Select(module => FileName(module.FilePath)).ToArray();
-        if (names.Distinct(StringComparer.OrdinalIgnoreCase).Count() != 2 ||
-            observation.Modules.Count(module => IsFilter(FileName(module.FilePath))) != 1 ||
-            observation.Modules.Count(module => FileName(module.FilePath).Equals("qcramdisk.sys", StringComparison.OrdinalIgnoreCase)) != 1)
-            throw new InvalidDataException("Expected exactly one loaded QueueCache filter module and one qcramdisk.sys module.");
-        var filter = observation.Modules.Single(module => IsFilter(FileName(module.FilePath)));
-        var provider = observation.Modules.Single(module => FileName(module.FilePath).Equals("qcramdisk.sys", StringComparison.OrdinalIgnoreCase));
-        if (filter.FileError is not null || provider.FileError is not null ||
-            !ValidHash(filter.FileSha256) || !ValidHash(provider.FileSha256))
-            throw new InvalidDataException("A loaded QueueCache driver file could not be hashed.");
-        if (!filter.FileSha256!.Equals(test.ExpectedFilterSha256, StringComparison.OrdinalIgnoreCase) ||
-            !provider.FileSha256!.Equals(test.ExpectedProviderSha256, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"Loaded driver file hashes do not match planned build {test.Build} for case {test.Id}.");
-    }
-
-    private static string[] Identity(LoadedDriverObservation observation) => observation.Modules
-        .OrderBy(module => FileName(module.FilePath), StringComparer.OrdinalIgnoreCase)
-        .Select(module => $"{FileName(module.FilePath)}|{module.FilePath.Replace('\\', '/')}|{module.FileSha256}")
-        .ToArray();
-
-    private static string FileName(string path) => path.Replace('\\', '/').Split('/').Last();
-    private static bool IsFilter(string name) => name.Equals("qcachelab.sys", StringComparison.OrdinalIgnoreCase) ||
-        name.StartsWith("QueueCache-", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".sys", StringComparison.OrdinalIgnoreCase);
-    private static bool ValidHash(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 }
 public sealed record TreePhaseIoAttempts(ulong Read, ulong Write, ulong Flush);
 public sealed record TreeDecisionAttemptDeltas(TreePhaseIoAttempts Create, TreePhaseIoAttempts CreateSettle,

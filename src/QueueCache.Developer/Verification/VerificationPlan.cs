@@ -41,19 +41,10 @@ public sealed record TreeDecisionCase(
     int BatchKiB,
     int Parallelism);
 
-public sealed record TreeBuildDecisionCase(
-    string Id,
-    int Repeat,
-    int Position,
-    string Build,
-    string ExpectedFilterSha256,
-    string ExpectedProviderSha256,
-    TreeDecisionCase TreeCase);
-
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 141;
+    public const int Version = 142;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -96,7 +87,6 @@ public static class VerificationPlan
         "drain-overlap-decision",
         "strict-impact-decision",
         "tree-decision",
-        "tree-build-decision",
         "read-tail-decision",
         "volumes",
         "trim-cache",
@@ -188,39 +178,6 @@ public static class VerificationPlan
         }
         return options.CaseFilter is null ? cases :
             cases.Where(test => test.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToArray();
-    }
-
-    public static IReadOnlyList<TreeBuildDecisionCase> TreeBuildDecisionPlan()
-    {
-        const string filter604 = "D9416B70A3A39CD6C1DEE6DF7488B27B7582D62DCEDE648AD59C54C3EBAE6EAE";
-        const string provider604 = "4F9B06E21F1730ED0954FA9253DCFA268C7EE517568AA38D57323E98CCB20934";
-        const string filter687 = "FE00891A0D6ADA54CD4FCB587C704DAFFDA97C6C0DD47F6BCF9F444C56A16632";
-        const string provider687 = "0B13C2F5DBDF45BBCFBEB3B07FFCE5BB915B2A2CA50193D6B2CF8EDA5F34D8FC";
-        (int Repeat, int Position, string Build, string Filter, string Provider)[] observations =
-        [
-            (1, 1, "604", filter604, provider604),
-            (1, 2, "687", filter687, provider687),
-            (2, 1, "687", filter687, provider687),
-            (2, 2, "604", filter604, provider604),
-            (3, 1, "604", filter604, provider604),
-            (3, 2, "687", filter687, provider687)
-        ];
-        return observations.Select(item =>
-        {
-            var id = $"tree-build-r{item.Repeat:D2}-p{item.Position:D2}-{item.Build}-flags7-b256-p2";
-            var treeCase = new TreeDecisionCase(id, item.Repeat, item.Position,
-                $"{item.Build}-flags7-b256-p2", true, 7, 256, 2);
-            return new TreeBuildDecisionCase(id, item.Repeat, item.Position, item.Build,
-                item.Filter, item.Provider, treeCase);
-        }).ToArray();
-    }
-
-    public static IReadOnlyList<TreeBuildDecisionCase> TreeBuildDecision(VerificationOptions options)
-    {
-        if (options.Suite != "tree-build-decision") return [];
-        var plan = TreeBuildDecisionPlan();
-        if (options.CaseFilter is null) return plan;
-        return plan.Where(test => string.Equals(test.Id, options.CaseFilter, StringComparison.Ordinal)).ToArray();
     }
 
     public static IReadOnlyList<IntegrityCase> Integrity(VerificationOptions options) => options.Suite switch
@@ -555,14 +512,10 @@ public static class VerificationPlan
         }
         else if (options.ManagedOraclePath is not null || options.ManagedTransition is not null)
             throw new ArgumentException("Managed lifecycle oracle/transition options require a managed lifecycle phase.");
-        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" or "tree-build-decision" or "read-tail-decision" or "drain-flush-decision" or "drain-overlap-decision" or "strict-impact-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
+        if ((options.Suite is "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "tree-decision" or "read-tail-decision" or "drain-flush-decision" or "drain-overlap-decision" or "strict-impact-decision" || IsLayoutSuite(options.Suite)) && options.BudgetMiB != 2048)
             throw new ArgumentException("Resident sequential, tree, read-tail, drain-flush, drain-overlap, strict-impact and layout suites require --budget-mib 2048 for their fixed workload size.");
         if (options.Suite == "tree-decision" && options.Repeats != 3)
             throw new ArgumentException("tree-decision requires exactly three alternated repetitions.");
-        if (options.Suite == "tree-build-decision" && (options.Repeats != 1 || options.DiskSpd is not null ||
-            options.SoakSeconds is not null || options.KeepWorkloads || options.CaseFilter is null ||
-            !TreeBuildDecisionPlan().Any(test => string.Equals(test.Id, options.CaseFilter, StringComparison.Ordinal))))
-            throw new ArgumentException("tree-build-decision requires --repeats 1 and --case-filter set to one complete planned observation ID; it does not accept DiskSpd, soak or retained workloads.");
         if (options.Suite == "read-tail-decision" &&
             (options.Repeats != ReadTailDecision.RequiredRepeats || options.DiskSpd is not null || options.CaseFilter is not null))
             throw new ArgumentException("read-tail-decision requires exactly three repetitions and does not accept DiskSpd or case filters.");
@@ -586,7 +539,7 @@ public static class VerificationPlan
         else if (options.DisposableInstance is not null || options.DisposableBytes is not null)
             throw new ArgumentException("Disposable disk identity arguments require disk-removal.");
         if (options.CaseFilter is not null &&
-            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "tree-decision" or "tree-build-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity") || string.IsNullOrWhiteSpace(options.CaseFilter)))
+            (options.Suite is not ("write-performance" or "sequential-resident" or "drain-decision" or "tree-decision" or "cache-concurrency" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity") || string.IsNullOrWhiteSpace(options.CaseFilter)))
             throw new ArgumentException("--case-filter requires a focused performance suite and a nonempty case-sensitive ID substring.");
 
         // These are runner safety limits, not driver limits. They bound VM RAM use,
@@ -608,7 +561,7 @@ public static class VerificationPlan
             throw new ArgumentException("stress-races runs once (--repeats 1) with a busy window of 60..3600 seconds (--soak-seconds, default 240).");
 
         if (options.CaseFilter is not null &&
-            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : options.Suite == "tree-decision" ? TreeDecision(options).Count : options.Suite == "tree-build-decision" ? TreeBuildDecision(options).Count : DrainDecision(options).Count) == 0)
+            (CacheExercisePlan.Contains(options.Suite) ? CacheExercisePlan.Cases(options).Count : options.Suite is "write-performance" or "sequential-resident" ? Performance(options).Count : options.Suite == "tree-decision" ? TreeDecision(options).Count : DrainDecision(options).Count) == 0)
             throw new ArgumentException("--case-filter matched no cases; no tests started.");
 
         if (options.Suite == "drain-decision" && options.BudgetMiB > 4096)
