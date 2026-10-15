@@ -24,7 +24,7 @@ Cross-date figures are descriptive; causal gains require alternated same-build A
     The 2026-10-15 same-build flags 7/15 repeat with Defender/Search disabled measured 9.95× cold random
     and 3.13× cold sequential throughput, with improved
     p99 and no repeated resident-control loss. Both arms use the new read pool and queue order; this isolates
-    miss offload, not the complete old driver. A later equal-work comparison (100,000 operations per case)
+    miss offload, not the complete old driver. A separate October 14 equal-work comparison (100,000 operations per case)
     improved cold-random p99.9 from 191.7 to 60.7 ms and the median of per-case maxima from 271.6 to 123.5 ms,
     with every pair improving. The earlier fixed-duration maxima sampled different amounts of work.
   - The old 256 KiB × 2 default wrote pending data at 105–130 MB/s. New-task defaults are 1024 KiB × 4
@@ -59,9 +59,10 @@ Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram
 
 ## Focused fix checks (2026-10-15)
 
-These checks use the unchanged 0.4.687.1 native driver with Defender/Search
+The current checks use the unchanged 0.4.687.1 native driver with Defender/Search
 disabled. Read/drain pairs change only miss offload or drain settings within
-each session. The earlier read screen used 0.4.685.1; these are controlled
+each session. The earlier accepted drain result predates this disabled baseline;
+its fresh repeat is incomplete. The earlier read screen used 0.4.685.1; these are controlled
 behavior comparisons, rather than a rerun of every historical product workload.
 The generic product and CrystalDiskMark rows below retain their original scores.
 

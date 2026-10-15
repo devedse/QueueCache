@@ -379,7 +379,7 @@ comparison with Defender/Search disabled stopped at case 1 and case 5
 12 KiB between the seed snapshot and Flush; the second had another 8 KiB
 accepted and dirty in the post-Flush snapshot. Both restored without driver errors;
 neither supplies a complete performance result. The source of these writes was
-not traced. Plan 145 keeps the writable seed handle open in the timed worker
+not traced. Plan 145 tried keeping the writable seed handle open in the timed worker
 until its Flush/end-state snapshots finish, moving handle closure outside the
 measured interval. Seed generation stays outside the timer, and all existing
 backlog, lower-I/O, health, clean-end and byte-oracle checks remain required.
@@ -438,8 +438,18 @@ performance verdict or aggregate is produced. A focused unchanged map-cost
 repeat completed all nine cases in
 `20261015-173103-968c4d0558e14a24ad3a223508cfacf0` and restored, without changing
 the guard or reproducing the lower reads. This does not identify their source.
-The remaining write/fault suites are being run separately; they cannot turn
-this campaign into a completed one.
+The separate `write-performance` run
+`20261015-202536-cb295eda46644df2bef04a4b7020c5ba` completed all 72 cases in
+31 min 45 s and restored. All 72 raw XML byte/operation totals and full process
+telemetry intervals were independently checked (maximum gap 0.215 s; no
+zero-completion scores). These are collected write scores, not a new accepted
+speedup comparison. The separate `ordering-faults` run
+`20261015-205732-73bca262a5374343af046e87a9f85525` completed all eight checks and
+restored in 30 seconds. Its backing Q: cache was paused for the lab VHDX test
+and resumed with its original settings afterwards; Q: stayed clean with zero
+errors. Lab V:'s three deliberate lifetime-error increments were accounted for,
+with no remaining active fault. These independent suite results cannot turn
+the original campaign into a completed one.
 
 **Foreground interference and Strict impact: not measured (plans 142/143; suites
 removed).** The two suites meant to answer these questions each failed twice at

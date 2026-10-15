@@ -119,13 +119,14 @@ the earlier accepted 512 MiB result (12.7 → 8.0 s) remains historical evidence
 
 The new-environment release campaign also stopped incomplete at 8/11 phases
 in map-cost case 7/9: six lower reads / 4,608 miss bytes appeared in a RAM-only
-window, with all scored bytes covered by hit accounting and no driver errors,
+window, with hit-byte growth exceeding scored bytes and no driver errors,
 writes, flushes or draining. The source is untraced; this remains a failed guard,
 not a qualified RAM-only result. The first eight phases, including all six
 sustained segments, completed; campaign restoration succeeded. An unchanged
 nine-case map-cost repeat completed and restored without reproducing the lower
-reads; their source remains unknown. Standalone checks do not replace a complete
-campaign result.
+reads; their source remains unknown. Separate follow-ups also completed all 72
+write cases and all eight ordering/fault checks, with restoration. These
+standalone checks do not replace a complete campaign result.
 
 The branch overlaps ordinary read misses, preserves each read's exact original
 pin identities, and uses 1024 KiB × 4 drain defaults for new tasks. Saved profiles
