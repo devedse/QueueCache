@@ -110,7 +110,11 @@ The new Defender/Search-off explicit-drain repeat stopped on late small writes
 outside the recorded seed (12 KiB before Flush, and 8 KiB after Flush in two
 incomplete runs); both restored without driver errors. Plan 145 keeps the seed
 file handle open through the timed Flush and end snapshots, preserving the
-existing evidence guards. VM validation of that fixture correction is pending.
+existing evidence guards. It also failed at case 1 when another 4 KiB arrived
+after Flush. The seeded backlog drained without driver errors and restoration
+succeeded; the late write's source is untraced. Plan 146 removes the ineffective
+held-handle change. The new environment has no complete drain comparison;
+the earlier accepted 512 MiB result (12.7 → 8.0 s) remains historical evidence.
 
 The branch overlaps ordinary read misses, preserves each read's exact original
 pin identities, and uses 1024 KiB × 4 drain defaults for new tasks. Saved profiles

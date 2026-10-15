@@ -21,7 +21,8 @@ Cross-date figures are descriptive; causal gains require alternated same-build A
   21 GB/s writes, against 17 and 19 GB/s for PrimoCache with Defer-Write. It exposed three weaknesses:
   - Missing data was read one request at a time: 217 MB/s against 560 for the bare disk and 512 for PrimoCache
     ([#14](https://github.com/devedse/QueueCache/issues/14)). The fix branch overlaps bounded ordinary misses.
-    A same-build flags 7/15 screen measured 9.4× cold random and 3.35× cold sequential throughput, with improved
+    The 2026-10-15 same-build flags 7/15 repeat with Defender/Search disabled measured 9.95× cold random
+    and 3.13× cold sequential throughput, with improved
     p99 and no repeated resident-control loss. Both arms use the new read pool and queue order; this isolates
     miss offload, not the complete old driver. A later equal-work comparison (100,000 operations per case)
     improved cold-random p99.9 from 191.7 to 60.7 ms and the median of per-case maxima from 271.6 to 123.5 ms,

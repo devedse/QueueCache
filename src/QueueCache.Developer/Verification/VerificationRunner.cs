@@ -1331,6 +1331,16 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             configured.Diagnostics.Attribution is null)
             throw new InvalidDataException("Explicit-drain precondition does not match the timing-off Fast Deferred configuration.");
 
+        var seedPath = await Worker(Job("seed-drain") with
+        {
+            WorkDirectory = workDirectory,
+            BudgetMiB = options.BudgetMiB,
+            Value = checked((ulong)(104729 + scenario.Repeat))
+        }, token, 600);
+        var seed = JsonSerializer.Deserialize<DrainSeedResult>(await File.ReadAllTextAsync(seedPath, token))
+            ?? throw new InvalidDataException("Missing explicit-drain dirty-seed evidence.");
+        var seedCompletedUtc = DateTimeOffset.UtcNow;
+
         var workerId = scenario.Id + "-flush-worker";
         var readyPath = storage.PathFor(scenario.Id + ".flush-ready.json");
         var startPath = storage.PathFor(scenario.Id + ".flush-start");
@@ -1340,27 +1350,21 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         {
             ReadyFile = readyPath,
             StartFile = startPath,
-            ProcessEvidence = processPath,
-            WorkDirectory = workDirectory,
-            BudgetMiB = options.BudgetMiB,
-            Value = checked((ulong)(104729 + scenario.Repeat))
+            ProcessEvidence = processPath
         }, workerCancellation.Token, 600);
         var released = false;
         try
         {
-            await TelemetryCoverage.WaitReadyAsync(readyPath, workerTask, TimeSpan.FromSeconds(600), token);
+            await TelemetryCoverage.WaitReadyAsync(readyPath, workerTask, TimeSpan.FromSeconds(45), token);
             using var readyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(readyPath, token));
             var workerReadyUtc = readyDocument.RootElement.GetProperty("At").GetDateTimeOffset();
             var releaseUtc = DateTimeOffset.UtcNow;
             File.WriteAllText(startPath, "start");
             released = true;
             var replyPath = await workerTask;
-            var measured = JsonSerializer.Deserialize<SeededDrainFlushResult>(
+            var control = JsonSerializer.Deserialize<DrainFlushControlResult>(
                 await File.ReadAllTextAsync(replyPath, token))
-                ?? throw new InvalidDataException("Missing held-seed explicit-flush control evidence.");
-            var seed = measured.Seed;
-            var seedCompletedUtc = measured.SeedCompletedUtc;
-            var control = measured.Control;
+                ?? throw new InvalidDataException("Missing timestamped explicit-flush control evidence.");
             var process = JsonSerializer.Deserialize<ProcessIdentity>(await File.ReadAllTextAsync(processPath, token))
                 ?? throw new InvalidDataException("Missing owned explicit-flush worker process identity.");
             var metrics = DrainFlushDecision.ValidateEvidence(scenario, seed, process,

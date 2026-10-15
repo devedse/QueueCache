@@ -303,12 +303,10 @@ setting with 1024 KiB × 4 for the explicit-flush time of a deterministic 512 Mi
 dirty seed. An owned worker is ready before the coordinator releases it, and
 duration starts immediately before the driver's Flush call. Timing diagnostics
 stay off; the run records drain batches/bytes, lower write/flush attempts, and
-verifies the persisted seed. From plan 145, the same owned worker seeds and
-flushes while keeping the writable seed handle open through the end-state
-snapshots. Closing it earlier admitted late writes in two incomplete runs;
-the unchanged backlog, lower-I/O and clean-end-state guards still reject those
-writes. Readiness is published after seeding, and seed time is excluded from
-the Flush timer:
+verifies the persisted seed. Plan 145 tried holding the seed handle open, but
+another late write still failed the unchanged clean-end-state check; plan 146
+restores the original fixture. The Defender/Search-off repeat is incomplete,
+so its partial samples cannot establish a new performance result.
 
 ```powershell
 qcache developer verify Q: --suite drain-flush-decision --budget-mib 2048 --repeats 3 --preparation-flush-seconds 900 --output C:\QCResults\drain-flush-decision

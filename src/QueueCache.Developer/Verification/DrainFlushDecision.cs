@@ -11,10 +11,7 @@ public sealed record DrainFlushControlResult(DateTimeOffset EnteredUtc, DateTime
     long ElapsedTicks, long TimestampFrequency,
     WriteCacheState Before, WriteCacheState After, CachePerformance PerformanceBefore,
     CachePerformance PerformanceAfter, CacheDiagnostics DiagnosticsBefore,
-    CacheDiagnostics DiagnosticsAfter, bool SeedHandleHeld = false);
-
-public sealed record SeededDrainFlushResult(DrainSeedResult Seed, DateTimeOffset SeedCompletedUtc,
-    DrainFlushControlResult Control);
+    CacheDiagnostics DiagnosticsAfter);
 
 public sealed record DrainFlushMetrics(double DurationMilliseconds, ulong DrainedBytes,
     ulong DrainBatches, ulong DriverDrainBytes, ulong LowerWriteAttempts,
@@ -108,7 +105,7 @@ public static class DrainFlushDecision
         var processStart = new DateTimeOffset(DateTime.SpecifyKind(process.StartedUtc, DateTimeKind.Utc));
         if (process.Pid <= 0 || processStart == default || workerReadyUtc == default ||
             seedCompletedUtc == default || releaseUtc == default || control.EnteredUtc == default ||
-            control.CompletedUtc == default || processStart > seedCompletedUtc || workerReadyUtc < seedCompletedUtc ||
+            control.CompletedUtc == default || processStart > workerReadyUtc || workerReadyUtc < seedCompletedUtc ||
             releaseUtc < workerReadyUtc)
             throw new InvalidDataException("The explicit-flush worker readiness and operation timestamps are invalid.");
 
@@ -118,7 +115,7 @@ public static class DrainFlushDecision
             throw new NotSupportedException("Explicit-drain comparison requires lower-I/O attempt counters.");
         var attributionAfter = control.DiagnosticsAfter.Attribution ??
             throw new NotSupportedException("Explicit-drain comparison requires lower-I/O attempt counters.");
-        if (!control.SeedHandleHeld || before.Instance != expectedInstance || after.Instance != expectedInstance ||
+        if (before.Instance != expectedInstance || after.Instance != expectedInstance ||
             before.Errors != expectedErrors || after.Errors != expectedErrors ||
             before.LastError != 0 || after.LastError != 0 || !MatchesPolicy(before) || !MatchesPolicy(after) ||
             before.DirtyBytes != seed.OwnedBytes || before.InFlightBytes != 0 ||
@@ -129,7 +126,10 @@ public static class DrainFlushDecision
             control.ElapsedTicks <= 0 || control.TimestampFrequency <= 0 ||
             control.PerformanceBefore.TimingEnabled != 0 || control.PerformanceAfter.TimingEnabled != 0 ||
             control.PerformanceBefore.Frequency == 0 || control.PerformanceAfter.Frequency == 0)
-            throw new InvalidDataException("Explicit flush did not drain the recorded backlog under the expected timing-off policy.");
+            throw new InvalidDataException("Explicit flush did not drain the recorded backlog under the expected timing-off policy: " +
+                $"expectedDirty={seed.OwnedBytes}, beforeDirty={before.DirtyBytes}, afterDirty={after.DirtyBytes}, " +
+                $"seedAccepted={seed.After.AcceptedBytes}, beforeAccepted={before.AcceptedBytes}, afterAccepted={after.AcceptedBytes}, " +
+                $"beforeDrained={before.DrainedBytes}, afterDrained={after.DrainedBytes}.");
 
         static ulong Delta(ulong current, ulong previous, string counter) => current >= previous
             ? current - previous : throw new InvalidDataException("Explicit-drain " + counter + " counter decreased.");

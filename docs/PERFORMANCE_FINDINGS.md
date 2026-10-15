@@ -380,7 +380,41 @@ until its Flush/end-state snapshots finish, moving handle closure outside the
 measured interval. Seed generation stays outside the timer, and all existing
 backlog, lower-I/O, health, clean-end and byte-oracle checks remain required.
 Evidence must explicitly confirm the held handle; older evidence cannot be
-accepted under the new contract. VM validation of this correction is pending.
+accepted under that contract. Its VM run
+`20261015-154542-30466d022cae4ed4bd7a351f60a3d451` also stopped at case 1:
+4 KiB was admitted after Flush and remained dirty, despite the held handle.
+The exact seeded backlog drained and there were no driver errors, but the clean
+end-state contract was not met. Restoration succeeded. Holding the file open
+therefore did not solve the fixture interference; plan 146 removes that change
+and restores the original measurement. All three incomplete runs are excluded
+from aggregates. No further fixture redesign is part of this focused task;
+the current environment has no newly qualified drain time.
+
+**Read-miss repeat with Defender/Search disabled (2026-10-15).** The complete
+24/24 `cache-read-misses` run
+`20261015-152826-599322e9accd4e45a7aef7ae4467908e` returned ACCEPT_SCREEN and
+restored the original 2 GiB / 256 KiB × 2 profile and copy flags 15. Controller
+0.4.726.1 (`22463de`) used the unchanged loaded 0.4.687.1 native hashes recorded
+above, the same pinned DiskSpd, timing off, 2 GiB Fast/Idle and 1024 KiB × 4
+settings in both arms. Defender services/drivers and Search were disabled;
+Everything, Steam and the tray were closed. Three alternated pairs gave:
+
+| Read shape | Serial median MiB/s (range) | Offload median MiB/s (range) | Ratio | Median p99, serial / offload (ms) |
+|---|---:|---:|---:|---:|
+| Cold random 4 KiB Q32 | 8.802 (7.825–10.204) | 87.568 (78.166–139.892) | 9.95× | 35.199 / 8.920 |
+| Cold sequential 1 MiB Q8 | 310.095 (153.073–316.542) | 970.115 (771.050–973.513) | 3.13× | 79.557 / 44.472 |
+| Resident random 4 KiB Q32 | 1658.638 | 1654.824 | −0.23% | 0.105 / 0.104 |
+| Resident sequential 1 MiB Q8 | 36850.000 | 36635.282 | −0.58% | 0.440 / 0.443 |
+
+Every cold pair improved throughput and p99, and throughput ranges separated.
+No resident pair lost 3% (largest loss 2.12%); resident controls had zero misses
+and lower reads. All 24 raw XML byte/operation totals and actual telemetry
+coverage were independently checked; the maximum gap was 0.215 seconds.
+Fixed-window random maxima were 111.543 / 175.209 ms, sequential maxima
+385.328 / 268.295 ms. These sample unequal amounts of work; the retained
+100,000-operation comparison above addresses equal-work tails. Absolute scores
+across sessions cannot isolate an effect from disabling Defender/Search or a
+new driver speedup. This repeat confirms the existing #14 improvement.
 
 **Foreground interference and Strict impact: not measured (plans 142/143; suites
 removed).** The two suites meant to answer these questions each failed twice at
