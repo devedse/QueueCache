@@ -223,18 +223,19 @@ evidence remains recorded in [performance findings](PERFORMANCE_FINDINGS.md).
   explicit drain time: the timing-off, ready/start-gated `drain-flush-decision`
   run `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f` flushed a 512 MiB seed in
   a median 8.0 s against 12.7 s, every pair better. The two suites meant to show
-  foreground interference and Strict-mode cost each failed twice at case 1 and
-  produced no measurement. `drain-overlap-decision` cannot seed its 75% backlog
-  under the default Idle options (the 5-second age drains it mid-seed: about 61 MB
-  and 238 lower writes in the second attempt) and cannot seed under held-off
-  options and then switch, because the driver refuses an options change while the
-  cache is enabled or dirty. `strict-impact-decision` cannot hold a 512 MiB dirty
-  backlog in Strict mode on NTFS: 2 application flushes and 1 write-through write
-  from the filesystem drained 280,502,272 of 536,890,368 seeded bytes during the
-  seed. Run IDs and counters are in [performance findings](PERFORMANCE_FINDINGS.md).
-  Neither suite should be rerun until its seed is redesigned (or the driver
-  supports an option change while dirty); the Strict result is the known
-  whole-cache barrier behaviour (#16), not a measured regression of the defaults.
+  foreground interference and Strict-mode cost each failed twice at case 1,
+  produced no measurement and were removed in commit `206c5e8`; a redesign (or a
+  driver option change while dirty) is needed, see Git history at commit
+  `206c5e8`. `drain-overlap-decision` could not seed its 75% backlog under the
+  default Idle options (the 5-second age drained it mid-seed: about 61 MB and 238
+  lower writes in the second attempt) and could not seed under held-off options and
+  then switch, because the driver refuses an options change while the cache is
+  enabled or dirty. `strict-impact-decision` could not hold a 512 MiB dirty backlog
+  in Strict mode: 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata,
+  drained 280,502,272 of 536,890,368 seeded bytes during the seed.
+  Run IDs and counters are in [performance findings](PERFORMANCE_FINDINGS.md). The
+  Strict result is the known whole-cache barrier behaviour (#16), not a measured
+  regression of the defaults.
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
   fix build. Existing 0.4.604.1 and competitor results remain historical and do
   not establish the newer build's crash behavior.

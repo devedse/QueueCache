@@ -108,8 +108,8 @@ RAM-only guard (36 lower reads, 27 KiB of misses); restoration succeeded. The tr
 was left open, so the failure needs a clean repeat and cannot be counted as a
 passing correctness or performance result. The completed same-build comparisons
 and concurrency matrix follow. Final release qualification on 0.4.687.1 is
-complete; the file-tree, latency-tail and drain-overlap questions recorded below
-remain open.
+complete; the file-tree and latency-tail questions are resolved below, and the
+foreground-interference and Strict-impact questions remain unmeasured.
 
 **Read-miss speed screen (plan 127).** Signed 0.4.677.1 completed all 24 windows
 of `cache-read-misses`, three alternated repetitions of flags 7/15, timing off,
@@ -366,15 +366,17 @@ ranges separated (6.6–9.4 s against 11.5–12.8 s): the 5% target for explicit
 time is met on this sequential seed, consistent with the earlier cold-read flush
 result (6.52 → 3.86 s). Only explicit drain time is qualified by this run.
 
-**Foreground interference and Strict impact: not measured (plans 142/143).** The
-two suites meant to answer these questions each failed twice at case 1 of the VM
-run, so no overlap or Strict-impact result exists. All evidence is kept under the
-run IDs below; none is combined or used as a performance number.
+**Foreground interference and Strict impact: not measured (plans 142/143; suites
+removed).** The two suites meant to answer these questions each failed twice at
+case 1 of the VM run, so no overlap or Strict-impact result exists. Both were
+removed in commit `206c5e8`; a redesign (or a driver option change while dirty) is
+needed, see Git history at commit `206c5e8`. The evidence is kept under the run IDs
+below; none is combined or used as a performance number.
 
 - `drain-overlap-decision`. Attempt 1 (`20261015-003236-c69bd0f31004430dabe56f4cc0a4c494`,
-  runner 0.4.718.1): 20 KiB of filesystem metadata was dirty when the configured
-  snapshot was taken. Plan 143's bounded quiet wait fixed that (attempt 2's
-  configured snapshot was clean). Attempt 2
+  runner 0.4.718.1): 20 KiB of dirty data (source unattributed, most likely NTFS
+  metadata) was present when the configured snapshot was taken. A bounded quiet
+  wait (plan 143) fixed that: attempt 2's configured snapshot was clean. Attempt 2
   (`20261015-004735-c183d0de9ee34efdb9e9fe051c23679f`, runner 0.4.720.1): the 75%
   seed (1,610,612,736 bytes) under the default Idle options was rejected because it was
   not an isolated RAM admission — accepted 1,610,651,136, dirty 1,549,039,104,
@@ -385,25 +387,23 @@ run IDs below; none is combined or used as a performance number.
   held-off options, then switch to Idle) is impossible on this driver: the options
   IOCTL returns `STATUS_DEVICE_BUSY` while the cache is enabled or holds dirty data
   (`driver/qcache/writecache.cpp`, `IOCTL_QCACHE_OPTIONS_V1`), and the supported
-  configure path drains and disables first. The suite was stopped after its second
-  failure; it needs either a native option-change-while-dirty capability or a
-  redesigned (smaller or faster) seed.
+  configure path drains and disables first. Removed after its second failure; it
+  needs either a native option-change-while-dirty capability or a redesigned
+  (smaller or faster) seed.
 - `strict-impact-decision`. Attempt 1 (`20261015-005332-2141cd24785c42e9bca1ebaf931cb810`,
   runner 0.4.720.1) failed in seed validation without naming a counter; its
   restoration snapshots show 536,889,856 accepted bytes of which 344,989,696 had
-  drained and 191,900,160 remained dirty. Plan 143's rejection message now lists the moved
-  counters. Attempt 2 (`20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861`, runner
+  drained and 191,900,160 remained dirty. The rejection message was then changed to
+  list the moved counters. Attempt 2 (`20261015-011121-03fa9bfa90cb4f6c94b5270a8a2cd861`, runner
   0.4.722.1, loaded 0.4.687.1) named them: during the 512 MiB seed (accepted
   536,890,368) the cache saw 2 application flushes, 1 write-through write,
   2 application barriers and 1 Strict write barrier, 3 lower flushes and 1,072 drain
-  batches, which drained 280,502,272 bytes and left 256,388,096 dirty. The seed worker opens
-  its file without write-through and never flushes, so these barriers came from
-  elsewhere (the counters have no process attribution; NTFS metadata is the
-  expected source). **Finding: in Strict mode on NTFS a large dirty backlog does
-  not survive between filesystem-issued barriers, because each barrier drains the
-  whole cache.** This is the known whole-cache-barrier weakness (issue #16), not a
-  fault of the new defaults. The suite was not redesigned and stopped after its
-  second failure.
+  batches, which drained 280,502,272 bytes and left 256,388,096 dirty. These
+  barriers were not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata. The counters have no process attribution. **Finding: in
+  Strict mode a large dirty backlog does not survive between such barriers,
+  because each barrier drains the whole cache.** This is the known
+  whole-cache-barrier weakness (issue #16), not a fault of the new defaults. The
+  suite was not redesigned and was removed after its second failure.
 
 **Final release campaign (plan 132).** Signed 0.4.687.1 from functional commit
 `4b0e3c6` completed `release-performance` in 7918.2 seconds (2 h 12 min), all
@@ -1424,8 +1424,8 @@ runs that found and fixed the issues described under
 | Read misses one at a time | **Qualified for throughput, p99 and equal-work tails** (plans 131/132/141, issue #14): arrival order retained, ordinary misses offloaded; same-build cold random +839.7%, sequential +235.0%, all pairs up and ranges separated, every cold p99 improved. The 568.7 ms fixed-window maximum is not reproduced with equal work: the complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2` improved every cold-random pair (+541% to +617% IOPS, p99.9 −92 to −148 ms, no operation above 500 ms) and showed no flag-driven control loss (resident differences follow run order). Both arms use the new pool and queue order; the pool size was not varied. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; a backing store with a different latency profile; evidence that the 16-thread pool starves another workload. |
 | 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stays enabled; no exclusion or driver change. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
-| Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a working overlap suite (needs a seed design the driver permits). |
-| Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed: with Strict on NTFS, 2 filesystem application flushes and 1 write-through write drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog cannot be held between filesystem barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a seed that can hold its backlog without filesystem barriers. |
+| Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
+| Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
 For a missing-span experiment, first record how many missing runs each partly
