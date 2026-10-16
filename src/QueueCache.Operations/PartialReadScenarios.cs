@@ -6,6 +6,8 @@ namespace QueueCache.Operations;
 
 public sealed record PartialReadObservation(string Id, int Bytes, ulong ExpectedCachedBytes,
     CacheStagedReads Before, CacheStagedReads After, CacheStagedReads Delta, string Sha256);
+public sealed record ConcurrentMissObservation(string Id, int Readers, long VerifiedBytes,
+    WriteCacheState Before, WriteCacheState After, CacheDiagnostics DiagnosticsBefore, CacheDiagnostics DiagnosticsAfter);
 
 /// <summary>Owns one small file and holds its unbuffered handle across quiescent counter boundaries.
 /// Counter accounting and bytes are checked separately; the coordinator owns restoration.</summary>
@@ -96,6 +98,108 @@ public static class PartialReadScenarios
             file.Write(0, expected);
             Probe("overwritten-hit", 0, FileBytes, 0, 0, false);
             device.Control(WriteCacheAction.Flush);
+        }
+        return checks;
+    }
+
+    /// <summary>Simultaneous reads of the same cold/partly dirty blocks. A completing miss
+    /// may fill blocks another read originally found absent; that read must not release
+    /// somebody else's pins. Large worker reads also overlap the small offloaded reads.</summary>
+    public static IReadOnlyList<CheckResult> ConcurrentMisses(DiskTarget target, CacheDevice device,
+        string directory, int budgetMiB, Action<ConcurrentMissObservation> record)
+    {
+        using var gate = ConfigurationGate.Enter(target.Instance);
+        const int bytes = 4 << 20, readers = 16;
+        var path = Path.GetFullPath(Path.Combine(directory, "concurrent-read-misses.dat"));
+        if (!path.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || File.Exists(path))
+            throw new IOException("Concurrent read misses require a new owned file on the selected volume.");
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        var expected = new byte[bytes];
+        new Random(1415).NextBytes(expected);
+        using var writer = new AlignedFile(path, bytes, create: true, alignment: 512, shareRead: true);
+        writer.Write(0, expected);
+        writer.Flush();
+        ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Deferred, HighPercent: 100, MaxDirtyAgeMs: 3600000)
+        }, true);
+        var checks = new List<CheckResult>();
+        for (var round = 0; round < 12; round++)
+        {
+            device.Control(WriteCacheAction.Flush);
+            device.Control(WriteCacheAction.DropClean);
+            if (round % 2 == 1)
+                for (var block = 0; block < bytes; block += 4096)
+                {
+                    var sector = new byte[512];
+                    new Random(round * 1009 + block).NextBytes(sector);
+                    writer.Write(block, sector);
+                    sector.CopyTo(expected, block);
+                }
+            using var ready = new CountdownEvent(readers);
+            using var start = new ManualResetEventSlim();
+            var before = device.GetWriteCacheState();
+            var diagnosticBefore = device.GetDiagnostics();
+            var tasks = new List<Task<long>>();
+            var allReady = false;
+            try
+            {
+                foreach (var reader in Enumerable.Range(0, readers))
+                    tasks.Add(Task.Factory.StartNew(() =>
+                    {
+                        var length = reader == 0 ? bytes : reader % 3 == 0 ? 4096 : 1 << 20;
+                        AlignedFile? file = null;
+                        try
+                        {
+                            try { file = new AlignedFile(path, length, create: false, sharedReadOnly: true); }
+                            finally { ready.Signal(); }
+                            start.Wait();
+                            var actual = new byte[length];
+                            // Each handle owns its buffer. Every byte is checked, including the
+                            // dirty sector overlays; poison catches short or missing copies.
+                            for (var pass = 0; pass < 3; pass++)
+                            {
+                                Array.Fill(actual, (byte)0xA5);
+                                file.Read(0, actual);
+                                if (!actual.AsSpan().SequenceEqual(expected.AsSpan(0, length)))
+                                    throw new InvalidDataException($"Concurrent miss round {round}, reader {reader}: byte mismatch.");
+                            }
+                            return 3L * length;
+                        }
+                        finally { file?.Dispose(); }
+                    }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
+                allReady = ready.Wait(TimeSpan.FromSeconds(30));
+            }
+            finally
+            {
+                // Never leave an owned thread waiting if a handle/thread failed to start.
+                start.Set();
+                Task.WaitAll(tasks.ToArray());
+            }
+            if (!allReady) throw new TimeoutException("Concurrent read workers did not become ready.");
+            var after = device.GetWriteCacheState();
+            var diagnosticAfter = device.GetDiagnostics();
+            var id = $"concurrent-misses-r{round + 1:D2}-{(round % 2 == 0 ? "cold" : "partial")}";
+            var verified = tasks.Sum(t => t.Result);
+            record(new(id, readers, verified, before, after, diagnosticBefore, diagnosticAfter));
+            if (before.Instance != after.Instance || before.Generation != after.Generation ||
+                before.Errors != after.Errors || after.LastError != 0 ||
+                diagnosticBefore.StagedReads is not { } first || diagnosticAfter.StagedReads is not { } last ||
+                last.Requests <= first.Requests)
+                throw new InvalidDataException(id + ": missing lower-read coverage or changed cache identity/health.");
+            // Leaked pins keep clean entries from being evicted. After draining and
+            // dropping them, the whole fixture must miss and still match every byte.
+            device.Control(WriteCacheAction.Flush);
+            device.Control(WriteCacheAction.DropClean);
+            var coldBefore = device.GetWriteCacheState();
+            var persisted = new byte[bytes];
+            writer.Read(0, persisted);
+            var coldAfter = device.GetWriteCacheState();
+            if (!persisted.AsSpan().SequenceEqual(expected) || coldAfter.ReadMissBytes < coldBefore.ReadMissBytes ||
+                coldAfter.ReadMissBytes - coldBefore.ReadMissBytes < bytes)
+                throw new InvalidDataException(id + ": persisted bytes mismatch or clean entries remained pinned.");
+            checks.Add(new(id, "PASS", $"{readers} readers verified {verified} bytes, plus {bytes} after drain/drop-clean."));
         }
         return checks;
     }

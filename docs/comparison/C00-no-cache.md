@@ -1,6 +1,60 @@
-# Q: without any cache Windows 11, baseline
+# Q: disk baseline
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
+
+## Short write plus drain comparison (2026-10-16)
+
+Three complete repetitions per workload, plan 148; same temporary snapshot present,
+Defender/Search disabled, all storage guards passed. QueueCache drivers and PrimoCache were absent.
+
+| Workload | MB/s, median (range) | App seconds | Drain/confirmation seconds | Total seconds | Mean backing write KiB |
+|---|---:|---:|---:|---:|---:|
+| One new 1 GiB file | **48.41** (42.63–53.43) | 22.152 | 0.089 | 22.179 | 988.8 |
+| 4,096 new 64 KiB files | **1.25** (1.23–1.33) | 213.555 | 0.489 | 213.897 | 5.0 |
+
+Exact run: `QueueCache-Verify-20261016-084338-620bac6863d24b9d8b4c6614fd43d0cf`; all 12,291 cache-bypassed file hashes passed.
+The headline includes filesystem metadata, explicit drain and pending/disk queue
+confirmation; verification is untimed. Application/drain/total columns are separate
+medians and need not add up. Backing-write sizes
+include metadata at the observed virtual-disk counter layer. These scores do not
+replace the different historical workloads below or prove power-loss durability.
+
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+per-case evidence and build identity are in the existing [data](data/C00-no-cache.json).
+
+## Current cache refresh (2026-10-15)
+
+QueueCache paused. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
+
+Runs: `QueueCache-Verify-20261015-230825-83e24bca1049435592297d32084887d6`, `QueueCache-Verify-20261015-224743-b2572bf0e2a745129b59744d3ff3d31c`.
+All declared steps and raw XML totals, duration, CPU and latency fields were reviewed; every tree hash check passed.
+
+| Workload | Current observation |
+|---|---:|
+| Hot sequential 1M Q8 read / write, MB/s | 572.8 / 250.7 |
+| First / second 1 GiB read after clearing, MB/s | 579.3 / 581.4 |
+| 8 GiB file random 4K Q32 / sequential 1M Q8 read, MB/s | 91.2 / 658.7 |
+| 8 GiB sustained write / slowest full second, MB/s | 259.5 / 243.3 |
+| 8 GiB payload through last busy backing-disk sample, MB/s | 257.4 |
+| Backing-disk activity after 1 GiB burst, seconds | 0.66 |
+| File tree create / copy / read-hash / delete, seconds | 23.69 / 21.19 / 2.90 / 13.42 |
+
+<img src="../images/comparison/off-refresh-20261016.png" width="480" alt="CrystalDiskMark, QueueCache paused">
+
+CrystalDiskMark retained `run2`, selected by sequential Q8 read from the two clean runs below. MB/s.
+
+| Shape | run2 read / write | run3 read / write |
+|---|---:|---:|
+| SEQ1M Q8T1 | 661.58 / 266.18 | 660.78 / 266.53 |
+| SEQ1M Q1T1 | 285.68 / 121.39 | 283.07 / 121.44 |
+| RND4K Q32T1 | 130.08 / 12.43 | 115.98 / 13.16 |
+| RND4K Q1T1 | 19.35 / 5.13 | 19.12 / 4.73 |
+
+All current shapes, percentiles, memory snapshots and backing-write measurements: [comparison data](data/C00-no-cache.json), `Refresh20261016`.
+
+## Earlier measurement (retained)
+
+The following results keep their original sessions and environment.
 
 | | |
 |---|---|
@@ -14,11 +68,11 @@
 | `compare-durability-write` run | `QueueCache-Verify-20261012-232604-91dbf1f2c4c643869b00996f8d8663c6` |
 | `compare-durability-verify` run | `QueueCache-Verify-20261012-232810-5db0f01079f4422eac252f3e000490a3` |
 
-## Notes
+### Notes
 
 The run went fine. This is the disk itself, without any cache, as the yardstick for the caches: about 570 MB/s for large reads, 250 MB/s for large writes, and 12 MB/s (reads) and 4 MB/s (writes) for small random requests one at a time. Windows' own file cache still speeds up programs that use it (the "buffered" rows). After the simulated power cut the file system was clean and all flushed data had survived. Of 10,000 new small files that nobody flushed, 8,236 were intact, 1,066 incomplete and 698 missing. That is normal Windows behaviour: it keeps new files in memory for a few seconds.
 
-## CrystalDiskMark
+### CrystalDiskMark
 
 <img src="../images/comparison/C00-no-cache.png" width="480" alt="CrystalDiskMark, Q: without any cache Windows 11, baseline">
 
@@ -31,7 +85,7 @@ Kept: run 2 (the faster SEQ1M Q8T1 read of two). MB/s.
 | RND4K Q32T1 | 135.12 / 11.62 | 116.61 / 10.82 |
 | RND4K Q1T1 | 19.77 / 4.76 | 19.64 / 4.67 |
 
-## Detailed measurements (DiskSpd and timed steps)
+### Detailed measurements (DiskSpd and timed steps)
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -76,7 +130,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 13,082 | 2,366 | 204 |
 | memory-end | 12,817 | 2,618 | 284 |
 
-## Empty cache
+### Empty cache
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -95,7 +149,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 13,018 | 2,428 | 216 |
 | memory-end | 13,042 | 2,406 | 214 |
 
-## Power loss
+### Power loss
 
 
 | Data set | New | Old | Other or missing |
@@ -105,7 +159,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 
 Small files: 8236 intact, 1066 damaged, 698 missing of 10000; chkdsk /scan exit 0.
 
-## Environment
+### Environment
 
 Windows 26H1 build 28000.2956; target Q: NTFS, cluster 4096 bytes, 199.98 GiB.
 

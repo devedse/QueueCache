@@ -161,6 +161,10 @@ internal static class StressRaceScenarios
                 Options = new CacheOptions(Drain: DrainAlgorithm.Idle, MaxDirtyAgeMs: 3600000, IdleMs: 60000, Parallelism: parallelism, RetainWrites: false)
             });
             volume.WritePass();
+            // Closing the writers can leave NTFS metadata in its lazy writer. Push
+            // it through the filesystem before faulting the cache; Fast still holds
+            // the payload in RAM until the explicit QueueCache barrier below.
+            FlushVolume(volume.Target);
             var dirty = volume.Device.GetWriteCacheState();
             if (dirty.DirtyBytes < 16UL * MiB) throw new IOException($"{label}: only {dirty.DirtyBytes} dirty bytes before the injected failure.");
             volume.Device.Control(WriteCacheAction.LabFault, value: fault);
@@ -173,11 +177,13 @@ internal static class StressRaceScenarios
             var readFailed = volume.ReadFailsWhileFaulted();
             volume.Device.Control(WriteCacheAction.LabFault);
             volume.Device.Control(WriteCacheAction.Retry);
+            // The faulted-read handle also closed. Complete filesystem metadata
+            // writes before the final barrier rather than accepting a dirty result.
+            FlushVolume(volume.Target);
             volume.Device.Control(WriteCacheAction.Flush);
             var retried = volume.Device.GetWriteCacheState();
             RunStorage.AtomicJson(evidence + $".{label.Replace('/', '-')}.json", new { Dirty = dirty, Faulted = faulted, Retried = retried, ReadFailed = readFailed });
-            if (retried.Faulted || retried.LastError != 0 || retried.DirtyBytes != 0)
-                throw new IOException($"{label}: Retry did not drain the retained data (0x{retried.LastError:X8}, {retried.DirtyBytes} dirty bytes).");
+            StressRetryEvidence.Validate(faulted, retried);
             volume.ReleaseAndVerify(label);
             yield return new(label, "PASS", $"Drain parallelism {parallelism}: {dirty.DirtyBytes >> 20} MiB dirty across 4 KiB to 4 MiB blocks; " +
                 $"lab fault {fault} faulted the cache with {faulted.DirtyBytes >> 20} MiB retained; a read failed instead of returning data; " +

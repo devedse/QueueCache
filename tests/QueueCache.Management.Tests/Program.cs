@@ -20,6 +20,7 @@ if (args.Length > 0 && args[0] == "--runner-child")
 }
 if (OperatingSystem.IsWindows()) await VerificationRunnerTests.RunAsync();
 CacheExerciseTests.Run();
+TelemetryRecorderTests.Run();
 await ManagedDiskTests.RunAsync();
 ManagedLifecycleTests.Run();
 
@@ -60,7 +61,7 @@ var alphaDefault = new CacheConfiguration();
 alphaDefault.Validate(true);
 Check(alphaDefault.Preset == CachePreset.Fast && alphaDefault.Enabled && alphaDefault.Options == new CacheOptions(
     Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
-    IdleMs: 250, BatchKiB: 256, Parallelism: 2), "new task uses explicit Fast/Idle alpha defaults");
+    IdleMs: 250, BatchKiB: 1024, Parallelism: 4), "new task uses explicit Fast/Idle defaults (1024 KiB x 4 drain since plan 125)");
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
     foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
         foreach (var share in new[] { 0, 50, 100 })

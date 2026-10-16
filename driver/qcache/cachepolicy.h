@@ -34,7 +34,8 @@ static_assert(sizeof(QC_OPTIONS) == 48);
 constexpr QC_OPTIONS QcDefaultOptions()
 {
     return {
-        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcIdle, 40, 80, 5000, 250, 256, 2};
+        // 1024 KiB batches with 4 lower writes in flight since plan 125 (issue #15; 256 KiB and 2 before).
+        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcIdle, 40, 80, 5000, 250, 1024, 4};
 }
 // QcCallerPath default: serve RAM hits and fitting writes on the calling thread
 // when the device has no other request queued or active.

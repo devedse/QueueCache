@@ -2,12 +2,13 @@ using System.Text.Json;
 
 namespace QueueCache.Developer.Verification;
 
-/// <summary>Plan 120 same-build comparison of cached read bookkeeping: copy flags 3 (before) against 7 (the
-/// product default since plan 120) with the plan-118 screen. Built only from this run's snapshots and scores;
-/// raw evidence remains authoritative.</summary>
+/// <summary>Plan 120 same-build comparison of cached read bookkeeping: copy flags without and with flag 4 (the
+/// product default since plan 120) with the plan-118 screen. From plan 125 both arms keep flag 8 (misses on the
+/// offloaded-read threads, the product default), so they are 11 and 15. Built only from this run's snapshots and
+/// scores; raw evidence remains authoritative.</summary>
 public static class CacheReadBookkeeping
 {
-    public const ulong OriginalFlags = 3, CandidateFlags = 7, ProductFlags = 7;
+    public const ulong OriginalFlags = 11, CandidateFlags = 15, ProductFlags = 15;
     public const double TargetGainPercent = 5, ControlLossPercent = -3;
     public static bool IsTarget(PerformanceCase c) => c.QueueDepth == 8 && c.Threads == 1;
 

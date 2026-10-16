@@ -27,9 +27,12 @@ QueueCache uses one block index: dirty writes, retained clean writes and clean r
 
 ## How requests are served (since 0.4.153.1-0.4.162.1)
 
-Every cached volume has one ordered request worker, a pool of three offloaded-request
-threads and the drainers. The order of requests that could affect each other is
-decided in one place, while copies of independent requests run in parallel.
+Every cached volume has one ordered request worker, sixteen offloaded-read threads
+and the drainers. The sixteen threads are created when the volume cache is
+initialized, even while caching is disabled. Their bounded table has 64 entries;
+each request can pin at most 256 4 KiB cache blocks. Request order is decided in
+one place, while independent lower reads and eligible large resident copies can
+run in parallel.
 
 | Request | Where it runs |
 |---|---|
@@ -37,8 +40,17 @@ decided in one place, while copies of independent requests run in parallel.
 | Several requests outstanding (queue depth > 1) | Queued to the worker, which overlaps with the submitting thread and polls 30 us before sleeping. After finding it busy, the next 256 candidates follow; every 1024th caller-path candidate is sent to the worker to detect a deep queue. |
 | Read of 256 KiB or more fully in RAM; payload copy of a fitting write that size | Admitted in order by the worker, copied on an offloaded-request thread. Overlapping writes and reads wait for it; controls wait for all of them. |
 | Paging read that needs the disk | Offloaded-request thread, as before. |
+| Ordinary read that needs the disk, up to 256 cache blocks (since plan 125) | Found by the worker, then read and kept on an offloaded-read thread, allowing concurrent disk reads. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the 64-entry offload table is full the worker reads it as before. An unaligned request of 1 MiB or less can span more than 256 blocks and uses the ordered worker. |
 | Paging-file I/O | Forwarded from dispatch, as before. |
-| Misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+| Larger misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+
+While the worker waits for the disk, it completes queued reads that are already in RAM and hands queued misses
+to the offloaded-request threads. A read it cannot do either keeps its place in the queue (before plan 125 it went
+back to the front, so newer reads could overtake it for as long as reads kept arriving).
+Every read retains the identities of its pinned cache entries, including entries
+that were absent. Concurrent fills cannot cause it to copy or release a version
+it never pinned. Ordinary misses are retained from driver-owned staging buffers;
+paging misses are never retained.
 
 `qcache developer performance Q: --caller-path false` turns the caller path off
 until the next boot (for comparisons); Diagnostics V14-V16 count caller-path
@@ -71,7 +83,7 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 |---|---|
 | Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The alpha baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 256 KiB batches and parallelism 2 (1 before plan 56). |
+| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 1024 KiB batches and parallelism 4 (256 KiB and 2 before plan 125; parallelism 1 before plan 56). |
 | Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
@@ -89,7 +101,19 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes. `--drain-parallelism 1..4` (default 2 since plan 56; 1 before) bounds concurrent writes; overlapping versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. The default remains one 256 KiB gather stream.
+Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes
+(default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4
+since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain
+thread waits for its write before gathering the next. Overlapping versions remain
+ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Saved
+profiles keep their configured settings. The complete plan-132 comparison
+(three alternated repetitions) reduced median drain time during cold reads from
+6.52 to 3.86 seconds at 1024 KiB × 4 versus 256 KiB × 2. A separate write-only
+repeat reduced median flush time from 127.61 to 92.16 seconds, with every pair
+improving and separated ranges. Fixed-window write IOPS varied with the interval
+before the administrative flush began; this is not a general write-IOPS gain.
+See [findings](PERFORMANCE_FINDINGS.md)
+for the exact workloads and qualification limits.
 
 ## CLI examples
 

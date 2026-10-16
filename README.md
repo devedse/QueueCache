@@ -75,8 +75,9 @@ machine's physical RAM.
 ## Performance
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
-default test (1 GiB, 5 passes), the better of two runs per column. Both Q: columns:
-QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
+default test (1 GiB, 5 passes), the better of two clean runs per column. Both Q:
+columns: QueueCache 0.4.687.1 (2026-10-15 UTC), Defender/Search disabled; Fast uses
+1024 KiB batches and four drainers. RAM disk: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|
@@ -89,25 +90,44 @@ QueueCache 0.4.604.1 (2026-10-12); RAM disk column: QueueCache 0.4.583.1 (2026-1
   <img src="docs/images/cdm-ram-disk.png" width="49%" alt="CrystalDiskMark on a 4 GiB RAM disk">
 </p>
 
-| MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
+| MB/s | Q: cache paused | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 692 | 39,702 | 47,583 |
-| Sequential write (SEQ1M Q8T1) | 269 | 21,249 | 24,434 |
-| Random 4K read (RND4K Q1T1) | 19.6 | 1,297 | 1,657 |
-| Random 4K write (RND4K Q1T1) | 4.8 | 1,034 | 1,310 |
+| Sequential read (SEQ1M Q8T1) | 662 | 40,591 | 47,583 |
+| Sequential write (SEQ1M Q8T1) | 266 | 20,908 | 24,434 |
+| Random 4K read (RND4K Q1T1) | 19.4 | 1,306 | 1,657 |
+| Random 4K write (RND4K Q1T1) | 5.1 | 1,095 | 1,310 |
 
-The test file fits in RAM, so this shows what QueueCache does for data that is
-in its cache. Data that is not in the cache yet is currently read more slowly
-than without the cache, because QueueCache fetches it from the drive one request
-at a time. The drive's own speed on this network storage varies (two days earlier
-it read 594 and wrote 112 MB/s);
-both Q: columns were measured in one session, without a restart in between. In
-the same session the cache's previous read bookkeeping read 38,645 MB/s at
-SEQ1M Q8T1 and 18,962 MB/s at SEQ1M Q1T1 (now 39,702 and 19,564). The RAM disk
+The test file fits in RAM, so this shows what QueueCache does for data already
+in its cache; Fast writes can finish before reaching the disk. The paused
+control retains QueueCache's loaded filter. The issue-fix checks below use
+separate workloads.
+Ordinary misses spanning at most 256 cache blocks can overlap. A same-build
+comparison with Defender/Search disabled measured 9.95× cold random and 3.13×
+cold sequential throughput, better p99 and no repeated resident-control loss.
+A separate equal-work test improved cold-random p99.9 from 192 to 61 ms and the
+median case maximum from 272 to 124 ms
+([results, controls and limits](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
+The drive's speed on this shared network storage varies; both Q: columns are
+measured in one session, without a restart in between. The RAM disk
 column was re-measured after RAM-disk reads became asynchronous: one program
 with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
 25,353 MB/s before).
 [How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
+
+**Short writes including the final drain (2026-10-16).** Separate new-file tests,
+three repetitions per provider, with Defender/Search disabled and the same temporary
+snapshot present. Both workloads fit the 2 GiB caches; these scores include file
+creation, all writes, filesystem flush and explicit drain, with file hashes checked
+after pausing the cache. The direct control has QueueCache absent.
+
+| Completed writes, MB/s | Direct disk | QueueCache Fast | PrimoCache Defer-Write |
+|---|---:|---:|---:|
+| One new 1 GiB file, 1 MiB Q4 | 48.41 | 52.71 | 78.96 |
+| 4,096 new 64 KiB files, 4 KiB writes | 1.25 | 41.71 | 57.62 |
+
+The small-file workload totals 256 MiB. These virtual-disk measurements use
+unbuffered file data; ordinary buffered copies and larger-than-cache workloads can
+behave differently. [Ranges, backing-write sizes and method](docs/COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
 
 How QueueCache compares with other RAM disks and RAM caches on the same machine,
 including where it is slower: [comparison](docs/COMPARISON.md).

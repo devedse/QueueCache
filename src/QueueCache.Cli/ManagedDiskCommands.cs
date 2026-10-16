@@ -245,7 +245,7 @@ internal static class ManagedDiskCommands
         public readonly Option<DrainAlgorithm> Drain = new("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Idle };
         public readonly Option<int> Low = new("--low-percent") { DefaultValueFactory = _ => 40 }, High = new("--high-percent") { DefaultValueFactory = _ => 80 },
             Age = new("--max-dirty-age-ms") { DefaultValueFactory = _ => 5000 }, Idle = new("--idle-ms") { DefaultValueFactory = _ => 250 },
-            Batch = new("--batch-kib") { DefaultValueFactory = _ => 256 }, Parallel = new("--drain-parallelism") { DefaultValueFactory = _ => 2 };
+            Batch = new("--batch-kib") { DefaultValueFactory = _ => 1024 }, Parallel = new("--drain-parallelism") { DefaultValueFactory = _ => 4 };
         private readonly Option[] options;
         public CacheBinding(Command command)
         {

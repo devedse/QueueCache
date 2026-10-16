@@ -1240,7 +1240,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     // Measured (plan 96, 1 MiB sequential RAM hits): prefetch +19-21% Q1; coalescing within a chunk
     // +33% Q1 and up to +11% Q8; together no loss. Bookkeeping (plan 120): 1M Q8T1 +7.9%, Q1T1 +4.5%,
     // four readers +3.5% in a same-build comparison. QcLabCopyFlags can still turn them off for A/B.
-    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping;
+    c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses;
     // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
     c->ReadRecall = 1;
     LARGE_INTEGER frequency;
@@ -1696,7 +1696,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         status = command.Value || command.BudgetBytes ? STATUS_INVALID_PARAMETER : MeasureLayout(c);
         break;
     case QcLabCopyFlags:
-        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping) || command.BudgetBytes)
+        if (command.Value > (QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses) || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CopyFlags, static_cast<LONG>(command.Value));
@@ -2292,8 +2292,11 @@ static bool DistinctPages(PIRP irp)
 }
 // callerPath (with hitOnly): QcCacheTryCallerPath; the read-service counters
 // stay the worker's, and a mapping failure declines instead of failing.
+// Returned by Read with offloadMiss for an ordinary miss, before any pin or disk I/O:
+// QcCacheProcess hands it to an offloaded-read thread (QcCopyOffloadMisses).
+static constexpr NTSTATUS QcReadMissOffload = static_cast<NTSTATUS>(0x6000A002L);
 static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowReadService = true,
-                     ULONG* pinned = nullptr, bool callerPath = false)
+                     ULONG* pinned = nullptr, bool callerPath = false, bool offloadMiss = false)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     auto length = stack->Parameters.Read.Length;
@@ -2381,34 +2384,51 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         ReleaseCache(c);
         return STATUS_NOT_FOUND;
     }
+    // The worker would wait here for the disk, one miss at a time (issue #14).
+    if (offloadMiss && !full && !pagingIo && length <= QcPagingPinBlocks * Chunk &&
+        (copyFlags & QcCopyOffloadMisses))
+    {
+        ReleaseCache(c);
+        return QcReadMissOffload;
+    }
     const auto firstBlock = start / Chunk * Chunk;
-    // Blocks that had a cached version when this read started. A kept miss is filled from the
-    // disk data read below, but for these blocks that data can predate the cached version: its
-    // drain may complete during the read and, unretained, leave the index, so the block would
-    // look missing and get the older disk bytes (found by stress-races). Only blocks without a
-    // cached version are filled; the worker serializes writes, so they cannot change meanwhile.
-    const bool fillCandidate = !full && !pagingIo && !pinned && !hitOnly && length <= QcStagedReadMaxBytes;
-    ULONG64 cachedAtStart[QcStagedReadMaxBytes / Chunk / 64 + 1];
-    if (fillCandidate)
-        RtlZeroMemory(cachedAtStart, ((end - firstBlock) / Chunk / 64 + 1) * sizeof(ULONG64));
+    // Every reader keeps the identities it pinned, including missing entries.
+    // Another miss can fill a previously absent block while lower I/O is pending;
+    // looking that block up again would overlay/unpin a version we never pinned.
+    // Keep the common <=1 MiB path on bounded stack/thread scratch. Larger worker
+    // reads use pool scratch and fail before pinning if it cannot be allocated.
+    ULONG localPins[QcPagingPinBlocks];
+    ULONG* allocatedPins = nullptr;
+    if (!pinned)
+    {
+        const auto blocks = static_cast<SIZE_T>((end - firstBlock + Chunk - 1) / Chunk);
+        if (blocks <= RTL_NUMBER_OF(localPins))
+            pinned = localPins;
+        else
+        {
+            allocatedPins = static_cast<ULONG*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, blocks * sizeof(ULONG), Tag));
+            if (!allocatedPins)
+            {
+                ReleaseCache(c);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            pinned = allocatedPins;
+        }
+    }
     for (auto block = firstBlock; block < end; block += Chunk)
     {
         const auto k = static_cast<ULONG>((block - firstBlock) / Chunk);
         auto index = batched ? pinned[k] : FindSlot(c, block);
-        if (pinned)
-            pinned[k] = index;
+        pinned[k] = index;
         if (index != NoSlot)
-        {
             ++c->Slots[index].Pins;
-            if (fillCandidate)
-                cachedAtStart[k / 64] |= 1ULL << (k % 64);
-        }
     }
     NTSTATUS status = STATUS_SUCCESS;
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
-    // Only the request worker keeps misses; paging reads never do (DistinctPages).
+    // Both worker and offloaded ordinary reads retain staged misses. Pin scratch
+    // controls version ownership, not admission. Paging misses are never retained.
     PUCHAR staging = nullptr;
-    const bool keepMiss = !full && !pagingIo && !pinned && !hitOnly && c->Enabled && ReadLimit(c) &&
+    const bool keepMiss = !full && !pagingIo && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
     ULONGLONG stagedCachedBytes = 0;
     if (keepMiss && length <= QcStagedReadMaxBytes)
@@ -2453,7 +2473,7 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         irp->IoStatus.Information = length;
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
         status = STATUS_DEVICE_DATA_ERROR;
-    if (NT_SUCCESS(status) && pinned)
+    if (NT_SUCCESS(status))
     {
         // A pinned version is immutable and stays allocated (writers create a new
         // version; eviction, retirement and trim skip it), so its buffer and valid
@@ -2515,49 +2535,11 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         c->State.CacheReadBytes += hitBytes;
         c->ReadMissBytes += missBytes;
     }
-    else if (NT_SUCCESS(status))
-    {
-        for (auto block = start / Chunk * Chunk; block < end;)
-        {
-            PUCHAR buffers[64];
-            ULONG valid[64];
-            ULONG count = 0;
-            auto first = block;
-            for (; count < RTL_NUMBER_OF(buffers) && block < end; ++count, block += Chunk)
-            {
-                auto index = pinned ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
-                buffers[count] = index == NoSlot ? nullptr : c->Slots[index].Buffer;
-                valid[count] = index == NoSlot ? 0 : c->Slots[index].ValidSectors;
-                const auto from = max(start, block);
-                const auto bytes = static_cast<ULONG>(min(end, block + Chunk) - from);
-                const auto hits = valid[count] == 255 ? bytes :
-                    QcValidBytes(valid[count] & QcSectorMask(static_cast<ULONG>(from - block), bytes));
-                c->ReadHitBytes += hits;
-                c->State.CacheReadBytes += hits;
-                c->ReadMissBytes += bytes - hits;
-            }
-            ReleaseCache(c);
-            for (ULONG i = 0; i < count; ++i)
-                if (buffers[i])
-                {
-                    auto current = first + i * Chunk;
-                    auto from = max(start, current);
-                    auto to = min(end, current + Chunk);
-                    if (valid[i] == 255)
-                        RtlCopyMemory(target + (from - start), buffers[i] + (from - current), static_cast<SIZE_T>(to - from));
-                    else
-                        for (auto sector = from; sector < to; sector += 512)
-                            if (valid[i] & (1UL << ((sector - current) / 512)))
-                                RtlCopyMemory(target + (sector - start), buffers[i] + (sector - current), 512);
-                }
-            AcquireCache(c);
-        }
-    }
     // Release every pin before admission can evict anything. Deferred retirement
     // allows a read to finish even if retention is disabled and draining completed.
     for (auto block = firstBlock; block < end; block += Chunk)
     {
-        auto index = pinned ? pinned[(block - firstBlock) / Chunk] : FindSlot(c, block);
+        auto index = pinned[(block - firstBlock) / Chunk];
         if (index != NoSlot)
             UnpinSlot(c, index);
     }
@@ -2572,8 +2554,9 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             auto index = FindSlot(c, block);
             // An unpinned version may have retired; touch only the version this
             // read used when it is still the current one.
-            if (pinned && index != pinned[(block - firstBlock) / Chunk])
-                continue;
+            const auto original = pinned[(block - firstBlock) / Chunk];
+            if (original != NoSlot && index != original)
+                continue; // Its cached bytes may have been newer than the lower read.
             if (index != NoSlot && batched && TouchCleanMovesOnly(c, index))
             {
                 if (runLast != NoSlot && c->Slots[runLast].QueueNext == index)
@@ -2598,8 +2581,6 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
             }
             if (!fillable || block < start || block + Chunk > end)
                 continue;
-            if (const auto k = static_cast<ULONG>((block - firstBlock) / Chunk); cachedAtStart[k / 64] & (1ULL << (k % 64)))
-                continue; // See cachedAtStart: the disk bytes may be older than the version it had.
             const bool recalled = RecallReadFill(c, block); // Before ReadRoom evicts its victim.
             if (ReadRoom(c))
             {
@@ -2624,6 +2605,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     ReleaseCache(c);
     if (staging)
         ExFreePoolWithTag(staging, Tag);
+    if (allocatedPins)
+        ExFreePoolWithTag(allocatedPins, Tag);
     return status;
 }
 bool QcCacheTryReadHit(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status)
@@ -2724,12 +2707,14 @@ static bool FullyResident(QC_CACHE* c, LONGLONG start, LONGLONG end)
     }
     return true;
 }
-bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
+bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool miss)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
     const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+    if (miss && (pagingIo || !(InterlockedCompareExchange(&c->CopyFlags, 0, 0) & QcCopyOffloadMisses)))
+        return false;
     if (stack->MajorFunction != IRP_MJ_READ || !c->ReadThreads[0].Thread || !c->CompleteRequest ||
-        (!pagingIo && stack->Parameters.Read.Length < QcCopyOffloadMinBytes))
+        (!pagingIo && !miss && stack->Parameters.Read.Length < QcCopyOffloadMinBytes))
         return false;
     const auto start = stack->Parameters.Read.ByteOffset.QuadPart;
     const auto length = stack->Parameters.Read.Length;
@@ -2744,13 +2729,17 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
     // Only the request worker sets these fields and offloads, so the decision
     // cannot race a new fence, active write or blocking request.
     // A paging read is offloaded for its disk wait: a RAM hit completes faster on
-    // the worker. A large ordinary read is offloaded only as a RAM hit, so several
-    // copies run at once; a miss keeps the worker's ordered path and read fill.
+    // the worker. A large ordinary read is offloaded as a RAM hit, so several copies
+    // run at once. An ordinary miss (miss: Read found it on the worker, with
+    // QcCopyOffloadMisses) is offloaded for its disk wait and keeps its read fill:
+    // the thread runs the worker's Read, and writes wait for overlapping offloaded
+    // reads, so its blocks cannot change meanwhile. If the range filled up in the
+    // meantime, that Read simply serves it from RAM.
     AcquireCache(c);
     const bool refused = c->OffloadBlocked || c->Stop || c->Gone || !c->Enabled ||
         (c->RangeDrain && start < c->RangeEnd && end > c->RangeStart) ||
         (c->ActiveWrite && start < c->ActiveWriteEnd && end > c->ActiveWriteStart) ||
-        FullyResident(c, start, end) == pagingIo || PagingReadsOverlap(c, start, end, true);
+        (!miss && FullyResident(c, start, end) == pagingIo) || PagingReadsOverlap(c, start, end, true);
     ReleaseCache(c);
     if (refused)
         return false;
@@ -2853,6 +2842,8 @@ static void PagingReader(PVOID context)
         }
         auto irp = next->Irp;
         const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
+        // Each read owns a stable pin snapshot, even when other misses fill the
+        // same blocks during its lower wait. Ordinary staged misses are retained.
         auto status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
                                   : Read(c, irp, false, false, reader->Pins);
         if (pagingIo)
@@ -3228,7 +3219,7 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         const bool write = stack->MajorFunction == IRP_MJ_WRITE;
         if (pagingIo)
             InterlockedIncrement64(write ? &c->PagingRoutedWriteRequests : &c->PagingRoutedReadRequests);
-        auto status = write ? Write(c, irp) : Read(c, irp);
+        auto status = write ? Write(c, irp) : Read(c, irp, false, true, nullptr, false, !pagingIo);
         if (pagingIo)
             InterlockedIncrement64(write
                 ? NT_SUCCESS(status) ? &c->PagingRoutedWriteCompletions : &c->PagingRoutedWriteFailures
@@ -3337,7 +3328,15 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
         if (first >= 0 && length)
             WaitForPagingReads(c, first, first > MAXLONGLONG - static_cast<LONGLONG>(length) ? MAXLONGLONG : first + length,
                                nullptr, nullptr, true);
-        return Process(c, irp, deviceBytes);
+        auto status = Process(c, irp, deviceBytes);
+        if (status != QcReadMissOffload)
+            return status;
+        if (QcCacheOffloadPagingRead(c, irp, deviceBytes, true))
+        {
+            *transferred = true;
+            return STATUS_PENDING;
+        }
+        return Read(c, irp); // Refused (table full, overlapping write or fence): the worker reads it.
     }
     if (major == IRP_MJ_WRITE)
     {

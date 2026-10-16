@@ -211,7 +211,16 @@ static NTSTATUS QueueInsert(PIO_CSQ csq, PIRP irp, PVOID reinsert)
     ext->Routing = TRUE;
     if (reinsert)
     {
-        InsertHeadList(&ext->Pending, &irp->Tail.Overlay.ListEntry);
+        // Back to its arrival position (DriverContext[0] keeps the sequence), not the head:
+        // head reinsertion let newer reads overtake older ones for as long as reads kept
+        // arriving (issue #14: single reads waited up to 59 s of a 60 s test). It crosses
+        // nothing it had not already passed, so ordering against older writes is unchanged.
+        const auto sequence = reinterpret_cast<ULONGLONG>(irp->Tail.Overlay.DriverContext[0]);
+        auto next = QcReadReinsertPosition(&ext->Pending, [](PLIST_ENTRY node) { return node->Flink; },
+            [sequence](PLIST_ENTRY node) {
+                return reinterpret_cast<ULONGLONG>(CONTAINING_RECORD(node, IRP, Tail.Overlay.ListEntry)->Tail.Overlay.DriverContext[0]) < sequence;
+            });
+        InsertTailList(next, &irp->Tail.Overlay.ListEntry); // Inserts before next.
         ext->ReadSelection.Reset(ext->Pending.Flink);
     }
     else
@@ -499,6 +508,14 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
                 Increment(&ext->Cache.Performance.ServiceReadCompletions);
             completed = true;
         }
+        else if (QcCacheOffloadPagingRead(&ext->Cache, read, deviceBytes, true))
+        {
+            // An ordinary miss (QcCopyOffloadMisses): an offloaded-read thread reads and
+            // keeps it, so this lane neither waits for the disk nor requeues it.
+            if (diagnostics)
+                Increment(&ext->Cache.Performance.ServiceReadCompletions);
+            completed = true;
+        }
         else
         {
             if (diagnostics)
@@ -507,10 +524,10 @@ static bool ServiceCachedReads(PVOID context, PIRP blockedRequest)
             // populate a missing block; retry after normal admission advances.
             // DriverContext[3] belongs to CSQ and must never be used here.
             read->Tail.Overlay.DriverContext[2] = reinterpret_cast<PVOID>(ext->ReadServiceEpoch);
-            // A miss must not block this lane on the lower device. Reinsertion at
-            // the head crosses only reads/non-overlapping writes, observations
-            // and eligible Fast flushes already checked. No lower read is issued
-            // here; the normal worker may later execute this independent miss.
+            // A miss that could not be offloaded must not block this lane on the lower
+            // device. QueueInsert puts it back at its arrival position, so it crosses
+            // nothing and keeps its turn. No lower read is issued here; the normal
+            // worker later executes this independent miss.
             // CSQ may cancel/free it inline; never touch it after successful insert.
             status = IoCsqInsertIrpEx(&ext->Csq, read, nullptr, reinterpret_cast<PVOID>(1));
             if (!NT_SUCCESS(status))

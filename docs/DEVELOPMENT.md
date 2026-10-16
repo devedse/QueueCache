@@ -46,7 +46,8 @@ New tasks default to:
 - Fast write behavior, requiring explicit volatility acknowledgement in the CLI;
 - Automatic RAM allocation with retained writes and read promotion;
 - Idle background draining with a 5,000 ms first-dirty trigger, 250 ms idle
-  trigger, 40/80 watermarks, 256 KiB batches and parallelism 2.
+  trigger, 40/80 watermarks, 1024 KiB batches and parallelism 4 (256 KiB and 2
+  before plan 125).
 
 Strict remains available. Existing profiles retain their saved Fast/Strict and
 drain settings. Background age starts scheduling and is not a durability deadline.

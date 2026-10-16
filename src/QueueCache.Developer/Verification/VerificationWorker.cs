@@ -19,11 +19,22 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null,
     string? ProductExecutable = null, string[]? ProductPrefix = null, string[]? Files = null,
     string? DiskSpd = null, int ReferenceRepeats = 3, RamReadRunKind ReferenceKind = RamReadRunKind.Reference, string? TraceSymbols = null,
-    string? Product = null, string? Suite = null);
+    string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
+    bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
+    long? DrainSeedBytes = null, string? StartFile = null,
+    string? ProcessEvidence = null, ComparisonProvider? Provider = null, string? PrimoCli = null);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
-    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null, ulong? CallerBackoff = null);
+    bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
+    ulong? CallerBackoff = null, ulong? CopyFlags = null);
 public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
+/// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
+public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
+    double PerformanceMilliseconds, double DiagnosticsMilliseconds,
+    double? PreviousPersistenceMilliseconds, double? PreviousDelayMilliseconds);
+public sealed record TelemetrySnapshot(DateTimeOffset Utc, double ElapsedSeconds,
+    WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics,
+    TelemetryStageTiming StageTiming);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
 [SupportedOSPlatform("windows")]
@@ -196,7 +207,8 @@ public static class VerificationWorker
     /// or in flight there. A restored cache that is enabled again (Fast or Strict) can already hold new writes
     /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
-        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null)
+        WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null,
+        ulong? copyFlags = null, bool copyFlagsRestoreRequired = false)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -221,7 +233,33 @@ public static class VerificationWorker
         Compare(nameof(restored.Options), original.State.Options, restored.Options);
         Compare(nameof(original.Timing), original.Timing ? 1UL : 0UL, timing);
         if (original.CallerBackoff is not null) Compare(nameof(original.CallerBackoff), original.CallerBackoff, callerBackoff);
+        if (original.CopyFlags is { } expectedCopyFlags)
+            mismatches.AddRange(CopyFlagsMismatches(expectedCopyFlags, copyFlags));
+        else if (copyFlagsRestoreRequired)
+            mismatches.Add($"CopyFlags: original value unavailable for this legacy run; actual {FormatCopyFlags(copyFlags)}");
         return mismatches;
+    }
+    public static IReadOnlyList<string> CopyFlagsMismatches(ulong expected, ulong? actual) =>
+        actual == expected ? [] : [$"CopyFlags: expected {expected}, actual {FormatCopyFlags(actual)}"];
+    private static string FormatCopyFlags(ulong? value) => value?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "unavailable";
+
+    /// <summary>Validates the old read-miss suite's separate pre-mutation artifact before using it to recover
+    /// a snapshot written before CopyFlags became part of RecoverySnapshot.</summary>
+    public static ulong ValidateLegacyCopyFlags(RecoverySnapshot original, CacheLayoutSnapshot? evidence)
+    {
+        if (evidence?.State is null || evidence.Diagnostics is null)
+            throw new InvalidDataException("Legacy copy-flags evidence is missing its cache state or diagnostics.");
+        var value = evidence.Diagnostics.CopyFlags;
+        if (value is null || value.Value > 15)
+            throw new InvalidDataException("Legacy copy-flags evidence is missing or outside the supported 0..15 range.");
+        var before = original.State;
+        var observed = evidence.State;
+        if (before.Instance == 0 || observed.Instance != before.Instance ||
+            observed.DeviceBytes != before.DeviceBytes || observed.Generation != before.Generation ||
+            observed.BudgetBytes != before.BudgetBytes || observed.Enabled != before.Enabled ||
+            observed.Options != before.Options || observed.Errors != before.Errors || observed.LastError != before.LastError)
+            throw new IOException("Legacy copy-flags evidence does not match the recovery snapshot's cache instance and pre-mutation state.");
+        return value.Value;
     }
     public static async Task<int> ExecuteAsync(string jobPath)
     {
@@ -237,6 +275,12 @@ public static class VerificationWorker
         {
             RunStorage.AtomicJson(job.Reply, ComparisonScenarios.Inspect(job.Volume, Path.GetDirectoryName(job.Reply)!,
                 job.Suite ?? throw new ArgumentException("Missing comparison suite.")));
+            return 0;
+        }
+        if (job.Operation == "compare-drain-restore")
+        {
+            await ComparisonDrainScenarios.RestoreAsync(job);
+            RunStorage.AtomicJson(job.Reply, new { Restored = true, At = DateTimeOffset.UtcNow });
             return 0;
         }
         if (ComparisonPlan.IsComparison(job.Operation))
@@ -303,7 +347,7 @@ public static class VerificationWorker
                         throw new IOException("Remove the saved C: profile before active system verification.");
                     RunStorage.AtomicJson(job.Reply, new RecoverySnapshot(1, target, before,
                         systemDevice.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow, Environment.MachineName,
-                        diagnosticsBefore.ReadRecall?.Mode, diagnosticsBefore.CallerRouting?.Backoff));
+                        diagnosticsBefore.ReadRecall?.Mode, diagnosticsBefore.CallerRouting?.Backoff, diagnosticsBefore.CopyFlags));
                     return 0;
                 }
                 if (job.Operation == "system-restore")
@@ -324,6 +368,8 @@ public static class VerificationWorker
                     systemDevice.Control(WriteCacheAction.Release);
                     if (original.CallerBackoff is { } systemBackoff)
                         systemDevice.Control(WriteCacheAction.LabCallerBackoff, value: systemBackoff);
+                    if (original.CopyFlags is { } systemCopyFlags)
+                        systemDevice.Control(WriteCacheAction.LabCopyFlags, value: systemCopyFlags);
                     systemDevice.Control(WriteCacheAction.FlushPolicy, value: original.State.UnsafeDefer ? 1UL : 0UL);
                     if (original.State.Options is not null)
                         systemDevice.SetOptions(original.State.Options);
@@ -331,8 +377,10 @@ public static class VerificationWorker
                     RunStorage.AtomicJson(job.Reply, restored);
                     var systemRestoredBackoff = systemDevice.GetDiagnostics().CallerRouting?.Backoff;
                     RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = systemRestoredBackoff });
+                    var systemRestoredCopyFlags = systemDevice.GetDiagnostics().CopyFlags;
+                    RunStorage.AtomicJson(job.Reply + ".copy-flags.json", new { Expected = original.CopyFlags, Actual = systemRestoredCopyFlags });
                     var mismatches = RestorationMismatches(original, systemDrained, restored, Profiles(),
-                        systemDevice.GetPerformance().TimingEnabled, systemRestoredBackoff);
+                        systemDevice.GetPerformance().TimingEnabled, systemRestoredBackoff, systemRestoredCopyFlags);
                     if (mismatches.Count != 0)
                         throw new IOException("System restoration mismatch: " + string.Join("; ", mismatches));
                     var requiredOracles = job.ImageOraclePaths ?? [];
@@ -686,16 +734,21 @@ public static class VerificationWorker
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
                 if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
                     throw new IOException(NotCleanMessage);
+                var capturedDiagnostics = device.GetDiagnostics();
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
-                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode,
-                    device.GetDiagnostics().CallerRouting?.Backoff);
+                    Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, capturedDiagnostics.ReadRecall?.Mode,
+                    capturedDiagnostics.CallerRouting?.Backoff, capturedDiagnostics.CopyFlags);
                 if (job.Operation == "campaign-prepare")
                 {
                     var expectedPreparation = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))
                         ?? throw new InvalidDataException("Missing campaign preparation baseline.");
-                    result = await PrepareCampaignAsync(expectedPreparation, () => new RecoverySnapshot(1, target,
-                        device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0, Profiles(), DateTimeOffset.UtcNow,
-                        Environment.MachineName, device.GetDiagnostics().ReadRecall?.Mode, device.GetDiagnostics().CallerRouting?.Backoff),
+                    result = await PrepareCampaignAsync(expectedPreparation, () =>
+                    {
+                        var diagnostics = device.GetDiagnostics();
+                        return new RecoverySnapshot(1, target, device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0,
+                            Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, diagnostics.ReadRecall?.Mode,
+                            diagnostics.CallerRouting?.Backoff, diagnostics.CopyFlags);
+                    },
                         () => { Stage("explicit phase preparation: flushing filesystem volume"); using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true); volume.Flush(); },
                         () => { Stage("explicit phase preparation: draining cache"); device.Control(WriteCacheAction.Flush); },
                         (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot), TimeSpan.FromSeconds(job.Seconds));
@@ -723,6 +776,9 @@ public static class VerificationWorker
                 var original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))!;
                 if (original.SchemaVersion != 1 || original.Machine != Environment.MachineName || original.Target != target)
                     throw new IOException("Recovery identity/version mismatch.");
+                var expectedCopyFlags = original.CopyFlags ?? job.RecoveryCopyFlags;
+                if (expectedCopyFlags is > 15)
+                    throw new InvalidDataException("Recovery copy flags are outside the supported 0..15 range.");
                 // This suite never sets fault injection. Clear only its delay and range-gate hooks;
                 // do not hide device faults. Older drivers without V9 have no gate to disarm.
                 device.Control(WriteCacheAction.LabDelay, value: 0);
@@ -797,17 +853,30 @@ public static class VerificationWorker
                     }
                 }
                 device.Control(WriteCacheAction.PerformanceTiming, value: original.Timing ? 1UL : 0UL);
+                if (expectedCopyFlags is { } restoreCopyFlags)
+                    device.Control(WriteCacheAction.LabCopyFlags, value: restoreCopyFlags);
                 var restored = ConfigurationManager.WaitForHealthyState(device.GetWriteCacheState, original.State);
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
-                var restoredBackoff = device.GetDiagnostics().CallerRouting?.Backoff;
+                var restoredDiagnostics = device.GetDiagnostics();
+                var restoredBackoff = restoredDiagnostics.CallerRouting?.Backoff;
+                var restoredCopyFlags = restoredDiagnostics.CopyFlags;
                 RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = restoredBackoff });
-                var mismatches = RestorationMismatches(original, drainedState, restored, restoredProfiles, restoredTiming, restoredBackoff);
+                RunStorage.AtomicJson(job.Reply + ".copy-flags.json", new
+                {
+                    Expected = expectedCopyFlags,
+                    Actual = restoredCopyFlags,
+                    Source = original.CopyFlags is not null ? "recovery snapshot" : job.RecoveryCopyFlags is not null ? "validated legacy artifact" : "legacy value unavailable"
+                });
+                var restorationBaseline = original with { CopyFlags = expectedCopyFlags };
+                var mismatches = RestorationMismatches(restorationBaseline, drainedState, restored, restoredProfiles,
+                    restoredTiming, restoredBackoff, restoredCopyFlags, job.RequireCopyFlagsRestore);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
                     {
-                        State = restored, Profiles = restoredProfiles, Timing = restoredTiming, Mismatches = mismatches
+                        State = restored, Profiles = restoredProfiles, Timing = restoredTiming,
+                        CopyFlags = restoredCopyFlags, Mismatches = mismatches
                     });
                     throw new IOException("Restoration/state/profile verification failed: " + string.Join("; ", mismatches));
                 }
@@ -879,6 +948,51 @@ public static class VerificationWorker
                     Diagnostics = device.GetDiagnostics()
                 };
                 break;
+            case "timed-cache-flush":
+                if (job.ReadyFile is null || job.StartFile is null)
+                    throw new ArgumentException("Timed cache flush requires ready and start-signal paths.");
+                var flushBefore = device.GetWriteCacheState();
+                var flushPerformanceBefore = device.GetPerformance();
+                var flushDiagnosticsBefore = device.GetDiagnostics();
+                RunStorage.AtomicJson(job.ReadyFile, new { Ready = true, At = DateTimeOffset.UtcNow });
+                while (!File.Exists(job.StartFile)) await Task.Delay(25);
+                var flushEnteredUtc = DateTimeOffset.UtcNow;
+                var flushStartTimestamp = Stopwatch.GetTimestamp();
+                device.Control(WriteCacheAction.Flush);
+                var flushElapsedTicks = Stopwatch.GetTimestamp() - flushStartTimestamp;
+                var flushCompletedUtc = DateTimeOffset.UtcNow;
+                result = new DrainFlushControlResult(flushEnteredUtc, flushCompletedUtc, flushElapsedTicks, Stopwatch.Frequency,
+                    flushBefore, device.GetWriteCacheState(), flushPerformanceBefore,
+                    device.GetPerformance(), flushDiagnosticsBefore, device.GetDiagnostics());
+                break;
+            case "flush-volume":
+                using (var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true))
+                    volume.Flush();
+                result = new { Target = target, Flushed = DateTimeOffset.UtcNow };
+                break;
+            case "tree-settle":
+                result = ComparisonScenarios.Settle(target.Number, job.Seconds);
+                break;
+            case "read-tail":
+                var tailCase = job.TailDecision ?? throw new ArgumentException("Read-tail measurement is missing its immutable case.");
+                result = await ReadTailWorker.MeasureAsync(tailCase,
+                    WorkloadFile(target, job.WorkDirectory, tailCase.Resident ? "resident.dat" : "writer.dat"));
+                break;
+            case "read-tail-warm":
+                result = await ReadTailWorker.WarmResidentAsync(
+                    WorkloadFile(target, job.WorkDirectory, "resident.dat"), checked((long)job.Value));
+                break;
+            case "read-tail-verify":
+                var verifyCase = job.TailDecision ?? throw new ArgumentException("Read-tail write verification is missing its immutable case.");
+                result = await ReadTailWorker.VerifyWritesAsync(verifyCase,
+                    WorkloadFile(target, job.WorkDirectory, "writer.dat"));
+                break;
+            case "tree-decision":
+                var treeRoot = Path.GetFullPath(job.WorkDirectory ?? throw new ArgumentException("Tree-decision work directory is required."));
+                if (!treeRoot.StartsWith(target.Root, StringComparison.OrdinalIgnoreCase) || Directory.Exists(treeRoot) || Directory.Exists(treeRoot + "-copy"))
+                    throw new IOException("Tree-decision requires fresh source and copy directories on the selected target volume.");
+                result = ComparisonScenarios.RunTreeDecision(treeRoot, target.Number, job.Seconds, device);
+                break;
             case "files":
                 var report = await DiskWorkloads.TestAsync(target, new Progress<string>(Console.WriteLine));
                 RunStorage.AtomicJson(job.Reply, report);
@@ -903,7 +1017,9 @@ public static class VerificationWorker
                 return sectorChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "partial-read-accounting":
                 var partialChecks = PartialReadScenarios.Run(target, device, job.WorkDirectory!, job.BudgetMiB,
-                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation));
+                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation)).ToList();
+                partialChecks.AddRange(PartialReadScenarios.ConcurrentMisses(target, device, job.WorkDirectory!, job.BudgetMiB,
+                    observation => RunStorage.AtomicJson(job.Reply + "." + observation.Id + ".json", observation)));
                 RunStorage.AtomicJson(job.Reply, partialChecks);
                 ReportFailures(partialChecks, Console.Error);
                 return partialChecks.Count > 0 && partialChecks.All(c => c.Result == "PASS") ? 0 : 1;
@@ -952,13 +1068,13 @@ public static class VerificationWorker
                     Console.Error.WriteLine("Pressure suite returned no checks.");
                 return pressureChecks.Count > 0 && pressureChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "seed-drain":
-                var seedBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                var seedBytes = checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20))));
                 result = DrainDecisionScenarios.PrepareDirtySet(device,
                     Path.Combine(job.WorkDirectory!, "drain.dat"), seedBytes,
                     checked((int)job.Value));
                 break;
             case "verify-drain":
-                var verifyBytes = checked(job.BudgetMiB / 4 * (1 << 20));
+                var verifyBytes = checked((int)(job.DrainSeedBytes ?? checked(job.BudgetMiB / 4L * (1 << 20))));
                 DrainDecisionScenarios.VerifyDirtySet(
                     Path.Combine(job.WorkDirectory!, "drain.dat"), verifyBytes,
                     checked((int)job.Value));
@@ -1019,31 +1135,44 @@ public static class VerificationWorker
                 await using (var writer = new StreamWriter(job.Reply, append: false))
                 {
                     var timer = Stopwatch.StartNew();
-                    while (timer.Elapsed.TotalSeconds < job.Seconds)
+                    double? persistenceMilliseconds = null;
+                    var readyPublished = false;
+                    TelemetryCapture<TelemetrySnapshot> Capture(double? delayMilliseconds)
                     {
                         // On stop, take one final sample covering workload completion.
+                        var stage = Stopwatch.StartNew();
                         var stopping = File.Exists(job.StopFile);
+                        var stopMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedState = device.GetWriteCacheState();
+                        var stateMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedPerformance = device.GetPerformance();
+                        var performanceMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        stage.Restart();
                         var observedDiagnostics = device.GetDiagnostics();
-                        await writer.WriteLineAsync(JsonSerializer.Serialize(new
-                        {
-                            Utc = DateTimeOffset.UtcNow,
-                            ElapsedSeconds = timer.Elapsed.TotalSeconds,
-                            State = observedState,
-                            Performance = observedPerformance,
-                            Diagnostics = observedDiagnostics
-                        }));
-                        await writer.FlushAsync();
-                        if (job.ReadyFile is not null && !File.Exists(job.ReadyFile))
+                        var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
+                            observedPerformance, observedDiagnostics, new(stopMilliseconds, stateMilliseconds,
+                                performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds)), stopping);
+                    }
+                    async Task Persist(TelemetrySnapshot sample, CancellationToken token)
+                    {
+                        var stage = Stopwatch.StartNew();
+                        var output = sample with { StageTiming = sample.StageTiming with
+                            { PreviousPersistenceMilliseconds = persistenceMilliseconds } };
+                        await writer.WriteLineAsync(JsonSerializer.Serialize(output).AsMemory(), token);
+                        await writer.FlushAsync(token);
+                        persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
+                        if (!readyPublished && job.ReadyFile is not null)
                             RunStorage.AtomicJson(job.ReadyFile, new
                             {
                                 Ready = true
                             });
-                        if (stopping)
-                            break;
-                        await Task.Delay(200);
+                        readyPublished = true;
                     }
+                    await TelemetryRecorder.RecordAsync(Capture, Persist, TimeSpan.FromSeconds(job.Seconds),
+                        TimeSpan.FromMilliseconds(200));
                 }
                 return 0;
             default:
@@ -1051,6 +1180,21 @@ public static class VerificationWorker
         }
         RunStorage.AtomicJson(job.Reply, result);
         return 0;
+    }
+
+    private static string WorkloadFile(DiskTarget target, string? workDirectory, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(workDirectory) || Path.GetFileName(fileName) != fileName)
+            throw new ArgumentException("The workload directory or file name is invalid.");
+        var root = Path.GetFullPath(workDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var targetRoot = Path.GetFullPath(target.Root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var path = Path.GetFullPath(Path.Combine(root, fileName));
+        if (!root.StartsWith(targetRoot, StringComparison.OrdinalIgnoreCase) ||
+            !path.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            throw new IOException("Read-tail worker files must be existing files in this run's target-volume workload directory.");
+        return path;
     }
 
     public static object Provenance(string executable)

@@ -44,6 +44,10 @@ public static class CacheExerciseEvidence
             x.LowerFlushAttempts != y.LowerFlushAttempts || a.DrainedBytes != b.DrainedBytes || a.ReadMissBytes != b.ReadMissBytes ||
             (workload == "write" ? b.AcceptedBytes < a.AcceptedBytes || b.AcceptedBytes - a.AcceptedBytes < (ulong)bytes
                                   : b.ReadHitBytes < a.ReadHitBytes || b.ReadHitBytes - a.ReadHitBytes < (ulong)bytes))
-            throw new InvalidDataException("The fitting RAM-only exercise used lower I/O or failed to account for all workload bytes.");
+            throw new InvalidDataException("The fitting RAM-only exercise used lower I/O or failed to account for all workload bytes: " +
+                $"workload={workload}, scoredBytes={bytes}, lowerReads={x.LowerReadAttempts}/{y.LowerReadAttempts}, " +
+                $"lowerWrites={x.LowerWriteAttempts}/{y.LowerWriteAttempts}, lowerFlushes={x.LowerFlushAttempts}/{y.LowerFlushAttempts}, " +
+                $"missBytes={a.ReadMissBytes}/{b.ReadMissBytes}, hitBytes={a.ReadHitBytes}/{b.ReadHitBytes}, " +
+                $"acceptedBytes={a.AcceptedBytes}/{b.AcceptedBytes}, drainedBytes={a.DrainedBytes}/{b.DrainedBytes} (before/after).");
     }
 }

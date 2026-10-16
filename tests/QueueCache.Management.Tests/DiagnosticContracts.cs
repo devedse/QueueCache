@@ -1,6 +1,9 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using QueueCache.Developer.Verification;
+using QueueCache.Management;
+using QueueCache.Operations;
 
 internal static class DiagnosticContracts
 {
@@ -12,9 +15,27 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 124, "plan 124 records unreadable churn files instead of stopping; the version changes on every host");
+        Check(VerificationPlan.Version == 148, "plan 148 compares new 1 GiB large and 256 MiB small-file workloads with provider drains, bypassed hashes and complete reports");
+        var drainTiming = DrainDecisionTiming.ForScore(10);
+        Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
+            drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
+            drainTiming.TelemetrySeconds > 45 + drainTiming.ProcessDeadlineSeconds &&
+            drainTiming.TelemetryDeadlineSeconds > drainTiming.TelemetrySeconds,
+            "the recorded 140-second pending-drain completion fits without ending its observer first, including readiness delay");
+        var drainStart = DateTimeOffset.UtcNow;
+        var completeDrain = Enumerable.Range(0, 146).Select(i => drainStart.AddSeconds(i)).ToArray();
+        TelemetryCoverage.Validate(completeDrain, drainStart.AddMilliseconds(250), drainStart.AddSeconds(140));
+        Reject(() => TelemetryCoverage.Validate(completeDrain.Take(131).ToArray(),
+            drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
+        Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
+            drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         RunPlan120Contracts(Check, Reject);
+        ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
+        CompareDrainContracts.Run(Check, Reject);
+        RunTreeDecisionContracts(Check, Reject);
+        RunReadTailDecisionContracts(Check, Reject);
+        RunDrainFlushContracts(Check, Reject);
         VerificationRunnerTests.RunCoordinationContracts(Check, Reject);
         VerificationRunnerTests.RunAsyncReadContracts(Check, Reject);
         var asyncExperiment = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3,
@@ -80,6 +101,42 @@ internal static class DiagnosticContracts
         var target = new QueueCache.Operations.DiskTarget('Q', 99990, 8L << 30, "fixture");
         var recovery = new RecoverySnapshot(1, target, new(1, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             false, "unchanged profiles", DateTimeOffset.UtcNow, "fixture");
+        var copyFlagsState = recovery.State with { Instance = 7, Generation = 12 };
+        var copyFlagsRecovery = recovery with { State = copyFlagsState, CopyFlags = 11 };
+        var legacyJson = JsonNode.Parse(JsonSerializer.Serialize(copyFlagsRecovery))!.AsObject();
+        legacyJson.Remove(nameof(RecoverySnapshot.CopyFlags));
+        Check(JsonSerializer.Deserialize<RecoverySnapshot>(legacyJson.ToJsonString())?.CopyFlags is null &&
+              JsonSerializer.Deserialize<RecoverySnapshot>(JsonSerializer.Serialize(copyFlagsRecovery))?.CopyFlags == 11,
+            "recovery snapshots preserve nondefault copy flags and distinguish legacy missing evidence");
+        Check(VerificationWorker.CopyFlagsMismatches(11, 11).Count == 0 &&
+              VerificationWorker.CopyFlagsMismatches(0, 0).Count == 0 &&
+              VerificationWorker.CopyFlagsMismatches(11, 7).SequenceEqual(["CopyFlags: expected 11, actual 7"]) &&
+              VerificationWorker.CopyFlagsMismatches(11, null).SequenceEqual(["CopyFlags: expected 11, actual unavailable"]),
+            "copy-flags restoration requires exact numeric readback and accepts zero");
+        var legacyCopyEvidence = new CacheLayoutSnapshot(copyFlagsState,
+            JsonSerializer.Deserialize<CachePerformance>("{\"Frequency\":10000000}")!,
+            new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { CopyFlags = 0 });
+        Check(VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null }, legacyCopyEvidence) == 0,
+            "legacy read-miss flags can be recovered from matching pre-mutation cache identity evidence");
+        try
+        {
+            VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+                legacyCopyEvidence with { State = copyFlagsState with { Generation = 13 } });
+            throw new Exception("Legacy copy-flags evidence from another generation was accepted.");
+        }
+        catch (IOException) { }
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+            legacyCopyEvidence with { Diagnostics = legacyCopyEvidence.Diagnostics with { CopyFlags = null } }));
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null }, null));
+        Reject(() => VerificationWorker.ValidateLegacyCopyFlags(copyFlagsRecovery with { CopyFlags = null },
+            legacyCopyEvidence with { State = null! }));
+        try
+        {
+            VerificationCampaignEvidence.ValidateConfiguration(copyFlagsRecovery,
+                copyFlagsRecovery with { CopyFlags = 7 });
+            throw new Exception("Campaign baseline accepted changed copy flags.");
+        }
+        catch (IOException) { }
         var finalTarget = new CampaignTargetEvidence(CampaignTargetRole.Performance, recovery, "NTFS", "fixture", "fixture", null,
             false, null, null, new(true, null, []));
         var finalOrder = new List<string>(); var finalClean = false;
@@ -234,7 +291,335 @@ internal static class DiagnosticContracts
         TraceToolSmoke.RunOptional();
     }
 
+    private static void RunTreeDecisionContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        static void RejectOptions(Action action)
+        {
+            try { action(); } catch (ArgumentException) { return; }
+            throw new Exception("Expected tree-decision option rejection.");
+        }
+        var options = new VerificationOptions("Q:", "tree-decision", BudgetMiB: 2048, Repeats: 3);
+        VerificationPlan.Validate(options);
+        var cases = VerificationPlan.TreeDecision(options);
+        check(cases.Count == 15 && cases.Select(test => test.Id).Distinct().Count() == 15 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 5 && group.Select(test => test.Position).Order().SequenceEqual([1, 2, 3, 4, 5])) &&
+            cases.GroupBy(test => test.Repeat).Select(group => string.Join(",", group.OrderBy(test => test.Position).Select(test => test.Arm))).Distinct().Count() == 3,
+            "tree-decision creates five fixed arms in three rotated repetitions with immutable unique IDs");
+        check(cases.Select(test => test.Arm).Distinct().Count() == 5 &&
+            cases.Count(test => !test.CacheEnabled) == 3 &&
+            cases.Where(test => test.CacheEnabled).Select(test => (test.CopyFlags, test.BatchKiB, test.Parallelism)).Distinct().Count() == 4,
+            "tree-decision compares a cache-off control with flags 7/15 at 256x2 and 1024x4");
+        var selected = VerificationPlan.TreeDecision(options with { CaseFilter = "r02-p01" });
+        check(selected.Count == 1 && selected[0].Repeat == 2 && selected[0].Position == 1,
+            "tree-decision case filter records a focused subset without changing case identity");
+        RejectOptions(() => VerificationPlan.Validate(options with { Repeats = 2 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { BudgetMiB = 1024 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { CaseFilter = "no-such-case" }));
+
+        var cached = cases.First(test => test.Arm == "flags7-b256-p2");
+        var cacheOptions = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true,
+            BatchKiB: cached.BatchKiB, Parallelism: cached.Parallelism);
+        var state = new WriteCacheState(1, 0, 1UL << 30, 2048UL << 20, 1UL << 30, 0, 0, 1UL << 30,
+            0, 0, 0, 0, 0, 0, 0, 0) { Options = cacheOptions, Instance = 77, Generation = 9 };
+        var perf = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var attribution = new CacheAttribution(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var diagnostics = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0) { Attribution = attribution, CopyFlags = 7 };
+        var snapshot = new CacheLayoutSnapshot(state, perf, diagnostics);
+        TreeDecisionEvidenceContract.ValidateStart(cached, snapshot);
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Diagnostics = diagnostics with { CopyFlags = 15 } }));
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Performance = perf with { TimingEnabled = 1 } }));
+        reject(() => TreeDecisionEvidenceContract.ValidateStart(cached,
+            snapshot with { Diagnostics = diagnostics with { Attribution = null } }));
+
+        var now = DateTimeOffset.UtcNow;
+        MemorySnapshot Memory(int second) => new(now.AddSeconds(second), 16L << 30, 8L << 30, 0, 0, 0, 0, 2L << 30);
+        var treeSpec = ComparisonData.TreeSpec();
+        var settle = new SettleResult(120, 0, true, "IOCTL_DISK_PERFORMANCE");
+        TreeCacheSnapshot Cache(ulong reads, ulong writes, ulong flushes) => new(state, perf,
+            diagnostics with { Attribution = new(reads, writes, flushes, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) });
+        var beforeCreate = Cache(100, 200, 30);
+        var afterCreate = Cache(101, 202, 30);
+        var afterCreateSettle = Cache(103, 202, 30);
+        var afterCopy = Cache(105, 205, 31);
+        var afterCopySettle = Cache(107, 205, 31);
+        var afterRead = Cache(110, 205, 31);
+        var afterDelete = Cache(111, 206, 31);
+        var tree = new TreeResult(treeSpec.Count, treeSpec.Sum(file => (long)file.Bytes), 1, 1, 1, 1, settle, settle, true,
+            Memory(0), Memory(1), Memory(2), Memory(3), Memory(4), Memory(5), Memory(6),
+            beforeCreate, afterCreate, afterCreateSettle, afterCreateSettle, afterCopy, afterCopySettle,
+            afterCopySettle, afterRead, afterRead, afterDelete);
+        var completeEvidence = new TreeDecisionEvidence(cached, snapshot, tree, snapshot);
+        TreeDecisionEvidenceContract.Validate(completeEvidence);
+        check(completeEvidence.LowerIoAttempts.Create == new TreePhaseIoAttempts(1, 2, 0) &&
+            completeEvidence.LowerIoAttempts.CreateSettle == new TreePhaseIoAttempts(2, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Copy == new TreePhaseIoAttempts(2, 3, 1) &&
+            completeEvidence.LowerIoAttempts.CopySettle == new TreePhaseIoAttempts(2, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Read == new TreePhaseIoAttempts(3, 0, 0) &&
+            completeEvidence.LowerIoAttempts.Delete == new TreePhaseIoAttempts(1, 1, 0),
+            "tree-decision reports separate create/copy/read/delete and settle lower-I/O attempt deltas");
+        var roundTrip = JsonSerializer.Deserialize<TreeDecisionEvidence>(JsonSerializer.Serialize(completeEvidence))!;
+        TreeDecisionEvidenceContract.Validate(roundTrip);
+        check(roundTrip.LowerIoAttempts.Read == new TreePhaseIoAttempts(3, 0, 0),
+            "tree-decision case evidence round-trips all phase snapshots and derived lower-I/O deltas");
+        reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
+            tree with { AfterCopy = settle with { IdleObserved = false } }, snapshot)));
+        reject(() => TreeDecisionEvidenceContract.Validate(new(cached, snapshot,
+            tree with { AfterReadCache = Cache(106, 205, 31) }, snapshot)));
+        check(CacheLayoutEvidence.IsQuiet(snapshot, snapshot) &&
+            !CacheLayoutEvidence.IsQuiet(snapshot, snapshot with { State = state with { DirtyBytes = 4096 } }) &&
+            !CacheLayoutEvidence.IsQuiet(snapshot, snapshot with
+            {
+                Diagnostics = diagnostics with
+                { Attribution = attribution with { LowerWriteAttempts = attribution.LowerWriteAttempts + 1 } }
+            }), "quiet-cache oracle requires zero dirty bytes and unchanged lower-I/O counters across the wait");
+        Console.WriteLine("Tree-decision plan, start-state, counter coverage and hash/settle contracts passed (no driver access).");
+    }
+
+    private static void RunReadTailDecisionContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        static void RejectOptions(Action action)
+        {
+            try { action(); } catch (ArgumentException) { return; }
+            throw new Exception("Expected read-tail option rejection.");
+        }
+
+        var options = new VerificationOptions("Q:", "read-tail-decision", BudgetMiB: 2048, Repeats: 3);
+        VerificationPlan.Validate(options);
+        var cases = ReadTailDecision.Cases(options);
+        check(cases.Count == 24 && cases.Select(test => test.Id).Distinct().Count() == 24 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 8 &&
+                group.Select(test => test.Position).SequenceEqual([1, 1, 2, 2, 3, 3, 4, 4]) &&
+                group.Select(test => (test.Workload, test.CopyFlags)).Distinct().Count() == 8),
+            "read-tail plan records 24 unique cases with paired flags and rotated workload order");
+        check(cases.Select(test => test.Workload).Distinct().Count() == 4 &&
+            cases.GroupBy(test => test.Workload).All(group => group.Count() == 6 &&
+                group.Select(test => test.CopyFlags).Order().SequenceEqual([7UL, 7UL, 7UL, 15UL, 15UL, 15UL])) &&
+            cases.All(test => test.OperationCount == 100_000 && !test.Writes || test.FileBytes / test.BlockBytes >= test.OperationCount),
+            "read-tail plan fixes cold/resident/write shapes, 100,000 operations and fitting unique write space");
+        foreach (var test in cases) ReadTailDecision.ValidateCase(test);
+        var write = cases.First(test => test.Workload == "foreground-write");
+        var writeOffsets = ReadTailDecision.AddressOffsets(write);
+        check(writeOffsets.Distinct().Count() == write.OperationCount &&
+            writeOffsets.All(offset => offset >= 0 && offset % write.BlockBytes == 0 && offset + write.BlockBytes <= write.FileBytes),
+            "foreground-write offsets are aligned, in-bounds and unique for the durable oracle");
+        check(ReadTailDecision.AddressSequenceSha256(write) == ReadTailDecision.AddressSequenceSha256(write),
+            "read-tail address sequence has a stable recorded SHA-256");
+        RejectOptions(() => VerificationPlan.Validate(options with { Repeats = 2 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { BudgetMiB = 1024 }));
+        RejectOptions(() => VerificationPlan.Validate(options with { DiskSpd = "fixture" }));
+        RejectOptions(() => VerificationPlan.Validate(options with { CaseFilter = "tail-r01" }));
+
+        var ticks = Enumerable.Repeat(Math.Max(1, System.Diagnostics.Stopwatch.Frequency / 100), write.OperationCount).ToArray();
+        ticks[^1] = Math.Max(1, System.Diagnostics.Stopwatch.Frequency);
+        ticks[^2] = ticks[^3] = Math.Max(1, System.Diagnostics.Stopwatch.Frequency * 3 / 10);
+        var result = ReadTailDecision.Summarize(write, ticks, 12.5);
+        ReadTailDecision.ValidateResult(write, result);
+        check(result.CompletedOperations == 100_000 && result.Bytes == 409_600_000 &&
+            result.Over50Milliseconds == 3 && result.Over100Milliseconds == 3 &&
+            result.Over250Milliseconds == 3 && result.Over500Milliseconds == 1 &&
+            result.LatencyTicks.Length == 100_000,
+            "read-tail percentile and exact latency-threshold counts derive from every per-operation sample");
+        reject(() => ReadTailDecision.ValidateResult(write, result with { Over100Milliseconds = 0 }));
+        reject(() => ReadTailDecision.ValidateResult(write, result with { LatencyTicks = ticks[..^1] }));
+        var workerJob = new WorkerJob("read-tail", "Q:", "reply", TailDecision: write);
+        check(JsonSerializer.Deserialize<WorkerJob>(JsonSerializer.Serialize(workerJob))!.TailDecision == write,
+            "immutable read-tail case crosses the owned-worker JSON boundary");
+
+        var cacheOptions = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true,
+            PromoteOnRead: true, BatchKiB: 256, Parallelism: 2);
+        var state = new WriteCacheState(1, 0, 16UL << 30, 2UL << 30, 2UL << 30,
+            0, 0, 2UL << 30, 0, 0, 0, 0, 0, 0, 0, 0)
+        { Options = cacheOptions, Instance = 77, Generation = 9 };
+        var performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheLayoutSnapshot Snapshot(ulong hits, ulong misses, ulong accepted, ulong reads, ulong writes, ulong flushes, ulong flags) =>
+            new(state with { ReadHitBytes = hits, ReadMissBytes = misses, AcceptedBytes = accepted }, performance,
+                new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+                {
+                    Attribution = new(reads, writes, flushes, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                    CopyFlags = flags
+                });
+        var cold = cases.First(test => test.Workload == "cold-random");
+        ReadTailDecision.ValidateEvidence(new(cold, Snapshot(0, 0, 0, 100, 100, 20, cold.CopyFlags), result with { CaseId = cold.Id,
+            Bytes = 409_600_000, AddressSequenceSha256 = ReadTailDecision.AddressSequenceSha256(cold) },
+            Snapshot(0, 4096, 0, 101, 100, 20, cold.CopyFlags)));
+        var resident = cases.First(test => test.Workload == "resident-random");
+        var residentResult = ReadTailDecision.Summarize(resident, ticks, 12.5);
+        ReadTailDecision.ValidateEvidence(new(resident, Snapshot(0, 0, 0, 100, 100, 20, resident.CopyFlags), residentResult,
+            Snapshot((ulong)residentResult.Bytes, 0, 0, 100, 100, 20, resident.CopyFlags)));
+        var accepted = cases.First(test => test.Workload == "foreground-write");
+        var writeResult = ReadTailDecision.Summarize(accepted, ticks, 12.5);
+        ReadTailDecision.ValidateEvidence(new(accepted, Snapshot(0, 0, 0, 100, 100, 20, accepted.CopyFlags), writeResult,
+            Snapshot(0, 0, (ulong)writeResult.Bytes, 100, 100, 20, accepted.CopyFlags)));
+        var throttled = Snapshot(0, 0, (ulong)writeResult.Bytes, 100, 100, 20, accepted.CopyFlags);
+        reject(() => ReadTailDecision.ValidateEvidence(new(accepted, Snapshot(0, 0, 0, 100, 100, 20, accepted.CopyFlags),
+            writeResult, throttled with { State = throttled.State with { ThrottleWaits = 1 } })));
+        reject(() => ReadTailDecision.ValidateEvidence(new(resident, Snapshot(0, 0, 0, 100, 100, 20, resident.CopyFlags), residentResult,
+            Snapshot((ulong)residentResult.Bytes, 1, 0, 101, 100, 20, resident.CopyFlags))));
+        ReadTailEvidence MakeEvidence(ReadTailCase test)
+        {
+            var measured = ReadTailDecision.Summarize(test, ticks, 12.5);
+            var before = Snapshot(0, 0, 0, 100, 100, 20, test.CopyFlags);
+            var after = test.Workload switch
+            {
+                "cold-random" => Snapshot(0, 4096, 0, 101, 100, 20, test.CopyFlags),
+                "resident-random" or "resident-sequential" => Snapshot((ulong)measured.Bytes, 0, 0, 100, 100, 20, test.CopyFlags),
+                _ => Snapshot(0, 0, (ulong)measured.Bytes, 100, 100, 20, test.CopyFlags)
+            };
+            return new(test, before, measured, after);
+        }
+        var aggregate = ReadTailDecision.AggregateEvidence(cases.Select(MakeEvidence));
+        var rendered = ReadTailDecision.RenderSummary(aggregate);
+        check(aggregate.CaseCount == 24 && aggregate.Cases.Count == 24 && aggregate.Pairs.Count == 12 &&
+            rendered.Contains("Flags 15 minus flags 7", StringComparison.Ordinal) &&
+            rendered.Contains(">50/>100/>250/>500 ms", StringComparison.Ordinal),
+            "read-tail final report requires the complete paired matrix and retains exact threshold counts");
+        reject(() => ReadTailDecision.AggregateEvidence(cases.Take(23).Select(MakeEvidence)));
+        Console.WriteLine("Read-tail plan, operation samples, address and cache-accounting contracts passed (no driver access).");
+    }
+
+    private static void RunDrainFlushContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "drain-flush-decision", BudgetMiB: 2048, Repeats: 3);
+        DrainFlushDecision.ValidateOptions(options);
+        VerificationPlan.Validate(options);
+        var cases = DrainFlushDecision.Cases(options);
+        check(cases.Count == 6 && cases.Select(test => test.Id).Distinct().Count() == 6 &&
+            cases.GroupBy(test => test.Repeat).All(group => group.Count() == 2 &&
+                group.Select(test => test.Position).SequenceEqual([1, 2]) &&
+                group.Select(test => (test.BatchKiB, test.Parallelism)).Distinct().Count() == 2),
+            "explicit-drain plan alternates both batch settings across three complete pairs");
+        const ulong instance = 78, errors = 0, seedBytes = 512UL << 20, baselineDrained = 100;
+        var flags = 1U | 32U | 256U | 512U;
+        CacheOptions Policy(DrainFlushCase test) => new(WritePercent: 100, RetainWrites: true, PromoteOnRead: true,
+            Drain: DrainAlgorithm.Deferred, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 3_600_000,
+            IdleMs: 250, BatchKiB: test.BatchKiB, Parallelism: test.Parallelism);
+        WriteCacheState State(DrainFlushCase test, ulong accepted, ulong drained, ulong dirty, ulong lowerWrites) =>
+            new(flags, 0, 16UL << 30, 2UL << 30, 2UL << 30, dirty, 0, 2UL << 30,
+                dirty / 4096, accepted, drained, 0, 0, errors, 0, dirty)
+            {
+                Options = Policy(test), Instance = instance, Generation = 9, LowerWrites = lowerWrites
+            };
+        CachePerformance Performance(ulong timing = 0, ulong batches = 0, ulong drainBytes = 0) =>
+            new(1_000_000, timing, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                batches, drainBytes, 0, 0);
+        CacheAttribution Attribution(ulong writes, ulong flushes, ulong reads = 0) => new(reads, writes, flushes,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        CacheDiagnostics Diagnostics(ulong writes, ulong flushes) => new(0, 0, 0, 0, 0, 0, 0, 0, 0)
+            { Attribution = Attribution(writes, flushes) };
+
+        var epoch = new DateTimeOffset(2026, 10, 14, 0, 0, 0, TimeSpan.Zero);
+        var verified = new List<DrainFlushEvidence>();
+        foreach (var test in cases)
+        {
+            var before = State(test, 0, baselineDrained, 0, 0);
+            var seeded = State(test, seedBytes, baselineDrained, seedBytes, 0);
+            var attribution = Attribution(10, 2);
+            var seed = new DrainSeedResult(108000 + test.Repeat, checked((int)seedBytes), seedBytes,
+                before, seeded, Performance(), Performance(), attribution, attribution);
+            var controlBefore = State(test, seedBytes, baselineDrained, seedBytes, 0);
+            var controlAfter = State(test, seedBytes, baselineDrained + seedBytes, 0, 1);
+            var control = new DrainFlushControlResult(epoch.AddSeconds(1.2), epoch.AddSeconds(1.5), 300, 1000,
+                controlBefore, controlAfter, Performance(), Performance(0, 1, seedBytes),
+                Diagnostics(10, 2), Diagnostics(11, 3));
+            var process = new ProcessIdentity(45 + test.Repeat, DateTime.SpecifyKind(
+                epoch.AddSeconds(0.8).UtcDateTime, DateTimeKind.Utc));
+            var seedCompleted = epoch.AddSeconds(0.5);
+            var ready = epoch.AddSeconds(1);
+            var release = epoch.AddSeconds(1.1);
+            var metrics = DrainFlushDecision.ValidateEvidence(test, seed, process,
+                seedCompleted, ready, release, control, instance, errors);
+            check(Math.Abs(metrics.DurationMilliseconds - 300) < 0.01 && metrics.DrainBatches == 1 &&
+                metrics.DriverDrainBytes == seedBytes && metrics.LowerWriteAttempts == 1 &&
+                metrics.LowerFlushAttempts == 1 && metrics.PendingBytesAfter == 0,
+                $"explicit-drain evidence times the actual flush call and verifies writes, flushes, batches and a clean seed: {metrics}");
+            verified.Add(new(test, seed, true, process, seedCompleted, ready, release, control,
+                "worker.process.json", "seed-verification.json", metrics));
+        }
+        var first = verified[0];
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { After = first.Control.After with
+                { DirtyBytes = 8192, AcceptedBytes = seedBytes + 8192 } }, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { PerformanceAfter = Performance(1, 1, seedBytes) }, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { DiagnosticsAfter = Diagnostics(11, 2) }, instance, errors));
+        var readAttemptSeed = first.Seed with
+        {
+            AttributionAfter = Attribution(writes: 10, flushes: 2, reads: 1)
+        };
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, readAttemptSeed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc, first.Control, instance, errors));
+        reject(() => DrainFlushDecision.ValidateEvidence(first.Case, first.Seed, first.WorkerProcess,
+            first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            first.Control with { Before = first.Control.Before with
+                { DirtyBytes = seedBytes + 4096, AcceptedBytes = seedBytes + 4096 } }, instance, errors));
+        var clockAdjustedControl = first.Control with
+        {
+            CompletedUtc = first.Control.EnteredUtc.AddMilliseconds(-100)
+        };
+        var monotonicMetrics = DrainFlushDecision.ValidateEvidence(first.Case, first.Seed,
+            first.WorkerProcess, first.SeedCompletedUtc, first.WorkerReadyUtc, first.ReleaseUtc,
+            clockAdjustedControl, instance, errors);
+        check(Math.Abs(monotonicMetrics.DurationMilliseconds - 300) < 0.01,
+            "explicit Flush duration uses monotonic ticks when wall-clock timestamps move backwards");
+        var summary = DrainFlushDecision.BuildSummary(verified);
+        check(summary.CaseCount == 6 && summary.Rows.Count == 2 &&
+            DrainFlushDecision.RenderSummary(summary).Contains("monotonic timer", StringComparison.Ordinal),
+            "explicit-drain report requires both complete three-case arms and the timestamp contract");
+        reject(() => DrainFlushDecision.BuildSummary(verified[..^1]));
+        reject(() => DrainFlushDecision.BuildSummary(verified.Select((row, index) => index == 0
+            ? row with { SeedVerified = false } : row).ToArray()));
+        Console.WriteLine("Explicit-drain plan, ready/start handshake timestamps, timing-off counters and full-matrix contracts passed (no driver access).");
+    }
+
     /// <summary>Plan 120: RAM write reference with memory-copy probes, and the cached read attribution suite.</summary>
+    private static void ReadMissContracts(Action<bool, string> check, Action<Action> reject)
+    {
+        var options = new VerificationOptions("Q:", "cache-read-misses", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
+        VerificationPlan.Validate(options);
+        var cases = VerificationPlan.Performance(options);
+        check(cases.Count == 24 && cases.Select(c => c.Id).Distinct().Count() == 24 &&
+            cases.All(c => !c.Timing && c.CopyFlags is 7 or 15) &&
+            cases.GroupBy(c => (c.Repeat, c.Workload, c.WarmResident)).All(g => g.Count() == 2 &&
+                g.First().CopyFlags == (g.Key.Repeat % 2 == 1 ? 7UL : 15UL)),
+            "read-miss matrix alternates same-build modes with cold targets and cached controls");
+        var campaign = VerificationCampaignPlan.Create(new(options with { Suite = "quick" }, "experiment", "W:", FocusSuite: "cache-read-misses"));
+        check(campaign.Count == 1 && campaign[0].ExpectedCases.Count == 24, "read-miss experiment composes without extra phases");
+        CacheReadMisses.ComparisonWindow[] Windows(Func<PerformanceCase, double> speed) => cases.Select(c =>
+            new CacheReadMisses.ComparisonWindow(c, speed(c), 1, 10, 4096, c.WarmResident ? 0UL : 4096UL, c.WarmResident ? 0UL : 1UL)).ToArray();
+        double Win(PerformanceCase c) => c.WarmResident ? 1000 : c.CopyFlags == 15 ? 200 : 100;
+        check(CacheReadMisses.Evaluate(Windows(Win)).Verdict == "ACCEPT_SCREEN", "both read targets must win");
+        check(CacheReadMisses.Evaluate(Windows(c => c.WarmResident && c.CopyFlags == 15 ? 900 : Win(c))).Verdict ==
+            "CONTROL_LOSS_REVISION_OR_REJECT", "cached control loss prevents read-miss acceptance");
+        check(CacheReadMisses.Evaluate(Windows(c => !c.WarmResident && c.Workload == "random-read" ? 100 : Win(c))).Verdict == "REJECT",
+            "one winning shape cannot hide a losing read target");
+        reject(() => CacheReadMisses.Evaluate(Windows(Win).Skip(1).ToArray()));
+        reject(() => CacheReadMisses.Evaluate([.. Windows(Win), Windows(Win)[0]]));
+        check(CacheReadMisses.Evaluate(Windows(Win).Where(w => w.Case.Repeat < 3).ToArray()).Verdict == "INCOMPLETE_FOR_ACCEPTANCE",
+            "two complete read-miss repetitions are not acceptance");
+        JsonElement Snapshot(ulong flags, ulong hit, ulong miss, ulong reads) => JsonSerializer.SerializeToElement(new
+        {
+            State = new { Operational = true, Instance = 1, Generation = 2, PayloadCapacity = 1024, Errors = 0, LastError = 0,
+                ReadHitBytes = hit, ReadMissBytes = miss },
+            Performance = new { TimingEnabled = 0 },
+            Diagnostics = new { CopyFlags = flags, Attribution = new { LowerReadAttempts = reads } }
+        });
+        var cold = cases.First(c => !c.WarmResident && c.Workload == "random-read");
+        var score = new DiskSpdScore(4096, 1, 1, 1, 1, 1, null, 2, 3);
+        CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 4096, 1), score);
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(15, 0, 4096, 1), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 2048, 1), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 4096, 0, 0), score));
+        reject(() => CacheReadMisses.Window(cold, Snapshot(7, 0, 0, 0), Snapshot(7, 0, 4096, 1), score with { ReadMaxMilliseconds = null }));
+        var warm = cases.First(c => c.WarmResident && c.Workload == "random-read");
+        reject(() => CacheReadMisses.Window(warm, Snapshot(7, 0, 0, 0), Snapshot(7, 4096, 512, 1), score));
+    }
+
     private static void RunPlan120Contracts(Action<bool, string> check, Action<Action> reject)
     {
         var writes = RamReadReferencePlan.CasesFor(RamReadRunKind.WriteReference, 3);
@@ -506,7 +891,7 @@ internal static class DiagnosticContracts
         finally { Directory.Delete(directory, recursive: true); }
     }
 
-    /// <summary>Plan 120 cached read candidate: copy flags 3 against 7 on one build.</summary>
+    /// <summary>Cached bookkeeping candidate: flags 11/15 on one build, with miss offload in both arms.</summary>
     private static void RunBookkeepingContracts(Action<bool, string> check, Action<Action> reject)
     {
         var options = new VerificationOptions("Q:", "cache-read-bookkeeping", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath);
@@ -517,21 +902,22 @@ internal static class DiagnosticContracts
             cases.GroupBy(c => (c.Repeat, c.QueueDepth, c.Threads)).All(g => g.Count() == 2 && g.Select(c => c.CopyFlags).Distinct().Count() == 2),
             "cached read comparison: each shape once per mode per repetition, timing off");
         check(CacheReadBookkeeping.IsTarget(cases[0]) && CacheReadBookkeeping.CandidateFlags == (CacheReadBookkeeping.OriginalFlags | 4) &&
-            CacheReadBookkeeping.ProductFlags == CacheReadBookkeeping.CandidateFlags, "the candidate adds only flag 4 and is the product default; Q8T1 is the target");
+            CacheReadBookkeeping.ProductFlags == CacheReadBookkeeping.CandidateFlags && (CacheReadBookkeeping.ProductFlags & 8) != 0,
+            "the candidate adds only flag 4 and is the product default (with miss offload, flag 8); Q8T1 is the target");
         var phase = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3, DiskSpd: Environment.ProcessPath), "experiment", "W:", FocusSuite: "cache-read-bookkeeping"));
         check(phase.Count == 1 && phase[0].Role == CampaignTargetRole.Performance && phase[0].MeasurementWindows == 18, "one-phase cached read comparison");
-        var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 7UL } });
+        var before = JsonSerializer.SerializeToElement(new { Diagnostics = new { CopyFlags = 15UL } });
         var score = new DiskSpdScore(1000L << 20, 1000, 10, 100, 100, null, null, null, null);
-        var candidate = cases.First(c => c.CopyFlags == 7);
-        check(CacheReadBookkeeping.Window(candidate, before, score).CopyFlags == 7, "the window records the reported copy flags");
-        reject(() => CacheReadBookkeeping.Window(cases.First(c => c.CopyFlags == 3), before, score));
+        var candidate = cases.First(c => c.CopyFlags == 15);
+        check(CacheReadBookkeeping.Window(candidate, before, score).CopyFlags == 15, "the window records the reported copy flags");
+        reject(() => CacheReadBookkeeping.Window(cases.First(c => c.CopyFlags == 11), before, score));
         reject(() => CacheReadBookkeeping.Window(candidate, JsonSerializer.SerializeToElement(new { Diagnostics = new { } }), score));
         CacheReadBookkeeping.ComparisonWindow[] Windows(Func<PerformanceCase, double> rate) =>
             cases.Select(c => new CacheReadBookkeeping.ComparisonWindow(c, c.CopyFlags!.Value, rate(c))).ToArray();
-        double Target(PerformanceCase c, double gain) => CacheReadBookkeeping.IsTarget(c) && c.CopyFlags == 7 ? 36_000 * gain + c.Repeat : 36_000 + c.Repeat;
+        double Target(PerformanceCase c, double gain) => CacheReadBookkeeping.IsTarget(c) && c.CopyFlags == 15 ? 36_000 * gain + c.Repeat : 36_000 + c.Repeat;
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10))).Verdict == "ACCEPT_SCREEN", "a clear Q8 gain passes the screen");
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.01))).Verdict == "REJECT", "a 1% gain rejects");
-        check(CacheReadBookkeeping.Evaluate(Windows(c => c.QueueDepth == 1 && c.CopyFlags == 7 ? 34_000 : Target(c, 1.10))).Verdict ==
+        check(CacheReadBookkeeping.Evaluate(Windows(c => c.QueueDepth == 1 && c.CopyFlags == 15 ? 34_000 : Target(c, 1.10))).Verdict ==
             "CONTROL_LOSS_REVISION_OR_REJECT", "a repeatable control loss blocks acceptance");
         check(CacheReadBookkeeping.Evaluate(Windows(c => Target(c, 1.10)).Where(w => w.Case.Repeat < 3).ToArray()).Verdict == "INCOMPLETE_FOR_ACCEPTANCE",
             "two repetitions never pass");
@@ -584,5 +970,17 @@ internal static class DiagnosticContracts
         var focused = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, SoakSeconds: 120), "focused", "W:", FocusSuite: "stress-races"));
         check(focused.Single(p => p.Options.Suite == "stress-races").Role == CampaignTargetRole.NtfsLab && focused[^1].Options.Suite == "ordering-faults",
             "a focused stress campaign keeps fault injection last");
+        var faulted = new WriteCacheState(8163, -1, 1UL << 30, 64UL << 20, 64UL << 20,
+            1UL << 20, 0, 60UL << 20, 256, 2UL << 20, 1UL << 20, 0, 0, 1, 1, 1UL << 20)
+            { Instance = 7, Generation = 3 };
+        var retried = faulted with { Flags = 8161, LastError = 0, DirtyBytes = 0, DrainedBytes = 2UL << 20 };
+        StressRetryEvidence.Validate(faulted, retried);
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { DrainedBytes = retried.DrainedBytes - 512 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with
+            { AcceptedBytes = retried.AcceptedBytes + 16384, DrainedBytes = retried.DrainedBytes + 8192, DirtyBytes = 8192 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { InFlightBytes = 512 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { Instance = 8 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { Errors = 2 }));
+        reject(() => StressRetryEvidence.Validate(faulted, retried with { DiscardedBytes = 512 }));
     }
 }

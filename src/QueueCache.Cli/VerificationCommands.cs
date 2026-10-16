@@ -63,8 +63,19 @@ internal static class VerificationCommands
                                  --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
-              drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads.
-                                 Parallelism 1/2/4; 24 cases at three repeats. Requires DiskSpd.
+              drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
+                                 256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
+                                 Requires DiskSpd.
+              drain-flush-decision Timed Flush of a deterministic 512 MiB dirty seed: 256 KiB x 2 versus 1024 KiB x 4.
+                                 Timing off, owned ready/start handshake and persisted-byte oracle; six cases.
+                                 --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
+              tree-decision      Seeded 40,000-file / 1.2 GiB create/copy/read/hash/delete comparison: cache-off and
+                                 flags 7/15 at 256 KiB x 2 / 1024 KiB x 4; three rotated repetitions (15 cases).
+                                 Phase memory/lower-I/O snapshots, disk-idle settles and hash oracle.
+                                 Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd. Collection only.
+              read-tail-decision Same seeded 100,000 operations per case, flags 7/15: cold/resident reads and fitting writes.
+                                 p50/p99/p99.9/max, exact latency threshold counts and durable write-byte oracle; 24 cases.
+                                 Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
@@ -88,7 +99,9 @@ internal static class VerificationCommands
                                  re-read, then ascending reset control. 18 cases; measures layout.
               cache-read-reference Resident 1M reads Q1T1/Q8T1/Q2T4, timing off (scores) and on (lock and queue
                                  time per read); 18 cases at --repeats 3; --budget-mib 2048. Attribution only.
-              cache-read-bookkeeping Same-build copy flags 3/7 (one lookup per block, run-based recency moves):
+              cache-read-misses  Same-build flags 7/15: cold 4K Q32 and 1M Q8 reads, cached controls,
+                                 three alternated repetitions; byte/mode checks and worst-read latency.
+              cache-read-bookkeeping Same-build copy flags 11/15 (one lookup per block, run-based recency moves):
                                  1M Q8T1 target, Q1T1 and Q2T4 controls; 18 cases at --repeats 3.
               cache-concurrency  Separate fitting files; 1/2/4 streams at total Q8, Q1 control, RAM-only and background-drain writes.
               cache-sustained    Six mixed read/write episodes with concurrent byte oracles and idle rereads, never clearing.
@@ -101,7 +114,7 @@ internal static class VerificationCommands
               priority-affinity  Cached reads: Normal/BelowNormal CPU crossed with default/unbound affinity.
               priority-cost      Fitting RAM reads: independent Normal/CPU BelowNormal/I/O Low/memory Low.
                                  1M Q1/Q8 and 4K Q1 controls; owned child settings, three-second warmup.
-              partial-read-accounting Patterned partial sectors, crossing/full hits and misses, timing off/on.
+              partial-read-accounting Patterned partial sectors and accounting, plus 16 overlapping cold/partial readers.
                                  Requires diagnostics V21; NTFS 512-byte sectors. No DiskSpd needed.
               ram-read-reference Direct/Standard RAM-disk reads: 1M Q1T1/Q8T1/Q2T4 and 4K controls.
               ram-read-attribution Three traced Direct RAM read shapes; diagnostic, not speed acceptance.
@@ -121,8 +134,13 @@ internal static class VerificationCommands
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
 
-            Comparisons with other products (driver-independent; no QueueCache configuration, hooks or telemetry;
-            --product "<name> <version> <mode>" required; QueueCache must be loaded exactly when the product is QueueCache):
+            Comparisons with other products (--product "<name> <version> <mode>" required; generic suites are
+            driver-independent; compare-drain uses an explicit --provider for drain, counters and verification bypass):
+              compare-drain      Explicit provider controls: --provider Direct|QueueCache|PrimoCache --budget-mib 2048 --repeats 3.
+                                 New 1 GiB file, 1 MiB writes Q4; 4,096 new 64 KiB files (256 MiB), 4 KiB writes, four workers.
+                                 Unique precomputed data; score through metadata flush, explicit product drain and zero pending.
+                                 Cache-bypassed whole-file hashes afterwards; restores active state even on verification failure.
+                                 No DiskSpd; Primo CLI defaults to ProgramFiles\PrimoCache\rxpcc.exe (--primo-cli overrides).
               compare-snapshot   Memory, loaded third-party drivers and storage filters only (e.g. before creating a disk).
               compare-ram        A 4 GiB RAM disk: 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes with latency and CPU,
                                  memory before/after a 2 GiB fill, a 40,000-file tree (create, copy, read, delete), byte check.
@@ -194,10 +212,12 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
+        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain only, required: Direct, QueueCache or PrimoCache. Controls explicit drain and verification bypass; never inferred from --product." };
+        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -211,7 +231,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))

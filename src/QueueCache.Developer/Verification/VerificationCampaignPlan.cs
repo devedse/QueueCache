@@ -12,19 +12,20 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "stress-races"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "cache-read-misses", "stress-races"];
     public static readonly string[] FocusSuites =
     ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults", "stress-races",
-     "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "ram-read-reference", "ram-write-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
+     "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "cache-read-misses", "ram-read-reference", "ram-write-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
 
     public static IReadOnlyList<string> ExpectedCases(VerificationOptions options)
     {
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" ||
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" ||
             VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         return [.. VerificationPlan.Integrity(options).Select(c => c.Id), .. performance.Select(c => c.Id),
-            .. VerificationPlan.DrainDecision(options).Select(c => c.Id), .. CacheExercisePlan.Cases(options).Select(c => c.Id)];
+            .. VerificationPlan.DrainDecision(options).Select(c => c.Id), .. VerificationPlan.TreeDecision(options).Select(c => c.Id),
+            .. CacheExercisePlan.Cases(options).Select(c => c.Id)];
     }
 
     public static IReadOnlyList<VerificationCampaignPhase> Create(VerificationCampaignOptions options)

@@ -294,7 +294,11 @@ enum : ULONG
     // Pinned read hits look each block up once (not once to check and again to pin) and move runs
     // of blocks that are already neighbours in their recency list in one step, leaving the same
     // order. Cached 1 MiB reads held the cache lock about 11 us each (plan 120; on by default).
-    QcCopyBookkeeping = 4
+    QcCopyBookkeeping = 4,
+    // An ordinary read that misses (up to 1 MiB) runs on an offloaded-read thread instead of the request
+    // worker, which waited for each disk read so misses reached the disk one at a time (issue #14). It is
+    // kept in the cache as on the worker: writes wait for overlapping offloaded reads. On by default (plan 125).
+    QcCopyOffloadMisses = 8
 };
 struct QC_SLOT
 {
@@ -338,10 +342,13 @@ struct QC_DRAIN_WORKER
     ULONG Number;
     HANDLE Thread;
 };
-// Offloaded-request executors: paging reads that need the disk, and large reads
-// served entirely from RAM and large fitting writes (QcCopyOffloadMinBytes), so
-// their copies run in parallel instead of one after another on the request worker.
-static constexpr ULONG QcReadThreads = 3;
+// Offloaded-request executors: reads that need the disk (paging reads, and ordinary
+// misses with QcCopyOffloadMisses), large reads served entirely from RAM and large
+// fitting writes (QcCopyOffloadMinBytes), so their disk waits and copies overlap
+// instead of running one after another on the request worker. Each thread waits for
+// one disk read at a time, so this is the number of misses at the disk at once (3
+// before plan 125).
+static constexpr ULONG QcReadThreads = 16;
 static constexpr ULONG QcCopyOffloadMinBytes = 256 * 1024;
 // Largest read miss copied through a driver-owned buffer and kept (StagedRead).
 static constexpr ULONG QcStagedReadMaxBytes = 16 * 1024 * 1024;
@@ -526,7 +533,7 @@ bool QcCacheTryReadHit(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS
 bool QcCacheTryCallerPath(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 bool QcCacheTryPagingReadProgress(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, NTSTATUS* status);
 // Request worker only. True: an offloaded-read thread now owns and will complete irp.
-bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes);
+bool QcCacheOffloadPagingRead(QC_CACHE* cache, PIRP irp, LONGLONG deviceBytes, bool miss = false);
 bool QcCachePagingReadsOutstanding(QC_CACHE* cache);
 void QcCacheWaitPagingReads(QC_CACHE* cache);
 // *transferred: the paging thread owns irp; the caller must not complete it.
