@@ -200,6 +200,19 @@ hashes matched the CI artifact; performance runs used Verifier and timing off,
 Fast 2 GiB Idle, flags 15, normal priority, Defender/Search disabled and the
 background apps/service stopped. Saved profiles were unchanged.
 
+After exporting and verifying all evidence, the original 0.4.687.1 module hashes,
+Fast 2 GiB 1024 KiB × 4 runtime/saved profile and original apps/service were
+restored and checked. Defender/Search remain disabled. The temporary snapshot
+was removed; no snapshots remain, and the final capacity/near-full guard passed
+with 148.3 GB free.
+
+Nine cases recorded 8–64 KiB newly dirty between the scored zero-pending endpoint
+and untimed Disable; their source is unattributed. Disable drained it and every
+case's final paused observation was clean. One closing-control pause also
+exercised the transient-Draining observation wait and then confirmed clean,
+without replaying Disable. As with plan 148, the hashes validate the later paused
+state, not the exact earlier scored instant or power-loss durability.
+
 **Screen decision:** both individual changes merit follow-up for large files.
 Eight drainers improved the median **18.9% / 25.1%** versus starting/ending
 controls; 2 MiB batches improved it **25.3% / 31.8%**. Every candidate large-file
