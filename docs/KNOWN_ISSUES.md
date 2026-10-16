@@ -157,11 +157,11 @@ worker.
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 
-The plan-149 experiment branch also needs a small-budget allocation fix before
-promotion: its fixed staging reservation grew to 16 MiB, while `Configure` still
-selects large staging at a 16 MiB budget. The unsigned slot-count subtraction
-can then underflow. This was found by source review, not a VM reproduction; the
-2 GiB experiment runs do not exercise it. Production 0.4.687.1 is unchanged.
+The experimental branch now bounds drain staging at small cache budgets and
+checks the remaining allocation before unsigned subtraction. This fixes the
+source-reviewed 16 MiB underflow introduced by the larger experimental staging
+ceiling. Plan 152 adds fourteen small-budget Fast/Strict byte-oracle checks;
+VM verification of this fix is pending. Production 0.4.687.1 is unchanged.
 
 The earlier same-build Defender/Search-off drain-settings repeat has no complete matrix: extra small writes
 invalidated seed/end snapshots. A failed file-handle experiment was removed in

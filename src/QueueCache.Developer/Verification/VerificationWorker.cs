@@ -1006,6 +1006,11 @@ public static class VerificationWorker
                 if (checks.Count == 0)
                     Console.Error.WriteLine("Policy suite returned no checks.");
                 return checks.Count > 0 && checks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "cache-allocation":
+                var allocationChecks = CacheAllocationScenarios.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, allocationChecks);
+                ReportFailures(allocationChecks, Console.Error);
+                return allocationChecks.Count == 14 && allocationChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "paging-coherence":
                 var pagingChecks = PagingCoherenceScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, pagingChecks);

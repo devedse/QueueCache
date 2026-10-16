@@ -257,6 +257,17 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 `20261016-133018-7b62779ae82c43aea3c25c11d75550cf`. Verifier smoke:
 `20261016-130550-0a059f72bc3e431cba1e18f3d290bcb3`.
 
+**Next decision screen (plan 152).** The branch bounds staging for small cache
+budgets and rejects insufficient remaining payload space before subtraction;
+normal 2 GiB staging and the selection algorithm are unchanged. New V4 performance
+snapshots count each batch's forward termination (limit, missing adjacent version,
+in-flight, filling, partial sector, fence, or partial anchor) and size bucket
+(<=64 KiB, <=1 MiB, >1 MiB). Older driver responses preserve unavailable fields as
+null. `cache-allocation` exercises fourteen small-budget Fast/Strict byte oracles.
+The authorized next measurement is the existing two file shapes at 2 MiB × 4/8,
+bracketed by 1 MiB × 4 controls, then the same two shapes on Direct and PrimoCache.
+No new performance result or promotion qualification exists yet.
+
 **Short lock/drain measurement (plan 151, 2026-10-16).** The complete
 `drain-lock-diagnostic` run measured 48 six-second windows: cached sequential
 1 MiB Q8 and uncached random 4 KiB Q1 reads, alone/with a continuous sequential

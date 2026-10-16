@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 151;
+    public const int Version = 152;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -79,6 +79,7 @@ public static class VerificationPlan
         "system-paging-recognition",
         "system-app-session",
         "policies",
+        "cache-allocation",
         "paging-coherence",
         "ordering-faults",
         "stress-races",
@@ -208,6 +209,7 @@ public static class VerificationPlan
         "system-paging-recognition" => [new("system-paging-recognition", "system-paging-recognition")],
         "system-app-session" => [new("system-app-session", "system-app-session")],
         "policies" => [new("policy-integrity", "policies")],
+        "cache-allocation" => [new("cache-allocation-bounds", "cache-allocation")],
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],

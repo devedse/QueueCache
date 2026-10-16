@@ -215,7 +215,8 @@ internal static class ComparisonDrainScenarios
             if (Kind == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume);
-                var state = cache.GetWriteCacheState(); ValidateQueueCache(cache, state, active: true);
+                var state = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
+                ValidateQueueCache(cache, state, active: true);
                 if (recovery?.OriginalState is { } original && (state.Instance != original.Instance || state.Errors != original.Errors || state.Options != original.Options))
                     throw new InvalidDataException("QueueCache identity, error count or options changed during comparison.");
                 RunStorage.AtomicJson(prefix + ".cache.json", state);

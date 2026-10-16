@@ -1174,7 +1174,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             KeReleaseSpinLock(&ext->QueueLock, irql);
 #endif
             auto bytes = outputLength < QcPerformanceV2Size ? QcPerformanceV1Size
-                         : outputLength < sizeof(performance) ? QcPerformanceV2Size
+                         : outputLength < QcPerformanceV3Size ? QcPerformanceV2Size
+                         : outputLength < sizeof(performance) ? QcPerformanceV3Size
                                                              : sizeof(performance);
             if (bytes == QcPerformanceV1Size)
             {
@@ -1185,6 +1186,11 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             {
                 performance.Version = 2;
                 performance.Size = QcPerformanceV2Size;
+            }
+            else if (bytes == QcPerformanceV3Size)
+            {
+                performance.Version = 3;
+                performance.Size = QcPerformanceV3Size;
             }
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &performance, bytes);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);

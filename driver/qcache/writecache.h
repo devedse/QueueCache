@@ -39,7 +39,8 @@ static_assert(sizeof(QC_SPECIAL_RANGE) == 16 && sizeof(QC_SPECIAL_RANGES_HEADER)
 static constexpr ULONG QcSpecialRangeMax = 256;
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
-// The first 192 bytes remain V1 and the first 408 bytes remain V2.
+// V4 appends batch termination reasons and size buckets (one reason/bucket per batch).
+// The first 192/408/432 bytes remain V1/V2/V3.
 struct QC_PERFORMANCE
 {
     ULONG Version, Size;
@@ -57,10 +58,13 @@ struct QC_PERFORMANCE
     ULONGLONG LastSelectionMajor, LastSelectionCode, LastSelectionOffset, LastSelectionLength;
     ULONGLONG LastSelectionSequence, LastAfterSequence, LastSelectionScanned;
     ULONGLONG DrainSelectionTicks, DrainCopyTicks, DrainRetirementTicks;
+    ULONGLONG DrainEndLimit, DrainEndGap, DrainEndInFlight, DrainEndFilling, DrainEndPartial, DrainEndFence;
+    ULONGLONG DrainPartialAnchor, DrainSizeSmall, DrainSizeMedium, DrainSizeLarge;
 };
 static constexpr ULONG QcPerformanceV1Size = 192;
 static constexpr ULONG QcPerformanceV2Size = 408;
-static_assert(sizeof(QC_PERFORMANCE) == 432);
+static constexpr ULONG QcPerformanceV3Size = 432;
+static_assert(sizeof(QC_PERFORMANCE) == 512);
 enum : ULONGLONG
 {
     QcIdlePhase,

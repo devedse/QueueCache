@@ -140,6 +140,7 @@ ones in use:
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle after a stable clean-cache wait; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
+| `cache-allocation` | Plan 152: 1/15/16/17/63/64/65 MiB caches, Fast and Strict, 2 MiB × 8 settings | Fourteen reservation-bound checks with live reads, explicit flushes and unbuffered bypassed byte oracles; correctness only. |
 | `drain-lock-diagnostic` | Plan 151: cached 1 MiB Q8 and uncached random 4 KiB Q1 reads, alone/with an Eager sequential writer, 2 MiB batches with 4/8 drainers, timing off/on, three reversed-order repetitions (48 windows) | Exactly `--budget-mib 2048 --repeats 3 --duration-seconds 6 --diskspd <same binary>`; 4m48s scored reads plus setup/settling/drainage. Cached cases use Automatic 50% writes; disk-read cases use Fixed 100% writes (zero read admission). Pure hit/miss paths, >=75% loaded-window pending observations, telemetry readiness/coverage and original-state restoration required. Global lock timings cover the reader process envelope and all callers; summed drainer waits can exceed wall time. Timing-on is diagnostic; timing-off is the performance score. Collection only; no lock/default change or correctness qualification. |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
@@ -208,7 +209,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 149; workload unchanged from 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 152; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -234,6 +235,10 @@ afterward. This branch raises the native/managed experiment limits to 2 MiB × 8
 and reserves staging for that ceiling in every arm. Check the lower adapter's
 transfer/page/alignment limits before testing 2 MiB; these results are not a
 qualification of new production defaults.
+Plan 152 records V4 batch termination and size counters in QueueCache pending snapshots.
+One terminal reason and one size bucket account for each batch; older drivers report these fields as unavailable.
+The new counters observe selection without changing it. Small-cache staging is bounded by the budget,
+with subtraction checked before sizing payload allocations.
 PrimoCache requires shared 2 GiB L1, no L2, 4 KiB blocks, Native Defer-Write 10 s,
 prefetch off and its GUI closed. The runner checks these settings.
 

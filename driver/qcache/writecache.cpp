@@ -7,6 +7,7 @@
 #include "observation.h"
 #include "sectorcoverage.h"
 #include "readrecall.h"
+#include "cacheallocation.h"
 #include "../shared/lockedpages.h"
 #include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
@@ -123,7 +124,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
-    c->Performance.Version = 3;
+    c->Performance.Version = 4;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
     c->Performance.TimingEnabled = c->Timing != 0;
     c->PerformanceSnapshot = c->Performance;
@@ -1073,22 +1074,30 @@ static void Drainer(PVOID context)
         ULONG merged = 0;
         io.Buffer = c->DrainBuffer + worker->Number * c->DrainCapacity;
         io.Length = 0;
+        // Exactly one terminal reason per submitted batch; counters do not change selection.
+        auto endReason = &c->Performance.DrainEndLimit;
         while (index != NoSlot && merged < batchBlocks)
         {
             auto slot = &c->Slots[index];
-            if (slot->InFlight || slot->Filling)
-                break;
+            if (slot->InFlight) { endReason = &c->Performance.DrainEndInFlight; break; }
+            if (slot->Filling) { endReason = &c->Performance.DrainEndFilling; break; }
             if (merged && slot->ValidSectors != 255)
-                break;
+            { endReason = &c->Performance.DrainEndPartial; break; }
             if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence))
-                break;
+            { endReason = &c->Performance.DrainEndFence; break; }
             selected[merged++] = index;
             slot->InFlight = TRUE;
             ++slot->Pins;
             io.Length += Chunk;
             index = FindOldestSlot(c, io.Offset.QuadPart + io.Length);
         }
+        if (io.ValidSectors != 255) endReason = &c->Performance.DrainPartialAnchor;
+        else if (merged < batchBlocks && index == NoSlot) endReason = &c->Performance.DrainEndGap;
+        ++*endReason;
         const auto transferBytes = io.ValidSectors == 255 ? io.Length : QcValidBytes(io.ValidSectors);
+        if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
+        else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
+        else ++c->Performance.DrainSizeLarge;
         c->State.InFlightBytes += transferBytes;
         // Lab gate (one shot): keep this overlapping batch in flight, after its
         // lower write completed, for a bounded hold. Newer overlapping direct
@@ -1486,7 +1495,7 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     c->State.BudgetBytes = budget;
     // Include both page-rounded descriptor and hash-index allocations in the hard budget.
-    c->DrainCapacity = budget < (16ULL << 20) ? SlabBytes / 4 : MaxBatchBytes;
+    c->DrainCapacity = QcDrainCapacityForBudget(budget, RTL_NUMBER_OF(c->Workers), MaxBatchBytes);
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
@@ -1494,7 +1503,15 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + 2 * sizeof(ULONG)) + sizeof(QC_CHUNK) +
         QcLockedPageMetadataBytes(SlabBytes, 1);
     // Four page-rounded tables (descriptors, index, chunks, recall) each round up by less than a page.
-    auto n = static_cast<ULONG>((budget - 4 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
+    const auto slabs = QcCacheSlabCount(budget, stagingBytes, 4 * PAGE_SIZE + slabTableReserve, slabCost);
+    if (!slabs || slabs > MAXULONG / SlotsPerSlab)
+    {
+        FreeSlots(c);
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    auto n = static_cast<ULONG>(slabs) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =

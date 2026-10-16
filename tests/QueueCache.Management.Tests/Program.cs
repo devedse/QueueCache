@@ -26,7 +26,7 @@ ManagedLifecycleTests.Run();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 4);
 BinaryPrimitives.WriteUInt32LittleEndian(perfWire.AsSpan(4), CachePerformance.WireSize);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 10_000_000);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 8), 2);
@@ -36,6 +36,17 @@ BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 52), 103);
 var perf = CachePerformance.Decode(perfWire);
 Check(perf.PhaseName == "Waiting for write capacity" && perf.Milliseconds(10_000) == 1, "performance wire phase and QPC conversion");
 Check(perf.DrainSelectionTicks == 101 && perf.DrainCopyTicks == 102 && perf.DrainRetirementTicks == 103, "performance v3 drain phase timings");
+for (var i = 0; i < 10; i++) BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(432 + i * 8), (ulong)(201 + i));
+var batchPerf = CachePerformance.Decode(perfWire);
+Check(batchPerf.DrainEndLimit == 201 && batchPerf.DrainEndGap == 202 && batchPerf.DrainEndInFlight == 203 &&
+    batchPerf.DrainEndFilling == 204 && batchPerf.DrainEndPartial == 205 && batchPerf.DrainEndFence == 206 &&
+    batchPerf.DrainPartialAnchor == 207 && batchPerf.DrainSizeSmall == 208 && batchPerf.DrainSizeMedium == 209 &&
+    batchPerf.DrainSizeLarge == 210, "performance v4 batch reasons and size buckets retain their wire offsets");
+var v3PerfWire = perfWire[..CachePerformance.V3WireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire.AsSpan(4), CachePerformance.V3WireSize);
+Check(CachePerformance.Decode(v3PerfWire).DrainEndGap is null && CachePerformance.Decode(v3PerfWire).DrainRetirementTicks == 103,
+    "older drivers distinguish unavailable batch evidence from a measured zero");
 var v2PerfWire = perfWire[..CachePerformance.V2WireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire, 2);
 BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire.AsSpan(4), CachePerformance.V2WireSize);
