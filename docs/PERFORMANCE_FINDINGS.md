@@ -257,23 +257,75 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 `20261016-133018-7b62779ae82c43aea3c25c11d75550cf`. Verifier smoke:
 `20261016-130550-0a059f72bc3e431cba1e18f3d290bcb3`.
 
-**Next decision screen (plan 152).** The branch bounds staging for small cache
-budgets and rejects insufficient remaining payload space before subtraction;
-normal 2 GiB staging and the selection algorithm are unchanged. New V4 performance
-snapshots count each batch's forward termination (limit, missing adjacent version,
-in-flight, filling, partial sector, fence, or partial anchor) and size bucket
-(<=64 KiB, <=1 MiB, >1 MiB). Older driver responses preserve unavailable fields as
-null. `cache-allocation` exercises fourteen small-budget Fast/Strict byte oracles.
-The authorized next measurement is the existing two file shapes at 2 MiB × 4/8,
-bracketed by 1 MiB × 4 controls, then the same two shapes on Direct and PrimoCache.
-The fourteen allocation cases and maximum-settings quick file-integrity smoke passed
-under actual Driver Verifier on native 0.4.756.1. The initial plan-152 combined arm
-stopped during preparation of its third case: 4 KiB became dirty after explicit
-preparation controls, with no in-flight bytes, driver errors or fault. Restoration
-succeeded. Its two completed cases are excluded. Plan 153 adds a recorded bounded
-preparation drain for this known delayed-write race; missing evidence and faults
-remain immediate failures. All comparison arms will be collected afresh under 153;
-no plan-152/153 matrix will be assembled. No promotion qualification exists yet.
+<a id="drain-decision-153"></a>
+
+**Drain decision screen (plans 152/153).** Native 0.4.756.1 (`d7895b5`),
+managed runner `d58b2e1`, Fast 2 GiB Idle, flags 15, timing/Verifier off, normal
+priority, Defender/Search disabled. Four complete plan-153 six-case runs used
+the unchanged two new-file workloads, three repetitions per shape, and bracket
+controls. All 24 cases and 49,164 unbuffered file hashes passed. Grouped arms
+and control drift limit causal attribution. Direct and Primo refreshes are pending.
+
+| Runtime arm | New 1 GiB + drain MB/s, median (range) | New small files + drain MB/s, median (range) | Mean backing write KiB, large / small |
+|---|---:|---:|---:|
+| Starting control, 1024 KiB × 4 | 57.81 (49.43–61.94) | 20.05 (18.59–24.66) | 1009.6 / 182.0 |
+| 2048 KiB × 4 | 74.66 (65.18–101.26) | 27.07 (25.42–65.67) | 2002.3 / 180.9 |
+| 2048 KiB × 8 | 84.24 (73.98–127.51) | 36.14 (34.15–49.95) | 2009.4 / 190.2 |
+| Ending control, 1024 KiB × 4 | 66.54 (59.86–73.39) | 42.54 (29.28–51.28) | 1015.4 / 207.0 |
+
+The ending control improved 15.1% for large files and 112.2% for small files.
+The combined arm's large-file range narrowly exceeds both control ranges; the
+small-file ranges overlap and do not establish a stable improvement. These
+results replace neither the earlier matched provider comparison nor the final
+default-qualification gates.
+
+**Batch attribution:** V4 snapshots count one forward-gather termination reason and size bucket
+per batch; their totals reconcile with the batch count in every case. At 2 MiB,
+94.3% / 96.1% of small-file batches (four/eight drainers) ended with no adjacent
+dirty version; mean software batch size was 209.6 / 217.5 KiB. Partial sectors,
+in-flight overlaps, filling and range fences did not advance the other forward
+termination counters; backward-walk stops were not attributed. Large-file batches averaged about 2 MiB and mostly reached their size limit.
+This points toward investigating gaps before raising the size ceiling again.
+`FindOldestSlot` excludes clean entries: a gap does not establish file fragmentation
+or prove that the neighboring bytes are absent from RAM. A bounded first candidate
+is gathering within aligned 2 MiB address regions, preserving the oldest anchor,
+to avoid leaving short dirty tails; this is a source-derived hypothesis, not a
+measured gain, and cannot bridge true gaps. Classify clean cached versus uncached
+gaps before considering gap filling; never write unknown sectors or bypass
+version/fence ownership.
+
+For example, the four-drainer small-file case at 65.67 MB/s issued 402 backing
+writes averaging 755.8 KiB; its 25.42 MB/s case issued 2,269 averaging 134.1 KiB.
+Both admitted application writes in about 1.2 s. Request shape therefore varies
+substantially even at fixed settings; storage latency alone is not established
+as the cause. In all twelve small-file cases, samples at/before application end
+recorded no backing-write increase. The 100 ms sampling cannot resolve the last
+fraction of that interval; longer admission delay is not the first candidate.
+
+**Allocation and preparation:** staging is now bounded at small budgets, and
+remaining payload space is checked before unsigned subtraction. Normal 2 GiB
+staging and selection are unchanged. All fourteen 1/15/16/17/63/64/65 MiB Fast/Strict
+byte-oracle checks and the maximum-settings quick file-integrity smoke passed
+under actual Driver Verifier. This resolves the source-reviewed allocation blocker;
+broader Strict, sustained and lifecycle qualification is still pending.
+
+The initial plan-152 combined run stopped before its third workload after a
+new 4 KiB pending write appeared during preparation (no in-flight bytes, errors
+or fault; source unattributed). Restoration succeeded; its two completed samples
+are excluded. Plan 153 records bounded unscored preparation drainage, retaining
+immediate rejection of faults/missing evidence and the scored ready handshake.
+All four arms were collected afresh; no 152/153 matrix was assembled. The new
+complete screen needed one preparation attempt per case. The earlier two complete
+152 arms remain historical evidence, outside this comparison.
+
+The first Direct plan-153 run stopped before its sixth workload because its
+single preparation observation found the backing disk busy after cleanup;
+restoration succeeded. All five samples are excluded. Plan 154 adds a bounded,
+recorded idle wait only to Direct preparation, preserving the zero-queue start
+condition, payload, scored endpoint and complete-matrix checks. Its invalid-counter
+and timeout paths are host tested. The complete QueueCache 153 runs are unaffected;
+Direct and Primo will be measured with runner 154 and their versions recorded
+explicitly. No incomplete Direct repetitions are combined.
 
 **Short lock/drain measurement (plan 151, 2026-10-16).** The complete
 `drain-lock-diagnostic` run measured 48 six-second windows: cached sequential

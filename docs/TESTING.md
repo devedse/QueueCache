@@ -209,7 +209,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 153; workload unchanged from 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 154; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -235,6 +235,10 @@ afterward. This branch raises the native/managed experiment limits to 2 MiB × 8
 and reserves staging for that ceiling in every arm. Check the lower adapter's
 transfer/page/alignment limits before testing 2 MiB; these results are not a
 qualification of new production defaults.
+Plan 154 additionally waits up to 30 seconds for Direct's backing queue to reach
+zero, recording every observation after flushing previous cleanup writes. This
+is unscored and preserves the existing zero-queue start requirement. QueueCache
+and Primo preparation are unchanged from 153.
 Plan 153 explicitly drains newly observed preparation writes on a separate 30-second
 preparation deadline, recording each attempt before starting the scored handshake.
 Invalid/missing counters and driver faults fail immediately. Scored workloads and

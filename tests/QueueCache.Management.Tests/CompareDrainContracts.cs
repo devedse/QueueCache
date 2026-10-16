@@ -56,6 +56,21 @@ internal static class CompareDrainContracts
             throw new Exception("Accepted permanently dirty preparation.");
         }
         catch (TimeoutException) { }
+        var busyDisk = new ComparisonDiskCounters(DateTimeOffset.UtcNow, 4096, 1, 1);
+        var diskObservations = new List<ComparisonDiskCounters>();
+        var idleDisk = ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk,
+            () => busyDisk with { Utc = DateTimeOffset.UtcNow, QueueDepth = 0 },
+            (_, value) => diskObservations.Add(value)).GetAwaiter().GetResult();
+        check(idleDisk.QueueDepth == 0 && diskObservations.Count == 2 && diskObservations[0].QueueDepth == 1,
+            "Direct preparation records the busy observation and waits unscored for the same zero-queue precondition");
+        reject(() => ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk,
+            () => busyDisk with { BytesWritten = 0 }, (_, _) => { }).GetAwaiter().GetResult());
+        try
+        {
+            ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk, () => busyDisk, (_, _) => { }, TimeSpan.Zero).GetAwaiter().GetResult();
+            throw new Exception("Accepted permanently busy Direct preparation.");
+        }
+        catch (TimeoutException) { }
         RunDeferredBlocksContracts(check, reject);
         var config = "Status: Active\r\nLevel-1 Cache: 2048,00MB\r\nLevel-2 Cache: 0,00MB\r\nR/W Ratio: Shared\r\nBlock Size: 4KB\r\nDefer-Write: Enabled\r\nLatency: 10s\r\nMode: Native\r\nPrefetch: Disabled\r\n";
         ComparisonDrain.ValidatePrimoConfiguration(config);

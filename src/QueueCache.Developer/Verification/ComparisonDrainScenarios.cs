@@ -59,6 +59,10 @@ internal static class ComparisonDrainScenarios
                 if (provider.Kind == ComparisonProvider.QueueCache)
                     File.Copy(prefix + $".prepare-{prepared.Attempt:D4}-pending.cache.json", prefix + ".before.cache.json");
                 var diskBefore = ComparisonScenarios.DiskCounters(target.DiskNumber.Value);
+                if (provider.Kind == ComparisonProvider.Direct)
+                    diskBefore = await ComparisonDrain.WaitForDirectDiskIdleAsync(diskBefore,
+                        () => ComparisonScenarios.DiskCounters(target.DiskNumber.Value),
+                        (attempt, value) => RunStorage.AtomicJson(prefix + $".direct-prepare-disk-{attempt:D4}.json", value));
                 if (diskBefore.QueueDepth != 0) throw new IOException("Backing disk is busy before compare-drain.");
                 using var stop = new CancellationTokenSource();
                 var samples = new List<ComparisonDiskCounters>();

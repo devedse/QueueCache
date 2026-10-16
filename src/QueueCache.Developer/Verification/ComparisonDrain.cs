@@ -119,6 +119,28 @@ public static class ComparisonDrain
         }
     }
 
+    public static async Task<ComparisonDiskCounters> WaitForDirectDiskIdleAsync(ComparisonDiskCounters initial,
+        Func<ComparisonDiskCounters> observe, Action<int, ComparisonDiskCounters> record, TimeSpan? deadline = null)
+    {
+        var limit = deadline ?? TimeSpan.FromSeconds(30);
+        if (limit < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(deadline));
+        var timer = Stopwatch.StartNew();
+        var current = initial;
+        for (var attempt = 1; ; attempt++)
+        {
+            ValidateDiskDelta(current, current, allowIdle: true);
+            if (current.Utc == default) throw new InvalidDataException("Missing disk preparation timestamp.");
+            record(attempt, current);
+            if (current.QueueDepth == 0) return current;
+            if (timer.Elapsed >= limit) throw new TimeoutException("Direct-disk preparation remained busy; inspect recorded observations.");
+            await Task.Delay(25);
+            var next = observe();
+            ValidateDiskDelta(current, next, allowIdle: true);
+            if (next.Utc < current.Utc) throw new InvalidDataException("Regressing disk preparation timestamp.");
+            current = next;
+        }
+    }
+
     public static void ValidateScore(ComparisonCase test, ComparisonDrainScore score, ComparisonProvider provider)
     {
         ValidatePending(score.Before, provider, true); ValidatePending(score.After, provider, true);
