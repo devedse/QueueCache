@@ -21,12 +21,12 @@ replace the different historical workloads below or prove power-loss durability.
 observation had 56 KiB newly dirty; untimed Disable drained it. Its source is untraced.
 The oracle validates files after that confirmation.
 
-[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+[All three providers and method](../COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16);
 per-case evidence and build identity are in the existing [data](data/C01-queuecache-fast-fix687.json).
 
 ## Current cache refresh (2026-10-15/16)
 
-QueueCache Fast, 2 GiB, 1024 KiB × 4. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
+QueueCache Fast, 2 GiB, 1024 KiB × 4. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516).
 
 Runs: `QueueCache-Verify-20261016-012344-9b75c20c35e64c84b81d54007349cc62`, `QueueCache-Verify-20261015-231123-5c5ab6cf34744b68b23521781a523fd6`.
 All declared steps and raw XML totals, duration, CPU and latency fields were reviewed; every tree hash check passed.

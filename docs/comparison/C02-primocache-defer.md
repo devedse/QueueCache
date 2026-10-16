@@ -19,12 +19,12 @@ medians and need not add up. Primo CLI overhead is included. Backing-write sizes
 include metadata at the observed virtual-disk counter layer. These scores do not
 replace the different historical workloads below or prove power-loss durability.
 
-[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+[All three providers and method](../COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16);
 per-case evidence and build identity are in the existing [data](data/C02-primocache-defer.json).
 
 ## Current cache refresh (2026-10-16)
 
-PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
+PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516).
 
 Storage guard passed before PrimoCache; its post-run check reported Ceph near-full warnings with 131.3 GB free. The onset and performance effect were not measured. Treat its storage-dependent scores as observations under that additional uncertainty. The warnings cleared after restoration and snapshot cleanup.
 

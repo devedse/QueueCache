@@ -14,14 +14,25 @@ production qualification.
 
 ## Current limitations
 
-### Fast mode and RAM disks lose data on a crash (by design)
+### Fast mode loses pending writes; filesystem damage remains an open safety issue
 
-In Fast mode a save finishes when the data is in RAM; QueueCache writes it to the
-disk moments later. A crash or power cut loses those writes and can damage the
-file system (FAT32 and exFAT have no journal, so they are most at risk). A RAM disk
-is empty after a crash, and an image in RAM is back at its last save. Strict mode
-and explicit flushes keep their disk boundary. The driver and installer are
-test-signed development builds; production signing and certification are not done.
+In Fast mode a save can finish when the data is in RAM, including application
+flushes and write-through requests; QueueCache writes it to disk later. A crash
+can lose those writes and damage the filesystem. The requested goal in
+[#13](https://github.com/devedse/QueueCache/issues/13) is to allow loss of pending
+writes while keeping NTFS healthy and untouched, durably checkpointed files
+intact. Filesystem damage is an unresolved safety issue, not the desired
+volatile-cache contract. The power-cut evidence is historical (0.4.604.1), not a
+qualification of the current 0.4.687.1 driver. PrimoCache also damaged NTFS in
+partial-drain cuts; its clean early cut does not establish a general guarantee.
+[Evidence and scope](COMPARISON_DETAILS.md#power-cut-while-the-cache-is-writing).
+
+Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
+an ordinary application flush in Fast mode does not provide that boundary.
+FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
+A RAM disk is empty after a crash, and an image in RAM is back at its last save.
+The driver and installer are test-signed development builds; production signing
+and certification are not done.
 
 ### Raw disk reads and writes bypass the cache (by design)
 
@@ -42,7 +53,7 @@ times slower than the bare disk. The read-miss and drain-default fixes do not
 change this durability boundary. Bounded Strict admission and overlapping-version
 ordering remain open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
 
-### Drain speed still trails the paused-disk baseline in the current comparison (performance)
+### Drain speed still trails PrimoCache; larger defaults improve only part of the gap
 
 The October 15/16 disabled-baseline refresh measured one complete 8 GiB write at 200.1
 MB/s including disk catch-up, against 257.4 MB/s with the cache paused. Fast accepted
@@ -51,7 +62,7 @@ KiB × 4 defaults improve paired explicit-drain times, but do not establish disk
 parity or invariant foreground performance. These are virtual-disk counters with roughly
 one-second resolution, with the QueueCache filter still loaded in the control. See
 [issue #15](https://github.com/devedse/QueueCache/issues/15) and the [current
-comparison](COMPARISON.md#current-cache-refresh-2026-10-1516).
+comparison](COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516).
 
 The separate plan 148 short new-file comparison completed three repetitions per
 provider. Through explicit drain, QueueCache Fast measured 52.71 MB/s for one
@@ -59,7 +70,12 @@ provider. Through explicit drain, QueueCache Fast measured 52.71 MB/s for one
 48.41 / 1.25 and PrimoCache 78.96 / 57.62 MB/s. All cache-bypassed hashes passed.
 QueueCache’s small-file repetitions ranged from 18.36 to 41.94 MB/s, for an
 unresolved reason. These fitting, unbuffered workloads show workload-specific
-results; the sustained 8 GiB gap above remains a separate finding. [Method and ranges](COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
+results; the sustained 8 GiB gap above remains a separate finding. QueueCache
+trails PrimoCache by 33.2% for the large file and 27.6% for small files. The goal
+in [#15](https://github.com/devedse/QueueCache/issues/15) is to match or exceed a
+contemporaneous PrimoCache control on both workloads, with repeatable results
+and correctness preserved. The larger-default fix is merged; this broader goal
+remains open. [Method and ranges](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16).
 
 ### Low-priority programs read cached data slower (performance)
 

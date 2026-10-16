@@ -127,7 +127,7 @@ after pausing the cache. The direct control has QueueCache absent.
 
 The small-file workload totals 256 MiB. These virtual-disk measurements use
 unbuffered file data; ordinary buffered copies and larger-than-cache workloads can
-behave differently. [Ranges, backing-write sizes and method](docs/COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
+behave differently. [Ranges, backing-write sizes and method](docs/COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16).
 
 How QueueCache compares with other RAM disks and RAM caches on the same machine,
 including where it is slower: [comparison](docs/COMPARISON.md).

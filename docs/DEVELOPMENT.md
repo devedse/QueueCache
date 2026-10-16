@@ -14,6 +14,8 @@ keep/reject decisions in [performance findings](PERFORMANCE_FINDINGS.md).
 |---|---|
 | [TESTING.md](TESTING.md) | Host tests, the test VM, one-command verification runs, comparing performance, the README benchmark |
 | [PERFORMANCE_FINDINGS.md](PERFORMANCE_FINDINGS.md) | What made QueueCache faster, what was rejected, current decisions |
+| [COMPARISON.md](COMPARISON.md) | Competitor scores, including large- and small-file write plus drain columns |
+| [COMPARISON_DETAILS.md](COMPARISON_DETAILS.md) | Comparison methods, findings, caveats and power-cut evidence |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | Current limitations and verification gaps |
 | [CACHE_POLICIES.md](CACHE_POLICIES.md) | The cache contract: Fast/Strict, admission, draining |
 | [VOLUME_FILTER.md](VOLUME_FILTER.md) | Where the filter sits and why |
@@ -24,10 +26,13 @@ keep/reject decisions in [performance findings](PERFORMANCE_FINDINGS.md).
 
 Product decisions that still hold: Fast mode is the default and the optimized
 mode; Strict is supported for correctness but not tuned for speed. C: is a normal
-target with the same activation path as other disks. Fast mode's volatility (loss
-of acknowledged writes and possible file-system damage after a crash or power
-loss) is accepted and must be explained, but silent corruption, stale reads or
-wrong write ordering during normal operation are defects.
+target with the same activation path as other disks. Fast mode's volatility
+(loss of acknowledged writes still in RAM) is accepted and must be explained.
+Filesystem damage after a crash remains a current risk; the desired state is
+loss of pending writes with a healthy filesystem, tracked in
+[#13](https://github.com/devedse/QueueCache/issues/13). That goal is not yet
+qualified. Silent corruption, stale reads and wrong write ordering during normal
+operation are defects.
 
 ## Product model
 

@@ -99,7 +99,7 @@ Each algorithm reads only some tuning settings; the desktop editor shows the rel
 
 All algorithms yield to explicit flushes, shutdown barriers and writers waiting for capacity. Maximum age is a scheduling trigger, not a promise that slow/failing storage will finish by a deadline. No mandatory 30-second delay is imposed.
 
-Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems.
+Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); that goal is not yet implemented and qualified, so the current warning still applies.
 
 Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes
 (default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4
