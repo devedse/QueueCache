@@ -2,6 +2,62 @@
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
 
+## Short write plus drain comparison (2026-10-16)
+
+Three complete repetitions per workload, plan 148; same temporary snapshot present,
+Defender/Search disabled, all storage guards passed. Fast used 2 GiB, 1024 KiB batches and four drainers; native driver 0.4.687.1 was unchanged.
+
+| Workload | MB/s, median (range) | App seconds | Drain/confirmation seconds | Total seconds | Mean backing write KiB |
+|---|---:|---:|---:|---:|---:|
+| One new 1 GiB file | **52.71** (42.25–62.13) | 0.139 | 20.230 | 20.369 | 1009.6 |
+| 4,096 new 64 KiB files | **41.71** (18.36–41.94) | 1.142 | 5.293 | 6.435 | 341.9 |
+
+Exact run: `QueueCache-Verify-20261016-100617-00f50445cdc04f5e897b625d384e1bec`; all 12,291 cache-bypassed file hashes passed.
+The headline includes filesystem metadata, explicit drain and pending/disk queue
+confirmation; verification is untimed. Application/drain/total columns are separate
+medians and need not add up. Backing-write sizes
+include metadata at the observed virtual-disk counter layer. These scores do not
+replace the different historical workloads below or prove power-loss durability. One post-score, pre-pause
+observation had 56 KiB newly dirty; untimed Disable drained it. Its source is untraced.
+The oracle validates files after that confirmation.
+
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+per-case evidence and build identity are in the existing [data](data/C01-queuecache-fast-fix687.json).
+
+## Current cache refresh (2026-10-15/16)
+
+QueueCache Fast, 2 GiB, 1024 KiB × 4. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
+
+Runs: `QueueCache-Verify-20261016-012344-9b75c20c35e64c84b81d54007349cc62`, `QueueCache-Verify-20261015-231123-5c5ab6cf34744b68b23521781a523fd6`.
+All declared steps and raw XML totals, duration, CPU and latency fields were reviewed; every tree hash check passed.
+
+| Workload | Current observation |
+|---|---:|
+| Hot sequential 1M Q8 read / write, MB/s | 35,016.8 / 20,937.2 |
+| First / second 1 GiB read after clearing, MB/s | 563.7 / 22,802.1 |
+| 8 GiB file random 4K Q32 / sequential 1M Q8 read, MB/s | 104.8 / 654.2 |
+| 8 GiB sustained write / slowest full second, MB/s | 267.5 / 192.9 |
+| 8 GiB payload through last busy backing-disk sample, MB/s | 200.1 |
+| Backing-disk activity after 1 GiB burst, seconds | 6.28 |
+| File tree create / copy / read-hash / delete, seconds | 4.03 / 5.36 / 2.84 / 11.98 |
+
+<img src="../images/comparison/on-refresh-20261016.png" width="480" alt="CrystalDiskMark, QueueCache Fast, 2 GiB, 1024 KiB × 4">
+
+CrystalDiskMark retained `run2`, selected by sequential Q8 read from the two clean runs below. MB/s.
+
+| Shape | run1 read / write | run2 read / write |
+|---|---:|---:|
+| SEQ1M Q8T1 | 38,747.11 / 20,556.19 | 40,591.32 / 20,907.88 |
+| SEQ1M Q1T1 | 19,782.88 / 13,398.29 | 20,202.83 / 13,545.81 |
+| RND4K Q32T1 | 1,753.62 / 1,469.58 | 1,764.46 / 1,468.38 |
+| RND4K Q1T1 | 1,299.89 / 1,096.45 | 1,306.24 / 1,095.32 |
+
+All current shapes, percentiles, memory snapshots and backing-write measurements: [comparison data](data/C01-queuecache-fast-fix687.json), `Refresh20261016`.
+
+## Earlier measurement (retained)
+
+The following results keep their original sessions and environment.
+
 | | |
 |---|---|
 | Product | QueueCache |
@@ -12,7 +68,7 @@
 | `compare-cache` run | `QueueCache-Verify-20261014-103546-64b8c94e36eb475084cf48d92c58a5a4` |
 | `compare-cache-cold` run | `QueueCache-Verify-20261014-113824-70b3db176e494efea4f7823e9199e453` |
 
-## Notes
+### Notes
 
 Measured on 2026-10-14 with signed QueueCache 0.4.687.1, Fast, 2 GiB RAM,
 Idle write-back, 1024 KiB batches and four drainers. This is a separate refresh
@@ -58,8 +114,12 @@ read. Its captured read/write scores are 37,374.91 / 19,980.67 (SEQ1M Q8T1),
 19,874.66 / 13,575.57 (SEQ1M Q1T1), 1,704.05 / 1,411.14 (RND4K Q32T1), and
 1,297.95 / 1,029.48 (RND4K Q1T1). The screenshot is the original retained capture.
 
-This refresh does not establish a win in every workload. The file-tree read/hash
-cost remains material, and shared network-storage conditions vary across dates.
+This refresh does not establish a win in every workload. Later cache-off controls
+and tracing attributed the 160–170-second file-tree read/hash times to Defender
+scanning (151.6 seconds of on-open scans in a 164.2-second diagnostic phase).
+The numbers on this page retain their original environment; shared
+network-storage conditions also vary across dates. Follow-up measurements are
+recorded in [performance findings](../PERFORMANCE_FINDINGS.md).
 The cold suite is a single observation; larger-file, sustained and tree results
 have two repetitions rather than three. Fast acknowledges explicit flushes from
 volatile RAM (the measured 512 MiB flush median is 0.000131 seconds), so hot
@@ -67,7 +127,7 @@ write-through and flush scores do not establish disk durability. Strict mode was
 not refreshed. Power-cut tests were not repeated on 0.4.687.1: this row has no
 new power-loss result, and all original power-cut evidence remains historical.
 
-## CrystalDiskMark
+### CrystalDiskMark
 
 <img src="../images/comparison/C01-queuecache-fast-fix687.png" width="480" alt="CrystalDiskMark, QueueCache 0.4.687.1, Fast, 2 GiB, 1024 KiB × 4">
 
@@ -80,7 +140,7 @@ Kept: run 2 (the faster SEQ1M Q8T1 read of two). MB/s.
 | RND4K Q32T1 | 1,778.06 / 1,396.98 | 1,704.05 / 1,411.14 |
 | RND4K Q1T1 | 1,294.73 / 1,025.89 | 1,297.95 / 1,029.48 |
 
-## Detailed measurements (DiskSpd and timed steps)
+### Detailed measurements (DiskSpd and timed steps)
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -125,7 +185,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 10,612 | 4,700 | 376 |
 | memory-end | 10,136 | 5,121 | 471 |
 
-## Empty cache
+### Empty cache
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -144,11 +204,11 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 10,343 | 4,925 | 391 |
 | memory-end | 10,381 | 4,909 | 390 |
 
-## Power loss
+### Power loss
 
 Not run yet.
 
-## Environment
+### Environment
 
 Windows 26H1 build 28000.3231; target Q: NTFS, cluster 4096 bytes, 199.98 GiB.
 

@@ -24,6 +24,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     private readonly object logGate = new();
     private IProgress<string>? progressSink;
     private string progressLabel = "Preflight";
+    private bool copyFlagsMutationStarted;
     public string? DirectoryPath => storage?.DirectoryPath;
     internal RecoverySnapshot? CampaignBaseline { get; init; }
     internal bool CampaignOwnsDiskLease { get; init; }
@@ -136,6 +137,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         RunStorage.AtomicJson(path, job);
         var result = await RunProcess(id, executable, [.. prefix, "--verification-worker", path],
             TimeSpan.FromSeconds(timeoutSeconds), token);
+        if (job.ProcessEvidence is { } processEvidence)
+        {
+            var ownedProcessEvidence = storage.PathFor(id + ".process.json");
+            if (!File.Exists(ownedProcessEvidence))
+                throw new InvalidDataException("Owned worker process identity was not recorded for " + id);
+            File.Copy(ownedProcessEvidence, processEvidence, overwrite: true);
+        }
         if (result.ExitCode != 0)
             throw new IOException($"Worker {job.Operation} failed ({result.ExitCode}): {ErrorDetail(result.Error)}. Full error: {storage.PathFor(id + ".stderr.txt")}");
         if (!File.Exists(job.Reply))
@@ -177,8 +185,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             throw new InvalidOperationException("Campaign ownership requires a captured baseline.");
         layoutGeneration = null;
         ulong? originalCopyFlags = null;
+        copyFlagsMutationStarted = false;
         layoutMeasurements = null;
-        if ((selected.Suite == "cache-read-misses" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+        if ((selected.Suite is "cache-read-misses" or "tree-decision" or "read-tail-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
         if (IsSystemSuite(selected.Suite))
@@ -215,10 +224,16 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
+        var drainFlush = DrainFlushDecision.Cases(options);
+        var treeDecision = VerificationPlan.TreeDecision(options);
+        var readTailDecision = ReadTailDecision.Cases(options);
         var integrity = VerificationPlan.Integrity(options);
         var expected = integrity.Select(test => test.Id).ToList();
         expected.AddRange(performance.Select(c => c.Id));
         expected.AddRange(drainDecision.Select(c => c.Id));
+        expected.AddRange(drainFlush.Select(c => c.Id));
+        expected.AddRange(treeDecision.Select(c => c.Id));
+        expected.AddRange(readTailDecision.Select(c => c.Id));
         expected.AddRange(exercises.Select(c => c.Id));
         totalCases = expected.Count;
         progressLabel = $"Preflight | 0/{totalCases} completed";
@@ -233,9 +248,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
-            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + exercises.Count} cases, not the complete suite matrix.");
+            Log($"Selected case ID substring: {options.CaseFilter}; {performance.Count + drainDecision.Count + treeDecision.Count + readTailDecision.Count + exercises.Count} cases, not the complete suite matrix.");
         if (drainDecision.Count > 0)
             Log($"Drain-decision score: {options.DurationSeconds}s; completion allowance: 300s; telemetry gap limit remains 2s.");
+        if (drainFlush.Count > 0)
+            Log($"Explicit-drain comparison: fixed {DrainFlushDecision.SeedBytes} byte seed; timing diagnostics OFF; worker-ready/start handshake; timestamped Flush call; three alternated pairs.");
+        if (readTailDecision.Count > 0)
+            Log("Read-tail decision: 100,000 fixed operations per case; per-request latency samples and exact >50/100/250/500 ms counts; collection only.");
         storage.Write("manifest.json", new
         {
             SchemaVersion = 1,
@@ -245,6 +264,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             ExpectedCases = expected,
             PerformanceCases = performance,
             DrainDecisionCases = drainDecision,
+            DrainFlushDecisionCases = drainFlush,
+            DrainFlushSeedBytes = drainFlush.Count == 0 ? (int?)null : DrainFlushDecision.SeedBytes,
+            TreeDecisionCases = treeDecision,
+            ReadTailDecisionCases = readTailDecision,
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
@@ -283,7 +306,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
                 comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
                     ?? throw new InvalidDataException("Missing comparison target.");
-                storage.Write("restoration.json", new { Required = false, Reason = "External comparison: no QueueCache configuration, hooks or driver access." });
+                storage.Write("restoration.json", new { Required = options.Suite == "compare-drain", Reason = options.Suite == "compare-drain"
+                    ? "Provider pause/resume journal; independent restoration after an owned worker failure."
+                    : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
             else if (IsSystemSuite(options.Suite))
             {
@@ -337,10 +362,18 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     diskLease = new FileStream(Path.Combine(leases, LeaseKey(target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             captured = !comparison && options.Suite != "trim-file" && !IsSystemSuite(options.Suite);
-            if (options.Suite == "cache-read-misses")
+            if (options.Suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision")
             {
-                originalCopyFlags = (await LayoutSnapshot("copy-flags-original.json", deadline.Token)).Diagnostics.CopyFlags
-                    ?? throw new InvalidDataException("Missing runtime copy flags for the read-miss comparison.");
+                originalCopyFlags = original.CopyFlags
+                    ?? throw new InvalidDataException("Missing original runtime copy flags; refusing to start a suite that changes them.");
+                if (options.Suite == "cache-read-misses")
+                {
+                    var copyFlagsEvidence = await LayoutSnapshot("copy-flags-original.json", deadline.Token);
+                    if (copyFlagsEvidence.Diagnostics.CopyFlags != originalCopyFlags ||
+                        copyFlagsEvidence.State.Instance != original.State.Instance ||
+                        copyFlagsEvidence.State.Generation != original.State.Generation)
+                        throw new InvalidDataException("The read-miss pre-mutation copy-flags artifact disagrees with the recovery snapshot.");
+                }
             }
             if (comparison)
             {
@@ -381,12 +414,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         {
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
+                            Provider = options.Provider, PrimoCli = options.PrimoCli, BudgetMiB = options.BudgetMiB,
                             OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))
                             ?? throw new InvalidDataException("Missing comparison step results.");
                         ComparisonPlan.ValidateChecks(plan, caseChecks);
-                        ComparisonReport.Write(storage.DirectoryPath, options.Suite, options.Product!, plan);
+                        ComparisonReport.Write(storage.DirectoryPath, options.Suite, options.Product!, plan, options.Provider);
                         return null;
                     }
                     if (test.Operation == "disk-removal")
@@ -543,7 +577,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         RamReadReferenceEvidence.ValidateChecks(RamReadReferencePlan.CasesFor(options), caseChecks!);
                     return null;
                 });
-            if (performance.Count > 0 || drainDecision.Count > 0 || exercises.Count > 0)
+            foreach (var scenario in treeDecision)
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                await Case(scenario.Id, () => MeasureTreeDecision(scenario, deadline.Token));
+            }
+            if (performance.Count > 0 || drainDecision.Count > 0 || drainFlush.Count > 0 || exercises.Count > 0 || readTailDecision.Count > 0)
             {
                 progressLabel = $"Preparing workloads | {storage.Results.Count}/{totalCases} completed";
                 var preparing = Stopwatch.StartNew();
@@ -557,6 +596,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     }, deadline.Token, 900);
                 }
                 finally { preparationSeconds = preparing.Elapsed.TotalSeconds; }
+                foreach (var scenario in readTailDecision)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureReadTailDecision(scenario, deadline.Token));
+                }
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
@@ -583,6 +627,11 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     deadline.Token.ThrowIfCancellationRequested();
                     await Case(scenario.Id, () => MeasureDrainDecision(scenario, deadline.Token));
                 }
+                foreach (var scenario in drainFlush)
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    await Case(scenario.Id, () => MeasureDrainFlush(scenario, deadline.Token));
+                }
             }
         }
         catch (Exception ex)
@@ -596,6 +645,17 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         {
             if (preflightSeconds == 0) preflightSeconds = elapsed.Elapsed.TotalSeconds;
             var restoring = Stopwatch.StartNew();
+            if (options.Suite == "compare-drain" && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
+            {
+                try
+                {
+                    OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    await ExecuteWorker(new WorkerJob("compare-drain-restore", options.Volume, storage.PathFor("compare-drain-restored.json"))
+                        with { Recovery = storage.PathFor(ComparisonDrainScenarios.RecoveryFile) }, CancellationToken.None, 300);
+                    storage.Write("restoration.json", new { Required = true, Restored = true, At = DateTimeOffset.UtcNow });
+                }
+                catch (Exception ex) { restorationFailure = ex.ToString(); Log("COMPARISON RESTORATION ERROR: " + restorationFailure); }
+            }
             if (captured && removalUnresolved)
             {
                 restorationFailure = "Removal outcome or reconnect verification is unresolved. Restoration deferred; preserve the disk and evidence, reconnect the exact original target, then use verify-recover.";
@@ -608,10 +668,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
-                    if (originalCopyFlags is { } restoreFlags)
-                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, restoreFlags);
-                    if (options.Suite == "cache-read-bookkeeping") // Runtime copy flags are not part of the recovery snapshot.
-                        await Control(WriteCacheAction.LabCopyFlags, CancellationToken.None, CacheReadBookkeeping.ProductFlags);
                     if (VerificationPlan.IsRamReadSuite(options.Suite) && File.Exists(storage.PathFor("ram-read-reference-owned.json")))
                         await Worker(Job("ram-read-cleanup") with { OraclePath = storage.PathFor("ram-read-reference-owned.json") }, CancellationToken.None, 300);
                     if (options.Suite == "stress-races" && File.Exists(storage.PathFor(StressOwnership)))
@@ -620,7 +676,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
-                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite)
+                        AcceptsLabErrors = VerificationPlan.InjectsLabFaults(options.Suite),
+                        RequireCopyFlagsRestore = copyFlagsMutationStarted
                     }, CancellationToken.None, 300);
                 }
                 catch (Exception ex) { restorationFailure = ex.ToString(); Log("RESTORATION ERROR: " + restorationFailure); }
@@ -654,6 +711,24 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
         var finalizing = Stopwatch.StartNew();
         var complete = failure is null && restorationFailure is null && RunStorage.Complete(expected, storage.Results, allowSkipped: AllowsSkips(options.Suite));
+        if (complete && readTailDecision.Count > 0)
+        {
+            try
+            {
+                var evidence = readTailDecision.Select(test =>
+                    JsonSerializer.Deserialize<ReadTailEvidence>(File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))
+                    ?? throw new InvalidDataException("Missing finalized read-tail evidence for " + test.Id)).ToArray();
+                var summary = ReadTailDecision.AggregateEvidence(evidence);
+                storage.Write("read-tail-aggregates.json", summary);
+                File.WriteAllText(storage.PathFor("read-tail-summary.md"), ReadTailDecision.RenderSummary(summary));
+            }
+            catch (Exception ex)
+            {
+                complete = false;
+                failure = "Read-tail final evidence/aggregate validation failed; no complete matrix report was emitted.\n" + ex;
+                Log("ERROR: " + failure);
+            }
+        }
         // A completed run no longer needs its multi-GiB workload files; a failed one keeps them for inspection.
         if (complete && RemovesWorkloads(options) && workDirectory.Length > 0 &&
             Path.GetFileName(workDirectory) == Path.GetFileName(storage.DirectoryPath))
@@ -670,8 +745,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 Log("Workload folders were kept, removal failed (the results are unaffected): " + ex.Message);
             }
         }
-        var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
-            token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         if (complete && performance.Count > 0)
         {
             static double Median(IEnumerable<double> values)
@@ -723,6 +796,23 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     CaseIds = group.Select(c => c.Id).ToArray()
                 }).ToArray());
         }
+        if (complete && drainFlush.Count > 0)
+        {
+            var evidence = drainFlush.Select(test =>
+            {
+                var row = JsonSerializer.Deserialize<DrainFlushEvidence>(
+                    File.ReadAllText(storage.PathFor(test.Id + "-evidence.json")))
+                    ?? throw new InvalidDataException("Missing completed explicit-drain evidence for " + test.Id);
+                if (row.Case != test || !row.SeedVerified)
+                    throw new InvalidDataException("Explicit-drain evidence does not match its immutable case or seed byte oracle.");
+                return row;
+            }).ToArray();
+            var summary = DrainFlushDecision.BuildSummary(evidence);
+            storage.Write("drain-flush-aggregates.json", summary);
+            File.WriteAllText(storage.PathFor("drain-flush-summary.md"), DrainFlushDecision.RenderSummary(summary));
+        }
+        var status = complete ? (storage.Results.Any(result => result.Status == "SKIP") ? "COMPLETED_WITH_SKIPS" : "COMPLETED") : restorationFailure is not null ? "RESTORATION_FAILED" :
+            token.IsCancellationRequested ? "CANCELLED" : "INCOMPLETE";
         storage.Write("status.json", new
         {
             Status = status,
@@ -743,6 +833,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             report.AppendLine("\n## Failure\n\n```text\n" + failure + "\n```");
         if (restorationFailure is not null)
             report.AppendLine("\n## Restoration failure\n\n```text\n" + restorationFailure + "\n```");
+        if (complete && drainFlush.Count > 0)
+            report.AppendLine("\nComplete explicit-drain matrix: `drain-flush-summary.md` and `drain-flush-aggregates.json`. Timing starts at the recorded Flush call, not worker launch.\n");
         File.WriteAllText(storage.PathFor("SUMMARY.md"), report.ToString());
         var csv = new StringBuilder("CaseId,Status,Seconds,Operations,IOPS,ReadP99Ms,ReadP999Ms,ReadMaxMs,WriteP99Ms,MBPerSecond\n");
         foreach (var r in storage.Results)
@@ -856,6 +948,146 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         return score;
     }
 
+    private async Task<DiskSpdScore?> MeasureTreeDecision(TreeDecisionCase scenario, CancellationToken token)
+    {
+        await Control(WriteCacheAction.Flush, token);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token);
+        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, scenario.CacheEnabled)
+        {
+            Options = new CacheOptions(CacheAllocation.Automatic, 50, RetainWrites: true, PromoteOnRead: true,
+                Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000, IdleMs: 250,
+                BatchKiB: scenario.BatchKiB, Parallelism: scenario.Parallelism)
+        };
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        if (scenario.CopyFlags is { } copyFlags)
+        {
+            copyFlagsMutationStarted = true;
+            await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
+        }
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var settlePath = await Worker(Job("tree-settle") with { Seconds = 30 }, token, 360);
+        var preconditionSettle = JsonSerializer.Deserialize<SettleResult>(await File.ReadAllTextAsync(settlePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision precondition settle evidence.");
+        TreeDecisionEvidenceContract.ValidateSettle(preconditionSettle, 30);
+
+        var beforePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
+        var before = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision start snapshot.");
+        TreeDecisionEvidenceContract.ValidateStart(scenario, before);
+        var treePath = await Worker(Job("tree-decision") with
+        {
+            WorkDirectory = Path.Combine(workDirectory, scenario.Id),
+            Seconds = 120,
+            Reply = storage.PathFor(scenario.Id + "-tree.json")
+        }, token, 1800);
+        var tree = JsonSerializer.Deserialize<TreeResult>(await File.ReadAllTextAsync(treePath, token))
+            ?? throw new InvalidDataException("Missing tree-decision byte/hash and timing evidence.");
+        var afterPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
+        var after = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(afterPath, token))
+            ?? throw new InvalidDataException("Missing tree-decision end snapshot.");
+        var evidence = new TreeDecisionEvidence(scenario, before, tree, after);
+        TreeDecisionEvidenceContract.Validate(evidence);
+        storage.Write(scenario.Id + "-evidence.json", evidence);
+        caseChecks = [new("Seeded file-tree byte and SHA-256 oracle", "PASS",
+            $"{tree.Files} files / {tree.Bytes} bytes; create {tree.CreateSeconds:F2}s, copy {tree.CopySeconds:F2}s, read/hash {tree.ReadSeconds:F2}s, delete {tree.DeleteSeconds:F2}s. Collection only; see per-phase memory and cache snapshots.")];
+        return null;
+    }
+
+    private async Task<DiskSpdScore?> MeasureReadTailDecision(ReadTailCase scenario, CancellationToken token)
+    {
+        ReadTailDecision.ValidateCase(scenario);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, true)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Idle, RetainWrites: true, PromoteOnRead: true,
+                LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000, IdleMs: 250,
+                BatchKiB: 256, Parallelism: 2)
+        };
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        copyFlagsMutationStarted = true;
+        await Control(WriteCacheAction.LabCopyFlags, token, scenario.CopyFlags);
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var settlePath = await Worker(Job("tree-settle") with { Seconds = 30 }, token, 360);
+        var settle = JsonSerializer.Deserialize<SettleResult>(await File.ReadAllTextAsync(settlePath, token))
+            ?? throw new InvalidDataException("Missing read-tail precondition settle evidence.");
+        TreeDecisionEvidenceContract.ValidateSettle(settle, 30);
+
+        if (scenario.Resident)
+        {
+            var warmPath = await Worker(Job("read-tail-warm") with
+            {
+                WorkDirectory = workDirectory,
+                Value = checked((ulong)scenario.FileBytes)
+            }, token, 900);
+            var warm = JsonSerializer.Deserialize<ReadTailWarmResult>(await File.ReadAllTextAsync(warmPath, token))
+                ?? throw new InvalidDataException("Missing read-tail resident warm-up evidence.");
+            if (warm.Bytes != scenario.FileBytes || warm.CompletedOperations != scenario.FileBytes / (1 << 20) ||
+                !double.IsFinite(warm.Seconds) || warm.Seconds <= 0)
+                throw new InvalidDataException(scenario.Id + ": resident warm-up did not cover the exact declared file.");
+            storage.Write(scenario.Id + "-warm.json", warm);
+        }
+
+        // A stray filesystem metadata write must not leave dirty bytes in the start snapshot and fail a long matrix.
+        await WaitForQuiet(scenario.Id + "-start", token);
+        var beforePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-before.json") }, token);
+        var before = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(beforePath, token))
+            ?? throw new InvalidDataException("Missing read-tail start snapshot.");
+        var resultPath = await Worker(Job("read-tail") with
+        {
+            WorkDirectory = workDirectory,
+            TailDecision = scenario,
+            Reply = storage.PathFor(scenario.Id + "-result.json")
+        }, token, 1800);
+        var result = JsonSerializer.Deserialize<ReadTailResult>(await File.ReadAllTextAsync(resultPath, token))
+            ?? throw new InvalidDataException("Missing exact-operation read-tail evidence.");
+        var afterPath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-after.json") }, token);
+        var after = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(afterPath, token))
+            ?? throw new InvalidDataException("Missing read-tail end snapshot.");
+        var evidence = new ReadTailEvidence(scenario, before, result, after);
+        ReadTailDecision.ValidateEvidence(evidence);
+        storage.Write(scenario.Id + "-evidence.json", evidence);
+
+        if (scenario.Writes)
+        {
+            await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+            await Worker(Job("flush-volume"), token, 180);
+            await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+            // Filesystem metadata can arrive immediately after the volume flush. Before the unbuffered
+            // oracle, require a clean cache whose lower-I/O counters remain stable for two seconds.
+            await WaitForQuiet(scenario.Id + "-durable", token);
+            await Control(WriteCacheAction.DropClean, token);
+            var durablePath = await Worker(Job("snapshot") with { Reply = storage.PathFor(scenario.Id + "-durable.json") }, token);
+            var durable = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(durablePath, token))
+                ?? throw new InvalidDataException("Missing post-flush write state.");
+            if (durable.State.DirtyBytes != 0 || durable.State.InFlightBytes != 0 || durable.State.Faulted ||
+                durable.State.Suspended || durable.State.Removed || durable.State.LastError != 0 ||
+                durable.State.Instance != before.State.Instance || durable.State.Generation != before.State.Generation)
+                throw new IOException(scenario.Id + ": foreground write set did not reach a clean, healthy state before disk verification.");
+            var verifyPath = await Worker(Job("read-tail-verify") with
+            {
+                WorkDirectory = workDirectory,
+                TailDecision = scenario,
+                Reply = storage.PathFor(scenario.Id + "-write-verification.json")
+            }, token, 1800);
+            var verification = JsonSerializer.Deserialize<ReadTailWriteVerification>(await File.ReadAllTextAsync(verifyPath, token))
+                ?? throw new InvalidDataException("Missing read-tail durable write oracle.");
+            if (verification.CompletedOperations != scenario.OperationCount || verification.Bytes != result.Bytes ||
+                verification.OrderedBlockSha256.Length != 64)
+                throw new InvalidDataException(scenario.Id + ": durable write oracle did not verify the complete declared operation set.");
+            storage.Write(scenario.Id + "-write-verification.json", verification);
+        }
+
+        caseChecks = [new("Fixed-operation read/write tail samples and cache accounting", "PASS",
+            $"{result.CompletedOperations:N0} operations; p50/p99/p99.9/max {result.P50Milliseconds:F3}/{result.P99Milliseconds:F3}/{result.P999Milliseconds:F3}/{result.MaxMilliseconds:F3} ms; " +
+            $">50/100/250/500 ms: {result.Over50Milliseconds}/{result.Over100Milliseconds}/{result.Over250Milliseconds}/{result.Over500Milliseconds}. Collection only.")];
+        return null;
+    }
+
     private const string StressOwnership = "stress-races-owned.json";
     private ulong? layoutGeneration, layoutMeasurements;
     private async Task<CacheLayoutSnapshot> LayoutSnapshot(string name, CancellationToken token)
@@ -907,7 +1139,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             await Control(WriteCacheAction.DropClean, token);
         await Control(WriteCacheAction.PerformanceTiming, token, scenario.Timing ? 1UL : 0UL);
         if (scenario.CopyFlags is { } copyFlags)
+        {
+            copyFlagsMutationStarted = true;
             await Control(WriteCacheAction.LabCopyFlags, token, copyFlags);
+        }
         if (scenario.Layout != CacheLayoutStage.None)
         {
             await WaitForQuiet(scenario.Id + "-start", token);
@@ -1083,6 +1318,100 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     }
                     catch (Exception) { /* original case failure retained */ }
                 }
+        }
+    }
+
+    private async Task<DiskSpdScore?> MeasureDrainFlush(DrainFlushCase scenario, CancellationToken token)
+    {
+        DrainFlushDecision.ValidateCase(scenario);
+        await Control(WriteCacheAction.LabDelay, token);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+        await Worker(Job("flush-volume"), token, 180);
+        await Control(WriteCacheAction.Flush, token, timeoutSeconds: options.PreparationFlushSeconds);
+
+        var configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, true)
+        {
+            Options = new CacheOptions(CacheAllocation.Automatic, 100, RetainWrites: true, PromoteOnRead: true,
+                Drain: DrainAlgorithm.Deferred, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 3_600_000,
+                IdleMs: 250, BatchKiB: scenario.BatchKiB, Parallelism: scenario.Parallelism)
+        };
+        await Worker(Job("configure") with { Configuration = configuration }, token, 300);
+        await Control(WriteCacheAction.PerformanceTiming, token, 0);
+        await Control(WriteCacheAction.DropClean, token);
+        var configured = await LayoutSnapshot(scenario.Id + "-configured.json", token);
+        if (!configured.State.Operational || !configured.State.Enabled || !configured.State.UnsafeDefer ||
+            configured.State.Options != configuration.Options || configured.State.DirtyBytes != 0 ||
+            configured.State.InFlightBytes != 0 || configured.Performance.TimingEnabled != 0 ||
+            configured.Diagnostics.Attribution is null)
+            throw new InvalidDataException("Explicit-drain precondition does not match the timing-off Fast Deferred configuration.");
+
+        var seedPath = await Worker(Job("seed-drain") with
+        {
+            WorkDirectory = workDirectory,
+            BudgetMiB = options.BudgetMiB,
+            Value = checked((ulong)(104729 + scenario.Repeat))
+        }, token, 600);
+        var seed = JsonSerializer.Deserialize<DrainSeedResult>(await File.ReadAllTextAsync(seedPath, token))
+            ?? throw new InvalidDataException("Missing explicit-drain dirty-seed evidence.");
+        var seedCompletedUtc = DateTimeOffset.UtcNow;
+
+        var workerId = scenario.Id + "-flush-worker";
+        var readyPath = storage.PathFor(scenario.Id + ".flush-ready.json");
+        var startPath = storage.PathFor(scenario.Id + ".flush-start");
+        var processPath = storage.PathFor(workerId + ".process.json");
+        using var workerCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var workerTask = Worker(Job("timed-cache-flush") with
+        {
+            ReadyFile = readyPath,
+            StartFile = startPath,
+            ProcessEvidence = processPath
+        }, workerCancellation.Token, 600);
+        var released = false;
+        try
+        {
+            await TelemetryCoverage.WaitReadyAsync(readyPath, workerTask, TimeSpan.FromSeconds(45), token);
+            using var readyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(readyPath, token));
+            var workerReadyUtc = readyDocument.RootElement.GetProperty("At").GetDateTimeOffset();
+            var releaseUtc = DateTimeOffset.UtcNow;
+            File.WriteAllText(startPath, "start");
+            released = true;
+            var replyPath = await workerTask;
+            var control = JsonSerializer.Deserialize<DrainFlushControlResult>(
+                await File.ReadAllTextAsync(replyPath, token))
+                ?? throw new InvalidDataException("Missing timestamped explicit-flush control evidence.");
+            var process = JsonSerializer.Deserialize<ProcessIdentity>(await File.ReadAllTextAsync(processPath, token))
+                ?? throw new InvalidDataException("Missing owned explicit-flush worker process identity.");
+            var metrics = DrainFlushDecision.ValidateEvidence(scenario, seed, process,
+                seedCompletedUtc, workerReadyUtc, releaseUtc, control,
+                original.State.Instance, original.State.Errors);
+
+            await Control(WriteCacheAction.Disable, token, timeoutSeconds: options.PreparationFlushSeconds);
+            var verifyPath = await Worker(Job("verify-drain") with
+            {
+                WorkDirectory = workDirectory,
+                BudgetMiB = options.BudgetMiB,
+                Value = (ulong)seed.Seed,
+                DrainSeedBytes = seed.Bytes
+            }, token, 600);
+            using var verifyDocument = JsonDocument.Parse(await File.ReadAllTextAsync(verifyPath, token));
+            if (!verifyDocument.RootElement.GetProperty("Verified").GetBoolean())
+                throw new InvalidDataException("Explicit-drain dirty-seed byte oracle did not pass.");
+
+            var evidence = new DrainFlushEvidence(scenario, seed, true, process, seedCompletedUtc,
+                workerReadyUtc, releaseUtc, control, processPath,
+                verifyPath, metrics);
+            storage.Write(scenario.Id + "-evidence.json", evidence);
+            storage.Write(scenario.Id + "-configured.json", configured);
+            storage.Write(scenario.Id + "-seed-verification.json", verifyDocument.RootElement.Clone());
+            caseChecks = [new("Timestamped explicit cache flush and seed persistence", "PASS",
+                $"Flush call {metrics.DurationMilliseconds:F1} ms; {metrics.DrainBatches} drain batches wrote {metrics.DriverDrainBytes} bytes; timing off and byte oracle passed.")];
+            return null;
+        }
+        finally
+        {
+            if (!released) workerCancellation.Cancel();
+            try { await workerTask; }
+            catch (Exception) { /* original case failure retained */ }
         }
     }
 
@@ -1262,6 +1591,29 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var path = Path.GetFullPath(directory);
         using var runLock = new FileStream(Path.Combine(path, "run.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         OwnedProcess.EnsureStopped(path);
+        var comparisonRecovery = Path.Combine(path, ComparisonDrainScenarios.RecoveryFile);
+        if (File.Exists(comparisonRecovery))
+        {
+            var recorded = JsonSerializer.Deserialize<ComparisonDrainRecovery>(await File.ReadAllTextAsync(comparisonRecovery, token))
+                ?? throw new InvalidDataException("Missing comparison recovery journal.");
+            options = new(recorded.Volume, "compare-drain", path, BudgetMiB: 2048, Provider: recorded.Provider, PrimoCli: recorded.PrimoCli);
+            storage = new RunStorage(path); progressSink = progress; progressLabel = "Comparison recovery";
+            try
+            {
+                await ExecuteWorker(new WorkerJob("compare-drain-restore", recorded.Volume, storage.PathFor("restored.json"))
+                    with { Recovery = comparisonRecovery }, token, 300);
+                storage.Write("status.json", new { Status = "COMPLETED", Restoration = "RESTORED" });
+                File.WriteAllText(storage.PathFor("FINISHED.txt"), "COMPLETED\n");
+                Log("Original comparison cache state restored; original run evidence is unchanged.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                storage.Write("status.json", new { Status = "RESTORATION_FAILED", Error = ex.ToString() });
+                File.WriteAllText(storage.PathFor("FINISHED.txt"), "RESTORATION_FAILED\n");
+                Log("COMPARISON RESTORATION ERROR: " + ex); return 1;
+            }
+        }
         var snapshotPath = Path.Combine(path, "recovery.json");
         original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(snapshotPath, token))!;
         var systemRecovery = IsSystemRecoveryTarget(original.Target);
@@ -1301,6 +1653,49 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
             var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
                 ?? throw new InvalidDataException("The run manifest has no suite.");
+            var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision";
+            ulong? recoveryCopyFlags = null;
+            if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")
+            {
+                var evidencePath = Path.Combine(path, "copy-flags-original.json");
+                if (File.Exists(evidencePath))
+                {
+                    try
+                    {
+                        var evidence = JsonSerializer.Deserialize<CacheLayoutSnapshot>(await File.ReadAllTextAsync(evidencePath, token))
+                            ?? throw new InvalidDataException("Legacy copy-flags evidence is empty.");
+                        recoveryCopyFlags = VerificationWorker.ValidateLegacyCopyFlags(original, evidence);
+                        storage.Write("copy-flags-recovery-source.json", new
+                        {
+                            Status = "VALIDATED",
+                            Source = "copy-flags-original.json",
+                            SourceSha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(evidencePath, token))),
+                            Target = original.Target,
+                            OriginalInstance = original.State.Instance,
+                            OriginalGeneration = original.State.Generation,
+                            CopyFlags = recoveryCopyFlags
+                        });
+                    }
+                    catch (Exception ex) when (ex is IOException || ex is InvalidDataException ||
+                                               ex is UnauthorizedAccessException || ex is JsonException)
+                    {
+                        storage.Write("copy-flags-recovery-source.json", new
+                        {
+                            Status = "REJECTED",
+                            Source = "copy-flags-original.json",
+                            Target = original.Target,
+                            Reason = ex.Message
+                        });
+                    }
+                }
+                else storage.Write("copy-flags-recovery-source.json", new
+                {
+                    Status = "MISSING",
+                    Source = "copy-flags-original.json",
+                    Target = original.Target,
+                    Reason = "No trustworthy pre-mutation copy-flags evidence is available."
+                });
+            }
             var operation = systemRecovery ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
@@ -1315,6 +1710,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 OraclePath = systemRecovery ? Path.Combine(path, "oracle.json") : null,
                 RequireImageEvidence = systemRecovery && VerificationWorker.RequiresSystemImageEvidence(priorResults),
                 AcceptsLabErrors = !systemRecovery && VerificationPlan.InjectsLabFaults(suite),
+                RecoveryCopyFlags = recoveryCopyFlags,
+                RequireCopyFlagsRestore = mutatesCopyFlags,
                 ImageOraclePaths = systemRecovery ? PassedSystemImageOracles(path, priorResults) : null
             }, token, 300);
             storage.Write("recovery-result.json", new

@@ -12,11 +12,15 @@ public static class ComparisonReport
     public sealed record ShapeRow(string Shape, int Samples, double MBPerSecond, double MinMBPerSecond, double MaxMBPerSecond, double Iops,
         double? ReadP50Ms, double? ReadP99Ms, double? ReadP999Ms, double? WriteP50Ms, double? WriteP99Ms, double? WriteP999Ms, double CpuPercent);
     public sealed record StepRow(string Shape, int Samples, string Measure, double Median, double Min, double Max);
+    public sealed record DrainRow(ComparisonProvider Provider, string Shape, int Samples, double MBPerSecond,
+        double MinMBPerSecond, double MaxMBPerSecond, double ApplicationSeconds, double DrainSeconds,
+        double TotalSeconds, double DiskBytesWritten, double DiskWriteOperations, double AverageWriteBytes);
 
-    public static void Write(string directory, string suite, string product, IReadOnlyList<ComparisonCase> plan)
+    public static void Write(string directory, string suite, string product, IReadOnlyList<ComparisonCase> plan, ComparisonProvider? provider = null)
     {
         var shapes = Shapes(directory, plan);
         var steps = Steps(directory, plan);
+        var drains = suite == "compare-drain" ? Drains(directory, plan, provider ?? throw new InvalidDataException("Missing comparison provider.")) : [];
         var memory = plan.Where(c => c.Kind == "memory")
             .Select(c => (c.Id, Snapshot: Read<MemorySnapshot>(directory, c.Id, "memory"))).ToArray();
         // A verify run writes result.json for the generations test and churn.json for the churn test.
@@ -27,11 +31,18 @@ public static class ComparisonReport
         RunStorage.AtomicJson(Path.Combine(directory, "comparison.json"), new
         {
             SchemaVersion = 1, Suite = suite, Product = product, PlanVersion = VerificationPlan.Version,
-            Shapes = shapes, Steps = steps, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
+            Provider = provider, Shapes = shapes, Steps = steps, Drains = drains, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
         });
         var md = new StringBuilder($"# Comparison: {product}\n\nSuite `{suite}`, plan {VerificationPlan.Version}. Medians of the repetitions " +
             "(range in brackets). MB/s are decimal (1,000,000 bytes/s). Raw evidence: `compare.<step>.*`. Not a verdict.\n");
         static string N(double? value, string format = "F1") => value?.ToString(format, CultureInfo.InvariantCulture) ?? "N/A";
+        if (drains.Count > 0)
+        {
+            md.AppendLine("\n| Write through explicit drain | Provider | n | MB/s (range) | App s | Drain/confirmation s | Total s | Disk write bytes | Disk write ops | Avg write bytes |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+            foreach (var r in drains)
+                md.AppendLine($"| {r.Shape} | {r.Provider} | {r.Samples} | {N(r.MBPerSecond)} ({N(r.MinMBPerSecond)}–{N(r.MaxMBPerSecond)}) | {N(r.ApplicationSeconds, "F3")} | {N(r.DrainSeconds, "F3")} | {N(r.TotalSeconds, "F3")} | {N(r.DiskBytesWritten, "F0")} | {N(r.DiskWriteOperations, "F0")} | {N(r.AverageWriteBytes, "F0")} |");
+            md.AppendLine("\nApplication time includes new file/directory creation and close. Drain time includes FlushVolume metadata, explicit product drain, zero pending and disk queue confirmation. Verification and preparation are outside timing. Disk counters describe the observed virtual disk stack, not physical-media/power-loss durability. Shuffled small-file names do not establish random LBA placement.");
+        }
         if (shapes.Count > 0)
         {
             md.AppendLine("\n| DiskSpd shape | n | MB/s | IOPS | Read p50 / p99 / p99.9 ms | Write p50 / p99 / p99.9 ms | CPU % |\n|---|---:|---:|---:|---|---|---:|");
@@ -69,6 +80,43 @@ public static class ComparisonReport
 
     private static string Share(SectorCounts c) => string.Create(CultureInfo.InvariantCulture,
         $"{c.New * 100.0 / c.Expected:F1}% new, {c.Old * 100.0 / c.Expected:F1}% old, {(c.Other + c.Missing) * 100.0 / c.Expected:F1}% other or missing");
+
+    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider)
+    {
+        if (!plan.SequenceEqual(ComparisonDrain.Cases(3))) throw new InvalidDataException("Cannot publish an incomplete compare-drain plan.");
+        using var oracle = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "compare-drain-oracle.json")));
+        var root = oracle.RootElement;
+        if (root.GetProperty("PayloadBytes").GetInt64() != ComparisonDrain.PayloadBytes ||
+            root.GetProperty("LargeBytes").GetInt64() != ComparisonDrain.LargeBytes ||
+            root.GetProperty("SmallBytes").GetInt64() != ComparisonDrain.SmallBytes ||
+            root.GetProperty("SmallFileCount").GetInt32() != ComparisonDrain.SmallFiles || root.GetProperty("Seed").GetInt32() != ComparisonDrain.Seed)
+            throw new InvalidDataException("Wrong compare-drain oracle contract.");
+        var small = root.GetProperty("SmallFiles").Deserialize<ComparisonFileHash[]>() ?? throw new InvalidDataException("Missing small-file hashes.");
+        if (small.Length != ComparisonDrain.SmallFiles || !small.Select(f => f.File).SequenceEqual(Enumerable.Range(0, small.Length).Select(ComparisonDrainFiles.SmallName)))
+            throw new InvalidDataException("Incomplete compare-drain small-file oracle.");
+        var scores = plan.Select(test =>
+        {
+            var score = Read<ComparisonDrainScore>(directory, test.Id, "score");
+            ComparisonDrain.ValidateScore(test, score, provider);
+            var verify = Read<ComparisonDrainVerification>(directory, test.Id, "verify");
+            ComparisonFileHash[] expected = test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)];
+            if (verify.Id != test.Id || !verify.Bypassed || !verify.Restored || !verify.Verified || !verify.Files.SequenceEqual(expected) ||
+                expected.Any(f => f.Bytes != (test.Kind == "drain-small" ? ComparisonDrain.SmallFileBytes : ComparisonDrain.LargeBytes) ||
+                    f.Sha256 is null || f.Sha256.Length != 64 || !f.Sha256.All(char.IsAsciiHexDigit)))
+                throw new InvalidDataException("Missing, failed or unrestored cache-bypassed file verification: " + test.Id);
+            return score;
+        }).ToArray();
+        double Median(IEnumerable<double> values) => ComparisonPlan.Spread(values.ToArray()).Median;
+        return scores.GroupBy(s => ComparisonPlan.Shape(s.Id)).Select(group =>
+        {
+            var speed = ComparisonPlan.Spread(group.Select(s => s.MBPerSecond).ToArray());
+            return new DrainRow(provider, group.Key, group.Count(), speed.Median, speed.Min, speed.Max,
+                Median(group.Select(s => s.ApplicationSeconds)), Median(group.Select(s => s.DrainSeconds)), Median(group.Select(s => s.TotalSeconds)),
+                Median(group.Select(s => (double)(s.DiskAfter.BytesWritten - s.DiskBefore.BytesWritten))),
+                Median(group.Select(s => (double)(s.DiskAfter.WriteOperations - s.DiskBefore.WriteOperations))),
+                Median(group.Select(s => (double)(s.DiskAfter.BytesWritten - s.DiskBefore.BytesWritten) / (s.DiskAfter.WriteOperations - s.DiskBefore.WriteOperations))));
+        }).ToArray();
+    }
 
     private static T Read<T>(string directory, string id, string suffix) =>
         JsonSerializer.Deserialize<T>(File.ReadAllText(Path.Combine(directory, $"compare.{id}.{suffix}.json")))

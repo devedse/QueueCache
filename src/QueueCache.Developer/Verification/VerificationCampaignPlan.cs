@@ -24,7 +24,8 @@ public static class VerificationCampaignPlan
         var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" ||
             VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         return [.. VerificationPlan.Integrity(options).Select(c => c.Id), .. performance.Select(c => c.Id),
-            .. VerificationPlan.DrainDecision(options).Select(c => c.Id), .. CacheExercisePlan.Cases(options).Select(c => c.Id)];
+            .. VerificationPlan.DrainDecision(options).Select(c => c.Id), .. VerificationPlan.TreeDecision(options).Select(c => c.Id),
+            .. CacheExercisePlan.Cases(options).Select(c => c.Id)];
     }
 
     public static IReadOnlyList<VerificationCampaignPhase> Create(VerificationCampaignOptions options)

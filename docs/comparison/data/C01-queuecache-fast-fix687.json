@@ -1501,5 +1501,1168 @@
  },
  "status": "Measured",
  "notes": "Measured on 2026-10-14 with signed QueueCache 0.4.687.1, Fast, 2 GiB RAM,\nIdle write-back, 1024 KiB batches and four drainers. This is a separate refresh\nof the Fast cache configuration. Historical 0.4.604.1, competitor and RAM-disk\nrows retain their original measurement dates and evidence. Cross-date figures\nare descriptive; causal gains are qualified only by alternated same-build A/B\ncomparisons in [performance findings](../PERFORMANCE_FINDINGS.md).\n\nBoth plan-132 runs completed with no run or restoration failure:\n`QueueCache-Verify-20261014-103546-64b8c94e36eb475084cf48d92c58a5a4`\n(`compare-cache`, three repetitions) and\n`QueueCache-Verify-20261014-113824-70b3db176e494efea4f7823e9199e453`\n(`compare-cache-cold`, one repetition). The main run contains 422 SHA-256-verified\nevidence files; the cold run contains 53. Loaded native hashes, environment,\ncompletion records and all 49 raw DiskSpd XML byte totals were reviewed; all\nDiskSpd windows completed operations. Generic comparison workloads use no\nQueueCache controls, hooks or telemetry.\n\nSelected results (decimal MB/s):\n\n| Workload | Result | Repetitions |\n|---|---:|---:|\n| First / second sequential read of 1 GiB, cache emptied | 571 / 19,638 MB/s | 1 |\n| 8 GiB file, random 4K Q32 / sequential 1M Q8 read | 80.90 / 621.88 MB/s | 2 |\n| 8 GiB sustained write, average / slowest-second median | 259.62 / 177.73 MB/s | 2 |\n| File-tree read and hash | 154.23 seconds | 2 |\n| Hot sequential 1M Q8 read / write | 34,774.80 / 20,655.48 MB/s | 3 |\n| 1 GiB burst admission | 2,959.75 MB/s | 3 |\n\nThe burst-drain table uses actual hypervisor scsi1 cumulative write counters:\n3,938 one-second samples cover both verification runs, maximum gap 1.036 seconds,\nwith monotonic counters and the owned sampler stopped afterwards. Each of the\nthree absorb passes was joined to its recorded `compare.absorb-rN.interval.json`:\nthe preceding host sample brackets the pass start within one second, and the\nlast busy sample plus five quiet samples lies inside that pass's settle interval,\nbefore the next step. The existing generator reports median 7.02 seconds and\n152.95 MB/s from pass completion to the last busy sample. These are sampled\nvirtual-disk observations, with roughly one-second timing resolution; no missing\ncounter is treated as zero and they do not certify physical-media durability.\n\nCrystalDiskMark has two real runs; run 2 was retained for its higher SEQ1M Q8T1\nread. Its captured read/write scores are 37,374.91 / 19,980.67 (SEQ1M Q8T1),\n19,874.66 / 13,575.57 (SEQ1M Q1T1), 1,704.05 / 1,411.14 (RND4K Q32T1), and\n1,297.95 / 1,029.48 (RND4K Q1T1). The screenshot is the original retained capture.\n\nThis refresh does not establish a win in every workload. The file-tree read/hash\ncost remains material, and shared network-storage conditions vary across dates.\nThe cold suite is a single observation; larger-file, sustained and tree results\nhave two repetitions rather than three. Fast acknowledges explicit flushes from\nvolatile RAM (the measured 512 MiB flush median is 0.000131 seconds), so hot\nwrite-through and flush scores do not establish disk durability. Strict mode was\nnot refreshed. Power-cut tests were not repeated on 0.4.687.1: this row has no\nnew power-loss result, and all original power-cut evidence remains historical.",
- "problems": []
+ "problems": [],
+ "Refresh20261016": {
+  "Mode": "QueueCache Fast, 2 GiB, 1024 KiB \u00d7 4",
+  "DateUtc": "2026-10-15/16",
+  "Scope": "One complete repetition of each comparison; two clean CDM runs.",
+  "Instruments": {
+   "CliSha256": "B73E24D31FC3D9A0CD9F3BA4E82E921637D132FB879BE59DB12FF7963BAD6115",
+   "DiskSpdSha256": "7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079",
+   "PlanVersion": 146
+  },
+  "ZeroCompletionScores": {
+   "compare-cache-cold": [],
+   "compare-cache": []
+  },
+  "Runs": {
+   "compare-cache-cold": {
+    "Id": "QueueCache-Verify-20261016-012344-9b75c20c35e64c84b81d54007349cc62",
+    "Comparison": {
+     "SchemaVersion": 1,
+     "Suite": "compare-cache-cold",
+     "Product": "QueueCache 0.4.687.1 Fast 2 GiB 1024 KiB x4, Defender Search off",
+     "PlanVersion": 146,
+     "Shapes": [
+      {
+       "Shape": "cold-rnd4k-q32t1-read-first",
+       "Samples": 1,
+       "MBPerSecond": 102.56759466666666,
+       "MinMBPerSecond": 102.56759466666666,
+       "MaxMBPerSecond": 102.56759466666666,
+       "Iops": 25040.916666666668,
+       "ReadP50Ms": 0.994,
+       "ReadP99Ms": 6.564,
+       "ReadP999Ms": 13.726,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 42.21
+      },
+      {
+       "Shape": "cold-rnd4k-q32t1-read-second",
+       "Samples": 1,
+       "MBPerSecond": 130.08151893333334,
+       "MinMBPerSecond": 130.08151893333334,
+       "MaxMBPerSecond": 130.08151893333334,
+       "Iops": 31758.183333333334,
+       "ReadP50Ms": 0.782,
+       "ReadP99Ms": 6.448,
+       "ReadP999Ms": 12.978,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 40.68
+      }
+     ],
+     "Steps": [
+      {
+       "Shape": "cold-first",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 563.7249950294696,
+       "Min": 563.7249950294696,
+       "Max": 563.7249950294696
+      },
+      {
+       "Shape": "cold-second",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 22802.052763130792,
+       "Min": 22802.052763130792,
+       "Max": 22802.052763130792
+      }
+     ],
+     "Memory": [
+      {
+       "Id": "memory-start",
+       "Snapshot": {
+        "Utc": "2026-10-16T01:23:45.1782562+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11412750336,
+        "CommitBytes": 4765671424,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 488079360,
+        "KernelPagedBytes": 324829184,
+        "SystemCacheBytes": 4149534720
+       }
+      },
+      {
+       "Id": "memory-end",
+       "Snapshot": {
+        "Utc": "2026-10-16T01:25:51.4633002+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11454914560,
+        "CommitBytes": 4721422336,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 487694336,
+        "KernelPagedBytes": 324251648,
+        "SystemCacheBytes": 4152107008
+       }
+      }
+     ],
+     "Durability": null,
+     "Churn": null
+    },
+    "Review": {
+     "Run": "QueueCache-Verify-20261016-012344-9b75c20c35e64c84b81d54007349cc62",
+     "Product": "QueueCache 0.4.687.1 Fast 2 GiB 1024 KiB x4, Defender Search off",
+     "Status": "COMPLETED",
+     "Cases": 7,
+     "XmlScores": 2,
+     "MaxBackingSamplerGapSeconds": 1.001,
+     "Seconds": 126.5703093,
+     "Writes": {},
+     "ZeroCompletionScores": []
+    }
+   },
+   "compare-cache": {
+    "Id": "QueueCache-Verify-20261015-231123-5c5ab6cf34744b68b23521781a523fd6",
+    "Comparison": {
+     "SchemaVersion": 1,
+     "Suite": "compare-cache",
+     "Product": "QueueCache 0.4.687.1 Fast 2 GiB 1024 KiB x4, Defender Search off",
+     "PlanVersion": 146,
+     "Shapes": [
+      {
+       "Shape": "hot-seq1m-q8t1-read",
+       "Samples": 1,
+       "MBPerSecond": 35016.78174625375,
+       "MinMBPerSecond": 35016.78174625375,
+       "MaxMBPerSecond": 35016.78174625375,
+       "Iops": 33394.605394605394,
+       "ReadP50Ms": 0.211,
+       "ReadP99Ms": 0.516,
+       "ReadP999Ms": 1.676,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 98.24
+      },
+      {
+       "Shape": "hot-seq1m-q1t1-read",
+       "Samples": 1,
+       "MBPerSecond": 20244.220982217783,
+       "MinMBPerSecond": 20244.220982217783,
+       "MaxMBPerSecond": 20244.220982217783,
+       "Iops": 19306.393606393605,
+       "ReadP50Ms": 0.048,
+       "ReadP99Ms": 0.092,
+       "ReadP999Ms": 0.146,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.47
+      },
+      {
+       "Shape": "hot-rnd4k-q32t1-read",
+       "Samples": 1,
+       "MBPerSecond": 1568.0654193806195,
+       "MinMBPerSecond": 1568.0654193806195,
+       "MaxMBPerSecond": 1568.0654193806195,
+       "Iops": 382828.47152847156,
+       "ReadP50Ms": 0.076,
+       "ReadP99Ms": 0.12,
+       "ReadP999Ms": 0.215,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 49.18
+      },
+      {
+       "Shape": "hot-rnd4k-q1t1-read",
+       "Samples": 1,
+       "MBPerSecond": 1270.620119080919,
+       "MinMBPerSecond": 1270.620119080919,
+       "MaxMBPerSecond": 1270.620119080919,
+       "Iops": 310209.99000999,
+       "ReadP50Ms": 0.003,
+       "ReadP99Ms": 0.009,
+       "ReadP999Ms": 0.036,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.39
+      },
+      {
+       "Shape": "hot-seq1m-q8t1-write",
+       "Samples": 1,
+       "MBPerSecond": 20937.161066133864,
+       "MinMBPerSecond": 20937.161066133864,
+       "MaxMBPerSecond": 20937.161066133864,
+       "Iops": 19967.232767232766,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.367,
+       "WriteP99Ms": 0.838,
+       "WriteP999Ms": 2.014,
+       "CpuPercent": 97.46
+      },
+      {
+       "Shape": "hot-seq1m-q1t1-write",
+       "Samples": 1,
+       "MBPerSecond": 13477.815573226775,
+       "MinMBPerSecond": 13477.815573226775,
+       "MaxMBPerSecond": 13477.815573226775,
+       "Iops": 12853.446553446554,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.07,
+       "WriteP99Ms": 0.14,
+       "WriteP999Ms": 0.48,
+       "CpuPercent": 26.17
+      },
+      {
+       "Shape": "hot-rnd4k-q32t1-write",
+       "Samples": 1,
+       "MBPerSecond": 1447.8204928,
+       "MinMBPerSecond": 1447.8204928,
+       "MaxMBPerSecond": 1447.8204928,
+       "Iops": 353471.8,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.008,
+       "WriteP99Ms": 0.118,
+       "WriteP999Ms": 0.277,
+       "CpuPercent": 50.86
+      },
+      {
+       "Shape": "hot-rnd4k-q1t1-write",
+       "Samples": 1,
+       "MBPerSecond": 1045.8898432,
+       "MinMBPerSecond": 1045.8898432,
+       "MaxMBPerSecond": 1045.8898432,
+       "Iops": 255344.2,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.004,
+       "WriteP99Ms": 0.014,
+       "WriteP999Ms": 0.041,
+       "CpuPercent": 26.6
+      },
+      {
+       "Shape": "buffered-seq1m-q8t1-read-buffered",
+       "Samples": 1,
+       "MBPerSecond": 12826.286489600001,
+       "MinMBPerSecond": 12826.286489600001,
+       "MaxMBPerSecond": 12826.286489600001,
+       "Iops": 12232.1,
+       "ReadP50Ms": 0.077,
+       "ReadP99Ms": 0.13,
+       "ReadP999Ms": 0.244,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.51
+      },
+      {
+       "Shape": "buffered-rnd4k-q1t1-read-buffered",
+       "Samples": 1,
+       "MBPerSecond": 1526.8897758241758,
+       "MinMBPerSecond": 1526.8897758241758,
+       "MaxMBPerSecond": 1526.8897758241758,
+       "Iops": 372775.8241758242,
+       "ReadP50Ms": 0.002,
+       "ReadP99Ms": 0.009,
+       "ReadP999Ms": 0.037,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.62
+      },
+      {
+       "Shape": "buffered-seq1m-q8t1-write-buffered",
+       "Samples": 1,
+       "MBPerSecond": 5202.235895304695,
+       "MinMBPerSecond": 5202.235895304695,
+       "MaxMBPerSecond": 5202.235895304695,
+       "Iops": 4961.238761238761,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.192,
+       "WriteP99Ms": 0.376,
+       "WriteP999Ms": 0.631,
+       "CpuPercent": 25.98
+      },
+      {
+       "Shape": "buffered-rnd4k-q1t1-write-buffered",
+       "Samples": 1,
+       "MBPerSecond": 1332.4316643356642,
+       "MinMBPerSecond": 1332.4316643356642,
+       "MaxMBPerSecond": 1332.4316643356642,
+       "Iops": 325300.6993006993,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.002,
+       "WriteP99Ms": 0.009,
+       "WriteP999Ms": 0.041,
+       "CpuPercent": 26.02
+      },
+      {
+       "Shape": "through-seq1m-q8t1-write-write-through",
+       "Samples": 1,
+       "MBPerSecond": 20574.19245074925,
+       "MinMBPerSecond": 20574.19245074925,
+       "MaxMBPerSecond": 20574.19245074925,
+       "Iops": 19621.078921078923,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.374,
+       "WriteP99Ms": 0.85,
+       "WriteP999Ms": 1.939,
+       "CpuPercent": 97.03
+      },
+      {
+       "Shape": "through-rnd4k-q1t1-write-write-through",
+       "Samples": 1,
+       "MBPerSecond": 1015.4254336,
+       "MinMBPerSecond": 1015.4254336,
+       "MaxMBPerSecond": 1015.4254336,
+       "Iops": 247906.6,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.004,
+       "WriteP99Ms": 0.015,
+       "WriteP999Ms": 0.04,
+       "CpuPercent": 26.37
+      },
+      {
+       "Shape": "big-rnd4k-q32t1-read",
+       "Samples": 1,
+       "MBPerSecond": 104.8043608731878,
+       "MinMBPerSecond": 104.8043608731878,
+       "MaxMBPerSecond": 104.8043608731878,
+       "Iops": 25587.002166305618,
+       "ReadP50Ms": 0.947,
+       "ReadP99Ms": 6.383,
+       "ReadP999Ms": 12.384,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 44.68
+      },
+      {
+       "Shape": "big-seq1m-q8t1-read",
+       "Samples": 1,
+       "MBPerSecond": 654.2198636227296,
+       "MinMBPerSecond": 654.2198636227296,
+       "MaxMBPerSecond": 654.2198636227296,
+       "Iops": 623.9126812197967,
+       "ReadP50Ms": 10.875,
+       "ReadP99Ms": 32.523,
+       "ReadP999Ms": 65.825,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 6.11
+      },
+      {
+       "Shape": "mixed-rnd4k-q8t1-mixed",
+       "Samples": 1,
+       "MBPerSecond": 47.539691520000005,
+       "MinMBPerSecond": 47.539691520000005,
+       "MaxMBPerSecond": 47.539691520000005,
+       "Iops": 11606.37,
+       "ReadP50Ms": 0.278,
+       "ReadP99Ms": 8.476,
+       "ReadP999Ms": 18.993,
+       "WriteP50Ms": 0.029,
+       "WriteP99Ms": 3.364,
+       "WriteP999Ms": 8.606,
+       "CpuPercent": 17.35
+      }
+     ],
+     "Steps": [
+      {
+       "Shape": "hot-warm1",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 574.8900279873857,
+       "Min": 574.8900279873857,
+       "Max": 574.8900279873857
+      },
+      {
+       "Shape": "hot-warm2",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 25610.771131581332,
+       "Min": 25610.771131581332,
+       "Max": 25610.771131581332
+      },
+      {
+       "Shape": "hot-warm3",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 26107.192242792054,
+       "Min": 26107.192242792054,
+       "Max": 26107.192242792054
+      },
+      {
+       "Shape": "buffered-warm",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 22944.62314972509,
+       "Min": 22944.62314972509,
+       "Max": 22944.62314972509
+      },
+      {
+       "Shape": "absorb",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 2596.4428981335454,
+       "Min": 2596.4428981335454,
+       "Max": 2596.4428981335454
+      },
+      {
+       "Shape": "flush",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 3839.8580985056715,
+       "Min": 3839.8580985056715,
+       "Max": 3839.8580985056715
+      },
+      {
+       "Shape": "flush",
+       "Samples": 1,
+       "Measure": "flush seconds",
+       "Median": 0.0007281,
+       "Min": 0.0007281,
+       "Max": 0.0007281
+      },
+      {
+       "Shape": "sustained",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 267.46596626127473,
+       "Min": 267.46596626127473,
+       "Max": 267.46596626127473
+      },
+      {
+       "Shape": "sustained",
+       "Samples": 1,
+       "Measure": "slowest second MB/s",
+       "Median": 192.937984,
+       "Min": 192.937984,
+       "Max": 192.937984
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "create seconds",
+       "Median": 4.0310637,
+       "Min": 4.0310637,
+       "Max": 4.0310637
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "copy seconds (4 threads)",
+       "Median": 5.3578332,
+       "Min": 5.3578332,
+       "Max": 5.3578332
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "read and hash seconds",
+       "Median": 2.8366178,
+       "Min": 2.8366178,
+       "Max": 2.8366178
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "delete seconds",
+       "Median": 11.9771529,
+       "Min": 11.9771529,
+       "Max": 11.9771529
+      }
+     ],
+     "Memory": [
+      {
+       "Id": "memory-start",
+       "Snapshot": {
+        "Utc": "2026-10-15T23:11:32.0510439+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11480850432,
+        "CommitBytes": 4708204544,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 471375872,
+        "KernelPagedBytes": 316715008,
+        "SystemCacheBytes": 3954364416
+       }
+      },
+      {
+       "Id": "memory-end",
+       "Snapshot": {
+        "Utc": "2026-10-15T23:36:35.274358+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11195035648,
+        "CommitBytes": 4992806912,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 567697408,
+        "KernelPagedBytes": 460996608,
+        "SystemCacheBytes": 3963551744
+       }
+      }
+     ],
+     "Durability": null,
+     "Churn": null
+    },
+    "Review": {
+     "Run": "QueueCache-Verify-20261015-231123-5c5ab6cf34744b68b23521781a523fd6",
+     "Product": "QueueCache 0.4.687.1 Fast 2 GiB 1024 KiB x4, Defender Search off",
+     "Status": "COMPLETED",
+     "Cases": 33,
+     "XmlScores": 17,
+     "MaxBackingSamplerGapSeconds": 1.004,
+     "Seconds": 1511.9009052,
+     "Writes": {
+      "absorb-r1": {
+       "Application": {
+        "Bytes": 1073741824,
+        "Seconds": 0.4135434,
+        "MBPerSecond": 2596.4428981335454,
+        "FlushSeconds": null,
+        "Started": "2026-10-15T23:19:47.6876068+00:00",
+        "Ended": "2026-10-15T23:19:48.1011542+00:00"
+       },
+       "Settle": {
+        "Seconds": 60.1325092,
+        "DiskBytesWritten": 1049674752,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 27271168,
+       "BackingMeanWriteKiBBracketingApplication": 918.3448275862069,
+       "FullSettleTailSeconds": 6.279846,
+       "BackingBytesThroughSettle": 1073800192,
+       "TailSampleIntervalMBps": 153.37811626910442,
+       "PayloadMBpsThroughLastBusySample": 160.41814122999483,
+       "FinalFiveSecondsQuiet": true
+      },
+      "flush-r1": {
+       "Application": {
+        "Bytes": 536870912,
+        "Seconds": 0.1398153,
+        "MBPerSecond": 3839.8580985056715,
+        "FlushSeconds": 0.0007281,
+        "Started": "2026-10-15T23:20:48.2370729+00:00",
+        "Ended": "2026-10-15T23:20:48.3768909+00:00"
+       },
+       "Settle": {
+        "Seconds": 45.0980315,
+        "DiskBytesWritten": 536949760,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 0,
+       "BackingMeanWriteKiBBracketingApplication": null,
+       "FullSettleTailSeconds": 4.02011,
+       "BackingBytesThroughSettle": 536949760,
+       "TailSampleIntervalMBps": 107.36192601479704,
+       "PayloadMBpsThroughLastBusySample": 129.0577413839855,
+       "FinalFiveSecondsQuiet": true
+      },
+      "sustained-r1": {
+       "Application": {
+        "Bytes": 8589934592,
+        "Seconds": 32.1159911,
+        "MBPerSecond": 267.46596626127473,
+        "FlushSeconds": null,
+        "Started": "2026-10-15T23:21:33.478502+00:00",
+        "Ended": "2026-10-15T23:22:05.5946187+00:00"
+       },
+       "Settle": {
+        "Seconds": 90.2032596,
+        "DiskBytesWritten": 2046653952,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 6684902400,
+       "BackingMeanWriteKiBBracketingApplication": 1022.7518408271973,
+       "SlowestFullSecondMBps": 192.937984,
+       "FullSettleTailSeconds": 10.811382,
+       "BackingBytesThroughSettle": 8589998592,
+       "TailSampleIntervalMBps": 189.5692449777293,
+       "PayloadMBpsThroughLastBusySample": 200.10331354508477,
+       "FinalFiveSecondsQuiet": true
+      }
+     },
+     "ZeroCompletionScores": []
+    }
+   }
+  },
+  "Cdm": {
+   "Eligible": {
+    "run1": {
+     "Column": "C01-fast",
+     "Run": "run1",
+     "Drive": "Q: 57% (114/200GiB)",
+     "Comment": "QueueCache Fast Q: (2 GiB; Defender/Search off)",
+     "CapturedUtc": "2026-10-15T22:42:02.9867165Z",
+     "Scores": [
+      {
+       "Test": "SEQ1M Q8T1",
+       "Read": 38747.11,
+       "Write": 20556.19
+      },
+      {
+       "Test": "SEQ1M Q1T1",
+       "Read": 19782.88,
+       "Write": 13398.29
+      },
+      {
+       "Test": "RND4K Q32T1",
+       "Read": 1753.62,
+       "Write": 1469.58
+      },
+      {
+       "Test": "RND4K Q1T1",
+       "Read": 1299.89,
+       "Write": 1096.45
+      }
+     ]
+    },
+    "run2": {
+     "Column": "C01-fast",
+     "Run": "run2",
+     "Drive": "Q: 57% (114/200GiB)",
+     "Comment": "QueueCache Fast Q: (2 GiB; Defender/Search off)",
+     "CapturedUtc": "2026-10-15T22:47:21.9986853Z",
+     "Scores": [
+      {
+       "Test": "SEQ1M Q8T1",
+       "Read": 40591.32,
+       "Write": 20907.88
+      },
+      {
+       "Test": "SEQ1M Q1T1",
+       "Read": 20202.83,
+       "Write": 13545.81
+      },
+      {
+       "Test": "RND4K Q32T1",
+       "Read": 1764.46,
+       "Write": 1468.38
+      },
+      {
+       "Test": "RND4K Q1T1",
+       "Read": 1306.24,
+       "Write": 1095.32
+      }
+     ]
+    }
+   },
+   "Retained": "run2",
+   "Selection": "Faster SEQ1M Q8T1 read"
+  },
+  "Environment": {
+   "Windows": {
+    "Build": "28000",
+    "Revision": "3231",
+    "Release": "26H1"
+   },
+   "Target": {
+    "Letter": "Q",
+    "Root": "Q:\\",
+    "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+    "FileSystem": "NTFS",
+    "Label": "QueueCacheLab",
+    "ClusterBytes": 4096,
+    "TotalBytes": 214730534912,
+    "FreeBytes": 92371668992,
+    "DriveType": "Fixed",
+    "DiskNumber": 1
+   },
+   "QueueCacheDrivers": [
+    {
+     "ModulePath": "\\SystemRoot\\System32\\drivers\\QueueCache-0.4.687.1-FE00891A0D6A.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\drivers\\QueueCache-0.4.687.1-FE00891A0D6A.sys",
+     "FileSha256": "FE00891A0D6ADA54CD4FCB587C704DAFFDA97C6C0DD47F6BCF9F444C56A16632",
+     "FileVersion": "0.4.687.1",
+     "FileError": null
+    },
+    {
+     "ModulePath": "\\SystemRoot\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_ab2607323c1d5628\\qcramdisk.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_ab2607323c1d5628\\qcramdisk.sys",
+     "FileSha256": "0B13C2F5DBDF45BBCFBEB3B07FFCE5BB915B2A2CA50193D6B2CF8EDA5F34D8FC",
+     "FileVersion": "0.4.687.1",
+     "FileError": null
+    }
+   ],
+   "ThirdPartyDrivers": [
+    {
+     "Name": "mcupdate_AuthenticAMD.dll",
+     "FilePath": "C:\\WINDOWS\\system32\\mcupdate_AuthenticAMD.dll",
+     "FileSha256": "1A8354CF533596A47D5A508DB0CA7F8C44EA5184ED0168128DC626A93C7FF318",
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": null
+    },
+    {
+     "Name": "globmerger.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\drivers\\globmerger.sys",
+     "FileSha256": "1E1CE2F9DC36632C7AF5324DD0F210BAF5BEB881A0E8A53BF43732CD4976B61D",
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": null
+    },
+    {
+     "Name": "vioscsi.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+     "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO SCSI pass-through controller",
+     "FileError": null
+    },
+    {
+     "Name": "QueueCache-0.4.687.1-FE00891A0D6A.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\drivers\\QueueCache-0.4.687.1-FE00891A0D6A.sys",
+     "FileSha256": "FE00891A0D6ADA54CD4FCB587C704DAFFDA97C6C0DD47F6BCF9F444C56A16632",
+     "FileVersion": "0.4.687.1",
+     "Company": "",
+     "Product": "QueueCache",
+     "FileError": null
+    },
+    {
+     "Name": "dump_diskdump.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\Drivers\\dump_diskdump.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\Drivers\\dump_diskdump.sys"
+    },
+    {
+     "Name": "dump_vioscsi.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\dump_vioscsi.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\dump_vioscsi.sys"
+    },
+    {
+     "Name": "dump_dumpfve.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\Drivers\\dump_dumpfve.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\Drivers\\dump_dumpfve.sys"
+    },
+    {
+     "Name": "qcramdisk.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\qcramdisk.inf_amd64_ab2607323c1d5628\\qcramdisk.sys",
+     "FileSha256": "0B13C2F5DBDF45BBCFBEB3B07FFCE5BB915B2A2CA50193D6B2CF8EDA5F34D8FC",
+     "FileVersion": "0.4.687.1",
+     "Company": "",
+     "Product": "QueueCache",
+     "FileError": null
+    },
+    {
+     "Name": "balloon.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+     "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO Balloon controller",
+     "FileError": null
+    },
+    {
+     "Name": "netkvm.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+     "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO Ethernet Adapter",
+     "FileError": null
+    },
+    {
+     "Name": "fwcfg.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+     "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "QEMU FwCfg Device",
+     "FileError": null
+    }
+   ],
+   "DefenderSearchDisabled": true
+  }
+ },
+ "ShortWriteDrain20261016": {
+  "Run": "QueueCache-Verify-20261016-100617-00f50445cdc04f5e897b625d384e1bec",
+  "PayloadSha256": "97800E5A01DD1819DC9E473BA1E75F67CA0A099A21E77EA56A4481B05FCA3828",
+  "SmallFileSetSha256": "f1a9bf50f22f97fe1d858ba0500cd5d074e9b7da1a93fd61f550c89243e2e4f3",
+  "PlanVersion": 148,
+  "Product": "QueueCache 0.4.687.1 Fast 2 GiB 1024KiB x4",
+  "Provider": "QueueCache",
+  "Cases": 6,
+  "VerifiedFiles": 12291,
+  "BytesPerCase": {
+   "drain-large": 1073741824,
+   "drain-small": 268435456
+  },
+  "Rows": [
+   {
+    "Provider": "QueueCache",
+    "Shape": "drain-large",
+    "Samples": 3,
+    "MBPerSecond": 52.71480768971324,
+    "MinMBPerSecond": 42.24597100598473,
+    "MaxMBPerSecond": 62.128197099417655,
+    "ApplicationSeconds": 0.1392086,
+    "DrainSeconds": 20.2296758,
+    "TotalSeconds": 20.3688844,
+    "DiskBytesWritten": 1074151424,
+    "DiskWriteOperations": 1039,
+    "AverageWriteBytes": 1033831.9769008663
+   },
+   {
+    "Provider": "QueueCache",
+    "Shape": "drain-small",
+    "Samples": 3,
+    "MBPerSecond": 41.713727257502725,
+    "MinMBPerSecond": 18.361556564582713,
+    "MaxMBPerSecond": 41.94249409222533,
+    "ApplicationSeconds": 1.142288,
+    "DrainSeconds": 5.292894700000001,
+    "TotalSeconds": 6.4351827,
+    "DiskBytesWritten": 311255040,
+    "DiskWriteOperations": 889,
+    "AverageWriteBytes": 350118.1552305962
+   }
+  ],
+  "Status": {
+   "Status": "COMPLETED",
+   "Finished": "2026-10-16T10:08:56.0335766+00:00",
+   "Expected": 1,
+   "Collected": 1,
+   "Failure": null,
+   "RestorationFailure": null
+  },
+  "SnapshotPresent": true,
+  "SnapshotName": "qcb-drain-20261016-base",
+  "StorageGuardsPassed": true,
+  "StorageGuardEvidence": [
+   "guards-queuecache148-rerun-before.log",
+   "guards-queuecache148-rerun-after.log"
+  ],
+  "DefenderSearchDisabled": true,
+  "SnapshotRemovalVerified": true,
+  "Controller": {
+   "PlanVersion": 148,
+   "Tag": "A09E86C5",
+   "ArchiveSha256": "646DD08A9DA7C95B5ACF032E68ACA1F1CD502A7A7449BEF6010D56AB118FE018",
+   "DeveloperDllSha256": "A09E86C55DD33CEFEF65A664EC8984F17BC83BEC158878814D1544543AA9BFC4",
+   "ExecutableSha256": "AF074868089F95F41BCA3929B246A57FC420F14E31F5129AB41E6038DF381B64"
+  },
+  "NativeModules": [
+   {
+    "FileSha256": "FE00891A0D6ADA54CD4FCB587C704DAFFDA97C6C0DD47F6BCF9F444C56A16632",
+    "FileVersion": "0.4.687.1"
+   },
+   {
+    "FileSha256": "0B13C2F5DBDF45BBCFBEB3B07FFCE5BB915B2A2CA50193D6B2CF8EDA5F34D8FC",
+    "FileVersion": "0.4.687.1"
+   }
+  ],
+  "RuntimeOptions": {
+   "Allocation": 0,
+   "WritePercent": 50,
+   "RetainWrites": true,
+   "PromoteOnRead": true,
+   "Drain": 2,
+   "LowPercent": 40,
+   "HighPercent": 80,
+   "MaxDirtyAgeMs": 5000,
+   "IdleMs": 250,
+   "BatchKiB": 1024,
+   "Parallelism": 4
+  },
+  "Settings": "Fast 2GiB,1024KiBx4,timingoff,copyflags15",
+  "HostStorage": "Existing Ceph OSD/PG/scrub warnings; no near-full at pre/post checks",
+  "RestorationVerified": true,
+  "OriginalPauseFailure": "Rejected state was not captured; original cause unproven. Incomplete attempt excluded. Final run recorded 12 healthy pause observations; all six paused states were clean; no Draining observation in final run.",
+  "Scores": [
+   {
+    "Id": "drain-large-r1",
+    "Provider": "QueueCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T10:06:20.7736256+00:00",
+    "StartedUtc": "2026-10-16T10:06:20.8341495+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:06:20.9733602+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:06:20.9743047+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:06:40.7753362+00:00",
+    "EndedUtc": "2026-10-16T10:06:41.2031099+00:00",
+    "ApplicationSeconds": 0.1392086,
+    "DrainSeconds": 20.2296758,
+    "ExplicitDrainSeconds": 19.8008957,
+    "ConfirmationSeconds": 0.4277721,
+    "TotalSeconds": 20.3688844,
+    "MBPerSecond": 52.71480768971324,
+    "Before": {
+     "Utc": "2026-10-16T10:06:20.7682325+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:06:41.2025871+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:06:20.7722402+00:00",
+     "BytesWritten": 2793058816,
+     "WriteOperations": 3082,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:06:41.2031037+00:00",
+     "BytesWritten": 3867210240,
+     "WriteOperations": 4121,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r1",
+    "Provider": "QueueCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T10:06:48.7328534+00:00",
+    "StartedUtc": "2026-10-16T10:06:48.7982578+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:06:49.9405469+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:06:49.9640042+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:06:55.2318922+00:00",
+    "EndedUtc": "2026-10-16T10:06:55.2334421+00:00",
+    "ApplicationSeconds": 1.142288,
+    "DrainSeconds": 5.292894700000001,
+    "ExplicitDrainSeconds": 5.2678843,
+    "ConfirmationSeconds": 0.0015482,
+    "TotalSeconds": 6.4351827,
+    "MBPerSecond": 41.713727257502725,
+    "Before": {
+     "Utc": "2026-10-16T10:06:48.7318953+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:06:55.2330388+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:06:48.7323464+00:00",
+     "BytesWritten": 3867292160,
+     "WriteOperations": 4129,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:06:55.2334354+00:00",
+     "BytesWritten": 4178493952,
+     "WriteOperations": 4841,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r2",
+    "Provider": "QueueCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T10:07:07.5429947+00:00",
+    "StartedUtc": "2026-10-16T10:07:07.5448745+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:07:09.0871749+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:07:09.1102599+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:07:13.943675+00:00",
+    "EndedUtc": "2026-10-16T10:07:13.944959+00:00",
+    "ApplicationSeconds": 1.5422991,
+    "DrainSeconds": 4.8577842,
+    "ExplicitDrainSeconds": 4.8334119,
+    "ConfirmationSeconds": 0.0012828,
+    "TotalSeconds": 6.4000833,
+    "MBPerSecond": 41.94249409222533,
+    "Before": {
+     "Utc": "2026-10-16T10:07:07.5414348+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:07:13.9446362+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:07:07.5418255+00:00",
+     "BytesWritten": 4189352448,
+     "WriteOperations": 4903,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:07:13.9449547+00:00",
+     "BytesWritten": 4500607488,
+     "WriteOperations": 5792,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r2",
+    "Provider": "QueueCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T10:07:24.0502788+00:00",
+    "StartedUtc": "2026-10-16T10:07:24.1011202+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:07:24.2566019+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:07:24.2575873+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:07:41.3822575+00:00",
+    "EndedUtc": "2026-10-16T10:07:41.383803+00:00",
+    "ApplicationSeconds": 0.1554807,
+    "DrainSeconds": 17.1272005,
+    "ExplicitDrainSeconds": 17.1246667,
+    "ConfirmationSeconds": 0.0015437,
+    "TotalSeconds": 17.2826812,
+    "MBPerSecond": 62.128197099417655,
+    "Before": {
+     "Utc": "2026-10-16T10:07:24.0492141+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:07:41.3833321+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:07:24.0498273+00:00",
+     "BytesWritten": 4511318528,
+     "WriteOperations": 5854,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:07:41.3837975+00:00",
+     "BytesWritten": 5585531392,
+     "WriteOperations": 6894,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r3",
+    "Provider": "QueueCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T10:07:49.9892937+00:00",
+    "StartedUtc": "2026-10-16T10:07:50.0442553+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:07:50.1752864+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:07:50.1762028+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:08:15.1288829+00:00",
+    "EndedUtc": "2026-10-16T10:08:15.4606885+00:00",
+    "ApplicationSeconds": 0.13103,
+    "DrainSeconds": 25.2854014,
+    "ExplicitDrainSeconds": 24.9526759,
+    "ConfirmationSeconds": 0.3318039,
+    "TotalSeconds": 25.4164314,
+    "MBPerSecond": 42.24597100598473,
+    "Before": {
+     "Utc": "2026-10-16T10:07:49.9884173+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:08:15.460289+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:07:49.9888691+00:00",
+     "BytesWritten": 5585699328,
+     "WriteOperations": 6912,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:08:15.4606826+00:00",
+     "BytesWritten": 6659809792,
+     "WriteOperations": 7947,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r3",
+    "Provider": "QueueCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T10:08:29.2843211+00:00",
+    "StartedUtc": "2026-10-16T10:08:29.2950109+00:00",
+    "ApplicationEndedUtc": "2026-10-16T10:08:30.4064499+00:00",
+    "DrainRequestedUtc": "2026-10-16T10:08:30.4292535+00:00",
+    "DrainReturnedUtc": "2026-10-16T10:08:43.913262+00:00",
+    "EndedUtc": "2026-10-16T10:08:43.9144404+00:00",
+    "ApplicationSeconds": 1.1114375,
+    "DrainSeconds": 13.5079906,
+    "ExplicitDrainSeconds": 13.4840046,
+    "ConfirmationSeconds": 0.001177,
+    "TotalSeconds": 14.6194281,
+    "MBPerSecond": 18.361556564582713,
+    "Before": {
+     "Utc": "2026-10-16T10:08:29.2785608+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T10:08:43.9139949+00:00",
+     "Provider": "QueueCache",
+     "DirtyBytes": 0,
+     "InFlightBytes": 0,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T10:08:29.2789685+00:00",
+     "BytesWritten": 6659875328,
+     "WriteOperations": 7953,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T10:08:43.9144353+00:00",
+     "BytesWritten": 6971240960,
+     "WriteOperations": 8871,
+     "QueueDepth": 0
+    }
+   }
+  ],
+  "PostScoreObservation": {"Case": "drain-large-r2", "DirtyBytes": 57344, "InFlightBytes": 0, "Source": "Unattributed new writes between scored zero-pending endpoint and untimed Disable; all paused states subsequently zero-pending."}
+ }
 }
