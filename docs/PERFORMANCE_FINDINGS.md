@@ -235,6 +235,21 @@ comparison or establish Primo parity. No crash-safety change or power cut ran;
 [#15](https://github.com/devedse/QueueCache/issues/15) remain open. No production
 default change or full release qualification is justified by this screen alone.
 
+**Promotion blockers found in follow-up source review:** the larger fixed staging
+reservation is 16 MiB even at the default runtime settings. `Configure` still
+switches to it at a 16 MiB cache budget, allowing its unsigned slot-count
+subtraction to underflow; fix this before promoting the experimental branch.
+The 2 GiB measurements do not exercise this allocation edge. Further ceiling
+increases also need bounded staging and selection storage: the current design
+would reserve 256 MiB for sixteen 16 MiB workers, and its local `selected` array
+would grow from 2 KiB to 16 KiB on the kernel stack. These are source-derived
+costs, not measured failures. On this adapter, 4–16 MiB gathers also exceed the
+reported 2 MiB single-transfer limit and require a deliberate split strategy.
+A short concurrency screen at 2 MiB with 4/8/12/16 drainers is the more direct
+next test; use a fresh same-build control and stop when gains flatten. Mixed
+foreground latency, Strict/flush correctness and small-budget allocation checks
+must precede a new default. No such additional tests have run yet.
+
 Exact completed run suffixes (each prefixed `QueueCache-Verify-`): starting
 control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 `20261016-132619-c2e501747076483999a489b541daa22d`; 2 MiB batches

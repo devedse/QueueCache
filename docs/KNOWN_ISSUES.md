@@ -156,6 +156,12 @@ worker.
 | Experimental drain ceilings | Plan 149 branch: 24 cases / 49,164 file hashes; 2 MiB × 4 large-file median 225.02 MB/s against bracket controls 179.57 / 170.68; maximum-settings Eager integrity smoke passed under Verifier | Defaults unchanged; grouped arms and control drift limit attribution, small-file gain is inconclusive, and combined 2 MiB × 8 performance / foreground / Strict / sustained qualification remain unrun |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 
+The plan-149 experiment branch also needs a small-budget allocation fix before
+promotion: its fixed staging reservation grew to 16 MiB, while `Configure` still
+selects large staging at a 16 MiB budget. The unsigned slot-count subtraction
+can then underflow. This was found by source review, not a VM reproduction; the
+2 GiB experiment runs do not exercise it. Production 0.4.687.1 is unchanged.
+
 The earlier same-build Defender/Search-off drain-settings repeat has no complete matrix: extra small writes
 invalidated seed/end snapshots. A failed file-handle experiment was removed in
 plan 146; its failed case never reached the byte oracle. The write source is
