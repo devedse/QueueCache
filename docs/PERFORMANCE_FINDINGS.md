@@ -72,6 +72,38 @@ check reported Ceph near-full warnings with 131.3 GB free. The onset and perform
 effect were not measured. Treat its storage-dependent scores as observations under that
 additional uncertainty. The warnings cleared after restoration and snapshot cleanup.
 
+**Short completed writes (2026-10-16, plan 148).** Three complete repetitions
+per provider, with one identical temporary snapshot present, measured one new
+1 GiB file and 4,096 new 64 KiB files (256 MiB). Through filesystem flush, explicit
+product drain and zero pending/disk queue, large/small medians were
+**48.41 / 1.25 MB/s Direct**, **52.71 / 41.71 QueueCache Fast**,
+and **78.96 / 57.62 PrimoCache**. All 18 cases and 36,873 cache-bypassed file
+hashes passed, with the same unique payload. QueueCache's small-file rate was
+33.2× Direct; its mean observed backing write was
+341.9 KiB against
+5.0 KiB Direct and
+1746.2 KiB PrimoCache, including metadata.
+The request sizes are consistent with batching, without establishing the source
+of every speed difference. The native driver stayed 0.4.687.1; this is new
+measurement evidence, not another driver fix.
+QueueCache’s small-file median remains 27.6% below PrimoCache, with a wide
+18.36–41.94 MB/s range; its large-file range overlaps Direct’s. The slow
+repetition’s cause is untraced. A follow-up should separate backend/OS-barrier
+variation from batching limits before choosing another driver change.
+One post-score, pre-pause snapshot also had 56 KiB newly dirty, drained by untimed
+Disable. Its source is untraced; the byte oracle validates the later paused state,
+not the exact scored endpoint.
+
+Defender/Search were disabled; processes had normal priority; Verifier/timing
+were off. Direct/Primo had QueueCache absent. Pre/post capacity and near-full
+guards passed, while existing Ceph OSD/PG/scrub warnings remain an uncertainty.
+The snapshot was removed after verified restoration. These unbuffered new-file,
+cache-fitting workloads do not replace the earlier 8 GiB sustained result,
+isolate a Defender speedup or qualify Strict/general interference. A slow 1 GiB
+small-file pilot and a pre-snapshot QueueCache diagnostic were excluded; every
+published provider used the final plan 148 contract. Exact runs, ranges and
+per-case scores: [short write plus drain comparison](COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
+
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
 
 **Question.** How does QueueCache compare with other RAM disks and RAM caches on the
@@ -1527,7 +1559,7 @@ runs that found and fixed the issues described under
 | Read misses one at a time | **Qualified for throughput, p99 and equal-work tails** (plans 131/132/141, issue #14): arrival order retained, ordinary misses offloaded; latest October 15 same-build repeat: cold random 9.95×, sequential 3.13×, all pairs up and ranges separated, every cold p99 improved, no resident pair loses 3%. The 568.7 ms fixed-window maximum is not reproduced with equal work: the complete 24-case fixed-operation run `20261014-230805-92a9f1ac4191423cbd05b571db4595b2` improved every cold-random pair (+541% to +617% IOPS, p99.9 −92 to −148 ms, no operation above 500 ms) and showed no flag-driven control loss (resident differences follow run order). Both arms use the new pool and queue order; the pool size was not varied. | Changes to read pinning, miss admission, queue order, offload workers or the measurement contract; a backing store with a different latency profile; evidence that the 16-thread pool starves another workload. |
 | 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15); one subsequent observation completed read/hash in 6.86 s with every hash verified. The cache path also changed, so this is not an isolated driver gain or a complete matrix. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
-| Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
+| Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. The separate plan 148 [short new-file comparison](COMPARISON.md#short-write-plus-drain-comparison-2026-10-16) completed all 18 provider cases and all hashes; it does not isolate a batch-setting gain or settle larger-than-cache throughput. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 

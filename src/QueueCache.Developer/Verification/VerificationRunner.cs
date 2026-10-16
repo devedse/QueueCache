@@ -306,7 +306,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
                 comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
                     ?? throw new InvalidDataException("Missing comparison target.");
-                storage.Write("restoration.json", new { Required = false, Reason = "External comparison: no QueueCache configuration, hooks or driver access." });
+                storage.Write("restoration.json", new { Required = options.Suite == "compare-drain", Reason = options.Suite == "compare-drain"
+                    ? "Provider pause/resume journal; independent restoration after an owned worker failure."
+                    : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
             else if (IsSystemSuite(options.Suite))
             {
@@ -412,12 +414,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         {
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
+                            Provider = options.Provider, PrimoCli = options.PrimoCli, BudgetMiB = options.BudgetMiB,
                             OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))
                             ?? throw new InvalidDataException("Missing comparison step results.");
                         ComparisonPlan.ValidateChecks(plan, caseChecks);
-                        ComparisonReport.Write(storage.DirectoryPath, options.Suite, options.Product!, plan);
+                        ComparisonReport.Write(storage.DirectoryPath, options.Suite, options.Product!, plan, options.Provider);
                         return null;
                     }
                     if (test.Operation == "disk-removal")
@@ -642,6 +645,17 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         {
             if (preflightSeconds == 0) preflightSeconds = elapsed.Elapsed.TotalSeconds;
             var restoring = Stopwatch.StartNew();
+            if (options.Suite == "compare-drain" && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
+            {
+                try
+                {
+                    OwnedProcess.EnsureStopped(storage.DirectoryPath);
+                    await ExecuteWorker(new WorkerJob("compare-drain-restore", options.Volume, storage.PathFor("compare-drain-restored.json"))
+                        with { Recovery = storage.PathFor(ComparisonDrainScenarios.RecoveryFile) }, CancellationToken.None, 300);
+                    storage.Write("restoration.json", new { Required = true, Restored = true, At = DateTimeOffset.UtcNow });
+                }
+                catch (Exception ex) { restorationFailure = ex.ToString(); Log("COMPARISON RESTORATION ERROR: " + restorationFailure); }
+            }
             if (captured && removalUnresolved)
             {
                 restorationFailure = "Removal outcome or reconnect verification is unresolved. Restoration deferred; preserve the disk and evidence, reconnect the exact original target, then use verify-recover.";
@@ -1577,6 +1591,29 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var path = Path.GetFullPath(directory);
         using var runLock = new FileStream(Path.Combine(path, "run.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         OwnedProcess.EnsureStopped(path);
+        var comparisonRecovery = Path.Combine(path, ComparisonDrainScenarios.RecoveryFile);
+        if (File.Exists(comparisonRecovery))
+        {
+            var recorded = JsonSerializer.Deserialize<ComparisonDrainRecovery>(await File.ReadAllTextAsync(comparisonRecovery, token))
+                ?? throw new InvalidDataException("Missing comparison recovery journal.");
+            options = new(recorded.Volume, "compare-drain", path, BudgetMiB: 2048, Provider: recorded.Provider, PrimoCli: recorded.PrimoCli);
+            storage = new RunStorage(path); progressSink = progress; progressLabel = "Comparison recovery";
+            try
+            {
+                await ExecuteWorker(new WorkerJob("compare-drain-restore", recorded.Volume, storage.PathFor("restored.json"))
+                    with { Recovery = comparisonRecovery }, token, 300);
+                storage.Write("status.json", new { Status = "COMPLETED", Restoration = "RESTORED" });
+                File.WriteAllText(storage.PathFor("FINISHED.txt"), "COMPLETED\n");
+                Log("Original comparison cache state restored; original run evidence is unchanged.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                storage.Write("status.json", new { Status = "RESTORATION_FAILED", Error = ex.ToString() });
+                File.WriteAllText(storage.PathFor("FINISHED.txt"), "RESTORATION_FAILED\n");
+                Log("COMPARISON RESTORATION ERROR: " + ex); return 1;
+            }
+        }
         var snapshotPath = Path.Combine(path, "recovery.json");
         original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(snapshotPath, token))!;
         var systemRecovery = IsSystemRecoveryTarget(original.Target);

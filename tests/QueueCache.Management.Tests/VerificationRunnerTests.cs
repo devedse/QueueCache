@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 146, "plan 146 restores the original explicit-drain contract and versions recovery, tree, read-tail start/durability settling, bounded/monotonic drain and timed explicit-drain contracts");
+        Check(VerificationPlan.Version == 148, "plan 148 keeps the 1 GiB large file and uses 4096 new 64 KiB files (256 MiB) for compare-drain");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&

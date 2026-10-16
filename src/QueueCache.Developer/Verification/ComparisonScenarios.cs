@@ -52,7 +52,7 @@ public sealed record ChurnBucket(string Group, int Expected, int Intact, int Dam
 
 public sealed record ChurnResult(DateTimeOffset BootUtc, IReadOnlyList<ChurnBucket> Groups, int ChkdskExitCode, IReadOnlyList<string> Unreadable);
 
-/// <summary>Runs inside the worker for driver-independent comparisons (see ComparisonPlan).</summary>
+/// <summary>Runs inside the comparison worker; compare-drain adds explicit provider controls (see ComparisonPlan).</summary>
 [SupportedOSPlatform("windows")]
 internal static class ComparisonScenarios
 {
@@ -92,13 +92,16 @@ internal static class ComparisonScenarios
         var product = job.Product ?? throw new ArgumentException("Comparisons require --product.");
         var queueCache = LoadedDriverInspection.Capture();
         if (!queueCache.Available) throw new IOException("Loaded drivers could not be observed: " + queueCache.Error);
-        var isQueueCache = product.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase);
+        var isQueueCache = job.Provider is { } provider ? provider == ComparisonProvider.QueueCache :
+            product.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase);
         if (isQueueCache != queueCache.Modules.Count > 0)
             throw new IOException(isQueueCache ? "The product is QueueCache, but no QueueCache driver is loaded."
                 : "A QueueCache driver is loaded; measure other products on a VM state without QueueCache.");
         RunStorage.AtomicJson(evidence + ".environment.json", CaptureEnvironment(target, product, queueCache));
         var plan = ComparisonPlan.CasesFor(job.Operation, job.ReferenceRepeats);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);
+        if (job.Operation == "compare-drain")
+            return await ComparisonDrainScenarios.RunAsync(job, target, plan);
         var work = job.WorkDirectory;
         if (work is not null) Directory.CreateDirectory(work);
         var checks = new List<CheckResult>();
@@ -295,15 +298,18 @@ internal static class ComparisonScenarios
         return BinaryPrimitives.ReadUInt32LittleEndian(number) == 7 ? BinaryPrimitives.ReadInt32LittleEndian(number.AsSpan(4)) : null; // FILE_DEVICE_DISK
     }
 
-    private static unsafe long DiskBytesWritten(int number)
+    private static long DiskBytesWritten(int number) => DiskCounters(number).BytesWritten;
+
+    public static unsafe ComparisonDiskCounters DiskCounters(int number)
     {
         using var disk = CreateFileW($@"\\.\PhysicalDrive{number}", 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
         if (disk.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), "The disk below the volume could not be opened for its counters.");
         var performance = new byte[88];
         fixed (byte* buffer = performance)
-            if (!DeviceIoControl(disk, 0x70020, null, 0, buffer, (uint)performance.Length, out _, IntPtr.Zero)) // IOCTL_DISK_PERFORMANCE
+            if (!DeviceIoControl(disk, 0x70020, null, 0, buffer, (uint)performance.Length, out var returned, IntPtr.Zero) || returned < 56) // IOCTL_DISK_PERFORMANCE
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Disk performance counters are unavailable.");
-        return BinaryPrimitives.ReadInt64LittleEndian(performance.AsSpan(8));
+        return new(DateTimeOffset.UtcNow, BinaryPrimitives.ReadInt64LittleEndian(performance.AsSpan(8)),
+            BinaryPrimitives.ReadUInt32LittleEndian(performance.AsSpan(44)), BinaryPrimitives.ReadUInt32LittleEndian(performance.AsSpan(48)));
     }
 
     /// <summary>Whole-file sequential 1 MiB unbuffered pass with <paramref name="queue"/> requests in flight

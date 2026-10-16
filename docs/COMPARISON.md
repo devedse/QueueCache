@@ -1,6 +1,6 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> Original comparison: 2026-10-12 to 2026-10-14. Cache paused, QueueCache Fast and PrimoCache Defer-Write refreshed: 2026-10-15/16.
+> Original comparison: 2026-10-12 to 2026-10-14. Cache paused, QueueCache Fast and PrimoCache Defer-Write refreshed: 2026-10-15/16. Short new-file write plus drain comparison: 2026-10-16.
 
 For the original comparison, every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
@@ -50,13 +50,89 @@ Cross-date figures are descriptive; causal gains require alternated same-build A
   ([Power cut while the cache is writing](#power-cut-while-the-cache-is-writing)). At that
   test's pace QueueCache Fast kept up with the disk and lost only the newest seconds, like the disk without a cache.
 
-Contents: [Current cache refresh](#current-cache-refresh-2026-10-1516) · [Focused fix checks](#focused-fix-checks-2026-10-15) ·
+Contents: [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) · [Current cache refresh](#current-cache-refresh-2026-10-1516) · [Focused fix checks](#focused-fix-checks-2026-10-15) ·
 [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
 [RAM disks: complete comparison](#ram-disks-complete-comparison) ·
 [RAM caches: complete comparison](#ram-caches-complete-comparison) ·
 [Power cut while the cache is writing](#power-cut-while-the-cache-is-writing) ·
 [Results per tool](#results-per-tool) · [Not tested](#not-tested) · [How this was measured](#how-this-was-measured)
+
+## Short write plus drain comparison (2026-10-16)
+
+Plan 148 measures the same two new-file workloads on the same VM and Q: disk,
+with each product alone, Defender/Search disabled, other indexers/launchers closed,
+Verifier/timing diagnostics off and normal process priority. Every published mode
+has the same temporary snapshot present and three complete repetitions; values
+are medians with the full observed range in parentheses. The snapshot was removed
+after verified restoration. Storage guards passed before and after each run;
+no near-full warning was present at those recorded guard checks. The backend
+still had existing OSD/PG/scrub warnings; their performance effect is unknown.
+
+| Unbuffered write + explicit drain, MB/s ↑ | Direct disk | QueueCache Fast | PrimoCache Defer-Write |
+|---|---:|---:|---:|
+| One new 1 GiB file | **48.41** (42.63–53.43) | **52.71** (42.25–62.13) | **78.96** (72.99–84.00) |
+| 4,096 new 64 KiB files (256 MiB total) | **1.25** (1.23–1.33) | **41.71** (18.36–41.94) | **57.62** (50.64–65.24) |
+
+The large file uses sequential 1 MiB requests with four writes outstanding.
+The small-file test creates 4,096 files of 64 KiB, using unbuffered 4 KiB writes
+and four workers. The large file writes 1 GiB; small files write its first 256 MiB. The payload
+is unique and incompressible, with no scored overwrites.
+File/directory creation and closing handles are included. Windows file-data
+caching is bypassed to isolate the disk caches; ordinary buffered copies can
+behave differently. Shuffled file names do not establish random physical placement.
+
+The headline includes the final filesystem flush, explicit product drain and
+confirmation of zero pending data and disk queue. It measures completed work,
+including Primo CLI/control overhead, rather than RAM acceptance speed. Every
+file is then read unbuffered with the product paused and checked by SHA-256,
+outside timing: 12,291 file checks per provider, all passed. Preparation and
+verification are outside the measured interval. These are virtual-disk
+observations, not power-loss durability tests. Zero pending/queue is a sampled endpoint,
+not a quiet-period guarantee. In one QueueCache case, 56 KiB became dirty after
+that endpoint and before untimed Disable; its source is untraced. Disable drained
+it before the verification reads. The oracle therefore validates files after
+that untimed confirmation, without proving their exact state at the scored endpoint.
+
+| Observed mean backing write, KiB | Direct disk | QueueCache Fast | PrimoCache Defer-Write |
+|---|---:|---:|---:|
+| Large file | 988.8 | 1009.6 | 1975.6 |
+| Small files | 5.0 | 341.9 | 1746.2 |
+
+Write sizes are median per-run write-byte/write-operation ratios at the observed
+physical-disk counter layer and include filesystem metadata. They help explain
+batching; they are not a histogram or a measurement of physical-media writes.
+
+QueueCache’s small-file median is 33.2× Direct, while trailing PrimoCache by
+27.6%; the large-file median trails PrimoCache by 33.2%. Its large-file range
+overlaps Direct’s, and the slowest small-file repetition fell to 18.36 MB/s.
+The source of that variation is unresolved; these observations do not establish
+a stable disk-speed ceiling or isolate batching as the only cause.
+
+These are separate workloads from the historical burst, 8 GiB sustained-write
+and buffered file-tree tests below. The unique full-GiB payload also avoids the
+repeated-buffer compression opportunity in the earlier sequential writer.
+Lower or higher figures across those methods do not establish a driver change.
+Between controllers, fixes covered the Primo pending-counter parser and untimed
+QueueCache pause confirmation; workload and scored timing stayed unchanged.
+The native QueueCache driver remains 0.4.687.1. These fitting workloads do not settle
+larger-than-cache throughput, general foreground interference or Strict latency.
+
+The first complete QueueCache run preceded snapshot creation and is retained as
+a diagnostic only. Published QueueCache results come from its complete repeat
+with the snapshot present. The original 1 GiB small-file direct-disk pilot was
+stopped when three repetitions were projected to take about an hour; the final
+256 MiB small-file workload is identical for all providers. An earlier runner
+attempt failed before writes due to a read-only control handle; it was fixed
+and excluded. A later QueueCache attempt stopped at pause confirmation and
+restored successfully; its incomplete matrix is also excluded. The rejected
+state was not captured, so that failure’s original cause remains unproven.
+
+Exact run identities and complete per-case scores are retained on the existing
+[direct-disk](comparison/C00-no-cache.md),
+[QueueCache](comparison/C01-queuecache-fast-fix687.md) and
+[PrimoCache](comparison/C02-primocache-defer.md) pages and their linked data.
+Method and invocation: [testing](TESTING.md#4-suites).
 
 ## Current cache refresh (2026-10-15/16)
 

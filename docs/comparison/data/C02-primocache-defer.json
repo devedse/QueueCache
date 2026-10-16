@@ -2499,5 +2499,359 @@
     "ClearedAfterRestoration": true
    }
   }
+ },
+ "ShortWriteDrain20261016": {
+  "Run": "QueueCache-Verify-20261016-093055-a612a2aaeb1a4283b1a9fbc462edce61",
+  "PayloadSha256": "97800E5A01DD1819DC9E473BA1E75F67CA0A099A21E77EA56A4481B05FCA3828",
+  "SmallFileSetSha256": "f1a9bf50f22f97fe1d858ba0500cd5d074e9b7da1a93fd61f550c89243e2e4f3",
+  "PlanVersion": 148,
+  "Product": "PrimoCache 4.4.1 L1 2 GiB defer-write",
+  "Provider": "PrimoCache",
+  "Cases": 6,
+  "VerifiedFiles": 12291,
+  "BytesPerCase": {
+   "drain-large": 1073741824,
+   "drain-small": 268435456
+  },
+  "Rows": [
+   {
+    "Provider": "PrimoCache",
+    "Shape": "drain-large",
+    "Samples": 3,
+    "MBPerSecond": 78.9624823684351,
+    "MinMBPerSecond": 72.99383898076209,
+    "MaxMBPerSecond": 83.99881034092175,
+    "ApplicationSeconds": 0.1583507,
+    "DrainSeconds": 13.4605106,
+    "TotalSeconds": 13.5981265,
+    "DiskBytesWritten": 1074176000,
+    "DiskWriteOperations": 531,
+    "AverageWriteBytes": 2023007.4576271186
+   },
+   {
+    "Provider": "PrimoCache",
+    "Shape": "drain-small",
+    "Samples": 3,
+    "MBPerSecond": 57.616377167945714,
+    "MinMBPerSecond": 50.63762267013286,
+    "MaxMBPerSecond": 65.2423362168225,
+    "ApplicationSeconds": 1.8601904,
+    "DrainSeconds": 2.7324344,
+    "TotalSeconds": 4.6590131,
+    "DiskBytesWritten": 311209984,
+    "DiskWriteOperations": 174,
+    "AverageWriteBytes": 1788068.7816091955
+   }
+  ],
+  "Status": {
+   "Status": "COMPLETED",
+   "Finished": "2026-10-16T09:32:55.9132882+00:00",
+   "Expected": 1,
+   "Collected": 1,
+   "Failure": null,
+   "RestorationFailure": null
+  },
+  "SnapshotPresent": true,
+  "SnapshotName": "qcb-drain-20261016-base",
+  "StorageGuardsPassed": true,
+  "StorageGuardEvidence": [
+   "guards-primo148-before.log",
+   "guards-primo148-after.log"
+  ],
+  "DefenderSearchDisabled": true,
+  "SnapshotRemovalVerified": true,
+  "Controller": {
+   "PlanVersion": 148,
+   "Tag": "1754AFDA",
+   "ArchiveSha256": "6BC23A875C724D21AC9F589FD506AE0EB19078D09BBE87978F2F78A63C925426",
+   "DeveloperDllSha256": "1754AFDA5B4E6AD4D6226FCA550EBE1B033BA05362B3D96E06FE0203E3831BB6",
+   "ExecutableSha256": "AF074868089F95F41BCA3929B246A57FC420F14E31F5129AB41E6038DF381B64"
+  },
+  "PrimoBuild": {
+   "CliSha256": "00412618F7A65069925F5F83A90541027D34157E1AC8621E6B295C296437D2B0",
+   "Version": "4.4.0",
+   "Drivers": [
+    {
+     "Name": "FancyCcV",
+     "State": "Running",
+     "PathName": "C:\\WINDOWS\\system32\\DRIVERS\\rxfcv.sys"
+    }
+   ],
+   "DriverSha256": "EDC57F50459E747D52C4E48BE52E5005952E5633283F79FCD594E3D1B2916C2D",
+   "DriverVersion": "4.4.0"
+  },
+  "Settings": "2GiB shared L1, no L2,4KiB,Native defer10s,prefetchdisabled",
+  "HostStorage": "Existing Ceph OSD/PG/scrub warnings; no near-full at pre/post checks",
+  "Installer": {
+   "ProductVersion": "4.4.1",
+   "File": "PrimoCache_Setup_4.4.1.exe",
+   "Sha256": "A837485BC9260C2FB2505845EBD6D188400EDF1773818669079A918E823ACA23"
+  },
+  "Scores": [
+   {
+    "Id": "drain-large-r1",
+    "Provider": "PrimoCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T09:30:59.2239595+00:00",
+    "StartedUtc": "2026-10-16T09:30:59.2803318+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:30:59.4386853+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:30:59.4400952+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:31:12.0339854+00:00",
+    "EndedUtc": "2026-10-16T09:31:12.0632367+00:00",
+    "ApplicationSeconds": 0.1583507,
+    "DrainSeconds": 12.624471100000001,
+    "ExplicitDrainSeconds": 12.5938888,
+    "ConfirmationSeconds": 0.0292505,
+    "TotalSeconds": 12.7828218,
+    "MBPerSecond": 83.99881034092175,
+    "Before": {
+     "Utc": "2026-10-16T09:30:59.2213288+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:31:12.0620777+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:30:59.2224653+00:00",
+     "BytesWritten": 87552,
+     "WriteOperations": 21,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:31:12.0632312+00:00",
+     "BytesWritten": 1074263552,
+     "WriteOperations": 557,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r1",
+    "Provider": "PrimoCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T09:31:21.3570579+00:00",
+    "StartedUtc": "2026-10-16T09:31:21.4091168+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:31:23.2693091+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:31:23.2928121+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:31:26.6808438+00:00",
+    "EndedUtc": "2026-10-16T09:31:26.7102253+00:00",
+    "ApplicationSeconds": 1.8601904,
+    "DrainSeconds": 3.4409166,
+    "ExplicitDrainSeconds": 3.3880297,
+    "ConfirmationSeconds": 0.0293809,
+    "TotalSeconds": 5.301107,
+    "MBPerSecond": 50.63762267013286,
+    "Before": {
+     "Utc": "2026-10-16T09:31:21.3558367+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:31:26.7097192+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:31:21.3566121+00:00",
+     "BytesWritten": 1074386432,
+     "WriteOperations": 575,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:31:26.7102206+00:00",
+     "BytesWritten": 1385510400,
+     "WriteOperations": 749,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r2",
+    "Provider": "PrimoCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T09:31:41.7447216+00:00",
+    "StartedUtc": "2026-10-16T09:31:41.7962219+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:31:43.5296023+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:31:43.5513519+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:31:45.8756526+00:00",
+    "EndedUtc": "2026-10-16T09:31:45.9106613+00:00",
+    "ApplicationSeconds": 1.7333791,
+    "DrainSeconds": 2.3810575000000003,
+    "ExplicitDrainSeconds": 2.3242986,
+    "ConfirmationSeconds": 0.035008,
+    "TotalSeconds": 4.1144366,
+    "MBPerSecond": 65.2423362168225,
+    "Before": {
+     "Utc": "2026-10-16T09:31:41.7437414+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:31:45.9102394+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:31:41.7443903+00:00",
+     "BytesWritten": 1396356608,
+     "WriteOperations": 793,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:31:45.9106567+00:00",
+     "BytesWritten": 1707673088,
+     "WriteOperations": 967,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r2",
+    "Provider": "PrimoCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T09:31:54.9342442+00:00",
+    "StartedUtc": "2026-10-16T09:31:55.0055555+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:31:55.1431724+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:31:55.1445801+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:32:08.540079+00:00",
+    "EndedUtc": "2026-10-16T09:32:08.6036841+00:00",
+    "ApplicationSeconds": 0.1376159,
+    "DrainSeconds": 13.4605106,
+    "ExplicitDrainSeconds": 13.3954969,
+    "ConfirmationSeconds": 0.0636039,
+    "TotalSeconds": 13.5981265,
+    "MBPerSecond": 78.9624823684351,
+    "Before": {
+     "Utc": "2026-10-16T09:31:54.9331951+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:32:08.5690325+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:31:54.9338902+00:00",
+     "BytesWritten": 1718478336,
+     "WriteOperations": 1009,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:32:08.6036755+00:00",
+     "BytesWritten": 2792695296,
+     "WriteOperations": 1540,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r3",
+    "Provider": "PrimoCache",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T09:32:16.6983985+00:00",
+    "StartedUtc": "2026-10-16T09:32:16.7490358+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:32:16.9174083+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:32:16.9186049+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:32:31.4332118+00:00",
+    "EndedUtc": "2026-10-16T09:32:31.4590762+00:00",
+    "ApplicationSeconds": 0.1683712,
+    "DrainSeconds": 14.5416624,
+    "ExplicitDrainSeconds": 14.5146051,
+    "ConfirmationSeconds": 0.0258579,
+    "TotalSeconds": 14.7100336,
+    "MBPerSecond": 72.99383898076209,
+    "Before": {
+     "Utc": "2026-10-16T09:32:16.6973414+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:32:31.4584749+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:32:16.6980097+00:00",
+     "BytesWritten": 2792785408,
+     "WriteOperations": 1550,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:32:31.4590567+00:00",
+     "BytesWritten": 3866920448,
+     "WriteOperations": 2078,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r3",
+    "Provider": "PrimoCache",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T09:32:40.8014745+00:00",
+    "StartedUtc": "2026-10-16T09:32:40.8519137+00:00",
+    "ApplicationEndedUtc": "2026-10-16T09:32:42.7784936+00:00",
+    "DrainRequestedUtc": "2026-10-16T09:32:42.7992794+00:00",
+    "DrainReturnedUtc": "2026-10-16T09:32:45.4837342+00:00",
+    "EndedUtc": "2026-10-16T09:32:45.5109281+00:00",
+    "ApplicationSeconds": 1.9265787,
+    "DrainSeconds": 2.7324344,
+    "ExplicitDrainSeconds": 2.6844535,
+    "ConfirmationSeconds": 0.0271934,
+    "TotalSeconds": 4.6590131,
+    "MBPerSecond": 57.616377167945714,
+    "Before": {
+     "Utc": "2026-10-16T09:32:40.8004421+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "After": {
+     "Utc": "2026-10-16T09:32:45.5103429+00:00",
+     "Provider": "PrimoCache",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": 0
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T09:32:40.8010707+00:00",
+     "BytesWritten": 3866994176,
+     "WriteOperations": 2086,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T09:32:45.5109223+00:00",
+     "BytesWritten": 4178204160,
+     "WriteOperations": 2400,
+     "QueueDepth": 0
+    }
+   }
+  ]
  }
 }

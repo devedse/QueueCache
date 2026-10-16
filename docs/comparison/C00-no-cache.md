@@ -1,6 +1,26 @@
-# Q: disk baseline (cache paused in current refresh)
+# Q: disk baseline
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
+
+## Short write plus drain comparison (2026-10-16)
+
+Three complete repetitions per workload, plan 148; same temporary snapshot present,
+Defender/Search disabled, all storage guards passed. QueueCache drivers and PrimoCache were absent.
+
+| Workload | MB/s, median (range) | App seconds | Drain/confirmation seconds | Total seconds | Mean backing write KiB |
+|---|---:|---:|---:|---:|---:|
+| One new 1 GiB file | **48.41** (42.63–53.43) | 22.152 | 0.089 | 22.179 | 988.8 |
+| 4,096 new 64 KiB files | **1.25** (1.23–1.33) | 213.555 | 0.489 | 213.897 | 5.0 |
+
+Exact run: `QueueCache-Verify-20261016-084338-620bac6863d24b9d8b4c6614fd43d0cf`; all 12,291 cache-bypassed file hashes passed.
+The headline includes filesystem metadata, explicit drain and pending/disk queue
+confirmation; verification is untimed. Application/drain/total columns are separate
+medians and need not add up. Backing-write sizes
+include metadata at the observed virtual-disk counter layer. These scores do not
+replace the different historical workloads below or prove power-loss durability.
+
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+per-case evidence and build identity are in the existing [data](data/C00-no-cache.json).
 
 ## Current cache refresh (2026-10-15)
 

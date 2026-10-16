@@ -114,6 +114,21 @@ with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
 25,353 MB/s before).
 [How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
 
+**Short writes including the final drain (2026-10-16).** Separate new-file tests,
+three repetitions per provider, with Defender/Search disabled and the same temporary
+snapshot present. Both workloads fit the 2 GiB caches; these scores include file
+creation, all writes, filesystem flush and explicit drain, with file hashes checked
+after pausing the cache. The direct control has QueueCache absent.
+
+| Completed writes, MB/s | Direct disk | QueueCache Fast | PrimoCache Defer-Write |
+|---|---:|---:|---:|
+| One new 1 GiB file, 1 MiB Q4 | 48.41 | 52.71 | 78.96 |
+| 4,096 new 64 KiB files, 4 KiB writes | 1.25 | 41.71 | 57.62 |
+
+The small-file workload totals 256 MiB. These virtual-disk measurements use
+unbuffered file data; ordinary buffered copies and larger-than-cache workloads can
+behave differently. [Ranges, backing-write sizes and method](docs/COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
+
 How QueueCache compares with other RAM disks and RAM caches on the same machine,
 including where it is slower: [comparison](docs/COMPARISON.md).
 

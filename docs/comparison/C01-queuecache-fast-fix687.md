@@ -2,6 +2,28 @@
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
 
+## Short write plus drain comparison (2026-10-16)
+
+Three complete repetitions per workload, plan 148; same temporary snapshot present,
+Defender/Search disabled, all storage guards passed. Fast used 2 GiB, 1024 KiB batches and four drainers; native driver 0.4.687.1 was unchanged.
+
+| Workload | MB/s, median (range) | App seconds | Drain/confirmation seconds | Total seconds | Mean backing write KiB |
+|---|---:|---:|---:|---:|---:|
+| One new 1 GiB file | **52.71** (42.25–62.13) | 0.139 | 20.230 | 20.369 | 1009.6 |
+| 4,096 new 64 KiB files | **41.71** (18.36–41.94) | 1.142 | 5.293 | 6.435 | 341.9 |
+
+Exact run: `QueueCache-Verify-20261016-100617-00f50445cdc04f5e897b625d384e1bec`; all 12,291 cache-bypassed file hashes passed.
+The headline includes filesystem metadata, explicit drain and pending/disk queue
+confirmation; verification is untimed. Application/drain/total columns are separate
+medians and need not add up. Backing-write sizes
+include metadata at the observed virtual-disk counter layer. These scores do not
+replace the different historical workloads below or prove power-loss durability. One post-score, pre-pause
+observation had 56 KiB newly dirty; untimed Disable drained it. Its source is untraced.
+The oracle validates files after that confirmation.
+
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+per-case evidence and build identity are in the existing [data](data/C01-queuecache-fast-fix687.json).
+
 ## Current cache refresh (2026-10-15/16)
 
 QueueCache Fast, 2 GiB, 1024 KiB × 4. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).

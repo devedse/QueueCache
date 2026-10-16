@@ -53,6 +53,14 @@ one-second resolution, with the QueueCache filter still loaded in the control. S
 [issue #15](https://github.com/devedse/QueueCache/issues/15) and the [current
 comparison](COMPARISON.md#current-cache-refresh-2026-10-1516).
 
+The separate plan 148 short new-file comparison completed three repetitions per
+provider. Through explicit drain, QueueCache Fast measured 52.71 MB/s for one
+1 GiB file and 41.71 MB/s for 4,096 small files (256 MiB); Direct measured
+48.41 / 1.25 and PrimoCache 78.96 / 57.62 MB/s. All cache-bypassed hashes passed.
+QueueCache’s small-file repetitions ranged from 18.36 to 41.94 MB/s, for an
+unresolved reason. These fitting, unbuffered workloads show workload-specific
+results; the sustained 8 GiB gap above remains a separate finding. [Method and ranges](COMPARISON.md#short-write-plus-drain-comparison-2026-10-16).
+
 ### Low-priority programs read cached data slower (performance)
 
 A program started below normal priority (Task Scheduler's default) read 1 MiB Q8
@@ -128,9 +136,10 @@ worker.
 | Read misses (#14) | Latest complete 24-case same-build screen: cold random 9.95×, sequential 3.13×, every cold p99 improves; no resident pair loses 3%, and resident misses/lower reads are zero | Both arms use the new pool and queue order; this isolates miss offload, not every old-driver difference |
 | Equal-work read tails | Complete 24-case, 100,000-operation comparison: cold-random p99.9 191.7 → 60.7 ms; median case maximum 271.6 → 123.5 ms; every cold pair improves | Fixed-duration maxima sample unequal amounts of work; backing-store profile and pool size were not varied |
 | Drain settings (#15) | Complete timing-off 512 MiB comparison: 12.7 → 8.0 s, every pair improves; separate cold-read/write-drain comparisons also improve | Qualifies explicit drain time, not disk-speed parity, general foreground throughput or Strict impact |
+| Short completed writes | Plan 148: all 18 provider cases, 36,873 file hashes, zero pending/disk queue and restored state | New files fitting in cache; no new native code, sustained/Strict qualification or power-loss test |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 
-The Defender/Search-off drain repeat has no complete matrix: extra small writes
+The earlier same-build Defender/Search-off drain-settings repeat has no complete matrix: extra small writes
 invalidated seed/end snapshots. A failed file-handle experiment was removed in
 plan 146; its failed case never reached the byte oracle. The write source is
 untraced. Earlier accepted drain evidence remains valid within its recorded scope.

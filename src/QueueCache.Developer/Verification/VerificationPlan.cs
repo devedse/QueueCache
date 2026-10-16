@@ -44,7 +44,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 146;
+    public const int Version = 148;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -117,6 +117,7 @@ public static class VerificationPlan
         "flush-interference",
         "performance",
         "full",
+        "compare-drain",
         "compare-snapshot",
         "compare-ram",
         "compare-cache",
@@ -477,6 +478,7 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        ComparisonDrain.ValidateOptions(options);
         if (ComparisonPlan.IsComparison(options.Suite))
         {
             if (string.IsNullOrWhiteSpace(options.Product))

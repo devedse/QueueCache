@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 146, "plan 146 restores the original explicit-drain contract and versions copy-flag recovery, file-tree, read-tail start/durability settling and timed explicit-drain contracts");
+        Check(VerificationPlan.Version == 148, "plan 148 compares new 1 GiB large and 256 MiB small-file workloads with provider drains, bypassed hashes and complete reports");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -32,6 +32,7 @@ internal static class DiagnosticContracts
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
+        CompareDrainContracts.Run(Check, Reject);
         RunTreeDecisionContracts(Check, Reject);
         RunReadTailDecisionContracts(Check, Reject);
         RunDrainFlushContracts(Check, Reject);

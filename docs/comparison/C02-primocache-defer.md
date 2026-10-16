@@ -2,6 +2,26 @@
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
 
+## Short write plus drain comparison (2026-10-16)
+
+Three complete repetitions per workload, plan 148; same temporary snapshot present,
+Defender/Search disabled, all storage guards passed. PrimoCache used shared 2 GiB L1, no L2, 4 KiB blocks and Native Defer-Write 10 s; QueueCache drivers were absent.
+
+| Workload | MB/s, median (range) | App seconds | Drain/confirmation seconds | Total seconds | Mean backing write KiB |
+|---|---:|---:|---:|---:|---:|
+| One new 1 GiB file | **78.96** (72.99–84.00) | 0.158 | 13.461 | 13.598 | 1975.6 |
+| 4,096 new 64 KiB files | **57.62** (50.64–65.24) | 1.860 | 2.732 | 4.659 | 1746.2 |
+
+Exact run: `QueueCache-Verify-20261016-093055-a612a2aaeb1a4283b1a9fbc462edce61`; all 12,291 cache-bypassed file hashes passed.
+The headline includes filesystem metadata, explicit drain and pending/disk queue
+confirmation; verification is untimed. Application/drain/total columns are separate
+medians and need not add up. Primo CLI overhead is included. Backing-write sizes
+include metadata at the observed virtual-disk counter layer. These scores do not
+replace the different historical workloads below or prove power-loss durability.
+
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
+per-case evidence and build identity are in the existing [data](data/C02-primocache-defer.json).
+
 ## Current cache refresh (2026-10-16)
 
 PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).

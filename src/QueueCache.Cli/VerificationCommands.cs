@@ -134,8 +134,13 @@ internal static class VerificationCommands
                                  Off/Eager/Idle, timing off/on; 72 cases. Requires DiskSpd.
                                  Use --budget-mib 2048 for a 1 GiB workload file.
 
-            Comparisons with other products (driver-independent; no QueueCache configuration, hooks or telemetry;
-            --product "<name> <version> <mode>" required; QueueCache must be loaded exactly when the product is QueueCache):
+            Comparisons with other products (--product "<name> <version> <mode>" required; generic suites are
+            driver-independent; compare-drain uses an explicit --provider for drain, counters and verification bypass):
+              compare-drain      Explicit provider controls: --provider Direct|QueueCache|PrimoCache --budget-mib 2048 --repeats 3.
+                                 New 1 GiB file, 1 MiB writes Q4; 4,096 new 64 KiB files (256 MiB), 4 KiB writes, four workers.
+                                 Unique precomputed data; score through metadata flush, explicit product drain and zero pending.
+                                 Cache-bypassed whole-file hashes afterwards; restores active state even on verification failure.
+                                 No DiskSpd; Primo CLI defaults to ProgramFiles\PrimoCache\rxpcc.exe (--primo-cli overrides).
               compare-snapshot   Memory, loaded third-party drivers and storage filters only (e.g. before creating a disk).
               compare-ram        A 4 GiB RAM disk: 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes with latency and CPU,
                                  memory before/after a 2 GiB fill, a 40,000-file tree (create, copy, read, delete), byte check.
@@ -207,10 +212,12 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
+        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain only, required: Direct, QueueCache or PrimoCache. Controls explicit drain and verification bypass; never inferred from --product." };
+        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -224,7 +231,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))

@@ -2466,5 +2466,349 @@
    ],
    "DefenderSearchDisabled": true
   }
+ },
+ "ShortWriteDrain20261016": {
+  "Run": "QueueCache-Verify-20261016-084338-620bac6863d24b9d8b4c6614fd43d0cf",
+  "PayloadSha256": "97800E5A01DD1819DC9E473BA1E75F67CA0A099A21E77EA56A4481B05FCA3828",
+  "SmallFileSetSha256": "f1a9bf50f22f97fe1d858ba0500cd5d074e9b7da1a93fd61f550c89243e2e4f3",
+  "PlanVersion": 148,
+  "Product": "Direct disk Windows 11 no cache drivers",
+  "Provider": "Direct",
+  "Cases": 6,
+  "VerifiedFiles": 12291,
+  "BytesPerCase": {
+   "drain-large": 1073741824,
+   "drain-small": 268435456
+  },
+  "Rows": [
+   {
+    "Provider": "Direct",
+    "Shape": "drain-large",
+    "Samples": 3,
+    "MBPerSecond": 48.412026503724725,
+    "MinMBPerSecond": 42.62680373740846,
+    "MaxMBPerSecond": 53.43132533043838,
+    "ApplicationSeconds": 22.1521292,
+    "DrainSeconds": 0.08873230000000021,
+    "TotalSeconds": 22.1792373,
+    "DiskBytesWritten": 1075325952,
+    "DiskWriteOperations": 1062,
+    "AverageWriteBytes": 1012547.9774011299
+   },
+   {
+    "Provider": "Direct",
+    "Shape": "drain-small",
+    "Samples": 3,
+    "MBPerSecond": 1.2549749819466427,
+    "MinMBPerSecond": 1.2308042982036769,
+    "MaxMBPerSecond": 1.329989226146854,
+    "ApplicationSeconds": 213.5546704,
+    "DrainSeconds": 0.4887702000000047,
+    "TotalSeconds": 213.8970576,
+    "DiskBytesWritten": 361625600,
+    "DiskWriteOperations": 70170,
+    "AverageWriteBytes": 5154.546561584203
+   }
+  ],
+  "Status": {
+   "Status": "COMPLETED",
+   "Finished": "2026-10-16T08:56:16.0808794+00:00",
+   "Expected": 1,
+   "Collected": 1,
+   "Failure": null,
+   "RestorationFailure": null
+  },
+  "SnapshotPresent": true,
+  "SnapshotName": "qcb-drain-20261016-base",
+  "StorageGuardsPassed": true,
+  "StorageGuardEvidence": [
+   "guards-plan148-before-direct.log",
+   "guards-direct148-running7.log"
+  ],
+  "DefenderSearchDisabled": true,
+  "SnapshotRemovalVerified": true,
+  "Controller": {
+   "PlanVersion": 148,
+   "Tag": "4E9E5C8F",
+   "ArchiveSha256": "D18EE624377A3A54E3B09D70DBB8333FE60DE7F15CB1DA4E5CAF6A0A39B62173",
+   "DeveloperDllSha256": "4E9E5C8F3BFF3D1B04E847E32667951687C8DD3B82536964658B66FEACF354F5",
+   "ExecutableSha256": "AF074868089F95F41BCA3929B246A57FC420F14E31F5129AB41E6038DF381B64"
+  },
+  "LoadedQueueCacheModules": [],
+  "LoadedPrimoModules": [],
+  "Dataset": {
+   "LargeBytes": 1073741824,
+   "SmallBytes": 268435456,
+   "SmallFiles": 4096,
+   "SmallFileBytes": 65536
+  },
+  "Measurement": "new unbuffered files through filesystem flush, product explicit drain and pending/disk queue zero; verification outside timing",
+  "HostStorage": "Ceph network backend; existing OSD/PG/scrub warnings; no near-full at pre/post guard checks",
+  "Scores": [
+   {
+    "Id": "drain-large-r1",
+    "Provider": "Direct",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T08:43:41.1856132+00:00",
+    "StartedUtc": "2026-10-16T08:43:41.2422909+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:44:06.2528913+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:44:06.431063+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:44:06.4310962+00:00",
+    "EndedUtc": "2026-10-16T08:44:06.4317193+00:00",
+    "ApplicationSeconds": 25.0105994,
+    "DrainSeconds": 0.1787586999999995,
+    "ExplicitDrainSeconds": 1.04e-05,
+    "ConfirmationSeconds": 0.0006227,
+    "TotalSeconds": 25.1893581,
+    "MBPerSecond": 42.62680373740846,
+    "Before": {
+     "Utc": "2026-10-16T08:43:41.1826534+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:44:06.4310996+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:43:41.1840205+00:00",
+     "BytesWritten": 2307665408,
+     "WriteOperations": 239739,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:44:06.431715+00:00",
+     "BytesWritten": 3386248192,
+     "WriteOperations": 240822,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r1",
+    "Provider": "Direct",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T08:44:13.789646+00:00",
+    "StartedUtc": "2026-10-16T08:44:13.8412119+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:47:35.1852483+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:47:35.6731101+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:47:35.6731221+00:00",
+    "EndedUtc": "2026-10-16T08:47:35.6740183+00:00",
+    "ApplicationSeconds": 201.3440347,
+    "DrainSeconds": 0.4887702000000047,
+    "ExplicitDrainSeconds": 8.8e-06,
+    "ConfirmationSeconds": 0.0008959,
+    "TotalSeconds": 201.8328049,
+    "MBPerSecond": 1.329989226146854,
+    "Before": {
+     "Utc": "2026-10-16T08:44:13.7874291+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:47:35.6732206+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:44:13.7884485+00:00",
+     "BytesWritten": 3386403840,
+     "WriteOperations": 240839,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:47:35.674013+00:00",
+     "BytesWritten": 3747663872,
+     "WriteOperations": 311009,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r2",
+    "Provider": "Direct",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T08:47:44.2484477+00:00",
+    "StartedUtc": "2026-10-16T08:47:44.3041709+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:51:21.3809077+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:51:22.3005157+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:51:22.300533+00:00",
+    "EndedUtc": "2026-10-16T08:51:22.401767+00:00",
+    "ApplicationSeconds": 217.0767355,
+    "DrainSeconds": 1.0208583999999803,
+    "ExplicitDrainSeconds": 1.24e-05,
+    "ConfirmationSeconds": 0.1012335,
+    "TotalSeconds": 218.0975939,
+    "MBPerSecond": 1.2308042982036769,
+    "Before": {
+     "Utc": "2026-10-16T08:47:44.2468761+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:51:22.4011009+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:47:44.2476963+00:00",
+     "BytesWritten": 3758605312,
+     "WriteOperations": 311064,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:51:22.4017604+00:00",
+     "BytesWritten": 4120939008,
+     "WriteOperations": 381358,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r2",
+    "Provider": "Direct",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T08:51:34.547967+00:00",
+    "StartedUtc": "2026-10-16T08:51:34.5539747+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:51:54.56098+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:51:54.6488367+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:51:54.648861+00:00",
+    "EndedUtc": "2026-10-16T08:51:54.649713+00:00",
+    "ApplicationSeconds": 20.007004,
+    "DrainSeconds": 0.08873230000000021,
+    "ExplicitDrainSeconds": 7.9e-06,
+    "ConfirmationSeconds": 0.0008509,
+    "TotalSeconds": 20.0957363,
+    "MBPerSecond": 53.43132533043838,
+    "Before": {
+     "Utc": "2026-10-16T08:51:34.5424679+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:51:54.6488676+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:51:34.5433455+00:00",
+     "BytesWritten": 4131805696,
+     "WriteOperations": 381401,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:51:54.6497077+00:00",
+     "BytesWritten": 5207131648,
+     "WriteOperations": 382463,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-large-r3",
+    "Provider": "Direct",
+    "Bytes": 1073741824,
+    "Files": 1,
+    "ReadyUtc": "2026-10-16T08:52:01.976106+00:00",
+    "StartedUtc": "2026-10-16T08:52:02.0287322+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:52:24.1808623+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:52:24.202284+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:52:24.2022941+00:00",
+    "EndedUtc": "2026-10-16T08:52:24.207971+00:00",
+    "ApplicationSeconds": 22.1521292,
+    "DrainSeconds": 0.027108099999999524,
+    "ExplicitDrainSeconds": 7.1e-06,
+    "ConfirmationSeconds": 0.0056766,
+    "TotalSeconds": 22.1792373,
+    "MBPerSecond": 48.412026503724725,
+    "Before": {
+     "Utc": "2026-10-16T08:52:01.9749992+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:52:24.202299+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:52:01.9756123+00:00",
+     "BytesWritten": 5207225856,
+     "WriteOperations": 382474,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:52:24.2079661+00:00",
+     "BytesWritten": 6282507264,
+     "WriteOperations": 383531,
+     "QueueDepth": 0
+    }
+   },
+   {
+    "Id": "drain-small-r3",
+    "Provider": "Direct",
+    "Bytes": 268435456,
+    "Files": 4096,
+    "ReadyUtc": "2026-10-16T08:52:32.1013289+00:00",
+    "StartedUtc": "2026-10-16T08:52:32.1600802+00:00",
+    "ApplicationEndedUtc": "2026-10-16T08:56:05.7147516+00:00",
+    "DrainRequestedUtc": "2026-10-16T08:56:06.0562284+00:00",
+    "DrainReturnedUtc": "2026-10-16T08:56:06.0562389+00:00",
+    "EndedUtc": "2026-10-16T08:56:06.0571398+00:00",
+    "ApplicationSeconds": 213.5546704,
+    "DrainSeconds": 0.34238720000001877,
+    "ExplicitDrainSeconds": 6.4e-06,
+    "ConfirmationSeconds": 0.0009003,
+    "TotalSeconds": 213.8970576,
+    "MBPerSecond": 1.2549749819466427,
+    "Before": {
+     "Utc": "2026-10-16T08:52:32.099782+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "After": {
+     "Utc": "2026-10-16T08:56:06.056243+00:00",
+     "Provider": "Direct",
+     "DirtyBytes": null,
+     "InFlightBytes": null,
+     "DeferredBlocks": null
+    },
+    "DiskBefore": {
+     "Utc": "2026-10-16T08:52:32.1009519+00:00",
+     "BytesWritten": 6282609664,
+     "WriteOperations": 383542,
+     "QueueDepth": 0
+    },
+    "DiskAfter": {
+     "Utc": "2026-10-16T08:56:06.0571342+00:00",
+     "BytesWritten": 6644235264,
+     "WriteOperations": 453671,
+     "QueueDepth": 0
+    }
+   }
+  ]
  }
 }
