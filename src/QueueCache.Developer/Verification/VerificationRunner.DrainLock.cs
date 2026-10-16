@@ -15,8 +15,7 @@ public sealed partial class VerificationRunner
         {
             Configuration = new CacheConfiguration(2048, CachePreset.Fast)
             {
-                Options = new CacheOptions(WritePercent: 50, RetainWrites: false, PromoteOnRead: scenario.Resident,
-                    Drain: DrainAlgorithm.Eager, BatchKiB: 2048, Parallelism: scenario.Parallelism)
+                Options = DrainLockDiagnostic.Options(scenario)
             }
         }, token, 300);
         await Control(WriteCacheAction.DropClean, token);

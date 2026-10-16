@@ -9,6 +9,12 @@ public sealed record DrainLockWindow(PerformanceCase Case, CacheLayoutSnapshot B
 public static class DrainLockDiagnostic
 {
     public const string Suite = "drain-lock-diagnostic";
+    // PromoteOnRead controls promotion of retained write blocks, not miss admission.
+    // A Fixed 100% write partition makes ReadLimit zero and keeps the disk-read arm uncached.
+    public static CacheOptions Options(PerformanceCase test) => new(
+        Allocation: test.Resident ? CacheAllocation.Automatic : CacheAllocation.Fixed,
+        WritePercent: test.Resident ? 50 : 100, RetainWrites: false, PromoteOnRead: test.Resident,
+        Drain: DrainAlgorithm.Eager, BatchKiB: 2048, Parallelism: test.Parallelism);
     public static void ValidateOptions(VerificationOptions options)
     {
         if (options.BudgetMiB != 2048 || options.Repeats != 3 || options.DurationSeconds != 6 ||
@@ -67,8 +73,7 @@ public static class DrainLockDiagnostic
         foreach (var s in new[] { a, b })
             if (!s.State.Operational || !s.State.Enabled || !s.State.UnsafeDefer || s.State.LastError != 0 ||
                 s.State.Suspended || s.State.Removed || s.State.Faulted || s.State.BudgetBytes != 2UL << 30 ||
-                s.State.Options is not { BatchKiB: 2048, RetainWrites: false, Drain: DrainAlgorithm.Eager } o ||
-                o.Parallelism != c.Parallelism || o.PromoteOnRead != c.Resident ||
+                s.State.Options != Options(c) ||
                 s.Performance.Frequency == 0 || s.Performance.TimingEnabled != (c.Timing ? 1UL : 0UL) ||
                 s.Diagnostics.CopyFlags != 15 || s.Diagnostics.Attribution is null)
                 throw new InvalidDataException("Lock diagnostic cache/profile/timing/attribution evidence differs.");

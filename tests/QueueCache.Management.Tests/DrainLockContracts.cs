@@ -27,8 +27,7 @@ internal static class DrainLockContracts
             Attribution = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) };
         DrainLockWindow Window(PerformanceCase c)
         {
-            var a = new CacheLayoutSnapshot(state with { Options = new(WritePercent: 50, RetainWrites: false,
-                PromoteOnRead: c.Resident, Drain: DrainAlgorithm.Eager, BatchKiB: 2048, Parallelism: c.Parallelism) },
+            var a = new CacheLayoutSnapshot(state with { Options = DrainLockDiagnostic.Options(c) },
                 perf with { TimingEnabled = c.Timing ? 1UL : 0UL }, diag);
             long bytes = c.Resident ? 100L << 20 : 100L * 4096;
             var b = a with
@@ -63,6 +62,10 @@ internal static class DrainLockContracts
         reject(() => DrainLockDiagnostic.Validate(timed with { Reader = timed.Reader with { Operations = 0, Bytes = 0 } }));
         reject(() => DrainLockDiagnostic.Validate(timed with { After = timed.After with { Diagnostics = diag with { Attribution = null } } }));
         var cold = windows.First(w => !w.Case.Resident);
+        check(cold.Before.State.Options is { Allocation: CacheAllocation.Fixed, WritePercent: 100 },
+            "cold-read diagnostic disables miss admission with a zero read partition, not merely disabled promotion");
+        reject(() => DrainLockDiagnostic.Validate(cold with { Before = cold.Before with
+            { State = cold.Before.State with { Options = cold.Before.State.Options! with { Allocation = CacheAllocation.Automatic, WritePercent = 50 } } } }));
         reject(() => DrainLockDiagnostic.Validate(cold with { After = cold.After with { State = cold.After.State with { ReadHitBytes = 4096 } } }));
         Console.WriteLine("Drain lock diagnostic matrix, counter scope, path purity, missing evidence and timing contracts passed (no driver access).");
     }
