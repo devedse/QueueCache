@@ -75,8 +75,9 @@ machine's physical RAM.
 ## Performance
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
-default test (1 GiB, 5 passes), the better of two runs per column. Both Q: columns:
-QueueCache 0.4.687.1 (2026-10-14); RAM disk column: QueueCache 0.4.583.1 (2026-10-11).
+default test (1 GiB, 5 passes), the better of two clean runs per column. Both Q:
+columns: QueueCache 0.4.687.1 (2026-10-15 UTC), Defender/Search disabled; Fast uses
+1024 KiB batches and four drainers. RAM disk: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|
@@ -89,16 +90,17 @@ QueueCache 0.4.687.1 (2026-10-14); RAM disk column: QueueCache 0.4.583.1 (2026-1
   <img src="docs/images/cdm-ram-disk.png" width="49%" alt="CrystalDiskMark on a 4 GiB RAM disk">
 </p>
 
-| MB/s | Q: without cache | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
+| MB/s | Q: cache paused | Q: with 2 GiB Fast cache | 4 GiB RAM disk |
 |---|---:|---:|---:|
-| Sequential read (SEQ1M Q8T1) | 602 | 37,375 | 47,583 |
-| Sequential write (SEQ1M Q8T1) | 230 | 19,981 | 24,434 |
-| Random 4K read (RND4K Q1T1) | 18.8 | 1,298 | 1,657 |
-| Random 4K write (RND4K Q1T1) | 4.7 | 1,029 | 1,310 |
+| Sequential read (SEQ1M Q8T1) | 662 | 40,591 | 47,583 |
+| Sequential write (SEQ1M Q8T1) | 266 | 20,908 | 24,434 |
+| Random 4K read (RND4K Q1T1) | 19.4 | 1,306 | 1,657 |
+| Random 4K write (RND4K Q1T1) | 5.1 | 1,095 | 1,310 |
 
 The test file fits in RAM, so this shows what QueueCache does for data already
-in its cache. These CrystalDiskMark scores retain their original sessions;
-the issue-fix checks below use separate workloads.
+in its cache; Fast writes can finish before reaching the disk. The paused
+control retains QueueCache's loaded filter. The issue-fix checks below use
+separate workloads.
 Ordinary misses spanning at most 256 cache blocks can overlap. A same-build
 comparison with Defender/Search disabled measured 9.95× cold random and 3.13×
 cold sequential throughput, better p99 and no repeated resident-control loss.

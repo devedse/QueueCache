@@ -1,7 +1,7 @@
 # QueueCache performance findings
 
 This is the consolidated reference for performance findings and decisions from
-the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-15.
+the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-16.
 Read it before proposing another experiment. Detailed methods and raw-evidence
 identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
@@ -43,11 +43,34 @@ drainers improve the cold-read target and repeated write-drain times. Fixed-wind
 foreground write IOPS are not qualified as invariant. The final release campaign
 completed all 11 phases on October 14; the October 15 environment repeat stopped
 incomplete at 8/11 phases on a RAM-only guard. Its unchanged nine-case map-cost
-repeat completed separately, without reproducing that failure. The earlier
-refreshed generic cached-volume and empty-cache comparisons remain complete.
+repeat completed separately, without reproducing that failure. The focused October 15/16 cache-paused, Fast and PrimoCache refresh completed both generic suites for each mode; it does not complete the interrupted release campaign.
 Real CrystalDiskMark captures are recorded
 separately in the README.
 Details: [competitor comparison](#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13).
+
+**Disabled-baseline cache refresh (2026-10-15/16, plan 146).** The same pinned tools
+completed 33 main and 7 empty-cache steps per mode: 120 steps and 57 raw XML scores
+reviewed, all tree hashes verified. Fast wrote 8 GiB at 267.5 MB/s at the application,
+but 200.1 MB/s through the last busy backing-disk sample, against 257.4 paused (-22.2%).
+Its sampled catch-up tail was 10.81 s. **Disk-speed parity is not established; the
+residual gap is measured here.** File-tree read/hash took 2.84 s Fast and 2.90 s paused,
+against the earlier Fast 154.23 s scanning episode. PrimoCache application /
+catch-up-inclusive 8 GiB rates were 425.1 / 279.6 MB/s. Each generic suite has one
+repetition. One-second virtual-disk sampling is not physical-media durability proof;
+sub-second tails are below its resolution. PrimoCache's retained CDM sequential
+read/write changed +5.1%/+8.2%, queued-random read/write −6.3%/+10.0%; the old Defender
+state was not recorded, so these cross-date deltas do not isolate disabling it. The
+paused control keeps QueueCache loaded and its 2 GiB reservation. Native code is
+unchanged. Keep 1024 KiB × 4 on the earlier paired explicit-drain evidence; this refresh
+does not qualify foreground interference or Strict latency. Full scores, six exact run
+identities and real captures: [current
+comparison](COMPARISON.md#current-cache-refresh-2026-10-1516) and its existing product
+data.
+
+**Storage qualification.** The storage guard passed before PrimoCache; its post-run
+check reported Ceph near-full warnings with 131.3 GB free. The onset and performance
+effect were not measured. Treat its storage-dependent scores as observations under that
+additional uncertainty. The warnings cleared after restoration and snapshot cleanup.
 
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
 

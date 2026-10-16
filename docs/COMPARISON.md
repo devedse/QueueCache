@@ -1,8 +1,8 @@
 # QueueCache compared with other RAM disks and RAM caches
 
-> All 12 RAM-disk and 6 cache configurations measured, 2026-10-12 to 2026-10-14.
+> Original comparison: 2026-10-12 to 2026-10-14. Cache paused, QueueCache Fast and PrimoCache Defer-Write refreshed: 2026-10-15/16.
 
-Every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
+For the original comparison, every product was installed alone on the same clean Windows 11 virtual machine, measured, and removed by restoring
 the machine to the same snapshot. QueueCache was measured the same way, by tools that do not use any QueueCache
 feature. The historical QueueCache 0.4.604.1 and competitor rows retain their original 2026-10-12 to 2026-10-13 measurement dates.
 QueueCache 0.4.687.1 Fast is a separate 2026-10-14 refresh; the RAM-disk and power-cut evidence was not repeated.
@@ -50,12 +50,35 @@ Cross-date figures are descriptive; causal gains require alternated same-build A
   ([Power cut while the cache is writing](#power-cut-while-the-cache-is-writing)). At that
   test's pace QueueCache Fast kept up with the disk and lost only the newest seconds, like the disk without a cache.
 
-Contents: [Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
+Contents: [Current cache refresh](#current-cache-refresh-2026-10-1516) · [Focused fix checks](#focused-fix-checks-2026-10-15) ·
+[Problems found](#problems-found) · [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
 [RAM disks: complete comparison](#ram-disks-complete-comparison) ·
 [RAM caches: complete comparison](#ram-caches-complete-comparison) ·
 [Power cut while the cache is writing](#power-cut-while-the-cache-is-writing) ·
 [Results per tool](#results-per-tool) · [Not tested](#not-tested) · [How this was measured](#how-this-was-measured)
+
+## Current cache refresh (2026-10-15/16)
+
+Defender Antivirus and Windows Search were effectively disabled; Everything, Steam and the QueueCache tray were closed, Verifier and timing diagnostics were off, and processes used normal priority. Each mode completed the entire one-repetition `compare-cache` and `compare-cache-cold` suites using the same pinned DiskSpd. These observations are not three-repetition medians or an isolated effect of disabling Defender/Search. The paused control retains the QueueCache filter and its 2 GiB reservation. PrimoCache ran with QueueCache absent, 2 GiB L1, no L2 and Defer-Write 10 s. No power-cut test was repeated.
+
+Storage guard passed before PrimoCache; its post-run check reported Ceph near-full warnings with 131.3 GB free. The onset and performance effect were not measured. Treat its storage-dependent scores as observations under that additional uncertainty. The warnings cleared after restoration and snapshot cleanup.
+
+Backing-disk figures use actual hypervisor counters, with roughly one-second resolution. The full settling interval is inspected for delayed writes; samples after the step are excluded. The 8 GiB payload rate includes time through the last interval writing more than 1 MB. It is a sampled virtual-disk observation, not proof of physical-media durability. Sub-second tails are below the recorder’s timing resolution.
+
+| Mode | Hot sequential read / write MB/s | 8 GiB write app / through last disk activity MB/s | Burst tail seconds | Tree read/hash seconds |
+|---|---:|---:|---:|---:|
+| [QueueCache paused](comparison/C00-no-cache.md) | 572.8 / 250.7 | 259.5 / 257.4 | 0.66 | 2.90 |
+| [QueueCache Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | 35,016.8 / 20,937.2 | 267.5 / 200.1 | 6.28 | 2.84 |
+| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s](comparison/C02-primocache-defer.md) | 17,215.1 / 18,757.6 | 425.1 / 279.6 | 10.92 | 2.87 |
+
+| Mode | Real CrystalDiskMark capture | SEQ1M Q8T1 R / W | SEQ1M Q1T1 R / W | RND4K Q32T1 R / W | RND4K Q1T1 R / W |
+|---|---|---:|---:|---:|---:|
+| [QueueCache paused](comparison/C00-no-cache.md) | <a href="images/comparison/off-refresh-20261016.png"><img src="images/comparison/off-refresh-20261016.png" width="240" alt="CrystalDiskMark, QueueCache paused"></a> | 662 / 266 | 286 / 121 | 130 / 12 | 19 / 5 |
+| [QueueCache Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | <a href="images/comparison/on-refresh-20261016.png"><img src="images/comparison/on-refresh-20261016.png" width="240" alt="CrystalDiskMark, QueueCache Fast, 2 GiB, 1024 KiB × 4"></a> | 40,591 / 20,908 | 20,203 / 13,546 | 1,764 / 1,468 | 1,306 / 1,095 |
+| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s](comparison/C02-primocache-defer.md) | <a href="images/comparison/primo-refresh-20261016.png"><img src="images/comparison/primo-refresh-20261016.png" width="240" alt="CrystalDiskMark, PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s"></a> | 17,277 / 19,515 | 14,423 / 4,172 | 473 / 370 | 1,028 / 783 |
+
+The tables below retain the original dated measurements. Full fresh scores, raw-run identities and the earlier results are on each product page and in its linked data.
 
 ## Focused fix checks (2026-10-15)
 

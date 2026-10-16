@@ -1704,5 +1704,800 @@
  "problems": [
   "All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write",
   "Power cuts while part of its held writes were on the disk (churn test): in 1 of 5 checked cuts NTFS needed an offline repair (volume bitmap corruption) and in another NTFS reported a file \"corrupted and unreadable\"; in the others files written 10-20 s earlier came back with zeros or another file's data, and deleted files came back"
- ]
+ ],
+ "Refresh20261016": {
+  "Mode": "PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s",
+  "DateUtc": "2026-10-16",
+  "Scope": "One complete repetition of each comparison; two clean CDM runs.",
+  "Instruments": {
+   "CliSha256": "B73E24D31FC3D9A0CD9F3BA4E82E921637D132FB879BE59DB12FF7963BAD6115",
+   "DiskSpdSha256": "7281BF6DA6C03797016EDDF2E8AAEC4C644AE893D403D57A030B7E2E14B61079",
+   "PlanVersion": 146
+  },
+  "ZeroCompletionScores": {
+   "compare-cache": [],
+   "compare-cache-cold": []
+  },
+  "Runs": {
+   "compare-cache": {
+    "Id": "QueueCache-Verify-20261016-020455-c83e09f44fb4481aa41e28157123b978",
+    "Comparison": {
+     "SchemaVersion": 1,
+     "Suite": "compare-cache",
+     "Product": "PrimoCache 4.4.1 L1 2 GiB Defer-Write 10 s, Defender Search off",
+     "PlanVersion": 146,
+     "Shapes": [
+      {
+       "Shape": "hot-seq1m-q8t1-read",
+       "Samples": 1,
+       "MBPerSecond": 17215.101337599997,
+       "MinMBPerSecond": 17215.101337599997,
+       "MaxMBPerSecond": 17215.101337599997,
+       "Iops": 16417.6,
+       "ReadP50Ms": 0.214,
+       "ReadP99Ms": 0.4,
+       "ReadP999Ms": 2.056,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 72.85
+      },
+      {
+       "Shape": "hot-seq1m-q1t1-read",
+       "Samples": 1,
+       "MBPerSecond": 14271.31839040959,
+       "MinMBPerSecond": 14271.31839040959,
+       "MaxMBPerSecond": 14271.31839040959,
+       "Iops": 13610.18981018981,
+       "ReadP50Ms": 0.07,
+       "ReadP99Ms": 0.1,
+       "ReadP999Ms": 0.213,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.16
+      },
+      {
+       "Shape": "hot-rnd4k-q32t1-read",
+       "Samples": 1,
+       "MBPerSecond": 491.169792,
+       "MinMBPerSecond": 491.169792,
+       "MaxMBPerSecond": 491.169792,
+       "Iops": 119914.5,
+       "ReadP50Ms": 0.031,
+       "ReadP99Ms": 0.113,
+       "ReadP999Ms": 0.239,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 53.36
+      },
+      {
+       "Shape": "hot-rnd4k-q1t1-read",
+       "Samples": 1,
+       "MBPerSecond": 1030.946013986014,
+       "MinMBPerSecond": 1030.946013986014,
+       "MaxMBPerSecond": 1030.946013986014,
+       "Iops": 251695.8041958042,
+       "ReadP50Ms": 0.004,
+       "ReadP99Ms": 0.01,
+       "ReadP999Ms": 0.023,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.16
+      },
+      {
+       "Shape": "hot-seq1m-q8t1-write",
+       "Samples": 1,
+       "MBPerSecond": 18757.556633599997,
+       "MinMBPerSecond": 18757.556633599997,
+       "MaxMBPerSecond": 18757.556633599997,
+       "Iops": 17888.6,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.21,
+       "WriteP99Ms": 0.441,
+       "WriteP999Ms": 12.373,
+       "CpuPercent": 72.93
+      },
+      {
+       "Shape": "hot-seq1m-q1t1-write",
+       "Samples": 1,
+       "MBPerSecond": 2684.7739904,
+       "MinMBPerSecond": 2684.7739904,
+       "MaxMBPerSecond": 2684.7739904,
+       "Iops": 2560.4,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.066,
+       "WriteP99Ms": 15.995,
+       "WriteP999Ms": 20.457,
+       "CpuPercent": 4.88
+      },
+      {
+       "Shape": "hot-rnd4k-q32t1-write",
+       "Samples": 1,
+       "MBPerSecond": 393.1860992,
+       "MinMBPerSecond": 393.1860992,
+       "MaxMBPerSecond": 393.1860992,
+       "Iops": 95992.7,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.034,
+       "WriteP99Ms": 0.146,
+       "WriteP999Ms": 2.493,
+       "CpuPercent": 53.32
+      },
+      {
+       "Shape": "hot-rnd4k-q1t1-write",
+       "Samples": 1,
+       "MBPerSecond": 519.235584,
+       "MinMBPerSecond": 519.235584,
+       "MaxMBPerSecond": 519.235584,
+       "Iops": 126766.5,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.004,
+       "WriteP99Ms": 0.018,
+       "WriteP999Ms": 0.054,
+       "CpuPercent": 16.84
+      },
+      {
+       "Shape": "buffered-seq1m-q8t1-read-buffered",
+       "Samples": 1,
+       "MBPerSecond": 13100.4891136,
+       "MinMBPerSecond": 13100.4891136,
+       "MaxMBPerSecond": 13100.4891136,
+       "Iops": 12493.6,
+       "ReadP50Ms": 0.073,
+       "ReadP99Ms": 0.145,
+       "ReadP999Ms": 0.771,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.31
+      },
+      {
+       "Shape": "buffered-rnd4k-q1t1-read-buffered",
+       "Samples": 1,
+       "MBPerSecond": 1513.4920503496503,
+       "MinMBPerSecond": 1513.4920503496503,
+       "MaxMBPerSecond": 1513.4920503496503,
+       "Iops": 369504.8951048951,
+       "ReadP50Ms": 0.002,
+       "ReadP99Ms": 0.009,
+       "ReadP999Ms": 0.036,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 25.23
+      },
+      {
+       "Shape": "buffered-seq1m-q8t1-write-buffered",
+       "Samples": 1,
+       "MBPerSecond": 5259.535702697302,
+       "MinMBPerSecond": 5259.535702697302,
+       "MaxMBPerSecond": 5259.535702697302,
+       "Iops": 5015.884115884116,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.189,
+       "WriteP99Ms": 0.369,
+       "WriteP999Ms": 0.924,
+       "CpuPercent": 25.51
+      },
+      {
+       "Shape": "buffered-rnd4k-q1t1-write-buffered",
+       "Samples": 1,
+       "MBPerSecond": 1307.0769742257744,
+       "MinMBPerSecond": 1307.0769742257744,
+       "MaxMBPerSecond": 1307.0769742257744,
+       "Iops": 319110.5894105894,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.002,
+       "WriteP99Ms": 0.009,
+       "WriteP999Ms": 0.041,
+       "CpuPercent": 25.66
+      },
+      {
+       "Shape": "through-seq1m-q8t1-write-write-through",
+       "Samples": 1,
+       "MBPerSecond": 18975.4544975025,
+       "MinMBPerSecond": 18975.4544975025,
+       "MaxMBPerSecond": 18975.4544975025,
+       "Iops": 18096.403596403597,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.208,
+       "WriteP99Ms": 0.426,
+       "WriteP999Ms": 2.215,
+       "CpuPercent": 70.83
+      },
+      {
+       "Shape": "through-rnd4k-q1t1-write-write-through",
+       "Samples": 1,
+       "MBPerSecond": 385.7158144,
+       "MinMBPerSecond": 385.7158144,
+       "MaxMBPerSecond": 385.7158144,
+       "Iops": 94168.9,
+       "ReadP50Ms": null,
+       "ReadP99Ms": null,
+       "ReadP999Ms": null,
+       "WriteP50Ms": 0.004,
+       "WriteP99Ms": 0.018,
+       "WriteP999Ms": 0.051,
+       "CpuPercent": 14.18
+      },
+      {
+       "Shape": "big-rnd4k-q32t1-read",
+       "Samples": 1,
+       "MBPerSecond": 139.80637866666666,
+       "MinMBPerSecond": 139.80637866666666,
+       "MaxMBPerSecond": 139.80637866666666,
+       "Iops": 34132.416666666664,
+       "ReadP50Ms": 0.373,
+       "ReadP99Ms": 7.716,
+       "ReadP999Ms": 17.347,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 38.17
+      },
+      {
+       "Shape": "big-seq1m-q8t1-read",
+       "Samples": 1,
+       "MBPerSecond": 412.8243712,
+       "MinMBPerSecond": 412.8243712,
+       "MaxMBPerSecond": 412.8243712,
+       "Iops": 393.7,
+       "ReadP50Ms": 15.194,
+       "ReadP99Ms": 97.497,
+       "ReadP999Ms": 172.14,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 7.25
+      },
+      {
+       "Shape": "mixed-rnd4k-q8t1-mixed",
+       "Samples": 1,
+       "MBPerSecond": 28.997402699910005,
+       "MinMBPerSecond": 28.997402699910005,
+       "MaxMBPerSecond": 28.997402699910005,
+       "Iops": 7079.444018532716,
+       "ReadP50Ms": 0.296,
+       "ReadP99Ms": 13.294,
+       "ReadP999Ms": 33.498,
+       "WriteP50Ms": 0.055,
+       "WriteP99Ms": 21.076,
+       "WriteP999Ms": 49.566,
+       "CpuPercent": 14.91
+      }
+     ],
+     "Steps": [
+      {
+       "Shape": "hot-warm1",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 568.9492372074598,
+       "Min": 568.9492372074598,
+       "Max": 568.9492372074598
+      },
+      {
+       "Shape": "hot-warm2",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 15503.259845998575,
+       "Min": 15503.259845998575,
+       "Max": 15503.259845998575
+      },
+      {
+       "Shape": "hot-warm3",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 17646.615094606295,
+       "Min": 17646.615094606295,
+       "Max": 17646.615094606295
+      },
+      {
+       "Shape": "buffered-warm",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 13529.569646155745,
+       "Min": 13529.569646155745,
+       "Max": 13529.569646155745
+      },
+      {
+       "Shape": "absorb",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 6274.051633719976,
+       "Min": 6274.051633719976,
+       "Max": 6274.051633719976
+      },
+      {
+       "Shape": "flush",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 8336.142403746422,
+       "Min": 8336.142403746422,
+       "Max": 8336.142403746422
+      },
+      {
+       "Shape": "flush",
+       "Samples": 1,
+       "Measure": "flush seconds",
+       "Median": 0.0009114,
+       "Min": 0.0009114,
+       "Max": 0.0009114
+      },
+      {
+       "Shape": "sustained",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 425.065117577049,
+       "Min": 425.065117577049,
+       "Max": 425.065117577049
+      },
+      {
+       "Shape": "sustained",
+       "Samples": 1,
+       "Measure": "slowest second MB/s",
+       "Median": 310.378496,
+       "Min": 310.378496,
+       "Max": 310.378496
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "create seconds",
+       "Median": 8.1448864,
+       "Min": 8.1448864,
+       "Max": 8.1448864
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "copy seconds (4 threads)",
+       "Median": 9.2107992,
+       "Min": 9.2107992,
+       "Max": 9.2107992
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "read and hash seconds",
+       "Median": 2.8700708,
+       "Min": 2.8700708,
+       "Max": 2.8700708
+      },
+      {
+       "Shape": "tree",
+       "Samples": 1,
+       "Measure": "delete seconds",
+       "Median": 4.5218516,
+       "Min": 4.5218516,
+       "Max": 4.5218516
+      }
+     ],
+     "Memory": [
+      {
+       "Id": "memory-start",
+       "Snapshot": {
+        "Utc": "2026-10-16T02:05:04.7008513+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11847258112,
+        "CommitBytes": 4490756096,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 198070272,
+        "KernelPagedBytes": 150724608,
+        "SystemCacheBytes": 2064232448
+       }
+      },
+      {
+       "Id": "memory-end",
+       "Snapshot": {
+        "Utc": "2026-10-16T02:29:04.0248825+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11456155648,
+        "CommitBytes": 4835409920,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 318861312,
+        "KernelPagedBytes": 305324032,
+        "SystemCacheBytes": 2252382208
+       }
+      }
+     ],
+     "Durability": null,
+     "Churn": null
+    },
+    "Review": {
+     "Run": "QueueCache-Verify-20261016-020455-c83e09f44fb4481aa41e28157123b978",
+     "Product": "PrimoCache 4.4.1 L1 2 GiB Defer-Write 10 s, Defender Search off",
+     "Status": "COMPLETED",
+     "Cases": 33,
+     "XmlScores": 17,
+     "MaxBackingSamplerGapSeconds": 1.001,
+     "Seconds": 1448.1261061,
+     "Writes": {
+      "absorb-r1": {
+       "Application": {
+        "Bytes": 1073741824,
+        "Seconds": 0.1711401,
+        "MBPerSecond": 6274.051633719976,
+        "FlushSeconds": null,
+        "Started": "2026-10-16T02:13:29.3937057+00:00",
+        "Ended": "2026-10-16T02:13:29.5648483+00:00"
+       },
+       "Settle": {
+        "Seconds": 60.0873288,
+        "DiskBytesWritten": 1073782784,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 17825792,
+       "BackingMeanWriteKiBBracketingApplication": 1582.5454545454545,
+       "FullSettleTailSeconds": 10.917152,
+       "BackingBytesThroughSettle": 1073782784,
+       "TailSampleIntervalMBps": 97.6073709662758,
+       "PayloadMBpsThroughLastBusySample": 96.83561124591292,
+       "FinalFiveSecondsQuiet": true
+      },
+      "flush-r1": {
+       "Application": {
+        "Bytes": 536870912,
+        "Seconds": 0.0644028,
+        "MBPerSecond": 8336.142403746422,
+        "FlushSeconds": 0.0009114,
+        "Started": "2026-10-16T02:14:29.6551569+00:00",
+        "Ended": "2026-10-16T02:14:29.7195621+00:00"
+       },
+       "Settle": {
+        "Seconds": 45.046444,
+        "DiskBytesWritten": 536920576,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 0,
+       "BackingMeanWriteKiBBracketingApplication": null,
+       "FullSettleTailSeconds": 8.768438,
+       "BackingBytesThroughSettle": 536920576,
+       "TailSampleIntervalMBps": 59.65030374402844,
+       "PayloadMBpsThroughLastBusySample": 60.78120614379695,
+       "FinalFiveSecondsQuiet": true
+      },
+      "sustained-r1": {
+       "Application": {
+        "Bytes": 8589934592,
+        "Seconds": 20.2085145,
+        "MBPerSecond": 425.065117577049,
+        "FlushSeconds": null,
+        "Started": "2026-10-16T02:15:14.7702219+00:00",
+        "Ended": "2026-10-16T02:15:34.9787426+00:00"
+       },
+       "Settle": {
+        "Seconds": 90.1162193,
+        "DiskBytesWritten": 1949360640,
+        "IdleObserved": true,
+        "Source": "IOCTL_DISK_PERFORMANCE"
+       },
+       "BackingBytesBracketingApplication": 6640632320,
+       "BackingMeanWriteKiBBracketingApplication": 1461.2421135646687,
+       "SlowestFullSecondMBps": 310.378496,
+       "FullSettleTailSeconds": 10.517258,
+       "BackingBytesThroughSettle": 8589992960,
+       "TailSampleIntervalMBps": 177.19546950277248,
+       "PayloadMBpsThroughLastBusySample": 279.56767481794355,
+       "FinalFiveSecondsQuiet": true
+      }
+     },
+     "ZeroCompletionScores": []
+    }
+   },
+   "compare-cache-cold": {
+    "Id": "QueueCache-Verify-20261016-023022-7419fac30902445185bf8b82189143d7",
+    "Comparison": {
+     "SchemaVersion": 1,
+     "Suite": "compare-cache-cold",
+     "Product": "PrimoCache 4.4.1 L1 2 GiB Defer-Write 10 s, Defender Search off",
+     "PlanVersion": 146,
+     "Shapes": [
+      {
+       "Shape": "cold-rnd4k-q32t1-read-first",
+       "Samples": 1,
+       "MBPerSecond": 125.50400639893351,
+       "MinMBPerSecond": 125.50400639893351,
+       "MaxMBPerSecond": 125.50400639893351,
+       "Iops": 30640.626562239628,
+       "ReadP50Ms": 0.414,
+       "ReadP99Ms": 7.931,
+       "ReadP999Ms": 17.662,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 35.97
+      },
+      {
+       "Shape": "cold-rnd4k-q32t1-read-second",
+       "Samples": 1,
+       "MBPerSecond": 90.19050666666668,
+       "MinMBPerSecond": 90.19050666666668,
+       "MaxMBPerSecond": 90.19050666666668,
+       "Iops": 22019.166666666668,
+       "ReadP50Ms": 0.293,
+       "ReadP99Ms": 13.683,
+       "ReadP999Ms": 41.633,
+       "WriteP50Ms": null,
+       "WriteP99Ms": null,
+       "WriteP999Ms": null,
+       "CpuPercent": 24.34
+      }
+     ],
+     "Steps": [
+      {
+       "Shape": "cold-first",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 571.8067307822882,
+       "Min": 571.8067307822882,
+       "Max": 571.8067307822882
+      },
+      {
+       "Shape": "cold-second",
+       "Samples": 1,
+       "Measure": "MB/s",
+       "Median": 16699.53705964599,
+       "Min": 16699.53705964599,
+       "Max": 16699.53705964599
+      }
+     ],
+     "Memory": [
+      {
+       "Id": "memory-start",
+       "Snapshot": {
+        "Utc": "2026-10-16T02:30:23.5245079+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11752226816,
+        "CommitBytes": 4577062912,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 204746752,
+        "KernelPagedBytes": 153890816,
+        "SystemCacheBytes": 2249998336
+       }
+      },
+      {
+       "Id": "memory-end",
+       "Snapshot": {
+        "Utc": "2026-10-16T02:32:29.9025169+00:00",
+        "TotalPhysicalBytes": 16706351104,
+        "AvailablePhysicalBytes": 11779203072,
+        "CommitBytes": 4545921024,
+        "CommitLimitBytes": 17780092928,
+        "KernelNonpagedBytes": 204222464,
+        "KernelPagedBytes": 153223168,
+        "SystemCacheBytes": 2250186752
+       }
+      }
+     ],
+     "Durability": null,
+     "Churn": null
+    },
+    "Review": {
+     "Run": "QueueCache-Verify-20261016-023022-7419fac30902445185bf8b82189143d7",
+     "Product": "PrimoCache 4.4.1 L1 2 GiB Defer-Write 10 s, Defender Search off",
+     "Status": "COMPLETED",
+     "Cases": 7,
+     "XmlScores": 2,
+     "MaxBackingSamplerGapSeconds": 1.001,
+     "Seconds": 126.6471422,
+     "Writes": {},
+     "ZeroCompletionScores": []
+    }
+   }
+  },
+  "Cdm": {
+   "Eligible": {
+    "run1": {
+     "Column": "C02-primo",
+     "Run": "run1",
+     "Drive": "Q: 57% (114/200GiB)",
+     "Comment": "PrimoCache Q: (2 GiB; Defender/Search off)",
+     "CapturedUtc": "2026-10-16T01:58:52.8058262Z",
+     "Scores": [
+      {
+       "Test": "SEQ1M Q8T1",
+       "Read": 17277.02,
+       "Write": 19515.26
+      },
+      {
+       "Test": "SEQ1M Q1T1",
+       "Read": 14423.24,
+       "Write": 4172.39
+      },
+      {
+       "Test": "RND4K Q32T1",
+       "Read": 473.14,
+       "Write": 369.68
+      },
+      {
+       "Test": "RND4K Q1T1",
+       "Read": 1027.58,
+       "Write": 782.53
+      }
+     ]
+    },
+    "run2": {
+     "Column": "C02-primo",
+     "Run": "run2",
+     "Drive": "Q: 57% (114/200GiB)",
+     "Comment": "PrimoCache Q: (2 GiB; Defender/Search off)",
+     "CapturedUtc": "2026-10-16T02:04:11.4818255Z",
+     "Scores": [
+      {
+       "Test": "SEQ1M Q8T1",
+       "Read": 17128.46,
+       "Write": 19238.9
+      },
+      {
+       "Test": "SEQ1M Q1T1",
+       "Read": 14300.09,
+       "Write": 4185.68
+      },
+      {
+       "Test": "RND4K Q32T1",
+       "Read": 456.85,
+       "Write": 357.87
+      },
+      {
+       "Test": "RND4K Q1T1",
+       "Read": 1024.76,
+       "Write": 792.27
+      }
+     ]
+    }
+   },
+   "Retained": "run1",
+   "Selection": "Faster SEQ1M Q8T1 read"
+  },
+  "Environment": {
+   "Windows": {
+    "Build": "28000",
+    "Revision": "3231",
+    "Release": "26H1"
+   },
+   "Target": {
+    "Letter": "Q",
+    "Root": "Q:\\",
+    "VolumeName": "\\\\?\\Volume{fa32f514-241e-44f1-8275-dc0db0728a4d}\\",
+    "FileSystem": "NTFS",
+    "Label": "QueueCacheLab",
+    "ClusterBytes": 4096,
+    "TotalBytes": 214730534912,
+    "FreeBytes": 92371664896,
+    "DriveType": "Fixed",
+    "DiskNumber": 1
+   },
+   "QueueCacheDrivers": [],
+   "ThirdPartyDrivers": [
+    {
+     "Name": "mcupdate_AuthenticAMD.dll",
+     "FilePath": "C:\\WINDOWS\\system32\\mcupdate_AuthenticAMD.dll",
+     "FileSha256": "1A8354CF533596A47D5A508DB0CA7F8C44EA5184ED0168128DC626A93C7FF318",
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": null
+    },
+    {
+     "Name": "globmerger.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\drivers\\globmerger.sys",
+     "FileSha256": "1E1CE2F9DC36632C7AF5324DD0F210BAF5BEB881A0E8A53BF43732CD4976B61D",
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": null
+    },
+    {
+     "Name": "vioscsi.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\vioscsi.sys",
+     "FileSha256": "1460B0AC9491F75E88E4FB6549B2043350FA865329A7D40192F9F685F4AA853A",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO SCSI pass-through controller",
+     "FileError": null
+    },
+    {
+     "Name": "rxfcv.sys",
+     "FilePath": "C:\\WINDOWS\\system32\\DRIVERS\\rxfcv.sys",
+     "FileSha256": "EDC57F50459E747D52C4E48BE52E5005952E5633283F79FCD594E3D1B2916C2D",
+     "FileVersion": "4.4.0",
+     "Company": "Romex Software",
+     "Product": "PrimoCache",
+     "FileError": null
+    },
+    {
+     "Name": "RXBSKNL.SYS",
+     "FilePath": "C:\\WINDOWS\\system32\\DRIVERS\\RXBSKNL.SYS",
+     "FileSha256": "D0135F5EDA0E2CB666F2902BE7B56610519F073E79B38AE8BC0156C9EA66C26D",
+     "FileVersion": "1.2.0",
+     "Company": "Windows (R) Win 7 DDK provider",
+     "Product": "Windows (R) Win 7 DDK driver",
+     "FileError": null
+    },
+    {
+     "Name": "dump_diskdump.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\Drivers\\dump_diskdump.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\Drivers\\dump_diskdump.sys"
+    },
+    {
+     "Name": "dump_vioscsi.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\dump_vioscsi.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\vioscsi.inf_amd64_79d939f171d924bc\\dump_vioscsi.sys"
+    },
+    {
+     "Name": "dump_dumpfve.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\Drivers\\dump_dumpfve.sys",
+     "FileSha256": null,
+     "FileVersion": null,
+     "Company": null,
+     "Product": null,
+     "FileError": "C:\\WINDOWS\\System32\\Drivers\\dump_dumpfve.sys"
+    },
+    {
+     "Name": "balloon.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\balloon.inf_amd64_c907745ca3c04c30\\balloon.sys",
+     "FileSha256": "B59ABE54A4233303E040C74CCFA6DCECAA6ECE989E742AC0D0DC3EF798F20652",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO Balloon controller",
+     "FileError": null
+    },
+    {
+     "Name": "netkvm.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\netkvm.inf_amd64_2648d33d769eca32\\netkvm.sys",
+     "FileSha256": "4053703616626DD8494EB2E015BDC923352241290A008DEC2C9F9C1841D44622",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "Red Hat VirtIO Ethernet Adapter",
+     "FileError": null
+    },
+    {
+     "Name": "fwcfg.sys",
+     "FilePath": "C:\\WINDOWS\\System32\\DriverStore\\FileRepository\\fwcfg.inf_amd64_c4e0eb3098a3b1a5\\fwcfg.sys",
+     "FileSha256": "F6053A268B61E7A938BCD074B517A304E5B45C8A074C97A8CEAE3E25F928FBDD",
+     "FileVersion": "100.100.104.27100",
+     "Company": "Red Hat, Inc.",
+     "Product": "QEMU FwCfg Device",
+     "FileError": null
+    }
+   ],
+   "DefenderSearchDisabled": true,
+   "StorageHealthObservation": {
+    "BeforeRunGuardPassed": true,
+    "AfterRunGuardPassed": false,
+    "PostRunFreeGB": 131.3,
+    "CephNearFullWarnings": true,
+    "OnsetMeasured": false,
+    "PerformanceEffectMeasured": false,
+    "ClearedAfterRestoration": true
+   }
+  }
+ }
 }

@@ -1,7 +1,7 @@
 # Known issues and verification gaps
 
 What is known to be limited or not yet proven in the current QueueCache source.
-The latest VM checks use 0.4.687.1 (2026-10-14); their scope is recorded below.
+Evidence through 2026-10-16 uses the unchanged 0.4.687.1 native driver; its scope is recorded below.
 Fixed defects are listed at the end with the build that
 fixed them; do not report them as current bugs without a reproduction on the
 current driver. Performance results and decisions are in
@@ -41,6 +41,17 @@ on 0.4.604.1 measured stops of more than 100 seconds and file operations several
 times slower than the bare disk. The read-miss and drain-default fixes do not
 change this durability boundary. Bounded Strict admission and overlapping-version
 ordering remain open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
+
+### Drain speed still trails the paused-disk baseline in the current comparison (performance)
+
+The October 15/16 disabled-baseline refresh measured one complete 8 GiB write at 200.1
+MB/s including disk catch-up, against 257.4 MB/s with the cache paused. Fast accepted
+the application write at 267.5 MB/s, then needed a sampled 10.81 s to catch up. The 1024
+KiB × 4 defaults improve paired explicit-drain times, but do not establish disk-speed
+parity or invariant foreground performance. These are virtual-disk counters with roughly
+one-second resolution, with the QueueCache filter still loaded in the control. See
+[issue #15](https://github.com/devedse/QueueCache/issues/15) and the [current
+comparison](COMPARISON.md#current-cache-refresh-2026-10-1516).
 
 ### Low-priority programs read cached data slower (performance)
 
@@ -147,10 +158,12 @@ CrystalDiskMark keep their own sessions; see [comparison](COMPARISON.md).
   they were not individually interrupted on the VM. Older recovery snapshots
   without original copy-flag evidence cannot be reported fully restored.
 - **File-tree environment:** tracing attributed the 160–170-second read/hash
-  slowdown to Defender. One disabled-baseline observation took 6.86 s with all
-  hashes verified; it is not a full paired matrix. The historical 4.9-second
-  session did not record Defender state. See [findings](PERFORMANCE_FINDINGS.md)
-  for the controls, tracing and exact runs.
+  slowdown to Defender. The full disabled-baseline generic refresh took
+  2.84 s Fast, 2.90 s paused and 2.87 s PrimoCache, with every hash verified
+  (one repetition each). The earlier 6.86-second diagnostic and historical
+  4.9-second session retain their own scope; the latter did not record Defender
+  state. PrimoCache also has a post-run Ceph near-full warning; its onset and
+  effect are unknown; the warnings cleared after restoration. See [findings](PERFORMANCE_FINDINGS.md) for controls and exact runs.
 - **Foreground interference and Strict impact:** neither has a valid isolated
   comparison for the new drain defaults. The removed overlap fixture drained its
   large seed after the default dirty-age trigger; the removed Strict fixture saw

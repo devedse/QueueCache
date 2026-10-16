@@ -2,6 +2,42 @@
 
 [Back to the comparison](../COMPARISON.md). Status: **Measured**.
 
+## Current cache refresh (2026-10-16)
+
+PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
+
+Storage guard passed before PrimoCache; its post-run check reported Ceph near-full warnings with 131.3 GB free. The onset and performance effect were not measured. Treat its storage-dependent scores as observations under that additional uncertainty. The warnings cleared after restoration and snapshot cleanup.
+
+Runs: `QueueCache-Verify-20261016-020455-c83e09f44fb4481aa41e28157123b978`, `QueueCache-Verify-20261016-023022-7419fac30902445185bf8b82189143d7`.
+All declared steps and raw XML totals, duration, CPU and latency fields were reviewed; every tree hash check passed.
+
+| Workload | Current observation |
+|---|---:|
+| Hot sequential 1M Q8 read / write, MB/s | 17,215.1 / 18,757.6 |
+| First / second 1 GiB read after clearing, MB/s | 571.8 / 16,699.5 |
+| 8 GiB file random 4K Q32 / sequential 1M Q8 read, MB/s | 139.8 / 412.8 |
+| 8 GiB sustained write / slowest full second, MB/s | 425.1 / 310.4 |
+| 8 GiB payload through last busy backing-disk sample, MB/s | 279.6 |
+| Backing-disk activity after 1 GiB burst, seconds | 10.92 |
+| File tree create / copy / read-hash / delete, seconds | 8.14 / 9.21 / 2.87 / 4.52 |
+
+<img src="../images/comparison/primo-refresh-20261016.png" width="480" alt="CrystalDiskMark, PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s">
+
+CrystalDiskMark retained `run1`, selected by sequential Q8 read from the two clean runs below. MB/s.
+
+| Shape | run1 read / write | run2 read / write |
+|---|---:|---:|
+| SEQ1M Q8T1 | 17,277.02 / 19,515.26 | 17,128.46 / 19,238.90 |
+| SEQ1M Q1T1 | 14,423.24 / 4,172.39 | 14,300.09 / 4,185.68 |
+| RND4K Q32T1 | 473.14 / 369.68 | 456.85 / 357.87 |
+| RND4K Q1T1 | 1,027.58 / 782.53 | 1,024.76 / 792.27 |
+
+All current shapes, percentiles, memory snapshots and backing-write measurements: [comparison data](data/C02-primocache-defer.json), `Refresh20261016`.
+
+## Earlier measurement (retained)
+
+The following results keep their original sessions and environment.
+
 | | |
 |---|---|
 | Product | PrimoCache |
@@ -14,16 +50,16 @@
 | `compare-durability-write` run | `QueueCache-Verify-20261013-011859-69cedcd7017d481c8103d02628b08ea3` |
 | `compare-durability-verify` run | `QueueCache-Verify-20261013-012105-3fc6f95878554734b25fce2d28ca813f` |
 
-## Problems
+### Problems
 
 - ⚠ All 10,000 new small files written in the last seconds before a simulated power cut were lost (the file system stayed clean); flushes are answered from RAM, expected with Defer-Write
 - ⚠ Power cuts while part of its held writes were on the disk (churn test): in 1 of 5 checked cuts NTFS needed an offline repair (volume bitmap corruption) and in another NTFS reported a file "corrupted and unreadable"; in the others files written 10-20 s earlier came back with zeros or another file's data, and deleted files came back
 
-## Notes
+### Notes
 
 The run went fine. Cached data is fast (about 17 GB/s reads and 19 GB/s writes; QueueCache reads cached data about twice as fast). Reading data that is not in the cache yet runs at the bare disk's speed (first read of 1 GiB at 512 MB/s, small random reads at 72 MB/s), because PrimoCache sends several such reads to the disk at once. After a 1 GiB burst the disk caught up in about 7 seconds at about 149 MB/s. With Defer-Write, PrimoCache answers flushes and write-through requests from RAM (a 256 MiB flush returned in 0.17 s, faster than the disk can write) and writes the data to the disk after a delay (10 seconds here). After the simulated power cut the file system was clean and data written earlier had reached the disk, but all 10,000 small files created in the last seconds before the cut were gone.
 
-## CrystalDiskMark
+### CrystalDiskMark
 
 <img src="../images/comparison/C02-primocache-defer.png" width="480" alt="CrystalDiskMark, PrimoCache 4.4.1, L1 2 GiB, Defer-Write">
 
@@ -36,7 +72,7 @@ Kept: run 2 (the faster SEQ1M Q8T1 read of two). MB/s.
 | RND4K Q32T1 | 487.49 / 380.46 | 504.71 / 335.93 |
 | RND4K Q1T1 | 1,001.33 / 775.05 | 1,003.38 / 776.41 |
 
-## Detailed measurements (DiskSpd and timed steps)
+### Detailed measurements (DiskSpd and timed steps)
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -81,7 +117,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 10,509 | 4,996 | 286 |
 | memory-end | 10,124 | 5,226 | 393 |
 
-## Empty cache
+### Empty cache
 
 Median of the repetitions, range in brackets. MB/s are decimal.
 
@@ -100,7 +136,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 | memory-start | 10,349 | 5,053 | 325 |
 | memory-end | 10,378 | 5,043 | 325 |
 
-## Power loss
+### Power loss
 
 
 | Data set | New | Old | Other or missing |
@@ -110,7 +146,7 @@ Median of the repetitions, range in brackets. MB/s are decimal.
 
 Small files: 0 intact, 0 damaged, 10000 missing of 10000; chkdsk /scan exit 0.
 
-## Environment
+### Environment
 
 Windows 26H1 build 28000.2956; target Q: NTFS, cluster 4096 bytes, 199.98 GiB.
 
