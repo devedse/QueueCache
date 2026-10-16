@@ -42,7 +42,7 @@ public sealed record ComparisonDrainVerification(
     [property: JsonRequired] bool Restored, [property: JsonRequired] bool Verified,
     [property: JsonRequired] ComparisonFileHash[] Files);
 
-/// <summary>Plan 148 fixed-work write-through-drain comparison: 1 GiB large file, 256 MiB small files.
+/// <summary>Plan 149 fixed-work write-through-drain comparison: 1 GiB large file, 256 MiB small files.
 /// Each provider uses the same workload and shared payload prefix. No scored overwrites.</summary>
 public static class ComparisonDrain
 {
@@ -130,9 +130,9 @@ public static class ComparisonDrain
         // Check every nontransient predicate before classifying a barrier as Draining.
         if (state.Faulted || state.LastError != 0 || state.Enabled != active || state.Suspended || state.Removed ||
             !state.UnsafeDefer || state.BudgetBytes != 2UL << 30 ||
-            state.Options is not { BatchKiB: 1024, Parallelism: 4 } || state.Performance is not { TimingEnabled: 0 } ||
+            state.Options is not { BatchKiB: 1024 or 2048, Parallelism: 4 or 8 } || state.Performance is not { TimingEnabled: 0 } ||
             active && (state.ReservedBytes == 0 || state.PayloadCapacity == 0 || state.SupportsReadWrite && !state.RoutingConfirmed))
-            throw new InvalidDataException($"compare-drain requires a healthy {(active ? "active" : "paused")} 2 GiB QueueCache Fast profile, 1024 KiB x 4, timing diagnostics OFF. State: {JsonSerializer.Serialize(state)}");
+            throw new InvalidDataException($"compare-drain requires a healthy {(active ? "active" : "paused")} 2 GiB QueueCache Fast profile, 1024/2048 KiB x 4/8, timing diagnostics OFF. State: {JsonSerializer.Serialize(state)}");
         if (state.Draining) throw new CacheDrainingException();
     }
 

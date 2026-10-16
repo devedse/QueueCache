@@ -207,7 +207,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 149; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -222,7 +222,17 @@ shuffled names do not establish random disk placement. No overwrites are scored.
 
 Run each provider alone on the same non-OS NTFS disk after section 2 preflight.
 Direct and PrimoCache require QueueCache drivers absent. QueueCache requires
-active Fast, 2 GiB, 1024 KiB batches × four drainers, timing diagnostics off;
+active Fast, 2 GiB, timing diagnostics off. On the experiment branch, batches may
+be 1024/2048 KiB and parallelism 4/8; normal defaults remain 1024 KiB × 4.
+Apply each runtime profile explicitly before its run, name it in `--product`,
+and check the recorded `compare-drain-recovery.json` original state and case
+snapshots. The runner rejects settings changes within a run. Use the same build
+for controls and candidates, changing one factor at a time; bracket candidate
+runs with a repeated 1024 KiB × 4 control. Restore captured runtime/saved settings
+afterward. This branch raises the native/managed experiment limits to 2 MiB × 8
+and reserves staging for that ceiling in every arm. Check the lower adapter's
+transfer/page/alignment limits before testing 2 MiB; these results are not a
+qualification of new production defaults.
 PrimoCache requires shared 2 GiB L1, no L2, 4 KiB blocks, Native Defer-Write 10 s,
 prefetch off and its GUI closed. The runner checks these settings.
 
@@ -292,7 +302,7 @@ then read the run folder:
 | `restoration.json` / `restored.json` | Independent restoration result |
 | per-case `*-before/after.json`, `*.score.json`, `*-telemetry.jsonl`, `*-interval.json`, raw DiskSpd output | The evidence behind each number |
 
-Current contracts (plan 148):
+Current contracts (plan 149):
 
 - **Telemetry (plans 130/131):** an owned thread samples every 200 ms, separately
   from persistence, with a bounded 256-sample buffer. The first persisted sample

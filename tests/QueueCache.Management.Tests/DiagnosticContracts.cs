@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 148, "plan 148 compares new 1 GiB large and 256 MiB small-file workloads with provider drains, bypassed hashes and complete reports");
+        Check(VerificationPlan.Version == 149, "plan 149 permits bounded drain-setting experiments with unchanged file workloads, bypassed hashes and complete reports");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&

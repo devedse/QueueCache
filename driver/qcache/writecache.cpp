@@ -11,7 +11,7 @@
 #include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
-static constexpr ULONG MaxBatchBytes = 1024 * 1024;
+static constexpr ULONG MaxBatchBytes = 2 * 1024 * 1024; // Experiment ceiling; default stays 1 MiB.
 static QC_MEMORY_BUDGET SharedMemoryBudget{};
 static volatile LONG64 NextInstance;
 static ULONGLONG MemoryLimit()

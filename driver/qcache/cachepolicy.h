@@ -61,7 +61,7 @@ constexpr bool QcValidOptions(const QC_OPTIONS& o)
     return o.Version == 1 && o.Size == sizeof(o) && o.Allocation <= QcFixed && o.WritePercent <= 100 &&
            !(o.Retention & ~3UL) && o.Drain <= QcDeferred && o.LowPercent < o.HighPercent && o.HighPercent <= 100 &&
            o.MaxAgeMs >= 10 && o.MaxAgeMs <= 3600000 && o.IdleMs >= 10 && o.IdleMs <= 60000 && o.BatchKiB >= 4 &&
-           o.BatchKiB <= 1024 && o.BatchKiB % 4 == 0 && o.Parallelism >= 1 && o.Parallelism <= 4;
+           o.BatchKiB <= 2048 && o.BatchKiB % 4 == 0 && o.Parallelism >= 1 && o.Parallelism <= 8;
 }
 constexpr ULONG QcWriteLimit(const QC_OPTIONS& o, ULONG capacity)
 {

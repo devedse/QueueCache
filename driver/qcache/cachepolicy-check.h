@@ -76,7 +76,15 @@ constexpr bool PolicyChecks()
     if (QcValidOptions(o))
         return false;
     o.MaxAgeMs = 3600000;
-    o.Parallelism = 5;
+    o.BatchKiB = 2048;
+    o.Parallelism = 8;
+    if (!QcValidOptions(o))
+        return false;
+    o.BatchKiB = 2052;
+    if (QcValidOptions(o))
+        return false;
+    o.BatchKiB = 1024;
+    o.Parallelism = 9;
     if (QcValidOptions(o))
         return false;
     o.Parallelism = 4;
@@ -93,7 +101,7 @@ constexpr bool WriteWakeChecks()
     for (ULONG policy = QcEager; policy <= QcDeferred; ++policy)
     {
         options.Drain = policy;
-        for (ULONG parallelism = 1; parallelism <= 4; ++parallelism)
+        for (ULONG parallelism = 1; parallelism <= 8; ++parallelism)
         {
             options.Parallelism = parallelism;
             bool pressure = false;

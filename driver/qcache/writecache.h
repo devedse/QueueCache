@@ -393,7 +393,7 @@ struct QC_CACHE
     PKEVENT RequestAvailable;
     KEVENT Wake, Changed;
     KEVENT Stopping; // Set once by QcCacheDestroy; drainers above Parallelism wait on it, never on Wake.
-    QC_DRAIN_WORKER Workers[4];
+    QC_DRAIN_WORKER Workers[8]; // Experiment ceiling; default stays four active drainers.
     QC_SLOT* Slots;
     // One MDL per 256 KiB payload slab: physical pages from the memory manager
     // (MmAllocatePagesForMdlEx), mapped once, never nonpaged pool. Indexed by

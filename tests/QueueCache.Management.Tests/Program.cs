@@ -72,7 +72,10 @@ foreach (var allocation in Enum.GetValues<CacheAllocation>())
 Reject(() => new CacheOptions(WritePercent: 101).Validate(), "invalid share");
 Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inverted watermarks");
 Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
-Reject(() => new CacheOptions(Parallelism: 5).Validate(), "unbounded parallelism");
+Check(CacheOptions.Decode(new CacheOptions(BatchKiB: 2048, Parallelism: 8).Encode()) ==
+    new CacheOptions(BatchKiB: 2048, Parallelism: 8), "experimental 2 MiB / eight-drainer policy wire roundtrip");
+Reject(() => new CacheOptions(Parallelism: 9).Validate(), "unbounded parallelism");
+Reject(() => new CacheOptions(BatchKiB: 2052).Validate(), "batch above experiment ceiling");
 Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
 var deferredHour = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000);
 Check(CacheOptions.Decode(deferredHour.Encode()) == deferredHour, "deferred one-hour wire roundtrip");

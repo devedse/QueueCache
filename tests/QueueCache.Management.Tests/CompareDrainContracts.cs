@@ -187,6 +187,8 @@ internal static class CompareDrainContracts
     {
         var performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         var active = original with { Performance = performance };
+        foreach (var (batch, parallelism) in new[] { (1024, 4), (1024, 8), (2048, 4), (2048, 8) })
+            ComparisonDrain.ValidateQueueCache(active with { Options = active.Options! with { BatchKiB = batch, Parallelism = parallelism } }, active: true);
         var paused = active with { Flags = active.Flags & ~1u, Generation = active.Generation + 1 };
         var samples = new Queue<WriteCacheState>([active with { Flags = active.Flags | 8u }, active,
             paused with { Flags = paused.Flags | 8u, DirtyBytes = 4096, InFlightBytes = 4096 }, paused]);
@@ -207,6 +209,7 @@ internal static class CompareDrainContracts
             active with { Instance = original.Instance + 1 }, active with { DeviceBytes = original.DeviceBytes + 4096 },
             active with { Options = null }, active with { Options = original.Options! with { RetainWrites = false } },
             active with { Options = original.Options! with { BatchKiB = 256 } }, active with { Options = original.Options! with { Parallelism = 2 } },
+            active with { Options = original.Options! with { BatchKiB = 2048 } }, active with { Options = original.Options! with { Parallelism = 8 } },
             active with { BudgetBytes = 1UL << 30 }, active with { ReservedBytes = 0 }, active with { PayloadCapacity = 0 },
             active with { Flags = active.Flags & ~32u }, active with { Errors = original.Errors + 1 }, active with { LastError = 5 },
             active with { Flags = active.Flags | 2u }, active with { Flags = active.Flags | 4u }, active with { Flags = active.Flags | 16u },
