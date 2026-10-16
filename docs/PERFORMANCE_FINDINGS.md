@@ -257,6 +257,88 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 `20261016-133018-7b62779ae82c43aea3c25c11d75550cf`. Verifier smoke:
 `20261016-130550-0a059f72bc3e431cba1e18f3d290bcb3`.
 
+**Short lock/drain measurement (plan 151, 2026-10-16).** The complete
+`drain-lock-diagnostic` run measured 48 six-second windows: cached sequential
+1 MiB Q8 and uncached random 4 KiB Q1 reads, alone/with a continuous sequential
+writer, 2 MiB batches at four/eight drainers, timing off/on and three repetitions
+with reversed order. The runner took **18m56s**, including preparation,
+inter-case flushing/warming and restoration; scored reads total **4m48s**.
+Native build **0.4.749.1** is unchanged from the earlier experiments; the tested
+managed runner source is `0f44814`. Actual loaded hashes matched that CI artifact.
+Verifier was off, post-boot settling exceeded 15 minutes, processes had normal
+priority, Defender/Search were disabled and background apps/service were stopped.
+
+The writer uses a separate 4 GiB file, 1 MiB Q8 writes and Eager draining with
+write retention off. Cached reads use a warmed 512 MiB file with Automatic
+allocation; uncached reads use a separate 1 GiB file with Fixed 100% writes
+(zero read-cache admission). Pure hit/miss counters and at least 75% pending
+observations during each loaded reader envelope were required. These are two
+separate read workloads, not a controlled comparison of cache-hit versus miss
+cost or a qualification of the Idle product defaults.
+
+Medians of three windows per cell. Read scores/p99 are **timing off**; lock
+occupancy is from separate **timing-on** diagnostics. Arrows mean alone → with
+the writer. GiB/s is binary throughput; IOPS is completed reads per second.
+
+| Reader | Drainers | Read throughput, alone → loaded | Read p99 ms, alone → loaded | Global lock held %, alone → loaded |
+|---|---:|---:|---:|---:|
+| Cached 1 MiB Q8 | 4 | 35.47 → 30.84 GiB/s | 0.436 → 0.665 | 30.27 → 34.80 |
+| Cached 1 MiB Q8 | 8 | 34.79 → 30.04 GiB/s | 0.456 → 0.756 | 30.14 → 33.59 |
+| Uncached random 4 KiB Q1 | 4 | 2,275 → 1,057 IOPS | 0.803 → 13.684 | 0.64 → 1.12 |
+| Uncached random 4 KiB Q1 | 8 | 3,437 → 465 IOPS | 0.598 → 24.473 | 0.78 → 0.88 |
+
+**Decision:** prioritize storage scheduling/concurrency over a reader–writer
+lock rewrite for the drain/read problem. During uncached reads, eight drainers
+raised median drainage **240.5 → 322.0 MiB/s (+33.9%)**, but reduced reader IOPS
+**56.0%** and raised p99 **78.8%** against four. Every loaded eight-drainer read
+IOPS/p99 range is worse than four's. The lock was held only about 1% of the
+diagnostic envelope and mean global acquisition waits were 1.09 / 3.69 µs;
+these global means are not reader-specific latency. Low VM CPU use (about
+5–6% in timing-off loaded disk-read windows) and the lower-path timings support
+storage competition as the main explanation, without identifying a physical
+device or Ceph cause.
+
+For RAM hits, concurrent draining reduced throughput **13.1% / 13.7%** versus
+the matching alone controls. Eight drainers drained **251.0 → 332.2 MiB/s**
+but served RAM reads 2.6% slower than four; ranges were separated. VM CPU use
+was approximately **97%** even for reads alone. Lock occupancy around 30–35%
+and global waits of 6.5 µs alone / 11–13 µs loaded show scope for less metadata
+work, but do not isolate lock blocking from CPU scheduling or memory-copy costs.
+Do not claim a reader–writer lock's gain from this screen.
+
+Across loaded timing-on windows, lower I/O accounted for approximately
+**98.9–99.9% of the summed measured drainer selection/copy/retirement/lower
+phases**. Concurrent drainer waits sum across threads and exceed wall time;
+they are not an application-latency breakdown or an exhaustive account of
+thread time. A candidate follow-up is to reduce outstanding drain writes while
+foreground disk reads are waiting, retaining higher concurrency when they are
+absent. Shorter read-hit bookkeeping is a secondary candidate; sharding/lock-free
+lookup is not justified as the first change. No locking or default change was made.
+
+Storage controls varied: four-drainer disk-read-alone IOPS ranged
+**1,869–3,449**, and eight-drainer loaded timing-on drainage ranged
+**69.8–331.8 MiB/s**. Ceph retained availability and BlueStore slow-operation
+warnings; capacity/near-full guards passed. The timing-on disk-read results
+cannot isolate instrumentation overhead from that variation. Keep this screen
+separate from the matched competitor comparison; no Primo run, Strict test,
+sustained qualification or power-cut test was added.
+
+The first plan-150 attempt stopped at case 9 because the fixture incorrectly
+treated disabled promotion as disabled read-miss admission. The strict purity
+check rejected its cached hits; restoration succeeded with no driver errors.
+It remains incomplete and is excluded entirely. Plan 151 fixes the cold arm
+with a zero read partition and adds a host contract for that distinction.
+
+Exact completed run: `QueueCache-Verify-20261016-201557-410f1de47e934ba48036c8e4d2a51593`.
+Excluded setup attempt: `QueueCache-Verify-20261016-200734-551c990292b04121a9a4a2753ea41294`.
+All 11,749 exported evidence and runner files were verified against guest-side
+SHA-256 manifests before rollback.
+The original 0.4.687.1 native hashes, Fast 2 GiB 1024 KiB × 4 runtime/saved
+profile and apps/service were restored and checked. Defender/Search remain
+disabled. The temporary snapshot and new VM test/evidence files were removed;
+zero snapshots remain, C:/Q: have 62.8/199.8 GB free, and the final capacity/
+near-full guard passed with 315.4 GB available in the backing pool.
+
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
 
 **Question.** How does QueueCache compare with other RAM disks and RAM caches on the
