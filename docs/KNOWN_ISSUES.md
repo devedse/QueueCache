@@ -160,8 +160,9 @@ worker.
 The experimental branch now bounds drain staging at small cache budgets and
 checks the remaining allocation before unsigned subtraction. This fixes the
 source-reviewed 16 MiB underflow introduced by the larger experimental staging
-ceiling. Plan 152 adds fourteen small-budget Fast/Strict byte-oracle checks;
-VM verification of this fix is pending. Production 0.4.687.1 is unchanged.
+ceiling. Plan 152's fourteen small-budget Fast/Strict byte-oracle checks passed on native
+0.4.756.1 under Driver Verifier, as did the maximum-settings quick file-integrity
+smoke. Broader promotion qualification remains pending. Production 0.4.687.1 is unchanged.
 
 The earlier same-build Defender/Search-off drain-settings repeat has no complete matrix: extra small writes
 invalidated seed/end snapshots. A failed file-handle experiment was removed in

@@ -266,7 +266,14 @@ in-flight, filling, partial sector, fence, or partial anchor) and size bucket
 null. `cache-allocation` exercises fourteen small-budget Fast/Strict byte oracles.
 The authorized next measurement is the existing two file shapes at 2 MiB × 4/8,
 bracketed by 1 MiB × 4 controls, then the same two shapes on Direct and PrimoCache.
-No new performance result or promotion qualification exists yet.
+The fourteen allocation cases and maximum-settings quick file-integrity smoke passed
+under actual Driver Verifier on native 0.4.756.1. The initial plan-152 combined arm
+stopped during preparation of its third case: 4 KiB became dirty after explicit
+preparation controls, with no in-flight bytes, driver errors or fault. Restoration
+succeeded. Its two completed cases are excluded. Plan 153 adds a recorded bounded
+preparation drain for this known delayed-write race; missing evidence and faults
+remain immediate failures. All comparison arms will be collected afresh under 153;
+no plan-152/153 matrix will be assembled. No promotion qualification exists yet.
 
 **Short lock/drain measurement (plan 151, 2026-10-16).** The complete
 `drain-lock-diagnostic` run measured 48 six-second windows: cached sequential

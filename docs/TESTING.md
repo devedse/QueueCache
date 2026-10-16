@@ -209,7 +209,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 152; workload unchanged from 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 153; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -235,6 +235,10 @@ afterward. This branch raises the native/managed experiment limits to 2 MiB × 8
 and reserves staging for that ceiling in every arm. Check the lower adapter's
 transfer/page/alignment limits before testing 2 MiB; these results are not a
 qualification of new production defaults.
+Plan 153 explicitly drains newly observed preparation writes on a separate 30-second
+preparation deadline, recording each attempt before starting the scored handshake.
+Invalid/missing counters and driver faults fail immediately. Scored workloads and
+endpoints are unchanged.
 Plan 152 records V4 batch termination and size counters in QueueCache pending snapshots.
 One terminal reason and one size bucket account for each batch; older drivers report these fields as unavailable.
 The new counters observe selection without changing it. Small-cache staging is bounded by the budget,

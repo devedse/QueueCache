@@ -32,6 +32,30 @@ internal static class CompareDrainContracts
             try { VerificationPlan.Validate(invalid); throw new Exception("Accepted invalid compare-drain options."); }
             catch (ArgumentException) { }
         }
+        var preparations = 0;
+        var settled = ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+        {
+            preparations++;
+            return Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache,
+                attempt == 1 ? 4096UL : 0UL, 0, null));
+        }).GetAwaiter().GetResult();
+        check(settled.Attempt == 2 && preparations == 2 && settled.Pending.DirtyBytes == 0,
+            "preparation drains new filesystem writes before the scored ready handshake");
+        var invalidAttempts = 0;
+        reject(() => ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+        {
+            invalidAttempts++;
+            return Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache, null, null, null));
+        }).GetAwaiter().GetResult());
+        check(invalidAttempts == 1, "missing pending evidence is never retried as drainage");
+        try
+        {
+            ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+                Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache, 4096, 0, null)),
+                TimeSpan.Zero).GetAwaiter().GetResult();
+            throw new Exception("Accepted permanently dirty preparation.");
+        }
+        catch (TimeoutException) { }
         RunDeferredBlocksContracts(check, reject);
         var config = "Status: Active\r\nLevel-1 Cache: 2048,00MB\r\nLevel-2 Cache: 0,00MB\r\nR/W Ratio: Shared\r\nBlock Size: 4KB\r\nDefer-Write: Enabled\r\nLatency: 10s\r\nMode: Native\r\nPrefetch: Disabled\r\n";
         ComparisonDrain.ValidatePrimoConfiguration(config);

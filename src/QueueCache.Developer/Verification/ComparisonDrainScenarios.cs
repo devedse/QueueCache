@@ -46,11 +46,18 @@ internal static class ComparisonDrainScenarios
             try
             {
                 // Explicit preparation is not part of the score. Every scored file is CreateNew.
-                ComparisonScenarios.FlushVolume(target.Letter);
-                await provider.DrainAsync(prefix + ".prepare-drain");
-                await provider.ClearAsync(prefix + ".prepare-clear");
-                var before = await provider.PendingAsync(prefix + ".before");
-                ComparisonDrain.ValidatePending(before, provider.Kind, clean: true);
+                var prepared = await ComparisonDrain.PrepareCleanAsync(provider.Kind, async attempt =>
+                {
+                    ComparisonScenarios.FlushVolume(target.Letter);
+                    await provider.DrainAsync(prefix + $".prepare-{attempt:D4}-drain");
+                    await provider.ClearAsync(prefix + $".prepare-{attempt:D4}-clear");
+                    return await provider.PendingAsync(prefix + $".prepare-{attempt:D4}-pending");
+                });
+                var before = prepared.Pending;
+                RunStorage.AtomicJson(prefix + ".before.pending.json", before);
+                RunStorage.AtomicJson(prefix + ".preparation.json", new { prepared.Attempt, Pending = before });
+                if (provider.Kind == ComparisonProvider.QueueCache)
+                    File.Copy(prefix + $".prepare-{prepared.Attempt:D4}-pending.cache.json", prefix + ".before.cache.json");
                 var diskBefore = ComparisonScenarios.DiskCounters(target.DiskNumber.Value);
                 if (diskBefore.QueueDepth != 0) throw new IOException("Backing disk is busy before compare-drain.");
                 using var stop = new CancellationTokenSource();

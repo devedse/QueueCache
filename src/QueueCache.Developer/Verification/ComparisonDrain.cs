@@ -96,6 +96,29 @@ public static class ComparisonDrain
             throw new InvalidDataException("Missing, inconsistent or nonzero product pending counters.");
     }
 
+    // Unscored preparation can receive delayed filesystem writes after the previous
+    // case's cleanup. Drain observed work before starting; never retry invalid evidence
+    // or a driver fault as though it were merely pending data. Every attempt is saved.
+    public static async Task<(ComparisonPending Pending, int Attempt)> PrepareCleanAsync(
+        ComparisonProvider provider, Func<int, Task<ComparisonPending>> prepare, TimeSpan? deadline = null)
+    {
+        var limit = deadline ?? TimeSpan.FromSeconds(30);
+        if (limit < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(deadline));
+        var timer = Stopwatch.StartNew();
+        for (var attempt = 1; ; attempt++)
+        {
+            var pending = await prepare(attempt);
+            ValidatePending(pending, provider, clean: false);
+            if (pending.DirtyBytes is not > 0 && pending.InFlightBytes is not > 0 && pending.DeferredBlocks is not > 0)
+            {
+                ValidatePending(pending, provider, clean: true);
+                return (pending, attempt);
+            }
+            if (timer.Elapsed >= limit) throw new TimeoutException("compare-drain preparation did not become clean; inspect recorded attempts.");
+            await Task.Delay(25);
+        }
+    }
+
     public static void ValidateScore(ComparisonCase test, ComparisonDrainScore score, ComparisonProvider provider)
     {
         ValidatePending(score.Before, provider, true); ValidatePending(score.After, provider, true);
