@@ -171,6 +171,64 @@ journal/dependent-write ordering sequence and its overwritten versions; only
 then design a targeted partial-drain cut. These are proposals, not scheduled or
 completed runs; neither issue is resolved by this inspection.
 
+**Individual VM experiments (plan 149, 2026-10-16).** Branch
+`experiment/drain-batch-concurrency`, tested source `b417470`, CI build
+**0.4.749.1**. Raise the experimental ceilings to 2 MiB and eight drainers;
+keep the 1024 KiB × 4 defaults. Native and managed bounds, compile-time policy
+checks and the existing `compare-drain` profile validation were extended together.
+The file workload, payload and timing endpoint are unchanged from plan 148.
+The lower adapter reports 2,097,152 maximum transfer bytes, 513 physical pages
+and alignment mask 3. Every arm uses this same build, including its larger fixed
+staging reservation (16 MiB), and the same temporary snapshot.
+
+| Runtime arm | New 1 GiB + drain MB/s, median (range) | New 4,096 × 64 KiB + drain MB/s, median (range) | Mean backing write KiB, large / small |
+|---|---:|---:|---:|
+| Starting control, 1024 KiB × 4 | 179.57 (153.10–185.13) | 98.82 (80.13–102.23) | 1004.8 / 737.9 |
+| More concurrency only, 1024 KiB × 8 | 213.58 (211.81–222.09) | 106.54 (94.70–110.86) | 1007.7 / 333.2 |
+| Larger batches only, 2048 KiB × 4 | 225.02 (218.36–232.23) | 103.00 (98.49–107.79) | 1986.7 / 298.3 |
+| Ending control, 1024 KiB × 4 | 170.68 (160.01–179.52) | 91.45 (87.04–93.34) | 1012.5 / 188.1 |
+
+All four full six-case runs completed with restoration: **24 workload cases and
+49,164 unbuffered file hashes passed**. Each row has three repetitions per shape.
+The four comparison workers took about **4 minutes 17 seconds** combined; CI,
+deployment, correctness checks, reboots and the required 15-minute post-boot
+settle were additional setup time. The maximum-settings 2048 KiB × 8 Eager
+file-integrity smoke also passed under Driver Verifier, including repeated
+overwrites, live reads, flush/reopen and copy hashes. File TRIM is unsupported
+and broader race/fault/lifecycle paths are outside that smoke. Actual loaded
+hashes matched the CI artifact; performance runs used Verifier and timing off,
+Fast 2 GiB Idle, flags 15, normal priority, Defender/Search disabled and the
+background apps/service stopped. Saved profiles were unchanged.
+
+**Screen decision:** both individual changes merit follow-up for large files.
+Eight drainers improved the median **18.9% / 25.1%** versus starting/ending
+controls; 2 MiB batches improved it **25.3% / 31.8%**. Every candidate large-file
+sample exceeds both control ranges. The controls drifted **−4.9% large / −7.5%
+small**, and arms were grouped, not alternated pairs. Small-file median gains
+were only **7.8%** (eight drainers) and **4.2%** (2 MiB) against the starting
+control, with overlapping ranges and substantially varying backing-write sizes.
+Do not qualify either small-file gain as stable or describe this as a causal
+percentage against the released driver. The 2 MiB arm doubled mean large-file
+write size but did not increase mean small-file write size.
+
+The first candidate for another short screen is **2 MiB × 4**; a combined
+2 MiB × 8 performance run and foreground/Strict/sustained regressions remain
+unrun. Ceph retained hosts/OSDs-down and inactive/stale-PG warnings. Capacity
+and near-full guards passed, but shared-storage behavior remains an uncertainty.
+Even today's controls are much faster than the earlier plan-148 QueueCache
+52.71 / 41.71 MB/s, so these observations cannot replace the matched three-product
+comparison or establish Primo parity. No crash-safety change or power cut ran;
+[#13](https://github.com/devedse/QueueCache/issues/13) and
+[#15](https://github.com/devedse/QueueCache/issues/15) remain open. No production
+default change or full release qualification is justified by this screen alone.
+
+Exact completed run suffixes (each prefixed `QueueCache-Verify-`): starting
+control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
+`20261016-132619-c2e501747076483999a489b541daa22d`; 2 MiB batches
+`20261016-132900-e8107338c2094977b5890ac873ffd9a8`; ending control
+`20261016-133018-7b62779ae82c43aea3c25c11d75550cf`. Verifier smoke:
+`20261016-130550-0a059f72bc3e431cba1e18f3d290bcb3`.
+
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
 
 **Question.** How does QueueCache compare with other RAM disks and RAM caches on the
