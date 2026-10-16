@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 149, "plan 149 permits bounded drain-setting experiments with unchanged file workloads, bypassed hashes and complete reports");
+        Check(VerificationPlan.Version == 150, "plan 150 adds a bounded read/drain lock attribution diagnostic");
         var drainTiming = DrainDecisionTiming.ForScore(10);
         Check(drainTiming.ScoreSeconds == 10 && drainTiming.ProcessDeadlineSeconds > 140 &&
             drainTiming.FlushDeadlineSeconds == drainTiming.ProcessDeadlineSeconds &&
@@ -33,6 +33,7 @@ internal static class DiagnosticContracts
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         CompareDrainContracts.Run(Check, Reject);
+        DrainLockContracts.Run(Check, Reject);
         RunTreeDecisionContracts(Check, Reject);
         RunReadTailDecisionContracts(Check, Reject);
         RunDrainFlushContracts(Check, Reject);

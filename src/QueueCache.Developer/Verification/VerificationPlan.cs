@@ -18,7 +18,9 @@ public sealed record PerformanceCase(
     bool PrecomputedWriteBuffer = false,
     CacheLayoutStage Layout = CacheLayoutStage.None,
     int Threads = 1,
-    ulong? CopyFlags = null)
+    ulong? CopyFlags = null,
+    int BatchKiB = 1024,
+    int Parallelism = 4)
 {
     public string WriteBufferArgument => PrecomputedWriteBuffer ? "-Z1M" : "-Zr";
 }
@@ -44,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 149;
+    public const int Version = 150;
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -83,6 +85,7 @@ public static class VerificationPlan
         "app-write-profile",
         "pressure",
         "drain-decision",
+        "drain-lock-diagnostic",
         "drain-flush-decision",
         "tree-decision",
         "read-tail-decision",
@@ -237,6 +240,8 @@ public static class VerificationPlan
     public static IReadOnlyList<PerformanceCase> Performance(VerificationOptions options)
     {
         var cases = new List<PerformanceCase>();
+        if (options.Suite == "drain-lock-diagnostic")
+            return DrainLockDiagnostic.Cases(options);
         if (options.Suite == "cache-read-misses")
             return CacheReadMisses.Cases(options);
 
@@ -478,6 +483,7 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (options.Suite == "drain-lock-diagnostic") DrainLockDiagnostic.ValidateOptions(options);
         ComparisonDrain.ValidateOptions(options);
         if (ComparisonPlan.IsComparison(options.Suite))
         {
@@ -575,7 +581,7 @@ public static class VerificationPlan
             throw new ArgumentException("RAM coordination permits one off/on/off batch, or one explicit correction/retry (--repeats 1..2).");
         if (IsRamReadSuite(options.Suite) && options.BudgetMiB != RamReadReferencePlan.DiskMiB)
             throw new ArgumentException("RAM read suites require --budget-mib 2048 for their owned 2 GiB disks and 1 GiB files.");
-        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "drain-decision") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
+        if (options.Suite is not ("performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "drain-decision" or "drain-lock-diagnostic") && !IsRamReadSuite(options.Suite) && !IsLayoutSuite(options.Suite) && !CacheExercisePlan.Contains(options.Suite))
         {
             return;
         }
