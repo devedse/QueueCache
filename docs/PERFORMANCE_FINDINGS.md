@@ -112,6 +112,65 @@ explicit durability. The defaults reduced paired drain time; parity is not yet
 shown. Diagnose the slow small-file repetition and post-score writes before
 attributing the remaining gap solely to request size.
 
+**First investigation: drain limits and crash ordering (2026-10-16).** A short
+source review and reanalysis of the existing complete plan-148 timelines found
+two concrete performance candidates; no new VM run or driver change was made.
+`Drainer` gathers adjacent blocks, submits one lower write and waits for it.
+`MaxBatchBytes`, the worker array and policy validation cap this at **1 MiB × 4**.
+During the three large-file cases, the sampled physical-disk queue was exactly
+4 for approximately 98%, 99% and 98% of the scored interval. Primo's queue was
+mostly 8–9, with mean backing writes about 1.9 MiB versus QueueCache's 1.0 MiB.
+These are total guest-disk counter observations, including metadata, not proof
+of Primo's internal thread count or a physical-media queue.
+
+| Existing QueueCache small-file case | RAM/application interval | Completed interval | Backing write operations | Mean backing write | Time sampled queue was 4 |
+|---|---:|---:|---:|---:|---:|
+| `drain-small-r2` | 1.542 s | 6.400 s | 889 | 341.9 KiB | 74.5% |
+| `drain-small-r3` | 1.111 s | 14.619 s | 918 | 331.2 KiB | 92.2% |
+
+The slow case admitted its writes faster, transferred essentially the same
+296.9 MiB including metadata, and performed only 3.3% more backing writes.
+Its busy queue shifts investigation toward lower-path latency/concurrency;
+it does not identify a Ceph cause or exclude driver effects. Queue percentages
+weight each observed depth until the next sample and clip to the scored UTC
+interval; the 100 ms sampling cannot resolve short gaps. Source runs are the
+same published Direct/QueueCache/Primo runs above; no incomplete samples were used.
+
+**Candidate order for #15:** compare 4 versus 8 outstanding drain writes and
+1 versus 2 MiB gathers as separate factors, retaining the present defaults until
+qualified. Both require a scoped driver/management/verification extension;
+they are not currently accepted CLI settings. Check lower-device transfer,
+scatter/gather and alignment limits before issuing larger requests
+([Microsoft adapter descriptor](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddstor/ns-ntddstor-_storage_adapter_descriptor)).
+If small writes remain fragmented, inspect which gaps, partial-sector versions,
+in-flight overlaps or oldest-block selection terminate batches; a bounded
+address-aware picker is a later candidate. Do not fill gaps by writing unknown
+sectors. Broad lock/copy rewrites are lower priority while the lower queue stays
+occupied; existing timing counters can distinguish selection/copy/retirement
+from lower waits in a separate diagnostic, with scored runs timing off.
+
+**Candidate direction for #13:** Fast's `IRP_MJ_FLUSH_BUFFERS` branch returns
+success without a durable barrier or an ordering marker, and `QC_SLOT` has no
+flush-group identity. Pending writes to an unpinned, non-in-flight block can be
+coalesced across those acknowledgments. A candidate is to retain flush and
+write-through boundaries as dependency groups, preserve required older block
+versions, and make a predecessor group durable before writing dependent blocks.
+This could preserve RAM-first acknowledgment while delaying destination writes;
+it is an unproven design direction, not a crash-safety guarantee. Merely sorting
+by address, retaining arrival order, or tagging the latest block version is not
+enough to establish the required journal dependencies. Persistent redo/recovery
+logging is a fallback with extra I/O and boot-recovery work, not the first small
+optimization. Passing every Fast flush through as Strict changes the volatile
+contract and is not an incidental fix.
+
+Keep the next step narrow: a short lower-I/O diagnostic, then a maintained,
+versioned 2 × 2 batch/concurrency experiment with three repetitions of both
+existing file shapes (24 cases), hashes and restoration. A fresh full competitor
+refresh is unnecessary for screening. For crash safety, first audit one
+journal/dependent-write ordering sequence and its overwritten versions; only
+then design a targeted partial-drain cut. These are proposals, not scheduled or
+completed runs; neither issue is resolved by this inspection.
+
 ## Competitor comparison: three cache weaknesses (plan 121, 2026-10-13)
 
 **Question.** How does QueueCache compare with other RAM disks and RAM caches on the
