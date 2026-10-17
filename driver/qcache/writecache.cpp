@@ -124,7 +124,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
-    c->Performance.Version = 4;
+    c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
     c->Performance.TimingEnabled = c->Timing != 0;
     c->PerformanceSnapshot = c->Performance;
@@ -1058,16 +1058,27 @@ static void Drainer(PVOID context)
                                ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
         const bool batchOverlapsFence = c->RangeDrain &&
             RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart);
+        const bool aligned = c->Performance.DrainGatherPolicy == 1;
+        const auto regionBytes = static_cast<LONGLONG>(batchBlocks) * Chunk;
+        const auto regionStart = c->Slots[index].Offset.QuadPart / regionBytes * regionBytes;
+        auto backReason = &c->Performance.DrainBackLimit;
+        if (c->Slots[index].ValidSectors != 255) backReason = &c->Performance.DrainBackPartial;
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
+            if (aligned && c->Slots[index].Offset.QuadPart == regionStart)
+            { backReason = &c->Performance.DrainBackAligned; break; }
             auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
-            if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling ||
-                c->Slots[previous].ValidSectors != 255)
-                break;
+            if (previous == NoSlot) { backReason = &c->Performance.DrainBackGap; break; }
+            if (c->Slots[previous].InFlight) { backReason = &c->Performance.DrainBackInFlight; break; }
+            if (c->Slots[previous].Filling) { backReason = &c->Performance.DrainBackFilling; break; }
+            if (c->Slots[previous].ValidSectors != 255) { backReason = &c->Performance.DrainBackPartial; break; }
             if (FenceSplitsBatch(c, c->Slots[previous].Offset.QuadPart, batchOverlapsFence))
-                break;
+            { backReason = &c->Performance.DrainBackFence; break; }
             index = previous;
         }
+        if (batchBlocks > 1 && c->Slots[index].Offset.QuadPart < Chunk)
+            backReason = &c->Performance.DrainBackBoundary;
+        ++*backReason;
         auto first = &c->Slots[index];
         QC_SLOT io = *first;
         ULONG selected[MaxBatchBytes / Chunk];
@@ -1079,6 +1090,7 @@ static void Drainer(PVOID context)
         while (index != NoSlot && merged < batchBlocks)
         {
             auto slot = &c->Slots[index];
+            if (aligned && slot->Offset.QuadPart - regionStart >= regionBytes) break;
             if (slot->InFlight) { endReason = &c->Performance.DrainEndInFlight; break; }
             if (slot->Filling) { endReason = &c->Performance.DrainEndFilling; break; }
             if (merged && slot->ValidSectors != 255)
@@ -1092,7 +1104,15 @@ static void Drainer(PVOID context)
             index = FindOldestSlot(c, io.Offset.QuadPart + io.Length);
         }
         if (io.ValidSectors != 255) endReason = &c->Performance.DrainPartialAnchor;
-        else if (merged < batchBlocks && index == NoSlot) endReason = &c->Performance.DrainEndGap;
+        else if (merged < batchBlocks && index == NoSlot)
+        {
+            endReason = &c->Performance.DrainEndGap;
+            const auto neighbor = FindSlot(c, io.Offset.QuadPart + io.Length);
+            if (neighbor == NoSlot) ++c->Performance.DrainGapAbsent;
+            else if (c->Slots[neighbor].Filling) ++c->Performance.DrainGapFilling;
+            else if (c->Slots[neighbor].ValidSectors == 255) ++c->Performance.DrainGapCleanFull;
+            else ++c->Performance.DrainGapCleanPartial;
+        }
         ++*endReason;
         const auto transferBytes = io.ValidSectors == 255 ? io.Length : QcValidBytes(io.ValidSectors);
         if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
@@ -1739,6 +1759,16 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CallerBackoff, static_cast<LONG>(command.Value));
+        break;
+    case QcLabDrainGather:
+        if (command.Value > 1 || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else if (QcCachePagingPathCount(c) > 0)
+            status = STATUS_NOT_SUPPORTED;
+        else if (c->State.DirtyBytes || c->State.InFlightBytes)
+            status = STATUS_DEVICE_BUSY;
+        else
+            c->Performance.DrainGatherPolicy = command.Value;
         break;
     case QcLabDelay:
         if (command.Value > 2000)

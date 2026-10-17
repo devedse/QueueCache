@@ -20,7 +20,8 @@ public static class ComparisonReport
     {
         var shapes = Shapes(directory, plan);
         var steps = Steps(directory, plan);
-        var drains = suite == "compare-drain" ? Drains(directory, plan, provider ?? throw new InvalidDataException("Missing comparison provider.")) : [];
+        var drains = ComparisonDrain.IsSuite(suite) ? Drains(directory, plan,
+            provider ?? throw new InvalidDataException("Missing comparison provider."), suite == DrainBatching.Suite) : [];
         var memory = plan.Where(c => c.Kind == "memory")
             .Select(c => (c.Id, Snapshot: Read<MemorySnapshot>(directory, c.Id, "memory"))).ToArray();
         // A verify run writes result.json for the generations test and churn.json for the churn test.
@@ -81,9 +82,10 @@ public static class ComparisonReport
     private static string Share(SectorCounts c) => string.Create(CultureInfo.InvariantCulture,
         $"{c.New * 100.0 / c.Expected:F1}% new, {c.Old * 100.0 / c.Expected:F1}% old, {(c.Other + c.Missing) * 100.0 / c.Expected:F1}% other or missing");
 
-    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider)
+    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider, bool batching = false)
     {
-        if (!plan.SequenceEqual(ComparisonDrain.Cases(3))) throw new InvalidDataException("Cannot publish an incomplete compare-drain plan.");
+        if (!plan.SequenceEqual(batching ? DrainBatching.Cases(3) : ComparisonDrain.Cases(3)) || batching && provider != ComparisonProvider.QueueCache)
+            throw new InvalidDataException("Cannot publish an incomplete or mixed compare-drain plan.");
         using var oracle = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "compare-drain-oracle.json")));
         var root = oracle.RootElement;
         if (root.GetProperty("PayloadBytes").GetInt64() != ComparisonDrain.PayloadBytes ||
@@ -98,6 +100,20 @@ public static class ComparisonReport
         {
             var score = Read<ComparisonDrainScore>(directory, test.Id, "score");
             ComparisonDrain.ValidateScore(test, score, provider);
+            if (batching)
+            {
+                var before = Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "before.cache");
+                var after = Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "after.cache");
+                DrainBatching.ValidateProfile(before, test.GatherPolicy!.Value);
+                DrainBatching.ValidateProfile(after, test.GatherPolicy.Value);
+                if (before.Instance != after.Instance || before.Generation != after.Generation || before.Errors != after.Errors || before.Options != after.Options ||
+                    before.DirtyBytes != score.Before.DirtyBytes || before.InFlightBytes != score.Before.InFlightBytes ||
+                    after.DirtyBytes != score.After.DirtyBytes || after.InFlightBytes != score.After.InFlightBytes)
+                    throw new InvalidDataException("Batching cache identity/profile changed.");
+                var evidence = DrainBatching.Measure(test, before.Performance!, after.Performance!);
+                if (JsonSerializer.Serialize(evidence) != JsonSerializer.Serialize(Read<DrainBatching.Evidence>(directory, test.Id, "batching")))
+                    throw new InvalidDataException("Batching summary contradicts raw counters.");
+            }
             var verify = Read<ComparisonDrainVerification>(directory, test.Id, "verify");
             ComparisonFileHash[] expected = test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)];
             if (verify.Id != test.Id || !verify.Bypassed || !verify.Restored || !verify.Verified || !verify.Files.SequenceEqual(expected) ||

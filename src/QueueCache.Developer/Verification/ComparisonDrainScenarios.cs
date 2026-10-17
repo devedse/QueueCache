@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
@@ -10,7 +11,8 @@ namespace QueueCache.Developer.Verification;
 public sealed record ComparisonDrainRecovery([property: JsonRequired] string Volume,
     [property: JsonRequired] ComparisonProvider Provider, [property: JsonRequired] string? PrimoCli,
     [property: JsonRequired] ComparisonTarget Target, [property: JsonRequired] bool ResumeRequired,
-    [property: JsonRequired] WriteCacheState? OriginalState, Guid? OriginalPrimoTaskId = null);
+    [property: JsonRequired] WriteCacheState? OriginalState, Guid? OriginalPrimoTaskId = null,
+    ulong? OriginalGatherPolicy = null, bool GatherRestoreRequired = false);
 
 [SupportedOSPlatform("windows")]
 internal static class ComparisonDrainScenarios
@@ -45,6 +47,8 @@ internal static class ComparisonDrainScenarios
             Progress($"{test.Id}: preparation ({checks.Count + 1}/{plan.Count}).");
             try
             {
+                if (test.GatherPolicy is { } policy)
+                    await provider.SelectGatherAsync(policy, prefix + ".policy");
                 // Explicit preparation is not part of the score. Every scored file is CreateNew.
                 var prepared = await ComparisonDrain.PrepareCleanAsync(provider.Kind, async attempt =>
                 {
@@ -110,6 +114,17 @@ internal static class ComparisonDrainScenarios
                     // Preserve the completed measurement even when coverage, bypass, a hash or restoration fails.
                     RunStorage.AtomicJson(prefix + ".score.json", score);
                     ComparisonDrain.ValidateScore(test, score, provider.Kind);
+                    if (provider.Kind == ComparisonProvider.QueueCache)
+                        File.Copy(prefix + $".after-{poll:D4}.cache.json", prefix + ".after.cache.json");
+                    if (test.GatherPolicy is { } measuredPolicy)
+                    {
+                        var initialState = JsonSerializer.Deserialize<WriteCacheState>(File.ReadAllText(prefix + ".before.cache.json"))!;
+                        var finalState = JsonSerializer.Deserialize<WriteCacheState>(File.ReadAllText(prefix + ".after.cache.json"))!;
+                        DrainBatching.ValidateProfile(initialState, measuredPolicy);
+                        DrainBatching.ValidateProfile(finalState, measuredPolicy);
+                        RunStorage.AtomicJson(prefix + ".batching.json", DrainBatching.Measure(test,
+                            initialState.Performance!, finalState.Performance!));
+                    }
                 }
                 finally { stop.Cancel(); await observer; }
 
@@ -182,6 +197,7 @@ internal static class ComparisonDrainScenarios
                 throw new IOException("A PrimoCache driver is loaded; Direct and QueueCache require a VM state without PrimoCache.");
             WriteCacheState? original = null;
             Guid? originalPrimoTaskId = null;
+            ulong? originalGatherPolicy = null;
             if (Kind == ComparisonProvider.QueueCache)
             {
                 var problems = DriverRegistration.Inspect().Problems();
@@ -189,6 +205,14 @@ internal static class ComparisonDrainScenarios
                 using var cache = new CacheDevice(job.Volume);
                 original = cache.GetWriteCacheState();
                 ValidateQueueCache(cache, original, active: true);
+                var performance = cache.GetPerformance();
+                if (performance.DrainGatherPolicy is > 0)
+                    throw new IOException("Comparison must start with the current default-off gather policy.");
+                if (job.Operation == DrainBatching.Suite)
+                {
+                    originalGatherPolicy = performance.DrainGatherPolicy ?? throw new IOException("Batching requires native V5 evidence.");
+                    DrainBatching.ValidateProfile(original with { Performance = performance }, DrainGatherPolicy.Current);
+                }
             }
             else if (Kind == ComparisonProvider.PrimoCache)
             {
@@ -196,7 +220,8 @@ internal static class ComparisonDrainScenarios
                 await Primo(Path.Combine(directory, "primo-pause-help"), "?", "pause");
                 originalPrimoTaskId = await ValidatePrimoAsync(Path.Combine(directory, "primo-original"));
             }
-            recovery = new(job.Volume, Kind, Kind == ComparisonProvider.PrimoCache ? Cli : null, target, false, original, originalPrimoTaskId);
+            recovery = new(job.Volume, Kind, Kind == ComparisonProvider.PrimoCache ? Cli : null, target, false, original, originalPrimoTaskId,
+                originalGatherPolicy);
             RunStorage.AtomicJson(Journal, recovery);
             ComparisonScenarios.FlushVolume(target.Letter);
             await DrainAsync(Path.Combine(directory, "compare-drain-initial-drain"));
@@ -205,6 +230,40 @@ internal static class ComparisonDrainScenarios
 
         private static void ValidateQueueCache(CacheDevice cache, WriteCacheState state, bool active)
             => ComparisonDrain.ValidateQueueCache(state with { Performance = cache.GetPerformance() }, active);
+
+        public async Task SelectGatherAsync(DrainGatherPolicy policy, string prefix)
+        {
+            if (Kind != ComparisonProvider.QueueCache || recovery?.OriginalGatherPolicy is not (0 or 1) || !Enum.IsDefined(policy))
+                throw new InvalidDataException("Gather mutation requires an observed original policy and QueueCache provider.");
+            using var cache = new CacheDevice(job.Volume, writable: true);
+            var timer = Stopwatch.StartNew();
+            for (var attempt = 1; ; ++attempt)
+            {
+                var state = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
+                ValidateQueueCache(cache, state, active: true);
+                RunStorage.AtomicJson(prefix + $".state-{attempt:D4}.json", state);
+                if (state.Performance?.DrainGatherPolicy == (ulong)policy) return;
+                if (timer.Elapsed > TimeSpan.FromSeconds(30)) throw new TimeoutException("Gather switch did not reach a clean boundary.");
+                if (state.DirtyBytes != 0 || state.InFlightBytes != 0)
+                {
+                    cache.Control(WriteCacheAction.Flush);
+                    continue;
+                }
+                recovery = recovery with { GatherRestoreRequired = true };
+                RunStorage.AtomicJson(Journal, recovery); // durable before the first policy mutation
+                try { cache.Control(WriteCacheAction.LabDrainGather, value: (ulong)policy); }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 170)
+                {
+                    // A newly dirty block raced the clean observation. Never retry faults or invalid evidence.
+                    await Task.Delay(25);
+                    continue;
+                }
+                var applied = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
+                DrainBatching.ValidateProfile(applied, policy);
+                RunStorage.AtomicJson(prefix + ".applied.json", applied);
+                return;
+            }
+        }
 
         private async Task<ComparisonPrimoObservation> CapturePrimoAsync(string prefix)
         {
@@ -295,15 +354,15 @@ internal static class ComparisonDrainScenarios
 
         public async Task RestoreAsync(string prefix)
         {
-            if (recovery?.ResumeRequired != true) return;
-            if (Kind == ComparisonProvider.QueueCache)
+            if (recovery is null) return;
+            if (recovery.ResumeRequired && Kind == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume, writable: true);
                 var state = ComparisonDrain.RestoreQueueCache(recovery.OriginalState ?? throw new InvalidDataException("Missing original QueueCache state."),
                     cache.GetWriteCacheState, () => cache.Control(WriteCacheAction.Enable));
                 ValidateQueueCache(cache, state, active: true);
             }
-            else if (Kind == ComparisonProvider.PrimoCache)
+            else if (recovery.ResumeRequired && Kind == ComparisonProvider.PrimoCache)
             {
                 var captures = 0;
                 await ComparisonDrain.RestorePrimoAsync(recovery.OriginalPrimoTaskId, job.Volume,
@@ -311,6 +370,12 @@ internal static class ComparisonDrainScenarios
                     () => Primo(prefix, "resume", "-v", job.Volume[..1], "-s"));
             }
             recovery = recovery with { ResumeRequired = false }; RunStorage.AtomicJson(Journal, recovery);
+            if (recovery.GatherRestoreRequired)
+            {
+                await SelectGatherAsync((DrainGatherPolicy)(recovery.OriginalGatherPolicy ??
+                    throw new InvalidDataException("Missing original gather policy during restoration.")), prefix + ".gather");
+                recovery = recovery with { GatherRestoreRequired = false }; RunStorage.AtomicJson(Journal, recovery);
+            }
         }
     }
 }

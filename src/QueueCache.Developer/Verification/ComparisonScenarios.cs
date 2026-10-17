@@ -100,7 +100,7 @@ internal static class ComparisonScenarios
         RunStorage.AtomicJson(evidence + ".environment.json", CaptureEnvironment(target, product, queueCache));
         var plan = ComparisonPlan.CasesFor(job.Operation, job.ReferenceRepeats);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);
-        if (job.Operation == "compare-drain")
+        if (ComparisonDrain.IsSuite(job.Operation))
             return await ComparisonDrainScenarios.RunAsync(job, target, plan);
         var work = job.WorkDirectory;
         if (work is not null) Directory.CreateDirectory(work);

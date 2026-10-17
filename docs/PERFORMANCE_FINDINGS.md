@@ -262,6 +262,22 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 
 <a id="drain-decision-153"></a>
 
+**Plan to match or exceed Primo (owner requested, October 17).** The immediate
+experiment below addresses batch formation; parity is a measured acceptance
+condition, not a promised consequence of raising settings. Current orientation
+is 84.24 / 36.14 MB/s for QueueCache 2 MiB × 8 versus 109.68 / 54.47 for Primo,
+large / small, with material control drift. Those historical values are not a
+replacement for a final contemporaneous provider comparison.
+
+| Step | Work and reason | Completion criterion | Expected test time, excluding builds / installation / boot settling |
+|---|---|---|---|
+| 1. Test small-file batch formation now | Same native build, current gather versus an aligned 2 MiB gather, runtime default off; fixed Fast 2 GiB Idle, 2 MiB × 4, flags 15. Three alternating pairs of each existing new-file shape, 12 immutable cases. Add clean/absent gap and backward-stop attribution. No gap filling or new lower reads. | All hashes, ready/telemetry evidence and restoration pass. A candidate gain needs at least 5%, every small-file pair faster and separated aggregate ranges; investigate any repeatable 3% control loss. Otherwise reject or record inconclusive, retaining the diagnosis. | About 5–15 min performance, plus targeted Verifier checks |
+| 2. Choose one further batching change only from the observed gaps | If alignment helps, retain it for qualification. If clean cached gaps dominate, assess a bounded gather of known pinned sectors with version/fence protection. If gaps are uncached, quantify contiguous dirty-run availability before considering reordering or bounded background read/modify/write; never introduce lower-I/O dependence for fitting Fast-mode admission. | One stated hypothesis and default-off candidate per cycle; same-build alternating control and the same byte/latency gates. Do not keep an unhelpful change or repeatedly rerun the same failed idea. | 10–30 min per justified candidate, not a broad matrix |
+| 3. Protect foreground reads | Test a bounded outstanding-write limit while disk reads wait; preserve high concurrency without readers. Use the short mixed-read suite and large/small controls. A lock rewrite or 12/16 drainers is conditional on new evidence, not the starting approach. | Improve loaded-reader latency without a repeatable 3% loss in the declared throughput controls; preserve fairness and error/lifecycle behavior. | About 20–30 min |
+| 4. Prove parity against a fresh provider control | Once a repeatable candidate survives, run the existing two workloads on Direct, QueueCache and Primo alone, same VM/snapshot, shared 2 GiB, services disabled and three complete repetitions. Current backend warnings and control drift must be reported; an unstable screen cannot establish a stable win. | QueueCache median at least Primo on **both** shapes, with all repetitions/ranges, completed-drain endpoint and all bypassed hashes. Use the same-build comparison to attribute a code gain. | About 20–30 min of runner work; provider swaps add setup time |
+| 5. Qualify the final candidate | Targeted Verifier/fault/partial-sector/ordering/lifecycle checks, RAM-first lower-attempt counters, foreground regression, sustained larger-than-cache and Strict boundaries; run the maintained focused checks and `release-performance` once on the final build. Small-budget allocation checks stay covered. | No correctness regression, no hidden control loss, successful restoration and complete final campaign. An unexercised Strict or fault path remains an explicit promotion gap. | Focused 10–30 min; final release campaign about 2 h |
+| 6. Publish and promote | Update existing comparison columns, methods, findings and issue #15 with final build identities; preserve old sessions. Restore VM/apps, remove owned data and temporary snapshot after verified evidence export. | Change defaults only after the above gates; close #15 only for demonstrated two-shape parity. Keep filesystem power-loss safety (#13) separate. If parity is not achieved, report the measured remaining gap and next evidence-based option. | Documentation / cleanup; no full competitor refresh |
+
 **Completed drain decision screen (plans 152–154, October 16/17).** Native
 0.4.756.1 (`d7895b5`), QueueCache runner `d58b2e1` / plan 153, Direct and Primo
 runner `48f8966` / plan 154. Fast 2 GiB Idle, flags 15, timing/Verifier off,

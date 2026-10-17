@@ -193,5 +193,8 @@ public enum WriteCacheAction : uint
     LabRamReadQueue,
     /// <summary>Lab post-overlap caller backoff, 0..256 (default 256). Exclusive
     /// foreground ownership and every busy/queued/control check remain mandatory.</summary>
-    LabCallerBackoff
+    LabCallerBackoff,
+    /// <summary>Runtime-only experiment: 0 current gather, 1 aligned batch regions.
+    /// Refused with pending data or paging/hibernation/dump usage paths.</summary>
+    LabDrainGather
 }

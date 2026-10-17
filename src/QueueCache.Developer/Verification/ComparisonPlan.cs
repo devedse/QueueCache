@@ -9,7 +9,8 @@ namespace QueueCache.Developer.Verification;
 /// File names are relative to the run's comparison folder on the target. Ids are unique per repetition.</summary>
 public sealed record ComparisonCase(string Id, string Kind, int Repeat, string File = "", char Access = 'R',
     int BlockKiB = 0, int Queue = 0, int Threads = 0, bool Random = false, int Seconds = 0,
-    string Buffering = ComparisonPlan.Unbuffered, int WritePercent = 0, long Bytes = 0, int SettleSeconds = 0);
+    string Buffering = ComparisonPlan.Unbuffered, int WritePercent = 0, long Bytes = 0, int SettleSeconds = 0,
+    DrainGatherPolicy? GatherPolicy = null);
 
 /// <summary>Driver-independent comparisons of QueueCache with other RAM disks and RAM caches
 /// (docs/TESTING.md). Generic suites use no QueueCache controls; compare-drain explicitly selects a
@@ -28,7 +29,7 @@ public static class ComparisonPlan
         ("mixed-4g.dat", 4L << 30), ("big-8g.dat", 8L << 30)
     ];
     public static readonly string[] Suites =
-        ["compare-drain", "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
+        ["compare-drain", DrainBatching.Suite, "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
          "compare-durability-verify"];
     public static bool IsComparison(string suite) => Suites.Contains(suite);
     public static bool UsesDiskSpd(string suite) => suite is "compare-ram" or "compare-cache" or "compare-cache-cold";
@@ -39,7 +40,7 @@ public static class ComparisonPlan
     /// completed run); cache and durability runs reuse fixed folders.</summary>
     public static string? WorkDirectory(string suite, string root, string runName) => suite switch
     {
-        "compare-ram" or "compare-drain" => Path.Combine(root, runName),
+        "compare-ram" or "compare-drain" or DrainBatching.Suite => Path.Combine(root, runName),
         "compare-cache" or "compare-cache-cold" => Path.Combine(root, "QCBench"),
         "compare-durability-write" or "compare-durability-verify" => Path.Combine(root, "QCBench-durability"),
         "compare-durability-churn" => Path.Combine(root, "QCBench-churn"),
@@ -48,7 +49,7 @@ public static class ComparisonPlan
 
     public static int TimeoutSeconds(string suite, int repeats) => suite switch
     {
-        "compare-drain" => 600 + repeats * 2400,
+        "compare-drain" or DrainBatching.Suite => 600 + repeats * 2400,
         "compare-ram" => 600 + repeats * 900,
         "compare-cache" => 2400 + repeats * 2400,
         "compare-cache-cold" => 1200,
@@ -63,6 +64,7 @@ public static class ComparisonPlan
         var cases = suite switch
         {
             "compare-drain" => ComparisonDrain.Cases(repeats),
+            DrainBatching.Suite => DrainBatching.Cases(repeats),
             "compare-snapshot" => [new("snapshot-memory", "memory", 1)],
             "compare-ram" => Ram(repeats),
             "compare-cache" => Cache(repeats),

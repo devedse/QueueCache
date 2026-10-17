@@ -71,9 +71,11 @@ public static class ComparisonDrain
         return result;
     }
 
+    public static bool IsSuite(string suite) => suite is "compare-drain" or DrainBatching.Suite;
+
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite != "compare-drain")
+        if (!IsSuite(options.Suite))
         {
             if (options.Provider is not null || options.PrimoCli is not null)
                 throw new ArgumentException("--provider and --primo-cli apply only to compare-drain.");
@@ -81,6 +83,8 @@ public static class ComparisonDrain
         }
         if (options.Provider is not { } provider || !Enum.IsDefined(provider) || options.Repeats != 3 || options.BudgetMiB != 2048)
             throw new ArgumentException("compare-drain requires --provider Direct|QueueCache|PrimoCache, --budget-mib 2048 and --repeats 3.");
+        if (options.Suite == DrainBatching.Suite && provider != ComparisonProvider.QueueCache)
+            throw new ArgumentException("compare-drain-batching requires --provider QueueCache.");
         if (provider != ComparisonProvider.PrimoCache && options.PrimoCli is not null)
             throw new ArgumentException("--primo-cli requires --provider PrimoCache.");
         if (provider == ComparisonProvider.PrimoCache && !File.Exists(options.PrimoCli ?? DefaultPrimoCli))

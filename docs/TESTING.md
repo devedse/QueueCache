@@ -147,6 +147,7 @@ ones in use:
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 | `compare-drain` | Two fixed new-file workloads through explicit product drain; three repeats, two median/range rows per provider | Explicit `--provider`, `--product`, `--budget-mib 2048 --repeats 3`; no DiskSpd |
+| `compare-drain-batching` | Plan 155: current versus aligned gather on the same build, three alternating pairs for each existing new-file shape (12 cases) | QueueCache only, fixed Fast 2 GiB Idle, 2048 KiB × 4, flags 15, timing off; V5 gap/backward attribution, full hashes and independent policy restoration; no DiskSpd |
 
 **Comparisons with other products** (plan 121). These suites measure any RAM
 disk or cached volume the same way, without QueueCache's controls, hooks or
@@ -209,7 +210,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 154; workload unchanged from 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 155; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -245,7 +246,7 @@ Invalid/missing counters and driver faults fail immediately. Scored workloads an
 endpoints are unchanged.
 Plan 152 records V4 batch termination and size counters in QueueCache pending snapshots.
 One terminal reason and one size bucket account for each batch; older drivers report these fields as unavailable.
-The new counters observe selection without changing it. Small-cache staging is bounded by the budget,
+The plan-152 counters observe selection without changing it. Small-cache staging is bounded by the budget,
 with subtraction checked before sizing payload allocations.
 PrimoCache requires shared 2 GiB L1, no L2, 4 KiB blocks, Native Defer-Write 10 s,
 prefetch off and its GUI closed. The runner checks these settings.
@@ -254,7 +255,25 @@ prefetch off and its GUI closed. The runner checks these settings.
 qcache developer verify Q: --suite compare-drain --provider Direct --product "Direct disk" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
 qcache developer verify Q: --suite compare-drain --provider QueueCache --product "QueueCache Fast 2 GiB" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
 qcache developer verify Q: --suite compare-drain --provider PrimoCache --product "PrimoCache 2 GiB defer-write" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
+qcache developer verify Q: --suite compare-drain-batching --provider QueueCache --product "QueueCache current vs aligned gather" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
 ```
+
+Plan 155's `compare-drain-batching` keeps the same payload and scored endpoint.
+It fixes the runtime profile to 2048 KiB × 4 and alternates current/aligned order
+in each shape's three pairs; each case has a distinct path and immutable ID.
+The aligned policy stops backward/forward gathering at the anchor's aligned
+batch region. It never bridges gaps, reads lower data, changes version ownership,
+or scans the whole cache. Runtime control is default off, requires a clean cache
+and is refused on paging/hibernation/dump paths. The provider journals the original
+policy before mutation and restores it after each bypassed hash oracle and on
+worker failure, independently of pause/resume. V5 (616 bytes) appends policy,
+clean/full/partial/absent/filling gap classification and one backward stop per batch;
+V1–V4 sizes/versions remain available, with absent V5 fields null on older drivers.
+The complete 12-case report requires matching raw policy, gap, stop and size
+counters, all hashes and restoration; four rows report shape × policy medians/ranges.
+Treat the run as collection, then apply section 6's gain/control gates. A failure
+under Driver Verifier is not a performance score. See the full parity plan in
+[performance findings](PERFORMANCE_FINDINGS.md#drain-decision-153).
 
 `--provider` selects explicit drain and verification controls independently of
 `--product`; `--primo-cli` overrides the default `%ProgramFiles%\PrimoCache\rxpcc.exe`.

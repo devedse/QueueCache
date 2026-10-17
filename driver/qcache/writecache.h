@@ -40,7 +40,8 @@ static constexpr ULONG QcSpecialRangeMax = 256;
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
 // V4 appends batch termination reasons and size buckets (one reason/bucket per batch).
-// The first 192/408/432 bytes remain V1/V2/V3.
+// V5 appends runtime gather policy, gap contents and backward-stop attribution.
+// The first 192/408/432/512 bytes remain V1/V2/V3/V4.
 struct QC_PERFORMANCE
 {
     ULONG Version, Size;
@@ -60,11 +61,18 @@ struct QC_PERFORMANCE
     ULONGLONG DrainSelectionTicks, DrainCopyTicks, DrainRetirementTicks;
     ULONGLONG DrainEndLimit, DrainEndGap, DrainEndInFlight, DrainEndFilling, DrainEndPartial, DrainEndFence;
     ULONGLONG DrainPartialAnchor, DrainSizeSmall, DrainSizeMedium, DrainSizeLarge;
+    // V5: runtime-only lab policy, gap contents and one backward stop per batch.
+    ULONGLONG DrainGatherPolicy, DrainGapCleanFull, DrainGapCleanPartial, DrainGapAbsent;
+    ULONGLONG DrainBackLimit, DrainBackGap, DrainBackInFlight, DrainBackFilling;
+    ULONGLONG DrainBackPartial, DrainBackFence, DrainBackBoundary, DrainBackAligned;
+    ULONGLONG DrainGapFilling;
 };
 static constexpr ULONG QcPerformanceV1Size = 192;
 static constexpr ULONG QcPerformanceV2Size = 408;
 static constexpr ULONG QcPerformanceV3Size = 432;
-static_assert(sizeof(QC_PERFORMANCE) == 512);
+static constexpr ULONG QcPerformanceV4Size = 512;
+static_assert(sizeof(QC_PERFORMANCE) == 616);
+static_assert(FIELD_OFFSET(QC_PERFORMANCE, DrainGatherPolicy) == QcPerformanceV4Size);
 enum : ULONGLONG
 {
     QcIdlePhase,
@@ -289,7 +297,10 @@ enum : ULONG
     QcLabRamReadQueue,
     // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
     // ownership checks still apply to every request. Runtime only.
-    QcLabCallerBackoff
+    QcLabCallerBackoff,
+    // Runtime experiment: 0 current gather, 1 aligned batch regions. No usage paths;
+    // a policy switch requires a clean cache. No admission or durability change.
+    QcLabDrainGather
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {

@@ -306,7 +306,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
                 comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
                     ?? throw new InvalidDataException("Missing comparison target.");
-                storage.Write("restoration.json", new { Required = options.Suite == "compare-drain", Reason = options.Suite == "compare-drain"
+                storage.Write("restoration.json", new { Required = ComparisonDrain.IsSuite(options.Suite), Reason = ComparisonDrain.IsSuite(options.Suite)
                     ? "Provider pause/resume journal; independent restoration after an owned worker failure."
                     : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
@@ -646,7 +646,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         {
             if (preflightSeconds == 0) preflightSeconds = elapsed.Elapsed.TotalSeconds;
             var restoring = Stopwatch.StartNew();
-            if (options.Suite == "compare-drain" && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
+            if (ComparisonDrain.IsSuite(options.Suite) && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
             {
                 try
                 {

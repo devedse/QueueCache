@@ -26,10 +26,24 @@ public sealed record CachePerformance(ulong Frequency, ulong TimingEnabled, ulon
     public ulong? DrainSizeSmall { get; init; }
     public ulong? DrainSizeMedium { get; init; }
     public ulong? DrainSizeLarge { get; init; }
+    public ulong? DrainGatherPolicy { get; init; }
+    public ulong? DrainGapCleanFull { get; init; }
+    public ulong? DrainGapCleanPartial { get; init; }
+    public ulong? DrainGapAbsent { get; init; }
+    public ulong? DrainBackLimit { get; init; }
+    public ulong? DrainBackGap { get; init; }
+    public ulong? DrainBackInFlight { get; init; }
+    public ulong? DrainBackFilling { get; init; }
+    public ulong? DrainBackPartial { get; init; }
+    public ulong? DrainBackFence { get; init; }
+    public ulong? DrainBackBoundary { get; init; }
+    public ulong? DrainBackAligned { get; init; }
+    public ulong? DrainGapFilling { get; init; }
     public const int LegacyWireSize = 192;
     public const int V2WireSize = 408;
     public const int V3WireSize = 432;
-    public const int WireSize = 512;
+    public const int V4WireSize = 512;
+    public const int WireSize = 616;
     public double Milliseconds(ulong ticks) => 1000.0 * ticks / Frequency;
     public string PhaseName => Phase switch
     {
@@ -48,14 +62,16 @@ public sealed record CachePerformance(ulong Frequency, ulong TimingEnabled, ulon
         if ((version != 1 || data.Length != LegacyWireSize || size != LegacyWireSize) &&
             (version != 2 || data.Length != V2WireSize || size != V2WireSize) &&
             (version != 3 || data.Length != V3WireSize || size != V3WireSize) &&
-            (version != 4 || data.Length != WireSize || size != WireSize))
+            (version != 4 || data.Length != V4WireSize || size != V4WireSize) &&
+            (version != 5 || data.Length != WireSize || size != WireSize))
             throw new InvalidDataException("Unsupported performance snapshot.");
         var v = new ulong[(data.Length - 8) / 8];
         for (int i = 0; i < v.Length; ++i)
             v[i] = BinaryPrimitives.ReadUInt64LittleEndian(data[(8 + i * 8)..]);
         if (v[0] == 0 || v[1] > 1 || v[8] > 5)
             throw new InvalidDataException("Invalid performance snapshot.");
-        Array.Resize(ref v, 63);
+        Array.Resize(ref v, 76);
+        if (version >= 5 && v[63] > 1) throw new InvalidDataException("Invalid drain gather policy.");
         return new(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10], v[11], v[12], v[13], v[14], v[15], v[16], v[17], v[18], v[19], v[20], v[21], v[22],
             v[23], v[24], v[25], v[26], v[27], v[28], v[29], v[30], v[31], v[32], v[33], v[34], v[35], v[36], v[37], v[38], v[39], v[40], v[41], v[42], v[43], v[44], v[45], v[46], v[47], v[48], v[49], v[50], v[51], v[52])
         {
@@ -68,7 +84,20 @@ public sealed record CachePerformance(ulong Frequency, ulong TimingEnabled, ulon
             DrainPartialAnchor = version >= 4 ? v[59] : null,
             DrainSizeSmall = version >= 4 ? v[60] : null,
             DrainSizeMedium = version >= 4 ? v[61] : null,
-            DrainSizeLarge = version >= 4 ? v[62] : null
+            DrainSizeLarge = version >= 4 ? v[62] : null,
+            DrainGatherPolicy = version >= 5 ? v[63] : null,
+            DrainGapCleanFull = version >= 5 ? v[64] : null,
+            DrainGapCleanPartial = version >= 5 ? v[65] : null,
+            DrainGapAbsent = version >= 5 ? v[66] : null,
+            DrainBackLimit = version >= 5 ? v[67] : null,
+            DrainBackGap = version >= 5 ? v[68] : null,
+            DrainBackInFlight = version >= 5 ? v[69] : null,
+            DrainBackFilling = version >= 5 ? v[70] : null,
+            DrainBackPartial = version >= 5 ? v[71] : null,
+            DrainBackFence = version >= 5 ? v[72] : null,
+            DrainBackBoundary = version >= 5 ? v[73] : null,
+            DrainBackAligned = version >= 5 ? v[74] : null,
+            DrainGapFilling = version >= 5 ? v[75] : null
         };
     }
 }

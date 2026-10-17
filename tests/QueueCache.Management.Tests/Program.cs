@@ -26,7 +26,7 @@ ManagedLifecycleTests.Run();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 4);
+BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 5);
 BinaryPrimitives.WriteUInt32LittleEndian(perfWire.AsSpan(4), CachePerformance.WireSize);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 10_000_000);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 8), 2);
@@ -42,6 +42,19 @@ Check(batchPerf.DrainEndLimit == 201 && batchPerf.DrainEndGap == 202 && batchPer
     batchPerf.DrainEndFilling == 204 && batchPerf.DrainEndPartial == 205 && batchPerf.DrainEndFence == 206 &&
     batchPerf.DrainPartialAnchor == 207 && batchPerf.DrainSizeSmall == 208 && batchPerf.DrainSizeMedium == 209 &&
     batchPerf.DrainSizeLarge == 210, "performance v4 batch reasons and size buckets retain their wire offsets");
+var v4PerfWire = perfWire[..CachePerformance.V4WireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(v4PerfWire, 4);
+BinaryPrimitives.WriteUInt32LittleEndian(v4PerfWire.AsSpan(4), CachePerformance.V4WireSize);
+Check(CachePerformance.Decode(v4PerfWire).DrainGatherPolicy is null && CachePerformance.Decode(v4PerfWire).DrainEndGap == 202,
+    "V4 callers retain batch counters and distinguish unavailable gather diagnostics");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 1);
+for (var i = 1; i < 13; i++) BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512 + i * 8), (ulong)(300 + i));
+var gatherPerf = CachePerformance.Decode(perfWire);
+Check(gatherPerf.DrainGatherPolicy == 1 && gatherPerf.DrainGapCleanFull == 301 && gatherPerf.DrainGapAbsent == 303 &&
+    gatherPerf.DrainBackLimit == 304 && gatherPerf.DrainBackAligned == 311 && gatherPerf.DrainGapFilling == 312, "V5 gather/gap/backward counters preserve offsets");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 2);
+Reject(() => CachePerformance.Decode(perfWire), "reject unsupported gather policy");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 0);
 var v3PerfWire = perfWire[..CachePerformance.V3WireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire, 3);
 BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire.AsSpan(4), CachePerformance.V3WireSize);
