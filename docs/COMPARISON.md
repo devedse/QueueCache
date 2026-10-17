@@ -90,15 +90,10 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 
 ## RAM caches: complete comparison
 
-The first table retains the October 12–14 results and adds the October 16 drain
-columns. The second retains the October 15/16 refresh with the same new columns.
-The new columns include creation, unbuffered writes, filesystem flush, explicit
-drain and zero pending/disk queue. Three repetitions per workload and provider;
-all 36,873 untimed file hashes passed after pause confirmation. A post-score
-56 KiB write in one QueueCache case limits what the oracle proves about the
-exact scored endpoint. [Method, backing-write sizes and caveats](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16).
-These are virtual-disk observations; new-file, historical burst and 8 GiB
-sustained scores use different workloads and timing. N/A means not measured.
+The first table retains October 12–14 results with the October 16 plan-148 drain
+columns. The second keeps the October 15/16 generic refresh and adds the latest
+October 16/17 decision screen in its drain columns. N/A means not measured for
+that build/session. [Methods, backing-write sizes and limits](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
 [Other column definitions](COMPARISON_DETAILS.md#cache-column-definitions).
 
 <a id="short-write-plus-drain-comparison-2026-10-16"></a>
@@ -114,19 +109,22 @@ sustained scores use different workloads and timing. N/A means not measured.
 
 <a id="current-cache-refresh-2026-10-1516"></a>
 
-October 15/16 refresh, Defender/Search disabled: one complete repetition per
-generic suite. The paused control keeps QueueCache loaded; the new Direct control
-has it absent. Primo's older refresh had a post-run near-full warning; none was
-present at the new drain runs' pre/post checks. Existing backend warnings and
-one-second timing limits qualify the older scores.
-[Refresh setup and limits](COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516).
+Generic columns: October 15/16, one repetition; drain columns: October 16/17,
+three repetitions per shape, 36 complete cases and 73,746 verified file hashes.
+Defender/Search disabled. Experimental QueueCache rows do not qualify new defaults.
+[Generic refresh](COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516) ·
+[Latest drain decision and endpoint caveat](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
 
-| Mode | Hot sequential read / write MB/s | 8 GiB write app / through last disk activity MB/s | Burst tail seconds | Tree read/hash seconds | Oct 16: new 1 GiB + drain MB/s (range) | Oct 16: new 4,096 × 64 KiB + drain MB/s (range) | Oct 16: mean backing write KiB, large / small |
+| Mode | Hot sequential read / write MB/s | 8 GiB write app / through last disk activity MB/s | Burst tail seconds | Tree read/hash seconds | Oct 16/17 decision: new 1 GiB + drain MB/s (range) | Oct 16/17 decision: new 4,096 × 64 KiB + drain MB/s (range) | Oct 16/17 decision: mean backing write KiB, large / small |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [QueueCache paused](comparison/C00-no-cache.md) | 572.8 / 250.7 | 259.5 / 257.4 | 0.66 | 2.90 | N/A — not run | N/A — not run | N/A — not run |
-| [QueueCache Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | 35,016.8 / 20,937.2 | 267.5 / 200.1 | 6.28 | 2.84 | **52.71** (42.25–62.13) | **41.71** (18.36–41.94) | 1009.6 / 341.9 |
-| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s](comparison/C02-primocache-defer.md) | 17,215.1 / 18,757.6 | 425.1 / 279.6 | 10.92 | 2.87 | **78.96** (72.99–84.00) | **57.62** (50.64–65.24) | 1975.6 / 1746.2 |
-| [Direct disk, QueueCache absent](comparison/C00-no-cache.md) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **48.41** (42.63–53.43) | **1.25** (1.23–1.33) | 988.8 / 5.0 |
+| [QueueCache 0.4.687.1 Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | 35,016.8 / 20,937.2 | 267.5 / 200.1 | 6.28 | 2.84 | N/A — different build | N/A — different build | N/A — different build |
+| [PrimoCache 4.4.1, L1 2 GiB, Defer-Write 10 s](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617) | 17,215.1 / 18,757.6 | 425.1 / 279.6 | 10.92 | 2.87 | **109.68** (100.31–117.36) | **54.47** (45.71–67.54) | 1939.0 / 1339.3 |
+| [Direct disk, QueueCache absent](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **47.71** (43.60–54.87) | **1.28** (1.25–1.48) | 986.9 / 5.0 |
+| [QueueCache 0.4.756.1 Fast, 1024 KiB × 4, starting control](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **57.81** (49.43–61.94) | **20.05** (18.59–24.66) | 1009.6 / 182.0 |
+| [QueueCache 0.4.756.1 Fast, 2048 KiB × 4, experimental](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **74.66** (65.18–101.26) | **27.07** (25.42–65.67) | 2002.3 / 180.9 |
+| [QueueCache 0.4.756.1 Fast, 2048 KiB × 8, experimental](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **84.24** (73.98–127.51) | **36.14** (34.15–49.95) | 2009.4 / 190.2 |
+| [QueueCache 0.4.756.1 Fast, 1024 KiB × 4, ending control](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **66.54** (59.86–73.39) | **42.54** (29.28–51.28) | 1015.4 / 207.0 |
 
 ## Power cut while the cache is writing
 

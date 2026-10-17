@@ -3,7 +3,7 @@
 [Comparison tables](COMPARISON.md) contain the scores. This document keeps the
 methods, explanations, failed attempts and limits behind them. The original
 comparison is dated October 12–14; the disabled-background-service refresh and
-short drain comparison are dated October 15–16, 2026. Cross-date scores describe
+short drain comparisons are dated October 15–17, 2026. Cross-date scores describe
 their sessions; they do not isolate a driver change or the effect of disabling
 Defender/Search.
 
@@ -18,6 +18,7 @@ that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 
 Contents: [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
+[Latest drain decision](#drain-decision-screen-2026-10-1617) ·
 [Cache refresh](#current-cache-refresh-2026-10-1516) ·
 [Focused checks](#focused-fix-checks-2026-10-15) ·
 [Earlier findings](#earlier-comparison-findings) · [Problems](#problems-found) ·
@@ -100,6 +101,69 @@ Exact run identities and complete per-case scores are retained on the existing
 [QueueCache](comparison/C01-queuecache-fast-fix687.md) and
 [PrimoCache](comparison/C02-primocache-defer.md) pages and their linked data.
 Method and invocation: [testing](TESTING.md#4-suites).
+
+## Drain decision screen (2026-10-16/17)
+
+This completes the short follow-up on branch `experiment/drain-batch-concurrency`.
+QueueCache native 0.4.756.1 fixes the experimental small-budget allocation bug
+and adds batch diagnostics; it does not change drain selection or defaults.
+All QueueCache arms use that same native build and runner `d58b2e1` / plan 153.
+Direct and Primo use runner `48f8966` / plan 154, whose only further change is
+an unscored wait for Direct's cleanup writes to settle. Workload, payload,
+ready/start handshake, scored endpoint and byte oracle are identical.
+
+Each row has three complete repetitions of both original new-file workloads.
+Numbers are median and full observed range, decimal MB/s, including creation,
+unbuffered writes, filesystem flush, explicit product drain and sampled zero
+pending/disk queue. Backing sizes are median per-case write-byte/write-operation
+ratios, include metadata, and describe virtual-disk requests rather than media.
+
+| Mode | New 1 GiB + drain MB/s, median (range) | New 4,096 × 64 KiB + drain MB/s, median (range) | Mean backing write KiB, large / small |
+|---|---:|---:|---:|
+| QueueCache 1024 KiB × 4, starting control | 57.81 (49.43–61.94) | 20.05 (18.59–24.66) | 1009.6 / 182.0 |
+| QueueCache 2048 KiB × 4 | 74.66 (65.18–101.26) | 27.07 (25.42–65.67) | 2002.3 / 180.9 |
+| QueueCache 2048 KiB × 8 | 84.24 (73.98–127.51) | 36.14 (34.15–49.95) | 2009.4 / 190.2 |
+| QueueCache 1024 KiB × 4, ending control | 66.54 (59.86–73.39) | 42.54 (29.28–51.28) | 1015.4 / 207.0 |
+| Direct disk, QueueCache absent | 47.71 (43.60–54.87) | 1.28 (1.25–1.48) | 986.9 / 5.0 |
+| PrimoCache 4.4.1, shared L1 2 GiB, Native defer 10 s | 109.68 (100.31–117.36) | 54.47 (45.71–67.54) | 1939.0 / 1339.3 |
+
+All **36 cases and 73,746 cache-bypassed file hashes passed**, with complete-run
+and restoration records. Each provider ran alone on the same Q: disk with the
+same temporary snapshot; provider changes used rollback to its base layout.
+QueueCache used Fast 2 GiB Idle, flags 15; Primo used shared 2 GiB L1, no L2,
+4 KiB blocks, Native defer 10 s, prefetch off. Timing/Verifier were off, priority
+normal, Defender/Search disabled, and other background apps/service closed.
+Loaded native hashes, exact run identities, allocation checks and CI are in
+[performance findings](PERFORMANCE_FINDINGS.md#drain-decision-153).
+
+QueueCache's controls changed +15.1% large / +112.2% small across grouped arms.
+Its 2 MiB × 8 large-file range narrowly exceeds both control ranges, but small-file
+ranges overlap; a stable small-file gain is unproven. That arm's medians remain
+23.2% / 33.7% below fresh Primo. Compared with the earlier plan-148 session,
+Primo changes 78.96 → 109.68 MB/s large and 57.62 → 54.47 small. Both sessions
+already had Defender/Search disabled; the difference is not an isolated effect
+of those settings. Direct stays near 48 / 1.3 MB/s. Ceph availability/scrub
+warnings remain a storage uncertainty; capacity/near-full guards passed.
+
+Nineteen QueueCache cases recorded 8–68 KiB newly dirty after the scored endpoint
+and before untimed Disable. Their source remains untraced. Disable drained them;
+all final paused states were clean and all hashes passed. These checks validate
+that later state, not exact scored-instant persistence or power-loss safety.
+Initial incomplete QueueCache 152 and Direct 153 attempts are wholly excluded;
+their strict preparation failures led to bounded, recorded waits outside timing,
+without relaxing fault/invalid-evidence rejection or reusing partial samples.
+
+The next throughput investigation is **small-file batch formation**: 94–96% of
+the 2 MiB QueueCache small-file batches ended at a missing dirty neighbor, with
+software batches averaging about 210–218 KiB. This can mean clean cached data
+or uncached gaps; it does not prove physical fragmentation. Classify those gaps
+before one bounded gather-policy experiment. A reader-aware drain limit is the
+separate responsiveness candidate: the earlier mixed-read test found a large
+read penalty at eight drainers with little global lock occupancy. A lock rewrite
+or further size/thread increases are not the first supported change. Defaults
+remain 1024 KiB × 4; broader Strict, sustained, Idle foreground and release
+qualification, and the separate power-loss issue, remain open. Historical generic
+and CrystalDiskMark scores were not rerun or relabeled as 0.4.756.1 results.
 
 ## Current cache refresh (2026-10-15/16)
 

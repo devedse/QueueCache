@@ -77,6 +77,16 @@ contemporaneous PrimoCache control on both workloads, with repeatable results
 and correctness preserved. The larger-default fix is merged; this broader goal
 remains open. [Method and ranges](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16).
 
+The later October 16/17 decision screen completes fresh Direct/Primo controls
+and four same-build QueueCache 0.4.756.1 arms. At 2 MiB × 8, large/small medians
+are 84.24 / 36.14 MB/s, versus Primo 109.68 / 54.47 and Direct 47.71 / 1.28.
+All 36 cases and 73,746 hashes passed. Control drift and overlapping small-file
+ranges prevent a stable small-file tuning claim. Most small-file batches stop
+at a missing dirty neighbor; classify those gaps before another batching change.
+The eight-drainer foreground-read penalty below also argues against a blanket
+default increase. These fitting workloads do not resolve sustained, Strict or
+power-loss gaps. [Latest methods and limits](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
+
 ### Low-priority programs read cached data slower (performance)
 
 A program started below normal priority (Task Scheduler's default) read 1 MiB Q8
@@ -153,7 +163,7 @@ worker.
 | Equal-work read tails | Complete 24-case, 100,000-operation comparison: cold-random p99.9 191.7 → 60.7 ms; median case maximum 271.6 → 123.5 ms; every cold pair improves | Fixed-duration maxima sample unequal amounts of work; backing-store profile and pool size were not varied |
 | Drain settings (#15) | Complete timing-off 512 MiB comparison: 12.7 → 8.0 s, every pair improves; separate cold-read/write-drain comparisons also improve | Qualifies explicit drain time, not disk-speed parity, general foreground throughput or Strict impact |
 | Short completed writes | Plan 148: all 18 provider cases, 36,873 file hashes, zero pending/disk queue and restored state | New files fitting in cache; no new native code, sustained/Strict qualification or power-loss test |
-| Experimental drain ceilings | Plan 149 branch: 24 cases / 49,164 file hashes; 2 MiB × 4 large-file median 225.02 MB/s against bracket controls 179.57 / 170.68; maximum-settings Eager integrity smoke passed under Verifier | Defaults unchanged; grouped arms and control drift limit attribution, small-file gain is inconclusive, and combined 2 MiB × 8 performance / foreground / Strict / sustained qualification remain unrun |
+| Experimental drain ceilings | Latest plans 153/154: 36 cases / 73,746 file hashes, including fresh Direct/Primo; 2 MiB × 4/8 large-file medians 74.66/84.24 MB/s, controls 57.81/66.54, Primo 109.68; allocation and maximum-settings integrity checks passed under Verifier | Defaults unchanged; small-file gain inconclusive, Primo parity not achieved, broader Idle foreground / Strict / sustained / release qualification unrun. The earlier faster plan-149 session remains separate historical evidence. |
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 
