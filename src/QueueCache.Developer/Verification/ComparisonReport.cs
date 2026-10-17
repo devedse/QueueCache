@@ -100,6 +100,15 @@ public static class ComparisonReport
         {
             var score = Read<ComparisonDrainScore>(directory, test.Id, "score");
             ComparisonDrain.ValidateScore(test, score, provider);
+            if (provider == ComparisonProvider.QueueCache)
+                ComparisonDrain.ValidateBypass(Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-before.cache"),
+                    Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-after.cache"));
+            else if (provider == ComparisonProvider.PrimoCache)
+            {
+                var recovery = JsonSerializer.Deserialize<ComparisonDrainRecovery>(File.ReadAllText(Path.Combine(directory, "compare-drain-recovery.json")))!;
+                if (ComparisonDrain.PrimoTaskId(Read<ComparisonPrimoObservation>(directory, test.Id, "bypass-primo"), recovery.Volume, paused: true) != recovery.OriginalPrimoTaskId)
+                    throw new InvalidDataException("Primo oracle bypass ownership changed.");
+            }
             if (batching)
             {
                 var before = Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "before.cache");

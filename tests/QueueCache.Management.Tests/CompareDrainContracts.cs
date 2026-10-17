@@ -21,6 +21,10 @@ internal static class CompareDrainContracts
         check(ComparisonPlan.WorkDirectory("compare-drain", "root", "run-a") == Path.Combine("root", "run-a") &&
             ComparisonPlan.WorkDirectory("compare-drain", "root", "run-b") != ComparisonPlan.WorkDirectory("compare-drain", "root", "run-a"),
             "compare-drain owns a fresh root per run, including after another provider");
+        ComparisonDrain.ValidateBrokerStartup(null);
+        ComparisonDrain.ValidateBrokerStartup(new QueueCache.Operations.ManagedDisks.ManagedBrokerObservation(4, 42, DateTime.UtcNow));
+        foreach (var state in new uint[] { 0, 1, 2, 3 })
+            reject(() => ComparisonDrain.ValidateBrokerStartup(new QueueCache.Operations.ManagedDisks.ManagedBrokerObservation(state, 42, DateTime.UtcNow)));
         var paired = DrainBatching.Cases(3);
         check(paired.Count == 12 && paired.Select(c => c.Id).Distinct().Count() == 12 &&
             paired.All(c => c.GatherPolicy is not null && c.Bytes == ComparisonDrain.ExpectedBytes(c.Kind)) &&
@@ -235,12 +239,25 @@ internal static class CompareDrainContracts
         reject(() => ComparisonDrain.VerifyBypassedAsync("failed-resume", () => Task.CompletedTask,
             () => [], () => throw new InvalidDataException("resume failed"), value => result = value).GetAwaiter().GetResult());
         check(result is { Verified: true, Restored: false }, "restoration failure is persisted and cannot pass verification");
+        reject(() => ComparisonDrain.VerifyBypassedAsync("resumed-during-oracle", () => Task.CompletedTask,
+            () => [], () => Task.CompletedTask, value => result = value,
+            () => throw new InvalidDataException("cache resumed during oracle")).GetAwaiter().GetResult());
+        check(result is { Verified: false, Bypassed: false, Restored: true },
+            "a successful hash cannot pass if post-oracle bypass proof fails; restoration still runs");
+
     }
 
     private static void RunQueueCachePauseContracts(WriteCacheState original, Action<bool, string> check, Action<Action> reject)
     {
         var performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         var active = original with { Performance = performance };
+        var oraclePaused = active with { Flags = active.Flags & ~1u };
+        ComparisonDrain.ValidateBypass(oraclePaused, oraclePaused);
+        foreach (var changed in new[] { active, oraclePaused with { ReadHitBytes = 1 }, oraclePaused with { ReadMissBytes = 4096 },
+            oraclePaused with { AcceptedBytes = 512 }, oraclePaused with { Instance = oraclePaused.Instance + 1 },
+            oraclePaused with { DirtyBytes = 512 }, oraclePaused with { Options = oraclePaused.Options! with { BatchKiB = 2048 } } })
+            reject(() => ComparisonDrain.ValidateBypass(oraclePaused, changed));
+
         foreach (var (batch, parallelism) in new[] { (1024, 4), (1024, 8), (2048, 4), (2048, 8) })
             ComparisonDrain.ValidateQueueCache(active with { Options = active.Options! with { BatchKiB = batch, Parallelism = parallelism } }, active: true);
         var paused = active with { Flags = active.Flags & ~1u, Generation = active.Generation + 1 };
@@ -429,6 +446,13 @@ internal static class CompareDrainContracts
                 RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.after.cache.json"), state with { Performance = finished });
                 RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.batching.json"), evidence);
             }
+            var bypass = new WriteCacheState(32 | 256 | 512, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30,
+                0, 0, 0, 0, 0, 0, 0, 0) { Instance = 42,
+                Options = new CacheOptions { BatchKiB = batching ? 2048 : 1024, Parallelism = 4 },
+                Performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                    { DrainGatherPolicy = test.GatherPolicy is { } mode ? (ulong)mode : null } };
+            RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.bypass-before.cache.json"), bypass);
+            RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.bypass-after.cache.json"), bypass);
             RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.score.json"), score);
             RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.verify.json"), new ComparisonDrainVerification(test.Id, true, true, true,
                 test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, hash)]));

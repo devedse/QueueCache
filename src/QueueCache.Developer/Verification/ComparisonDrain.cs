@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
@@ -72,6 +73,23 @@ public static class ComparisonDrain
     }
 
     public static bool IsSuite(string suite) => suite is "compare-drain" or DrainBatching.Suite;
+
+    public static void ValidateBrokerStartup(ManagedBrokerObservation? broker)
+    {
+        if (broker is not null && !broker.IsRunning)
+            throw new InvalidDataException("Wait for the installed QueueCache startup coordinator to finish before applying the test profile.");
+    }
+
+    public static void ValidateBypass(WriteCacheState before, WriteCacheState after)
+    {
+        ValidateQueueCache(before, active: false); ValidateQueueCache(after, active: false);
+        if (!before.SupportsReadWrite || !after.SupportsReadWrite || before.Instance != after.Instance ||
+            before.Options != after.Options || before.BudgetBytes != after.BudgetBytes || before.Errors != after.Errors ||
+            before.DirtyBytes != 0 || before.InFlightBytes != 0 || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
+            before.ReadHitBytes != after.ReadHitBytes || before.ReadMissBytes != after.ReadMissBytes ||
+            before.AcceptedBytes != after.AcceptedBytes || before.Performance!.DrainGatherPolicy != after.Performance!.DrainGatherPolicy)
+            throw new InvalidDataException("Cache bypass changed during file verification; cached/admitted I/O invalidates the oracle.");
+    }
 
     public static void ValidateOptions(VerificationOptions options)
     {
@@ -288,14 +306,17 @@ public static class ComparisonDrain
     }
 
     public static async Task<ComparisonFileHash[]> VerifyBypassedAsync(string id, Func<Task> pause,
-        Func<ComparisonFileHash[]> verify, Func<Task> restore, Action<ComparisonDrainVerification> persist)
+        Func<ComparisonFileHash[]> verify, Func<Task> restore, Action<ComparisonDrainVerification> persist,
+        Func<Task>? confirmBypass = null)
     {
         ComparisonFileHash[] hashes = [];
         var bypassed = false; var verified = false; var restored = false;
         try
         {
-            await pause(); bypassed = true;
-            hashes = verify(); verified = true;
+            await pause(); bypassed = confirmBypass is null;
+            hashes = verify();
+            if (confirmBypass is not null) { await confirmBypass(); bypassed = true; }
+            verified = true;
             return hashes;
         }
         finally

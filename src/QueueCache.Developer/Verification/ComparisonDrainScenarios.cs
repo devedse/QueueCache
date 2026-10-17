@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
@@ -131,7 +132,8 @@ internal static class ComparisonDrainScenarios
                 Progress(test.Id + ": measurement saved; bypassing product cache and verifying every file (untimed).");
                 var hashes = await ComparisonDrain.VerifyBypassedAsync(test.Id,
                     () => provider.PauseAsync(prefix + ".pause"), () => files.Verify(path, test.Kind == "drain-small"),
-                    () => provider.RestoreAsync(prefix + ".resume"), verify => RunStorage.AtomicJson(prefix + ".verify.json", verify));
+                    () => provider.RestoreAsync(prefix + ".resume"), verify => RunStorage.AtomicJson(prefix + ".verify.json", verify),
+                    () => provider.ConfirmBypassAsync(prefix));
                 checks.Add(new(test.Id, "PASS", $"{score.MBPerSecond:F2} MB/s through explicit drain; app {score.ApplicationSeconds:F3}s, drain/confirmation {score.DrainSeconds:F3}s; all {hashes.Length} file hashes verified with cache bypassed."));
                 RunStorage.AtomicJson(Path.Combine(directory, "compare-drain-checks.json"), checks);
                 // Only an owned, successfully verified directory is eligible. The next preparation flush
@@ -178,6 +180,7 @@ internal static class ComparisonDrainScenarios
     {
         public ComparisonProvider Kind => job.Provider ?? throw new ArgumentException("Missing comparison provider.");
         private ComparisonDrainRecovery? recovery = recorded;
+        private WriteCacheState? bypassBefore;
         private string Journal => Path.Combine(directory, RecoveryFile);
         private string Cli => job.PrimoCli ?? ComparisonDrain.DefaultPrimoCli;
 
@@ -200,6 +203,11 @@ internal static class ComparisonDrainScenarios
             ulong? originalGatherPolicy = null;
             if (Kind == ComparisonProvider.QueueCache)
             {
+                ManagedBrokerObservation? broker;
+                try { broker = WindowsManagedBrokerService.Observe(); }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 1060) { broker = null; }
+                RunStorage.AtomicJson(Path.Combine(directory, "compare-broker-startup.json"), new { Installed = broker is not null, Broker = broker });
+                ComparisonDrain.ValidateBrokerStartup(broker);
                 var problems = DriverRegistration.Inspect().Problems();
                 if (problems.Count != 0) throw new IOException("Unsupported QueueCache registration: " + string.Join(" ", problems));
                 using var cache = new CacheDevice(job.Volume);
@@ -339,7 +347,7 @@ internal static class ComparisonDrainScenarios
                         throw;
                     }
                 }
-                await ComparisonDrain.PauseQueueCacheAsync(recovery.OriginalState ?? throw new InvalidDataException("Missing original QueueCache state."),
+                bypassBefore = await ComparisonDrain.PauseQueueCacheAsync(recovery.OriginalState ?? throw new InvalidDataException("Missing original QueueCache state."),
                     Capture, () => cache.Control(WriteCacheAction.Disable),
                     (phase, state) => RunStorage.AtomicJson(prefix + "." + phase + ".cache.json", state));
             }
@@ -349,6 +357,25 @@ internal static class ComparisonDrainScenarios
                 var status = await Primo(prefix + ".status", "status", "-a");
                 var volumes = await Primo(prefix + ".volumes", "ls", "-v=1");
                 ComparisonDrain.ValidatePrimoVolumeState(status, volumes, job.Volume, paused: true);
+            }
+        }
+
+        public async Task ConfirmBypassAsync(string prefix)
+        {
+            if (Kind == ComparisonProvider.QueueCache)
+            {
+                using var cache = new CacheDevice(job.Volume);
+                var after = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
+                RunStorage.AtomicJson(prefix + ".bypass-before.cache.json", bypassBefore ?? throw new InvalidDataException("Missing pre-oracle bypass state."));
+                RunStorage.AtomicJson(prefix + ".bypass-after.cache.json", after);
+                ComparisonDrain.ValidateBypass(bypassBefore!, after);
+            }
+            else if (Kind == ComparisonProvider.PrimoCache)
+            {
+                var observation = await CapturePrimoAsync(prefix + ".bypass-after");
+                RunStorage.AtomicJson(prefix + ".bypass-primo.json", observation);
+                if (ComparisonDrain.PrimoTaskId(observation, job.Volume, paused: true) != recovery?.OriginalPrimoTaskId)
+                    throw new InvalidDataException("Primo bypass task changed during file verification.");
             }
         }
 

@@ -53,6 +53,10 @@ the drivers several times over.
 
 - Elevated terminal; nothing else testing or benchmarking; close the QueueCache
   tray app if the run changes caches it shows.
+- Wait for the installed `QueueCache.ManagedDisks` service to reach Running before
+  applying a temporary runtime profile, including for correctness runs. Its delayed
+  startup initializes managed disks and reapplies saved profiles before reporting
+  Running; starting a test earlier can overwrite its profile during a file oracle.
 - Close background indexers and launchers, which start again at every sign-in:
   Steam (`steam.exe -shutdown`), Everything (`Everything.exe -exit`) and its
   `Everything` service (`Stop-Service Everything`). Their disk activity fails the
@@ -147,7 +151,7 @@ ones in use:
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 | `compare-drain` | Two fixed new-file workloads through explicit product drain; three repeats, two median/range rows per provider | Explicit `--provider`, `--product`, `--budget-mib 2048 --repeats 3`; no DiskSpd |
-| `compare-drain-batching` | Plan 155: current versus aligned gather on the same build, three alternating pairs for each existing new-file shape (12 cases) | QueueCache only, fixed Fast 2 GiB Idle, 2048 KiB × 4, flags 15, timing off; V5 gap/backward attribution, full hashes and independent policy restoration; no DiskSpd |
+| `compare-drain-batching` | Plan 156: current versus aligned gather on the same build, three alternating pairs for each existing new-file shape (12 cases) | QueueCache only, fixed Fast 2 GiB Idle, 2048 KiB × 4, flags 15, timing off; V5 gap/backward attribution, full hashes and independent policy restoration; no DiskSpd |
 
 **Comparisons with other products** (plan 121). These suites measure any RAM
 disk or cached volume the same way, without QueueCache's controls, hooks or
@@ -210,7 +214,7 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 155; workload unchanged from 148).** `compare-drain` runs two
+**Focused write plus drain comparison (plan 156; workload unchanged from 148).** `compare-drain` runs two
 fixed workloads three times each, alternating large/small order:
 
 | Workload | Requests | Files |
@@ -258,7 +262,7 @@ qcache developer verify Q: --suite compare-drain --provider PrimoCache --product
 qcache developer verify Q: --suite compare-drain-batching --provider QueueCache --product "QueueCache current vs aligned gather" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
 ```
 
-Plan 155's `compare-drain-batching` keeps the same payload and scored endpoint.
+The plan-155 batching experiment keeps the same payload and scored endpoint.
 It fixes the runtime profile to 2048 KiB × 4 and alternates current/aligned order
 in each shape's three pairs; each case has a distinct path and immutable ID.
 The aligned policy stops backward/forward gathering at the anchor's aligned
@@ -307,6 +311,15 @@ original state. After confirming owned processes stopped, use the standard
 QueueCache pause confirmation records each full state and permits up to 30 seconds
 for a transient draining barrier to settle. Identity/settings changes, faults or
 unexpected enabled state fail immediately; Disable is never replayed.
+
+Plan 156 also rejects an installed QueueCache startup coordinator that has not
+finished initializing. After every hash oracle and before resuming the product,
+confirm it stayed paused: QueueCache requires the same paused identity/profile,
+zero pending bytes, and unchanged read-hit/read-miss/accepted-write counters across
+the oracle; Primo requires the original task still paused on the same volume.
+Persist both QueueCache snapshots or the final Primo task observation. A passing
+hash without passing post-oracle bypass evidence cannot produce a complete report.
+These checks are outside scoring and do not change the write workload or endpoint.
 
 Reports require all six unique cases, every hash, telemetry and successful
 restoration. `comparison.json`/`COMPARISON.md` report two medians with ranges,
