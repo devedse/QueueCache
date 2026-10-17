@@ -92,8 +92,8 @@ files (1.2 GiB): create, copy with four threads, read back and check, delete.
 
 The first table retains October 12–14 results with the October 16 plan-148 drain
 columns. The second keeps the October 15/16 generic refresh and adds the latest
-October 16/17 decision screen in its drain columns. N/A means not measured for
-that build/session. [Methods, backing-write sizes and limits](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
+October 16/17 decision screen and October 17 gather experiment in its drain
+columns. N/A means not measured for that build/session. [Methods, backing-write sizes and limits](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
 [Other column definitions](COMPARISON_DETAILS.md#cache-column-definitions).
 
 <a id="short-write-plus-drain-comparison-2026-10-16"></a>
@@ -109,13 +109,16 @@ that build/session. [Methods, backing-write sizes and limits](COMPARISON_DETAILS
 
 <a id="current-cache-refresh-2026-10-1516"></a>
 
-Generic columns: October 15/16, one repetition; drain columns: October 16/17,
-three repetitions per shape, 36 complete cases and 73,746 verified file hashes.
+Generic columns: October 15/16, one repetition. Drain rows: October 16/17 plans
+153/154 (36 cases / 73,746 hashes); separately labeled October 17 gather rows
+(12 cases / 24,582 hashes). Each row has three repetitions per shape. The latter
+has no contemporaneous Primo control and cannot establish parity.
 Defender/Search disabled. Experimental QueueCache rows do not qualify new defaults.
 [Generic refresh](COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516) ·
-[Latest drain decision and endpoint caveat](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617).
+[Drain decision](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617) ·
+[Gather experiment, rejected policy and endpoint caveats](COMPARISON_DETAILS.md#small-file-gather-experiment-2026-10-17).
 
-| Mode | Hot sequential read / write MB/s | 8 GiB write app / through last disk activity MB/s | Burst tail seconds | Tree read/hash seconds | Oct 16/17 decision: new 1 GiB + drain MB/s (range) | Oct 16/17 decision: new 4,096 × 64 KiB + drain MB/s (range) | Oct 16/17 decision: mean backing write KiB, large / small |
+| Mode | Hot sequential read / write MB/s | 8 GiB write app / through last disk activity MB/s | Burst tail seconds | Tree read/hash seconds | Drain session shown in row: new 1 GiB + drain MB/s (range) | Drain session shown in row: new 4,096 × 64 KiB + drain MB/s (range) | Drain session shown in row: mean backing write KiB, large / small |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | [QueueCache paused](comparison/C00-no-cache.md) | 572.8 / 250.7 | 259.5 / 257.4 | 0.66 | 2.90 | N/A — not run | N/A — not run | N/A — not run |
 | [QueueCache 0.4.687.1 Fast, 2 GiB, 1024 KiB × 4](comparison/C01-queuecache-fast-fix687.md) | 35,016.8 / 20,937.2 | 267.5 / 200.1 | 6.28 | 2.84 | N/A — different build | N/A — different build | N/A — different build |
@@ -125,6 +128,8 @@ Defender/Search disabled. Experimental QueueCache rows do not qualify new defaul
 | [QueueCache 0.4.756.1 Fast, 2048 KiB × 4, experimental](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **74.66** (65.18–101.26) | **27.07** (25.42–65.67) | 2002.3 / 180.9 |
 | [QueueCache 0.4.756.1 Fast, 2048 KiB × 8, experimental](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **84.24** (73.98–127.51) | **36.14** (34.15–49.95) | 2009.4 / 190.2 |
 | [QueueCache 0.4.756.1 Fast, 1024 KiB × 4, ending control](PERFORMANCE_FINDINGS.md#drain-decision-153) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **66.54** (59.86–73.39) | **42.54** (29.28–51.28) | 1015.4 / 207.0 |
+| [Oct 17 gather session: QueueCache 0.4.761.1, 2048 KiB × 4, current gather](COMPARISON_DETAILS.md#small-file-gather-experiment-2026-10-17) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **227.95** (227.65–261.66) | **111.85** (110.17–113.50) | 1964.4 / 1641.5 |
+| [Oct 17 gather session: same build/settings, aligned gather, rejected](COMPARISON_DETAILS.md#small-file-gather-experiment-2026-10-17) | N/A — not run | N/A — not run | N/A — not run | N/A — not run | **219.98** (214.26–257.45) | **93.58** (92.16–110.98) | 1942.7 / 990.0 |
 
 ## Power cut while the cache is writing
 

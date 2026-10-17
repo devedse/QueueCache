@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 156, "plan 156 adds the paired gather-policy experiment and V5 gap attribution");
+        Check(VerificationPlan.Version == 157, "plan 157 retires rejected gather selection and requires observed bypass counters");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

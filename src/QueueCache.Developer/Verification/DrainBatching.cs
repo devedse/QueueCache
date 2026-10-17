@@ -6,7 +6,7 @@ namespace QueueCache.Developer.Verification;
 [JsonConverter(typeof(JsonStringEnumConverter<DrainGatherPolicy>))]
 public enum DrainGatherPolicy { Current, Aligned }
 
-/// <summary>Same-build batch selection experiment. Reuses compare-drain's exact bytes and endpoint.</summary>
+/// <summary>Retired paired plan, retained to validate its recorded evidence. Not a selectable verification suite.</summary>
 public static class DrainBatching
 {
     public const string Suite = "compare-drain-batching";

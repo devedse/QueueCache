@@ -143,9 +143,30 @@ public static class ComparisonReport
         }).ToArray();
     }
 
-    private static T Read<T>(string directory, string id, string suffix) =>
-        JsonSerializer.Deserialize<T>(File.ReadAllText(Path.Combine(directory, $"compare.{id}.{suffix}.json")))
-        ?? throw new InvalidDataException($"Missing comparison evidence compare.{id}.{suffix}.json.");
+    private static T Read<T>(string directory, string id, string suffix)
+    {
+        var json = File.ReadAllText(Path.Combine(directory, $"compare.{id}.{suffix}.json"));
+        if (typeof(T) == typeof(QueueCache.Management.WriteCacheState))
+        {
+            // Snapshot DTO defaults preserve old recovery journals. They cannot turn
+            // missing observed counters into zero in new measurement/oracle evidence.
+            using var document = JsonDocument.Parse(json);
+            foreach (var field in new[] { "Flags", "LastError", "Instance", "BudgetBytes", "DirtyBytes", "InFlightBytes",
+                "Errors", "ReadHitBytes", "ReadMissBytes", "AcceptedBytes" })
+                if (!document.RootElement.TryGetProperty(field, out var value) || value.ValueKind != JsonValueKind.Number)
+                    throw new InvalidDataException("Missing observed cache field: " + field);
+            foreach (var (group, fields) in new[] {
+                ("Options", new[] { "Allocation", "WritePercent", "RetainWrites", "PromoteOnRead", "Drain", "LowPercent", "HighPercent", "MaxDirtyAgeMs", "IdleMs", "BatchKiB", "Parallelism" }),
+                ("Performance", new[] { "Frequency", "TimingEnabled", "DrainGatherPolicy" }) })
+            {
+                if (!document.RootElement.TryGetProperty(group, out var value) || value.ValueKind != JsonValueKind.Object ||
+                    fields.Any(field => !value.TryGetProperty(field, out _)))
+                    throw new InvalidDataException("Missing observed cache evidence: " + group);
+            }
+        }
+        return JsonSerializer.Deserialize<T>(json)
+            ?? throw new InvalidDataException($"Missing comparison evidence compare.{id}.{suffix}.json.");
+    }
 
     public static IReadOnlyList<ShapeRow> Shapes(string directory, IReadOnlyList<ComparisonCase> plan)
     {

@@ -298,8 +298,7 @@ enum : ULONG
     // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
     // ownership checks still apply to every request. Runtime only.
     QcLabCallerBackoff,
-    // Runtime experiment: 0 current gather, 1 aligned batch regions. No usage paths;
-    // a policy switch requires a clean cache. No admission or durability change.
+    // Reserved rejected gather experiment: 0 harmless reset; 1 unsupported.
     QcLabDrainGather
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG

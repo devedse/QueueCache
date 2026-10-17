@@ -109,7 +109,10 @@ PRs #17/#18. [Issue #15](https://github.com/devedse/QueueCache/issues/15) remain
 the drain follow-up: match or exceed a contemporaneous PrimoCache control on
 both new-file workloads, while preserving correctness, RAM-first admission and
 explicit durability. The defaults reduced paired drain time; parity is not yet
-shown. Diagnose the slow small-file repetition and post-score writes before
+shown. The latest [aligned-gather test](#small-file-gather-156) passed its byte
+checks but lost performance; the [updated plan](#drain-decision-153) starts with
+fresh current provider controls. Diagnose the slow small-file repetition and
+post-score writes before
 attributing the remaining gap solely to request size.
 
 **First investigation: drain limits and crash ordering (2026-10-16).** A short
@@ -262,21 +265,133 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 
 <a id="drain-decision-153"></a>
 
-**Plan to match or exceed Primo (owner requested, October 17).** The immediate
-experiment below addresses batch formation; parity is a measured acceptance
-condition, not a promised consequence of raising settings. Current orientation
-is 84.24 / 36.14 MB/s for QueueCache 2 MiB × 8 versus 109.68 / 54.47 for Primo,
-large / small, with material control drift. Those historical values are not a
-replacement for a final contemporaneous provider comparison.
+**Plan to match or exceed Primo (updated after the October 17 batching test).**
+The aligned-gather experiment is complete and rejected. The current gather already
+produced much larger small-file backing writes in this session; explain that
+change and refresh the provider controls before choosing another kernel policy.
+Parity means matching a contemporaneous Primo run, not beating its older score.
 
-| Step | Work and reason | Completion criterion | Expected test time, excluding builds / installation / boot settling |
+| Step / status | Work and reason | Completion criterion | Expected test time, excluding engineering, builds, provider swaps and boot settling |
 |---|---|---|---|
-| 1. Test small-file batch formation now | Same native build, current gather versus an aligned 2 MiB gather, runtime default off; fixed Fast 2 GiB Idle, 2 MiB × 4, flags 15. Three alternating pairs of each existing new-file shape, 12 immutable cases. Add clean/absent gap and backward-stop attribution. No gap filling or new lower reads. | All hashes, ready/telemetry evidence and restoration pass. A candidate gain needs at least 5%, every small-file pair faster and separated aggregate ranges; investigate any repeatable 3% control loss. Otherwise reject or record inconclusive, retaining the diagnosis. | About 5–15 min performance, plus targeted Verifier checks |
-| 2. Choose one further batching change only from the observed gaps | If alignment helps, retain it for qualification. If clean cached gaps dominate, assess a bounded gather of known pinned sectors with version/fence protection. If gaps are uncached, quantify contiguous dirty-run availability before considering reordering or bounded background read/modify/write; never introduce lower-I/O dependence for fitting Fast-mode admission. | One stated hypothesis and default-off candidate per cycle; same-build alternating control and the same byte/latency gates. Do not keep an unhelpful change or repeatedly rerun the same failed idea. | 10–30 min per justified candidate, not a broad matrix |
-| 3. Protect foreground reads | Test a bounded outstanding-write limit while disk reads wait; preserve high concurrency without readers. Use the short mixed-read suite and large/small controls. A lock rewrite or 12/16 drainers is conditional on new evidence, not the starting approach. | Improve loaded-reader latency without a repeatable 3% loss in the declared throughput controls; preserve fairness and error/lifecycle behavior. | About 20–30 min |
-| 4. Prove parity against a fresh provider control | Once a repeatable candidate survives, run the existing two workloads on Direct, QueueCache and Primo alone, same VM/snapshot, shared 2 GiB, services disabled and three complete repetitions. Current backend warnings and control drift must be reported; an unstable screen cannot establish a stable win. | QueueCache median at least Primo on **both** shapes, with all repetitions/ranges, completed-drain endpoint and all bypassed hashes. Use the same-build comparison to attribute a code gain. | About 20–30 min of runner work; provider swaps add setup time |
-| 5. Qualify the final candidate | Targeted Verifier/fault/partial-sector/ordering/lifecycle checks, RAM-first lower-attempt counters, foreground regression, sustained larger-than-cache and Strict boundaries; run the maintained focused checks and `release-performance` once on the final build. Small-budget allocation checks stay covered. | No correctness regression, no hidden control loss, successful restoration and complete final campaign. An unexercised Strict or fault path remains an explicit promotion gap. | Focused 10–30 min; final release campaign about 2 h |
-| 6. Publish and promote | Update existing comparison columns, methods, findings and issue #15 with final build identities; preserve old sessions. Restore VM/apps, remove owned data and temporary snapshot after verified evidence export. | Change defaults only after the above gates; close #15 only for demonstrated two-shape parity. Keep filesystem power-loss safety (#13) separate. If parity is not achieved, report the measured remaining gap and next evidence-based option. | Documentation / cleanup; no full competitor refresh |
+| 1. Complete: test small-file batching | Same native build, current versus aligned 2 MiB gather, Fast 2 GiB Idle, 2 MiB × 4, flags 15; three alternating pairs per shape. Added gap/backward attribution. | All 12 performance cases and 24,582 bypassed hashes passed. Aligned medians lost 3.5% large / 16.3% small and failed the gain/control gates. Policy removed; diagnostics retained. Separate Verifier run also passed all 12 cases / 24,582 hashes. | Actual worker time: about 2 min performance, 2.5 min correctness; setup took longer |
+| 2. Next: establish current controls and placement | Run only the two existing shapes on Direct, QueueCache and Primo, each alone with three repetitions. Use the same recoverable VM layout and disabled services. Capture file extents and dirty-run/gap-distance distributions outside scoring if needed to explain the old ~181 KiB versus current ~1642 KiB small-file requests. If considering defaults, screen 1 MiB × 4 against 2 MiB × 4 on the same build. | Complete provider matrices, stable/bracketed QueueCache controls, all hashes and bypass proof; report every range. State whether parity already holds under these conditions. Do not attribute a cross-session gain to code or to disabled services. | About 20–30 min runner work; optional settings screen 5–15 min; no full competitor refresh |
+| 3. Conditional: improve concurrency while protecting reads | If a throughput gap remains despite large backing requests, test one default-off read-aware outstanding-write limit: allow higher concurrency when quiet, reduce it while foreground disk reads wait. Plan 151 supports this responsiveness experiment. | Lower loaded-reader latency, no repeatable 3% loss in declared throughput controls, preserved fairness/error semantics. A code-gain claim needs at least 5%, every relevant pair faster and separated aggregate ranges; otherwise reject or report inconclusive. | About 20–30 min short mixed-read and large/small controls |
+| 4. Conditional: one further batching candidate | Only if measured dirty runs still limit representative small files, use gap lengths/extents/available adjacent dirty data to choose one bounded picker or background merge experiment. Clean cached gap filling has low support: 202/202 current forward gaps were absent here. Never write unknown bytes or make fitting Fast admission depend on lower I/O; retain pins, oldest-version ordering and range fences. | Stated hypothesis, default-off candidate, same-build alternating pairs, all byte/telemetry proofs and the same gain/control gates. Reject failed ideas. Lock rewrites, 12/16 threads and 4–16 MiB gathers require new evidence. | 10–30 min per justified candidate; stop after the first discriminating screen |
+| 5. Pending: qualify one final candidate | Targeted Verifier, faults, partial sectors, paging, ordering/lifecycle and RAM-first lower-attempt counters; check sustained larger-than-cache writes, default Idle foreground interference and Strict boundaries. Then the maintained focused checks and one final release-performance campaign. | Complete final-build checks, no correctness/read regression or hidden control loss, successful restoration. Record every unexercised path; the short fitting test cannot settle them. | Focused 10–30 min; final release-performance about 2 h |
+| 6. Pending: final parity and publication | Repeat the narrow provider comparison if candidate/environment changes require it; publish build identities, all medians/ranges and remaining gaps in the existing comparison, findings and issue #15. Restore VM/apps and remove owned data/snapshot after verified export. | QueueCache median ≥ contemporaneous Primo on both shapes, stable controls, complete hashes/telemetry, and step 5 passed before promotion. Only then consider defaults/closing #15. Filesystem power-loss safety (#13) remains separate. | Narrow provider test about 20–30 min if needed; documentation/cleanup otherwise |
+
+These are short decision cycles followed by one final qualification, not a fixed
+multi-day test campaign. Engineering effort and the number of useful candidates
+remain uncertain; this experiment provides no basis to promise a parity date.
+
+<a id="small-file-gather-156"></a>
+
+**Completed aligned-gather experiment (plans 155/156, October 17).** Current
+selection versus a runtime default-off policy that constrained gathering to the
+oldest anchor's aligned 2 MiB region. It did not bridge gaps, add lower reads,
+change ownership/fences or change admission. Both arms used Fast 2 GiB Idle,
+2048 KiB × 4, flags 15 and timing off, with three paired repetitions per shape
+and reversed order in the second repetition. Existing unique SplitMix payload,
+new-file workloads and write-plus-explicit-drain endpoint are unchanged.
+
+| Shape | Current gather MB/s, median (range) | Aligned gather MB/s, median (range) | Median change | Mean backing write KiB, current / aligned |
+|---|---:|---:|---:|---:|
+| One new 1 GiB file | 227.95 (227.65–261.66) | 219.98 (214.26–257.45) | −3.5% | 1964.4 / 1942.7 |
+| 4,096 new 64 KiB files | 111.85 (110.17–113.50) | 93.58 (92.16–110.98) | −16.3% | 1641.5 / 990.0 |
+
+These are decimal payload MB/s including creation, writes, metadata flush,
+explicit product drain and sampled zero pending/disk queue, not isolated drain
+bandwidth. Backing sizes are median per-case byte/operation ratios including
+metadata, not physical-media writes. Large-file paired changes were −1.61%,
+−3.37%, −6.00%; small-file changes were −16.33%, −18.80%, +0.74%. The candidate
+fails the predefined gain gate and repeatedly loses more than 3% in the large
+control. **Reject it and retain the original gather.** Ranges overlap and
+application times vary too; the median loss alone does not isolate every cause.
+The retired suite is no longer selectable from plan 157; its evidence models
+remain readable for historical reports/recovery. No default was changed.
+
+The small-file current/aligned totals were 629/934 batches. Forward gaps were
+202/484: all 202 current gaps were absent from cache, and aligned had 483 absent
+plus one clean-full gap. Current backward stops were 263 gaps / 366 in-flight;
+aligned had 483 gaps / 451 aligned boundaries. No partial/filling/fence backward
+stops advanced. Each case reconciles forward reason, backward reason and size
+bucket to its batch count, and gap classifications to forward gaps. Aggregate
+software batches averaged 1448.8/976.0 KiB (distinct from the table's median
+backing-request statistic). Classification does not measure gap distance,
+physical allocation, or how much useful adjacent dirty data remains.
+
+The unchanged current gather's ~1642 KiB small-file backing requests are much
+larger than the earlier ~181 KiB session, at the same 2 MiB × 4 setting. Current
+227.95/111.85 MB/s must **not** be compared with older Primo 109.68/54.47 to claim
+parity or a driver gain. No fresh Direct/Primo ran here. Backend/NTFS placement,
+request formation and session variation remain unresolved. This changes the
+next decision: establish fresh controls before a riskier batching implementation.
+
+**Verification and evidence.** Native 0.4.761.1, source `a2249b1`, came from
+[the passing native CI](https://github.com/devedse/QueueCache/actions/runs/39057350363).
+Actual loaded filter SHA-256 was
+`3037482DB14CE0CAEA5E5222BF8179048E7CF7C283631DBC4D70AF21C1541C3F`;
+RAM disk was `6330959F9BC5A36122F7477963BB0833EC84A9EEFC808B64869529EB6229D1C2`.
+The complete Verifier run used plan 155 / controller 761; performance retained
+those exact native binaries, with the managed-only plan-156 controller from
+`e2aa5c8`, [runner CI](https://github.com/devedse/QueueCache/actions/runs/39059367859),
+package 0.4.762.1. That package's native binaries were not substituted.
+Controller SHA-256 was
+`FB66CE0F96C62F40BBD1B55E0A867D62C3102550B207AD58E654F82D7112C859`.
+
+| Evidence | Complete run ID, prefixed QueueCache-Verify- | Outcome |
+|---|---|---|
+| Correctness, actual Verifier 0x209bb on both drivers | `20261017-183856-b25c1cd7215449b99ba081fc2cb6e3f0` | 12 cases / 24,582 bypassed hashes, about 153 s worker time; not performance scores |
+| Performance, Verifier off, 15.6 min boot settling | `20261017-190028-238f1f85f3bd449294f714ed3be8e210` | 12 cases / 24,582 hashes and post-oracle bypass proofs; about 120 s worker time |
+
+FINISHED/status/summary/results/run log and the exact raw scores, counters,
+policy states, telemetry coverage and oracles were audited. Every performance
+hash oracle also proved unchanged hit/miss/accepted-byte counters across the
+same paused identity/profile; policy restoration completed. Five performance
+cases acquired 8–72 KiB dirty after the scored endpoint before untimed pause;
+its source remains unattributed. Disable drained it. Hashes validate the later
+paused state, not persistence at the exact scored instant or power-loss safety.
+Defender/Search stayed disabled, indexers/launchers were closed and priority was
+normal. Capacity/near-full guards passed; existing Ceph availability/scrub
+warnings remain a storage uncertainty.
+
+**Mistakes and fixes.** The first Windows CI failed a stale Windows-only plan
+version assertion; fixed before deployment. An early correctness attempt
+`20261017-182743-ce6bd0b60a30461cb0c12e0fdd29cfec` began before delayed broker
+startup finished. Saved-profile restoration replaced the temporary 2 MiB profile
+with 1 MiB and re-enabled the cache during the fourth oracle; strict restoration
+correctly refused the changed settings. The entire matrix is excluded. Raw
+state/service logs were preserved, owned workers confirmed stopped, original
+test settings explicitly restored, and maintained verify-recover completed in
+`20261017-183508-51b723075a9644a68730b741b334ccfd`. A fresh complete correctness
+matrix followed. The failed run remains failed. No earlier settled performance
+session is thereby invalidated.
+
+The maintained runner now refuses an installed startup broker that is not
+Running, and requires post-oracle bypass proof for QueueCache and Primo. Plan
+157 additionally rejects omitted observed snapshot counters instead of accepting
+DTO zero defaults, and retires the failed policy/suite. A private PowerShell
+wrapper also miscounted the successful correctness JSON array; raw maintained
+results showed all 12 passed, the wrapper was fixed and no successful matrix was
+rerun. Host contracts cover missing evidence, startup rejection, false bypass
+success and independent failure restoration. The new Primo post-oracle path
+still needs a real provider run. The final retirement/parser edits require CI;
+their driver behavior was not separately VM-deployed. Broader Strict, sustained,
+Idle foreground, faults and power-loss qualification remain open.
+
+All 785 final evidence files were exported and guest SHA-256 manifests checked
+before rollback; archive SHA-256
+`33A2D5F26D77A6228B5979EA9C6137894EA92CF9B7AB7996E57C242573ADEF90`.
+Raw evidence stays private. Final restoration passed: original 0.4.687.1 loaded
+module hashes, saved profiles, Fast 2 GiB Idle 1024 KiB × 4 runtime, flags 15,
+timing/Verifier off, original applications and Everything service. The broker
+was confirmed Running before restoring the profile. Defender/Search remain
+disabled, Primo is absent. Restoration records were pulled and SHA-256 checked;
+all ten remaining owned helper/evidence files were preserved and hash-verified
+before scoped deletion. Only system folders and the reusable QueueCache-Lab
+remain at Q:'s root. The temporary snapshot is deleted, zero snapshots remain,
+and the final capacity/near-full guard passed with 313.6 GB free. Existing Ceph
+availability/scrub warnings remain; no unrelated files or lab disks were removed.
 
 **Completed drain decision screen (plans 152–154, October 16/17).** Native
 0.4.756.1 (`d7895b5`), QueueCache runner `d58b2e1` / plan 153, Direct and Primo
@@ -349,26 +464,12 @@ unattributed; Disable drained it, then every paused-state observation was clean
 and every file hash passed. The oracle validates that later paused state,
 without proving file persistence at the exact earlier scored instant.
 
-**Next improvement decision:** prioritize making small-file backing writes
-larger, while retaining a bounded selection cost. Primo's observed small-file
-write averages 1339.3 KiB, versus 180.9 / 190.2 KiB in the two 2 MiB QueueCache
-arms. This identifies a batching opportunity, not proof that gap filling is
-safe or will eliminate the throughput gap. First classify the missing dirty
-neighbors as clean cached, uncached, or competing versions, and record backward
-walk stops. If enough adjacent dirty data remains, test one bounded, aligned
-gather policy behind a runtime switch, retaining the oldest anchor and version,
-pin and range-fence rules. Never fill gaps with unknown bytes or overwrite newer
-versions. A read-aware outstanding-write limit is the separate first
-responsiveness improvement supported by plan 151; a reader–writer lock rewrite
-and 12/16 drainers or 4–16 MiB gathers are deferred.
-
-Use the maintained two-workload suite with three alternated candidate/control
-repetitions for that single policy, plus the short mixed-read regression if
-selection/concurrency changes. Reuse these provider results for orientation;
-refresh Primo only after a repeatable candidate gain merits a final parity check.
-Require byte oracles, targeted Verifier/fault checks, and a final release campaign
-before promotion. No adaptive scheduling or gather-policy change is implemented
-here. Defaults remain 1024 KiB × 4, and issues #13/#15/#16 remain open.
+**Decision at the end of plans 153/154:** the small backing requests justified
+classifying gaps and trying one bounded aligned gather. That follow-up is now
+[complete and rejected](#small-file-gather-156). Use the updated plan above;
+current controls and request sizes changed enough to require a fresh provider
+comparison before another batching policy. Defaults remain 1024 KiB × 4;
+issues #13/#15/#16 remain open.
 
 **Allocation and preparation:** staging is now bounded at small budgets, and
 remaining payload space is checked before unsigned subtraction. Normal 2 GiB
@@ -1975,7 +2076,7 @@ runs that found and fixed the issues described under
 | 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15); one subsequent observation completed read/hash in 6.86 s with every hash verified. The cache path also changed, so this is not an isolated driver gain or a complete matrix. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
 | Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. The separate plan 148 [short new-file comparison](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16) completed all 18 provider cases and all hashes; it does not isolate a batch-setting gain or settle larger-than-cache throughput. The broader goal in [#15](https://github.com/devedse/QueueCache/issues/15), matching or exceeding a contemporaneous PrimoCache control on both shapes, remains open. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
-| Next drain improvement | **Small-file batching first; read-aware concurrency for responsiveness.** Complete plans 153/154: 2 MiB × 8 reaches 84.24 / 36.14 MB/s large/small versus fresh Primo 109.68 / 54.47. All 36 cases / 73,746 hashes pass, but controls drift and no stable small-file gain is established. About 94–96% of 2 MiB small-file batches stop at a missing dirty neighbor; distinguish clean/uncached gaps and backward stops before one bounded gather-policy experiment. Allocation blocker fixed and tested under Verifier; defaults unchanged. See [full decision and limits](#drain-decision-153). | A classified batching opportunity and a single candidate ready for an alternated same-build comparison; preserve fairness/version/fence rules and repeat read interference for a selection/concurrency change. Do not reopen lock rewrites or raise ceilings without new discriminating evidence. |
+| Next drain improvement | **Aligned gather rejected; fresh controls before further batching.** Plans 155/156: current versus aligned at 2 MiB × 4, 227.95 → 219.98 MB/s large and 111.85 → 93.58 small; all 12 performance cases / 24,582 hashes and bypass proofs passed, separate Verifier matrix passed. Small-file backing sizes already 1641.5 KiB current, 990.0 aligned; all 202 current forward gaps absent. Retain diagnostics, remove failed policy, keep defaults. Historical Primo 109.68/54.47 cannot establish current parity. [Result and full plan](#small-file-gather-156). | Fresh same-session Direct/QueueCache/Primo controls and placement/dirty-run evidence. Read-aware concurrency remains the supported responsiveness candidate. New batching, lock rewrites and raised ceilings require discriminating evidence. |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 

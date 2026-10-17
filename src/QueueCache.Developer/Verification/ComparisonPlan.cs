@@ -29,7 +29,7 @@ public static class ComparisonPlan
         ("mixed-4g.dat", 4L << 30), ("big-8g.dat", 8L << 30)
     ];
     public static readonly string[] Suites =
-        ["compare-drain", DrainBatching.Suite, "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
+        ["compare-drain", "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
          "compare-durability-verify"];
     public static bool IsComparison(string suite) => Suites.Contains(suite);
     public static bool UsesDiskSpd(string suite) => suite is "compare-ram" or "compare-cache" or "compare-cache-cold";

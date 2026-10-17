@@ -153,17 +153,73 @@ Initial incomplete QueueCache 152 and Direct 153 attempts are wholly excluded;
 their strict preparation failures led to bounded, recorded waits outside timing,
 without relaxing fault/invalid-evidence rejection or reusing partial samples.
 
-The next throughput investigation is **small-file batch formation**: 94–96% of
-the 2 MiB QueueCache small-file batches ended at a missing dirty neighbor, with
-software batches averaging about 210–218 KiB. This can mean clean cached data
-or uncached gaps; it does not prove physical fragmentation. Classify those gaps
-before one bounded gather-policy experiment. A reader-aware drain limit is the
-separate responsiveness candidate: the earlier mixed-read test found a large
-read penalty at eight drainers with little global lock occupancy. A lock rewrite
-or further size/thread increases are not the first supported change. Defaults
-remain 1024 KiB × 4; broader Strict, sustained, Idle foreground and release
+That session justified classifying small-file gaps and trying one bounded gather
+policy. The follow-up below is complete and rejected; use the
+[updated full plan](PERFORMANCE_FINDINGS.md#drain-decision-153). Defaults remain
+1024 KiB × 4. Strict, sustained, default Idle foreground and final release
 qualification, and the separate power-loss issue, remain open. Historical generic
-and CrystalDiskMark scores were not rerun or relabeled as 0.4.756.1 results.
+and CrystalDiskMark scores were not rerun or relabeled as newer-build results.
+
+## Small-file gather experiment (2026-10-17)
+
+Native 0.4.761.1 (`a2249b1`), same binaries in both arms. Fast 2 GiB Idle,
+2048 KiB × 4, flags 15, timing off. Current gather versus a default-off policy
+constraining backward/forward gather to the oldest anchor's aligned 2 MiB region;
+no gap filling or new lower reads. Three alternating pairs of each original
+new-file workload, reversed order in repetition two; 12 immutable case IDs.
+Payload and scored write-plus-explicit-drain endpoint are unchanged.
+
+| Shape | Current gather MB/s, median (range) | Aligned gather MB/s, median (range) | Median change | Mean backing write KiB, current / aligned |
+|---|---:|---:|---:|---:|
+| One new 1 GiB file | 227.95 (227.65–261.66) | 219.98 (214.26–257.45) | −3.5% | 1964.4 / 1942.7 |
+| 4,096 new 64 KiB files | 111.85 (110.17–113.50) | 93.58 (92.16–110.98) | −16.3% | 1641.5 / 990.0 |
+
+Decimal payload MB/s includes creation, writes/close, volume metadata flush,
+explicit drain and sampled zero product-pending/disk queue. Backing sizes are
+median per-case byte/operation ratios including metadata, not media writes.
+**Reject the aligned policy:** small-file pairs changed −16.33%, −18.80%, +0.74%;
+large-file pairs −1.61%, −3.37%, −6.00%, including repeated control losses over
+3%. It fails the stated gain gate. Application times also varied; the medians
+alone do not isolate every cause. The policy is removed and suite retired in
+plan 157, retaining observational diagnostics and historical evidence readers.
+
+Small-file current/aligned batches total 629/934. Forward gaps are 202/484:
+current all absent from cache, aligned 483 absent and one clean-full. Current
+backward stops are 263 gaps/366 in-flight, aligned 483 gaps/451 aligned-region
+boundaries. All reason/size/gap totals reconcile per case. This does not measure
+gap lengths or prove disk fragmentation. Clean cached gap filling has little
+support here; the unchanged gather already forms ~1.6 MiB backing requests.
+
+**These are a new session, not a measured improvement over the earlier provider
+table.** The earlier current 2 MiB × 4 row was 74.66/27.07 MB/s with ~181 KiB
+small-file requests; no new selection improvement was added to the current arm.
+No Direct or Primo was rerun here. Comparing 227.95/111.85 with older Primo
+109.68/54.47 cannot establish parity. Fresh same-session controls and file
+placement/dirty-run evidence are next, before another kernel policy.
+
+All 12 performance cases, 24,582 unbuffered paused-cache hashes, telemetry and
+post-oracle bypass proofs passed under plan 156; native 761 was retained while
+the managed-only controller was updated to 762. Actual Verifier was off,
+post-boot settling 15.6 min, background apps/service closed, Defender/Search
+disabled, priority normal. Separate Verifier correctness passed 12 cases / 24,582
+hashes under plan 155; those scores are not performance measurements. Worker
+times were about two minutes / two and a half minutes respectively, plus setup.
+
+An initial early correctness run was excluded after delayed broker startup
+reapplied saved settings during its fourth oracle. Evidence was preserved,
+settings restored explicitly and maintained recovery completed before the fresh
+successful matrix. Runner startup readiness and post-oracle paused/counter
+checks now prevent that false-success path; missing observed counters are fatal.
+The new Primo bypass-confirmation path still needs a real provider run.
+
+Five performance cases recorded 8–72 KiB newly dirty between scored completion
+and untimed pause. Disable drained them and all hashes passed: this proves the
+later paused state, not exact scored-instant persistence or power-loss safety.
+Capacity/near-full guards passed; existing Ceph availability/scrub warnings
+remain. No final defaults, sustained/Strict/Idle foreground or power-loss
+qualification was performed. Exact run IDs, hashes, excluded attempt and the
+[full result and parity plan](PERFORMANCE_FINDINGS.md#small-file-gather-156)
+are retained in findings; raw evidence stays private.
 
 ## Current cache refresh (2026-10-15/16)
 

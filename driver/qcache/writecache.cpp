@@ -1058,15 +1058,10 @@ static void Drainer(PVOID context)
                                ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
         const bool batchOverlapsFence = c->RangeDrain &&
             RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart);
-        const bool aligned = c->Performance.DrainGatherPolicy == 1;
-        const auto regionBytes = static_cast<LONGLONG>(batchBlocks) * Chunk;
-        const auto regionStart = c->Slots[index].Offset.QuadPart / regionBytes * regionBytes;
         auto backReason = &c->Performance.DrainBackLimit;
         if (c->Slots[index].ValidSectors != 255) backReason = &c->Performance.DrainBackPartial;
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
-            if (aligned && c->Slots[index].Offset.QuadPart == regionStart)
-            { backReason = &c->Performance.DrainBackAligned; break; }
             auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
             if (previous == NoSlot) { backReason = &c->Performance.DrainBackGap; break; }
             if (c->Slots[previous].InFlight) { backReason = &c->Performance.DrainBackInFlight; break; }
@@ -1090,7 +1085,6 @@ static void Drainer(PVOID context)
         while (index != NoSlot && merged < batchBlocks)
         {
             auto slot = &c->Slots[index];
-            if (aligned && slot->Offset.QuadPart - regionStart >= regionBytes) break;
             if (slot->InFlight) { endReason = &c->Performance.DrainEndInFlight; break; }
             if (slot->Filling) { endReason = &c->Performance.DrainEndFilling; break; }
             if (merged && slot->ValidSectors != 255)
@@ -1761,14 +1755,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             InterlockedExchange(&c->CallerBackoff, static_cast<LONG>(command.Value));
         break;
     case QcLabDrainGather:
+        // ABI reservation for the rejected aligned-gather experiment. Reset is
+        // harmless; current selection is the retained pre-experiment algorithm.
         if (command.Value > 1 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
-        else if (QcCachePagingPathCount(c) > 0)
+        else if (command.Value)
             status = STATUS_NOT_SUPPORTED;
-        else if (c->State.DirtyBytes || c->State.InFlightBytes)
-            status = STATUS_DEVICE_BUSY;
-        else
-            c->Performance.DrainGatherPolicy = command.Value;
         break;
     case QcLabDelay:
         if (command.Value > 2000)

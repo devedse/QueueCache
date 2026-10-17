@@ -30,10 +30,11 @@ internal static class CompareDrainContracts
             paired.All(c => c.GatherPolicy is not null && c.Bytes == ComparisonDrain.ExpectedBytes(c.Kind)) &&
             paired.GroupBy(c => (c.Kind, c.Repeat)).All(g => g.Count() == 2 && g.Select(c => c.GatherPolicy).Distinct().Count() == 2) &&
             paired.Take(2).Select(c => c.GatherPolicy).SequenceEqual(paired.Skip(4).Take(2).Reverse().Select(c => c.GatherPolicy)) &&
-            !ComparisonPlan.UsesDiskSpd(DrainBatching.Suite) && ComparisonPlan.IsComparison(DrainBatching.Suite) && VerificationPlan.Suites.Contains(DrainBatching.Suite),
-            "batching is a complete twelve-case same-build paired matrix with reversed order and unchanged payloads");
+            !ComparisonPlan.UsesDiskSpd(DrainBatching.Suite) && !ComparisonPlan.IsComparison(DrainBatching.Suite) && !VerificationPlan.Suites.Contains(DrainBatching.Suite),
+            "retired batching plan preserves its twelve unique cases but is not selectable");
         var batchingOptions = new VerificationOptions("Q:", DrainBatching.Suite, BudgetMiB: 2048, Product: "QueueCache batching", Provider: ComparisonProvider.QueueCache);
-        VerificationPlan.Validate(batchingOptions);
+        try { VerificationPlan.Validate(batchingOptions); throw new Exception("Retired batching suite remained selectable."); }
+        catch (ArgumentException) { }
         foreach (var bad in new[] { batchingOptions with { Provider = ComparisonProvider.Direct }, batchingOptions with { Repeats = 2 }, batchingOptions with { CaseFilter = "small" } })
         {
             try { VerificationPlan.Validate(bad); throw new Exception("Accepted incomplete or wrong-provider batching matrix."); }
@@ -464,6 +465,15 @@ internal static class CompareDrainContracts
         reject(() => Rows(plan.Take(5).ToArray(), provider));
         reject(() => Rows(plan, ComparisonProvider.PrimoCache));
         reject(() => Rows(plan.Select(c => c.Kind == "drain-small" ? c with { Bytes = 1L << 30 } : c).ToArray(), provider));
+        var bypassPath = Path.Combine(directory, $"compare.{plan[0].Id}.bypass-after.cache.json");
+        var completeBypass = File.ReadAllText(bypassPath);
+        foreach (var field in new[] { "ReadHitBytes", "ReadMissBytes", "AcceptedBytes", "DirtyBytes", "Instance" })
+        {
+            var missing = JsonNode.Parse(completeBypass)!.AsObject(); missing.Remove(field);
+            File.WriteAllText(bypassPath, missing.ToJsonString());
+            reject(() => Rows(plan, provider));
+        }
+        File.WriteAllText(bypassPath, completeBypass);
         if (batching) reject(() => ComparisonReport.Drains(directory, ComparisonDrain.Cases(3), provider, batching: true));
         var originalOracle = File.ReadAllText(oraclePath);
         var oldOracle = JsonNode.Parse(originalOracle)!.AsObject(); oldOracle["SmallBytes"] = 1L << 30; oldOracle["SmallFileCount"] = 16_384;

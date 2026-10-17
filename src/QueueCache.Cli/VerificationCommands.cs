@@ -137,7 +137,6 @@ internal static class VerificationCommands
             Comparisons with other products (--product "<name> <version> <mode>" required; generic suites are
             driver-independent; compare-drain uses an explicit --provider for drain, counters and verification bypass):
               compare-drain      Explicit provider controls: --provider Direct|QueueCache|PrimoCache --budget-mib 2048 --repeats 3.
-              compare-drain-batching  Same-build current/aligned gather pairs: QueueCache, 2048 KiB x 4, 2 GiB, three repeats.
                                  New 1 GiB file, 1 MiB writes Q4; 4,096 new 64 KiB files (256 MiB), 4 KiB writes, four workers.
                                  Unique precomputed data; score through metadata flush, explicit product drain and zero pending.
                                  Cache-bypassed whole-file hashes afterwards; restores active state even on verification failure.
@@ -213,7 +212,7 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
-        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain suites, required: Direct, QueueCache or PrimoCache (batching: QueueCache only). Controls explicit drain and verification bypass; never inferred from --product." };
+        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain only, required: Direct, QueueCache or PrimoCache. Controls explicit drain and verification bypass; never inferred from --product." };
         var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
