@@ -212,8 +212,8 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
-        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain only, required: Direct, QueueCache or PrimoCache. Controls explicit drain and verification bypass; never inferred from --product." };
-        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
+        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain/compare-drain-sustained only, required: Direct, QueueCache, PrimoCache, QueueCachePaused or PrimoCachePaused (product loaded, cache paused for the whole run: an in-session disk anchor). Controls explicit drain and verification bypass; never inferred from --product." };
+        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache/PrimoCachePaused only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,

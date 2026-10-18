@@ -29,7 +29,7 @@ public static class ComparisonPlan
         ("mixed-4g.dat", 4L << 30), ("big-8g.dat", 8L << 30)
     ];
     public static readonly string[] Suites =
-        ["compare-drain", "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
+        ["compare-drain", ComparisonDrain.SustainedSuite, "compare-snapshot", "compare-ram", "compare-cache", "compare-cache-cold", "compare-durability-write", "compare-durability-churn",
          "compare-durability-verify"];
     public static bool IsComparison(string suite) => Suites.Contains(suite);
     public static bool UsesDiskSpd(string suite) => suite is "compare-ram" or "compare-cache" or "compare-cache-cold";
@@ -40,7 +40,7 @@ public static class ComparisonPlan
     /// completed run); cache and durability runs reuse fixed folders.</summary>
     public static string? WorkDirectory(string suite, string root, string runName) => suite switch
     {
-        "compare-ram" or "compare-drain" or DrainBatching.Suite => Path.Combine(root, runName),
+        "compare-ram" or "compare-drain" or ComparisonDrain.SustainedSuite or DrainBatching.Suite => Path.Combine(root, runName),
         "compare-cache" or "compare-cache-cold" => Path.Combine(root, "QCBench"),
         "compare-durability-write" or "compare-durability-verify" => Path.Combine(root, "QCBench-durability"),
         "compare-durability-churn" => Path.Combine(root, "QCBench-churn"),
@@ -49,7 +49,7 @@ public static class ComparisonPlan
 
     public static int TimeoutSeconds(string suite, int repeats) => suite switch
     {
-        "compare-drain" or DrainBatching.Suite => 600 + repeats * 2400,
+        "compare-drain" or ComparisonDrain.SustainedSuite or DrainBatching.Suite => 600 + repeats * 2400,
         "compare-ram" => 600 + repeats * 900,
         "compare-cache" => 2400 + repeats * 2400,
         "compare-cache-cold" => 1200,
@@ -64,6 +64,7 @@ public static class ComparisonPlan
         var cases = suite switch
         {
             "compare-drain" => ComparisonDrain.Cases(repeats),
+            ComparisonDrain.SustainedSuite => ComparisonDrain.SustainedCases(repeats),
             DrainBatching.Suite => DrainBatching.Cases(repeats),
             "compare-snapshot" => [new("snapshot-memory", "memory", 1)],
             "compare-ram" => Ram(repeats),

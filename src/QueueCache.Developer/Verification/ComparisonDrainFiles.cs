@@ -14,9 +14,19 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
     private byte* payload;
     private readonly int bytes;
     private readonly int[] order;
+    private readonly Lazy<string> sustainedHash;
     public ComparisonFileHash[] SmallHashes { get; }
     public string LargeHash { get; }
+    /// <summary>The payload repeated <see cref="ComparisonDrain.SustainedPasses"/> times; hashed on first use, outside timing.</summary>
+    public string SustainedHash => sustainedHash.Value;
+    public long SustainedBytes => (long)ComparisonDrain.SustainedPasses * bytes;
     public static string SmallName(int index) => $"f{index:D5}.bin";
+    public static string FileName(string kind) => kind switch
+    {
+        "drain-large" => "large.bin",
+        "drain-sustained" => "sustained.bin",
+        _ => throw new InvalidDataException("Not a single-file compare-drain workload: " + kind)
+    };
 
     public ComparisonDrainFiles(int bytes = ComparisonDrain.PayloadBytes)
     {
@@ -32,6 +42,13 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
             SmallHashes = Enumerable.Range(0, files).Select(i => new ComparisonFileHash(SmallName(i), ComparisonDrain.SmallFileBytes,
                 Convert.ToHexString(SHA256.HashData(new ReadOnlySpan<byte>(payload + i * ComparisonDrain.SmallFileBytes, ComparisonDrain.SmallFileBytes))))).ToArray();
             order = ShuffledOrder(files);
+            sustainedHash = new(() =>
+            {
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                for (var pass = 0; pass < ComparisonDrain.SustainedPasses; pass++)
+                    hash.AppendData(new ReadOnlySpan<byte>(payload, this.bytes));
+                return Convert.ToHexString(hash.GetHashAndReset());
+            });
         }
         catch { Dispose(); throw; }
     }
@@ -62,18 +79,23 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
 
     private static FileOptions Options => (OperatingSystem.IsWindows() ? (FileOptions)0x20000000 : FileOptions.None) | FileOptions.Asynchronous;
 
-    /// <summary>Four ready threads share an overlapped CreateNew handle (large Q4), or each creates
-    /// one small file at a time in a fixed shuffled lane. New directory and all file metadata are timed.
-    /// onStart runs immediately before releasing writers, outside their transfer loops.</summary>
-    public (DateTimeOffset Started, DateTimeOffset Ended, double Seconds) Write(string directory, bool small, Action<DateTimeOffset> onStart)
+    /// <summary>Four ready threads share an overlapped CreateNew handle (large Q4), eight write the payload
+    /// eight times into one file (sustained Q8), or four each create one small file at a time in a fixed shuffled
+    /// lane. New directory and all file metadata are timed. onStart runs immediately before releasing writers,
+    /// outside their transfer loops.</summary>
+    public (DateTimeOffset Started, DateTimeOffset Ended, double Seconds) Write(string directory, string kind, Action<DateTimeOffset> onStart)
     {
         if (Directory.Exists(directory)) throw new IOException("Scored directory already exists: " + directory);
-        using var ready = new CountdownEvent(ComparisonDrain.Workers);
+        var small = kind == "drain-small";
+        var total = small ? 0 : kind == "drain-sustained" ? SustainedBytes : bytes;
+        var lanes = kind == "drain-sustained" ? ComparisonDrain.SustainedWorkers : ComparisonDrain.Workers;
+        if (!small) _ = FileName(kind); // unknown workloads fail before any thread starts
+        using var ready = new CountdownEvent(lanes);
         using var start = new ManualResetEventSlim();
         var errors = new ConcurrentQueue<Exception>();
         SafeFileHandle? large = null;
         long next = -ComparisonDrain.LargeBlockBytes;
-        var workers = Enumerable.Range(0, ComparisonDrain.Workers).Select(lane => new Thread(() =>
+        var workers = Enumerable.Range(0, lanes).Select(lane => new Thread(() =>
         {
             ready.Signal(); start.Wait();
             try
@@ -93,8 +115,8 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
                     while (true)
                     {
                         var offset = Interlocked.Add(ref next, ComparisonDrain.LargeBlockBytes);
-                        if (offset >= bytes) break;
-                        RandomAccess.Write(large!, new ReadOnlySpan<byte>(payload + offset, ComparisonDrain.LargeBlockBytes), offset);
+                        if (offset >= total) break;
+                        RandomAccess.Write(large!, new ReadOnlySpan<byte>(payload + offset % bytes, ComparisonDrain.LargeBlockBytes), offset);
                     }
                 }
             }
@@ -108,7 +130,7 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
         {
             onStart(began);
             Directory.CreateDirectory(directory);
-            if (!small) large = File.OpenHandle(Path.Combine(directory, "large.bin"), FileMode.CreateNew, FileAccess.Write, FileShare.Read, Options);
+            if (!small) large = File.OpenHandle(Path.Combine(directory, FileName(kind)), FileMode.CreateNew, FileAccess.Write, FileShare.Read, Options);
         }
         catch (Exception ex) { errors.Enqueue(ex); }
         finally
@@ -124,9 +146,14 @@ public sealed unsafe class ComparisonDrainFiles : IDisposable
         return (began, ended, seconds);
     }
 
-    public ComparisonFileHash[] Verify(string directory, bool small)
+    public ComparisonFileHash[] Verify(string directory, string kind)
     {
-        ComparisonFileHash[] expected = small ? SmallHashes : [new("large.bin", bytes, LargeHash)];
+        ComparisonFileHash[] expected = kind switch
+        {
+            "drain-small" => SmallHashes,
+            "drain-sustained" => [new(FileName(kind), SustainedBytes, SustainedHash)],
+            _ => [new(FileName(kind), bytes, LargeHash)]
+        };
         var actualNames = Directory.EnumerateFiles(directory).Select(Path.GetFileName).Order(StringComparer.Ordinal).ToArray();
         if (!expected.Select(e => e.File).Order(StringComparer.Ordinal).SequenceEqual(actualNames, StringComparer.Ordinal))
             throw new InvalidDataException("Missing or unexpected compare-drain files.");

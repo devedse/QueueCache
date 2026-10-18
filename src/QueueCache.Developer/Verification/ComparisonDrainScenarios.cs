@@ -22,8 +22,9 @@ internal static class ComparisonDrainScenarios
 
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(WorkerJob job, ComparisonTarget target, IReadOnlyList<ComparisonCase> plan)
     {
-        if (target.DiskNumber is null || target.VolumeName is null || target.FreeBytes < 7L << 30)
-            throw new IOException("compare-drain requires an observable physical backing disk and at least 7 GiB free.");
+        var freeGiB = job.Operation == ComparisonDrain.SustainedSuite ? 12 : 7;
+        if (target.DiskNumber is null || target.VolumeName is null || target.FreeBytes < (long)freeGiB << 30)
+            throw new IOException($"{job.Operation} requires an observable physical backing disk and at least {freeGiB} GiB free.");
         var directory = Path.GetDirectoryName(job.Reply)!;
         var provider = new Provider(job, directory);
         await provider.PreflightAsync(target);
@@ -36,6 +37,8 @@ internal static class ComparisonDrainScenarios
             Algorithm = "SplitMix64 little-endian", ComparisonDrain.Seed, ComparisonDrain.PayloadBytes,
             ComparisonDrain.LargeBytes, ComparisonDrain.SmallBytes, SmallFileCount = ComparisonDrain.SmallFiles,
             LargeSha256 = files.LargeHash, SmallFiles = files.SmallHashes,
+            SustainedBytes = job.Operation == ComparisonDrain.SustainedSuite ? files.SustainedBytes : (long?)null,
+            SustainedSha256 = job.Operation == ComparisonDrain.SustainedSuite ? files.SustainedHash : null,
             ShuffledOrder = ComparisonDrainFiles.ShuffledOrder(ComparisonDrain.SmallFiles)
         });
         var checks = new List<CheckResult>();
@@ -61,10 +64,10 @@ internal static class ComparisonDrainScenarios
                 var before = prepared.Pending;
                 RunStorage.AtomicJson(prefix + ".before.pending.json", before);
                 RunStorage.AtomicJson(prefix + ".preparation.json", new { prepared.Attempt, Pending = before });
-                if (provider.Kind == ComparisonProvider.QueueCache)
+                if (provider.Product == ComparisonProvider.QueueCache)
                     File.Copy(prefix + $".prepare-{prepared.Attempt:D4}-pending.cache.json", prefix + ".before.cache.json");
                 var diskBefore = ComparisonScenarios.DiskCounters(target.DiskNumber.Value);
-                if (provider.Kind == ComparisonProvider.Direct)
+                if (provider.Kind == ComparisonProvider.Direct || provider.Paused)
                     diskBefore = await ComparisonDrain.WaitForDirectDiskIdleAsync(diskBefore,
                         () => ComparisonScenarios.DiskCounters(target.DiskNumber.Value),
                         (attempt, value) => RunStorage.AtomicJson(prefix + $".direct-prepare-disk-{attempt:D4}.json", value));
@@ -83,7 +86,7 @@ internal static class ComparisonDrainScenarios
                     var release = prefix + ".start.json";
                     RunStorage.AtomicJson(release, new { At = DateTimeOffset.UtcNow, Ready = readyUtc });
                     var scoreClock = new Stopwatch();
-                    var pass = files.Write(path, test.Kind == "drain-small", at =>
+                    var pass = files.Write(path, test.Kind, at =>
                         scoreClock.Start());
                     ComparisonScenarios.FlushVolume(target.Letter);
                     var requested = DateTimeOffset.UtcNow;
@@ -108,14 +111,14 @@ internal static class ComparisonDrainScenarios
                     var confirmationSeconds = endpoint.Elapsed.TotalSeconds;
                     var ended = DateTimeOffset.UtcNow;
                     stop.Cancel(); await observer;
-                    score = new(test.Id, provider.Kind, expectedBytes, test.Kind == "drain-small" ? ComparisonDrain.SmallFiles : 1,
+                    score = new(test.Id, provider.Kind, expectedBytes, ComparisonDrain.Files(test.Kind),
                         readyUtc, pass.Started, pass.Ended, requested, returned, ended,
                         pass.Seconds, total - pass.Seconds, explicitSeconds, confirmationSeconds, total, expectedBytes / total / 1_000_000.0,
                         before, after, diskBefore, diskAfter, samples.ToArray());
                     // Preserve the completed measurement even when coverage, bypass, a hash or restoration fails.
                     RunStorage.AtomicJson(prefix + ".score.json", score);
                     ComparisonDrain.ValidateScore(test, score, provider.Kind);
-                    if (provider.Kind == ComparisonProvider.QueueCache)
+                    if (provider.Product == ComparisonProvider.QueueCache)
                         File.Copy(prefix + $".after-{poll:D4}.cache.json", prefix + ".after.cache.json");
                     if (test.GatherPolicy is { } measuredPolicy)
                     {
@@ -131,7 +134,7 @@ internal static class ComparisonDrainScenarios
 
                 Progress(test.Id + ": measurement saved; bypassing product cache and verifying every file (untimed).");
                 var hashes = await ComparisonDrain.VerifyBypassedAsync(test.Id,
-                    () => provider.PauseAsync(prefix + ".pause"), () => files.Verify(path, test.Kind == "drain-small"),
+                    () => provider.PauseAsync(prefix + ".pause"), () => files.Verify(path, test.Kind),
                     () => provider.RestoreAsync(prefix + ".resume"), verify => RunStorage.AtomicJson(prefix + ".verify.json", verify),
                     () => provider.ConfirmBypassAsync(prefix));
                 checks.Add(new(test.Id, "PASS", $"{score.MBPerSecond:F2} MB/s through explicit drain; app {score.ApplicationSeconds:F3}s, drain/confirmation {score.DrainSeconds:F3}s; all {hashes.Length} file hashes verified with cache bypassed."));
@@ -173,12 +176,14 @@ internal static class ComparisonDrainScenarios
         var current = ComparisonScenarios.Inspect(job.Volume, Path.GetDirectoryName(job.Reply)!, "compare-drain");
         ComparisonDrain.ValidateRecoveryTarget(recovery, current);
         var provider = new Provider(job with { Provider = recovery.Provider, PrimoCli = recovery.PrimoCli }, Path.GetDirectoryName(path)!, recovery);
-        await provider.RestoreAsync(Path.Combine(Path.GetDirectoryName(job.Reply)!, "compare-drain-restore"));
+        await provider.RestoreAsync(Path.Combine(Path.GetDirectoryName(job.Reply)!, "compare-drain-restore"), final: true);
     }
 
     private sealed class Provider(WorkerJob job, string directory, ComparisonDrainRecovery? recorded = null)
     {
         public ComparisonProvider Kind => job.Provider ?? throw new ArgumentException("Missing comparison provider.");
+        public ComparisonProvider Product => ComparisonDrain.Product(Kind);
+        public bool Paused => ComparisonDrain.IsPaused(Kind);
         private ComparisonDrainRecovery? recovery = recorded;
         private WriteCacheState? bypassBefore;
         private string Journal => Path.Combine(directory, RecoveryFile);
@@ -196,12 +201,12 @@ internal static class ComparisonDrainScenarios
 
         public async Task PreflightAsync(ComparisonTarget target)
         {
-            if (Kind != ComparisonProvider.PrimoCache && LoadedDriverInspection.CaptureThirdParty().Any(d => d.Name.Equals("rxfcv.sys", StringComparison.OrdinalIgnoreCase)))
+            if (Product != ComparisonProvider.PrimoCache && LoadedDriverInspection.CaptureThirdParty().Any(d => d.Name.Equals("rxfcv.sys", StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("A PrimoCache driver is loaded; Direct and QueueCache require a VM state without PrimoCache.");
             WriteCacheState? original = null;
             Guid? originalPrimoTaskId = null;
             ulong? originalGatherPolicy = null;
-            if (Kind == ComparisonProvider.QueueCache)
+            if (Product == ComparisonProvider.QueueCache)
             {
                 ManagedBrokerObservation? broker;
                 try { broker = WindowsManagedBrokerService.Observe(); }
@@ -222,18 +227,20 @@ internal static class ComparisonDrainScenarios
                     DrainBatching.ValidateProfile(original with { Performance = performance }, DrainGatherPolicy.Current);
                 }
             }
-            else if (Kind == ComparisonProvider.PrimoCache)
+            else if (Product == ComparisonProvider.PrimoCache)
             {
                 await Primo(Path.Combine(directory, "primo-perf-help"), "?", "perf");
                 await Primo(Path.Combine(directory, "primo-pause-help"), "?", "pause");
                 originalPrimoTaskId = await ValidatePrimoAsync(Path.Combine(directory, "primo-original"));
             }
-            recovery = new(job.Volume, Kind, Kind == ComparisonProvider.PrimoCache ? Cli : null, target, false, original, originalPrimoTaskId,
+            recovery = new(job.Volume, Kind, Product == ComparisonProvider.PrimoCache ? Cli : null, target, false, original, originalPrimoTaskId,
                 originalGatherPolicy);
             RunStorage.AtomicJson(Journal, recovery);
             ComparisonScenarios.FlushVolume(target.Letter);
-            await DrainAsync(Path.Combine(directory, "compare-drain-initial-drain"));
-            ComparisonDrain.ValidatePending(await PendingAsync(Path.Combine(directory, "compare-drain-original")), Kind, clean: true);
+            await ProductDrainAsync(Path.Combine(directory, "compare-drain-initial-drain"));
+            ComparisonDrain.ValidatePending(await PendingAsync(Path.Combine(directory, "compare-drain-original"), active: true), Kind, clean: true);
+            // A paused provider stays paused until the run's restoration; its verification bypass is this pause.
+            if (Paused) await PauseProductAsync(Path.Combine(directory, "compare-drain-run-pause"));
         }
 
         private static void ValidateQueueCache(CacheDevice cache, WriteCacheState state, bool active)
@@ -287,20 +294,20 @@ internal static class ComparisonDrainScenarios
             return ComparisonDrain.PrimoTaskId(observation, job.Volume, paused: false);
         }
 
-        public async Task<ComparisonPending> PendingAsync(string prefix)
+        public async Task<ComparisonPending> PendingAsync(string prefix, bool? active = null)
         {
             ComparisonPending pending;
-            if (Kind == ComparisonProvider.QueueCache)
+            if (Product == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume);
                 var state = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
-                ValidateQueueCache(cache, state, active: true);
+                ValidateQueueCache(cache, state, active: active ?? !Paused);
                 if (recovery?.OriginalState is { } original && (state.Instance != original.Instance || state.Errors != original.Errors || state.Options != original.Options))
                     throw new InvalidDataException("QueueCache identity, error count or options changed during comparison.");
                 RunStorage.AtomicJson(prefix + ".cache.json", state);
                 pending = new(DateTimeOffset.UtcNow, Kind, state.DirtyBytes, state.InFlightBytes, null);
             }
-            else if (Kind == ComparisonProvider.PrimoCache)
+            else if (Product == ComparisonProvider.PrimoCache)
             {
                 var output = await Primo(prefix + ".perf", "perf", "-v", job.Volume[..1]);
                 pending = new(DateTimeOffset.UtcNow, Kind, null, null, ComparisonDrain.ParseDeferredBlocks(output));
@@ -313,28 +320,36 @@ internal static class ComparisonDrainScenarios
 
         public async Task DrainAsync(string prefix)
         {
-            if (Kind == ComparisonProvider.QueueCache)
+            if (!Paused) await ProductDrainAsync(prefix); // a paused product has nothing pending
+        }
+
+        private async Task ProductDrainAsync(string prefix)
+        {
+            if (Product == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume, writable: true);
                 if (cache.GetWriteCacheState().Faulted) throw new IOException("Faulted cache; explicit drain refused.");
                 cache.Control(WriteCacheAction.Flush);
             }
-            else if (Kind == ComparisonProvider.PrimoCache) await Primo(prefix, "dwflush", "-v", job.Volume[..1], "-s");
+            else if (Product == ComparisonProvider.PrimoCache) await Primo(prefix, "dwflush", "-v", job.Volume[..1], "-s");
             // Direct's explicit volume flush was issued by the caller.
         }
 
         public async Task ClearAsync(string prefix)
         {
-            if (Kind == ComparisonProvider.QueueCache) { using var cache = new CacheDevice(job.Volume, writable: true); cache.Control(WriteCacheAction.DropClean); }
-            else if (Kind == ComparisonProvider.PrimoCache) await Primo(prefix, "clear", "-v", job.Volume[..1], "-s");
+            if (Paused) return;
+            if (Product == ComparisonProvider.QueueCache) { using var cache = new CacheDevice(job.Volume, writable: true); cache.Control(WriteCacheAction.DropClean); }
+            else if (Product == ComparisonProvider.PrimoCache) await Primo(prefix, "clear", "-v", job.Volume[..1], "-s");
         }
 
-        public async Task PauseAsync(string prefix)
+        /// <summary>Verification bypass. A paused provider is already bypassed for the whole run.</summary>
+        public Task PauseAsync(string prefix) => Kind == ComparisonProvider.Direct || Paused ? Task.CompletedTask : PauseProductAsync(prefix);
+
+        private async Task PauseProductAsync(string prefix)
         {
-            if (Kind == ComparisonProvider.Direct) return;
             recovery = (recovery ?? throw new InvalidOperationException("No original state.")) with { ResumeRequired = true };
             RunStorage.AtomicJson(Journal, recovery); // before the mutation, including a partly failed pause
-            if (Kind == ComparisonProvider.QueueCache)
+            if (Product == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume, writable: true);
                 WriteCacheState Capture()
@@ -360,9 +375,10 @@ internal static class ComparisonDrainScenarios
             }
         }
 
+        /// <summary>A paused QueueCache compares against its run-start pause, so every scored write is covered too.</summary>
         public async Task ConfirmBypassAsync(string prefix)
         {
-            if (Kind == ComparisonProvider.QueueCache)
+            if (Product == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume);
                 var after = cache.GetWriteCacheState() with { Performance = cache.GetPerformance() };
@@ -370,7 +386,7 @@ internal static class ComparisonDrainScenarios
                 RunStorage.AtomicJson(prefix + ".bypass-after.cache.json", after);
                 ComparisonDrain.ValidateBypass(bypassBefore!, after);
             }
-            else if (Kind == ComparisonProvider.PrimoCache)
+            else if (Product == ComparisonProvider.PrimoCache)
             {
                 var observation = await CapturePrimoAsync(prefix + ".bypass-after");
                 RunStorage.AtomicJson(prefix + ".bypass-primo.json", observation);
@@ -379,17 +395,18 @@ internal static class ComparisonDrainScenarios
             }
         }
 
-        public async Task RestoreAsync(string prefix)
+        /// <summary>After each verification, or with final at the run's restoration. A paused provider resumes only then.</summary>
+        public async Task RestoreAsync(string prefix, bool final = false)
         {
-            if (recovery is null) return;
-            if (recovery.ResumeRequired && Kind == ComparisonProvider.QueueCache)
+            if (recovery is null || Paused && !final) return;
+            if (recovery.ResumeRequired && Product == ComparisonProvider.QueueCache)
             {
                 using var cache = new CacheDevice(job.Volume, writable: true);
                 var state = ComparisonDrain.RestoreQueueCache(recovery.OriginalState ?? throw new InvalidDataException("Missing original QueueCache state."),
                     cache.GetWriteCacheState, () => cache.Control(WriteCacheAction.Enable));
                 ValidateQueueCache(cache, state, active: true);
             }
-            else if (recovery.ResumeRequired && Kind == ComparisonProvider.PrimoCache)
+            else if (recovery.ResumeRequired && Product == ComparisonProvider.PrimoCache)
             {
                 var captures = 0;
                 await ComparisonDrain.RestorePrimoAsync(recovery.OriginalPrimoTaskId, job.Volume,

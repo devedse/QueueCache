@@ -151,6 +151,7 @@ ones in use:
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 | `compare-drain` | Two fixed new-file workloads through explicit product drain; three repeats, two median/range rows per provider | Explicit `--provider`, `--product`, `--budget-mib 2048 --repeats 3`; no DiskSpd |
+| `compare-drain-sustained` | Plan 158: one new 8 GiB file (four times the cache) through explicit product drain; three repeats | Same options as `compare-drain`; at least 12 GiB free |
 
 **Comparisons with other products** (plan 121). These suites measure any RAM
 disk or cached volume the same way, without QueueCache's controls, hooks or
@@ -213,13 +214,15 @@ lists, Secure Boot and Memory Integrity settings, and memory snapshots.
 - `compare-snapshot` records memory and drivers only, for example before
   creating a disk.
 
-**Focused write plus drain comparison (plan 157; workload unchanged from 148).** `compare-drain` runs two
-fixed workloads three times each, alternating large/small order:
+**Focused write plus drain comparison (plan 158; workload unchanged from 148).** `compare-drain` runs two
+fixed workloads three times each, alternating large/small order. `compare-drain-sustained` runs the third
+workload three times, with the same endpoint, oracle and provider controls:
 
 | Workload | Requests | Files |
 |---|---|---|
 | Large file | Sequential 1 MiB, four outstanding writes on an overlapped handle | One new 1 GiB file |
 | Small files | Unbuffered 4 KiB, four workers | 4,096 new 64 KiB files (256 MiB total) in a fixed shuffled order |
+| Sustained (plan 158) | Sequential 1 MiB, eight outstanding writes on an overlapped handle | One new 8 GiB file: the payload written eight times |
 
 A unique, incompressible 1 GiB SplitMix64 payload is precomputed with all
 SHA-256 oracles outside timing; small files use its first 256 MiB. File/directory
@@ -227,7 +230,13 @@ creation and close are timed;
 shuffled names do not establish random disk placement. No overwrites are scored.
 
 Run each provider alone on the same non-OS NTFS disk after section 2 preflight.
-Direct and PrimoCache require QueueCache drivers absent. QueueCache requires
+Direct and PrimoCache require QueueCache drivers absent. `QueueCachePaused` and
+`PrimoCachePaused` (plan 158) check and drain the active product, pause it for the
+whole run and resume it only at the run's restoration: they measure the disk
+through the same loaded filter stack, so every product session can carry its own
+raw-disk anchor for relative comparisons across sessions. They issue no product
+drain; the oracle proves QueueCache admitted nothing since the run's pause, or that
+the Primo task stayed paused. QueueCache requires
 active Fast, 2 GiB, timing diagnostics off. On the experiment branch, batches may
 be 1024/2048 KiB and parallelism 4/8; normal defaults remain 1024 KiB × 4.
 Apply each runtime profile explicitly before its run, name it in `--product`,

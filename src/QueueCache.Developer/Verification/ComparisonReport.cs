@@ -21,7 +21,8 @@ public static class ComparisonReport
         var shapes = Shapes(directory, plan);
         var steps = Steps(directory, plan);
         var drains = ComparisonDrain.IsSuite(suite) ? Drains(directory, plan,
-            provider ?? throw new InvalidDataException("Missing comparison provider."), suite == DrainBatching.Suite) : [];
+            provider ?? throw new InvalidDataException("Missing comparison provider."), suite == DrainBatching.Suite,
+            suite == ComparisonDrain.SustainedSuite) : [];
         var memory = plan.Where(c => c.Kind == "memory")
             .Select(c => (c.Id, Snapshot: Read<MemorySnapshot>(directory, c.Id, "memory"))).ToArray();
         // A verify run writes result.json for the generations test and churn.json for the churn test.
@@ -82,9 +83,11 @@ public static class ComparisonReport
     private static string Share(SectorCounts c) => string.Create(CultureInfo.InvariantCulture,
         $"{c.New * 100.0 / c.Expected:F1}% new, {c.Old * 100.0 / c.Expected:F1}% old, {(c.Other + c.Missing) * 100.0 / c.Expected:F1}% other or missing");
 
-    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider, bool batching = false)
+    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider,
+        bool batching = false, bool sustained = false)
     {
-        if (!plan.SequenceEqual(batching ? DrainBatching.Cases(3) : ComparisonDrain.Cases(3)) || batching && provider != ComparisonProvider.QueueCache)
+        var complete = batching ? DrainBatching.Cases(3) : sustained ? ComparisonDrain.SustainedCases(3) : ComparisonDrain.Cases(3);
+        if (batching && sustained || !plan.SequenceEqual(complete) || batching && provider != ComparisonProvider.QueueCache)
             throw new InvalidDataException("Cannot publish an incomplete or mixed compare-drain plan.");
         using var oracle = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "compare-drain-oracle.json")));
         var root = oracle.RootElement;
@@ -93,6 +96,12 @@ public static class ComparisonReport
             root.GetProperty("SmallBytes").GetInt64() != ComparisonDrain.SmallBytes ||
             root.GetProperty("SmallFileCount").GetInt32() != ComparisonDrain.SmallFiles || root.GetProperty("Seed").GetInt32() != ComparisonDrain.Seed)
             throw new InvalidDataException("Wrong compare-drain oracle contract.");
+        string? sustainedHash = null;
+        if (sustained && (!root.TryGetProperty("SustainedBytes", out var sustainedBytes) || sustainedBytes.ValueKind != JsonValueKind.Number ||
+            sustainedBytes.GetInt64() != ComparisonDrain.SustainedBytes || !root.TryGetProperty("SustainedSha256", out var hashValue) ||
+            hashValue.ValueKind != JsonValueKind.String || (sustainedHash = hashValue.GetString()) is not { Length: 64 } ||
+            !sustainedHash.All(char.IsAsciiHexDigit)))
+            throw new InvalidDataException("Missing or wrong compare-drain-sustained oracle.");
         var small = root.GetProperty("SmallFiles").Deserialize<ComparisonFileHash[]>() ?? throw new InvalidDataException("Missing small-file hashes.");
         if (small.Length != ComparisonDrain.SmallFiles || !small.Select(f => f.File).SequenceEqual(Enumerable.Range(0, small.Length).Select(ComparisonDrainFiles.SmallName)))
             throw new InvalidDataException("Incomplete compare-drain small-file oracle.");
@@ -100,10 +109,10 @@ public static class ComparisonReport
         {
             var score = Read<ComparisonDrainScore>(directory, test.Id, "score");
             ComparisonDrain.ValidateScore(test, score, provider);
-            if (provider == ComparisonProvider.QueueCache)
+            if (ComparisonDrain.Product(provider) == ComparisonProvider.QueueCache)
                 ComparisonDrain.ValidateBypass(Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-before.cache"),
                     Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-after.cache"));
-            else if (provider == ComparisonProvider.PrimoCache)
+            else if (ComparisonDrain.Product(provider) == ComparisonProvider.PrimoCache)
             {
                 var recovery = JsonSerializer.Deserialize<ComparisonDrainRecovery>(File.ReadAllText(Path.Combine(directory, "compare-drain-recovery.json")))!;
                 if (ComparisonDrain.PrimoTaskId(Read<ComparisonPrimoObservation>(directory, test.Id, "bypass-primo"), recovery.Volume, paused: true) != recovery.OriginalPrimoTaskId)
@@ -124,9 +133,14 @@ public static class ComparisonReport
                     throw new InvalidDataException("Batching summary contradicts raw counters.");
             }
             var verify = Read<ComparisonDrainVerification>(directory, test.Id, "verify");
-            ComparisonFileHash[] expected = test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)];
+            ComparisonFileHash[] expected = test.Kind switch
+            {
+                "drain-small" => small,
+                "drain-sustained" => [new(ComparisonDrainFiles.FileName(test.Kind), ComparisonDrain.SustainedBytes, sustainedHash!)],
+                _ => [new(ComparisonDrainFiles.FileName(test.Kind), ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)]
+            };
             if (verify.Id != test.Id || !verify.Bypassed || !verify.Restored || !verify.Verified || !verify.Files.SequenceEqual(expected) ||
-                expected.Any(f => f.Bytes != (test.Kind == "drain-small" ? ComparisonDrain.SmallFileBytes : ComparisonDrain.LargeBytes) ||
+                expected.Any(f => f.Bytes != (test.Kind == "drain-small" ? ComparisonDrain.SmallFileBytes : ComparisonDrain.ExpectedBytes(test.Kind)) ||
                     f.Sha256 is null || f.Sha256.Length != 64 || !f.Sha256.All(char.IsAsciiHexDigit)))
                 throw new InvalidDataException("Missing, failed or unrestored cache-bypassed file verification: " + test.Id);
             return score;
