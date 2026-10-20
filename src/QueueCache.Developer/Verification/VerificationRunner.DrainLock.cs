@@ -26,7 +26,7 @@ public sealed partial class VerificationRunner
             if (warm.State.CleanReadBytes < 512UL << 20) throw new IOException("Diagnostic hot file is not fully resident.");
         }
         // Background file-system writes (metadata, TRIM) can land in a 6 s standalone window. Such a window is
-        // never scored: it is recorded under its own name and remeasured, within a fixed attempt bound (plan 159).
+        // never scored: it is recorded under its own name and remeasured, within a fixed attempt bound (plan 160).
         var noisy = new List<object>();
         for (var attempt = 1; ; attempt++)
         {

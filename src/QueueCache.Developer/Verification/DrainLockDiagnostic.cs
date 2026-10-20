@@ -3,7 +3,7 @@ using QueueCache.Management;
 namespace QueueCache.Developer.Verification;
 
 /// <summary>A standalone window saw background writes (file-system metadata, TRIM); it is never scored, only
-/// recorded and remeasured within <see cref="DrainLockDiagnostic.StandaloneAttempts"/> (plan 159).</summary>
+/// recorded and remeasured within <see cref="DrainLockDiagnostic.StandaloneAttempts"/> (plan 160).</summary>
 public sealed class StandaloneNoiseException(ulong lowerWrites, ulong drainedBytes) : IOException(
     $"Clean standalone control is missing: {lowerWrites} background lower write(s), {drainedBytes} bytes drained.")
 {

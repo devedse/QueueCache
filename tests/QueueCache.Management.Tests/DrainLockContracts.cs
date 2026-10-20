@@ -67,7 +67,7 @@ internal static class DrainLockContracts
         reject(() => DrainLockDiagnostic.Validate(cold with { Before = cold.Before with
             { State = cold.Before.State with { Options = cold.Before.State.Options! with { Allocation = CacheAllocation.Automatic, WritePercent = 50 } } } }));
         reject(() => DrainLockDiagnostic.Validate(cold with { After = cold.After with { State = cold.After.State with { ReadHitBytes = 4096 } } }));
-        // Plan 159: background writes in a standalone window are a distinct, retryable failure, never a score.
+        // Plan 160: background writes in a standalone window are a distinct, retryable failure, never a score.
         Exception? Thrown(Action action) { try { action(); return null; } catch (Exception ex) { return ex; } }
         var alone = windows.First(w => !w.Case.Writer && !w.Case.Resident);
         var noisy = alone with { After = alone.After with { State = alone.After.State with { DrainedBytes = 4096 },
