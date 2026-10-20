@@ -234,7 +234,14 @@ Direct and PrimoCache require QueueCache drivers absent. `QueueCachePaused` and
 `PrimoCachePaused` (plan 158) check and drain the active product, pause it for the
 whole run and resume it only at the run's restoration: they measure the disk
 through the same loaded filter stack, so every product session can carry its own
-raw-disk anchor for relative comparisons across sessions. They issue no product
+disk anchor for relative comparisons across sessions. NTFS reaches the disk at
+queue depth about 1 for the new large and sustained files (extending writes) and
+about 4 for small files, so these anchors track per-request latency, not the
+throughput a deeper queue gets. On the shared Ceph-backed VM disk, plan 158
+anchors changed about 3× within hours with unchanged `ceph health`. Compare
+products only within one time window, or A–B–A with anchors at each end, and log
+the backend's other client load and each case's drain-phase latency
+(mean queue depth ÷ write IOPS). They issue no product
 drain; the oracle proves QueueCache admitted nothing since the run's pause, or that
 the Primo task stayed paused. QueueCache requires
 active Fast, 2 GiB, timing diagnostics off. On the experiment branch, batches may

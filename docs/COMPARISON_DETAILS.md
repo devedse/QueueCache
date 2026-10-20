@@ -3,7 +3,7 @@
 [Comparison tables](COMPARISON.md) contain the scores. This document keeps the
 methods, explanations, failed attempts and limits behind them. The original
 comparison is dated October 12–14; the disabled-background-service refresh and
-short drain comparisons are dated October 15–17, 2026. Cross-date scores describe
+short drain comparisons are dated October 15–20, 2026. Cross-date scores describe
 their sessions; they do not isolate a driver change or the effect of disabling
 Defender/Search.
 
@@ -17,7 +17,8 @@ loss of pending writes with a healthy filesystem. The results below do not certi
 that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 
-Contents: [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
+Contents: [Matched in-session comparison](#matched-in-session-comparison-2026-10-1820) ·
+[Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
 [Latest drain decision](#drain-decision-screen-2026-10-1617) ·
 [Cache refresh](#current-cache-refresh-2026-10-1516) ·
 [Focused checks](#focused-fix-checks-2026-10-15) ·
@@ -25,6 +26,65 @@ Contents: [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16
 [Column definitions](#cache-column-definitions) ·
 [Power cuts](#power-cut-while-the-cache-is-writing) ·
 [Original setup](#how-this-was-measured)
+
+## Matched in-session comparison (2026-10-18/20)
+
+Plan 158 on branch `experiment/drain-batch-concurrency`, CI build 0.4.764.1
+(source `d741d05`). Same VM, Q: disk, payload, workloads and scored endpoint as
+plans 148–156, plus a new 8 GiB sustained workload. Each product ran alone.
+Numbers are medians with the full observed range, decimal MB/s. They include
+creation, unbuffered writes, filesystem flush, explicit product drain and a
+sampled zero pending/disk queue. "Paused" rows keep the product loaded but
+paused. They reach the disk at queue depth about 1 for the new large and
+sustained files and about 4 for small files, so they track per-request latency.
+
+| Mode, window (UTC) | New 1 GiB + drain | New 4,096 × 64 KiB + drain | New 8 GiB + drain | Small-file application s | Drain latency at 2 MiB × 8, ms |
+|---|---:|---:|---:|---:|---:|
+| QueueCache 1024 KiB × 4 Idle, S1 Oct 18 05:52–06:48 | 174.2 (161.1–183.6) | 92.1 (46.6–112.2) | 156.1 (139.0–165.3) | 1.18 | — |
+| QueueCache 2048 KiB × 8 Idle, S1 | 213.9 (61.8–292.4) | 76.2 (46.1–119.9) | 183.4 (122.4–218.7) | 1.17 | 74.5 (57.7 first round) |
+| QueueCache 2048 KiB × 8 Eager, S1 | 293.8 (39.7–320.4) | 177.5 (57.8–203.7) | — | 1.37 | 53.6 |
+| QueueCache paused, S1 06:21 / 11:43 | 111.1 / 32.7 | 3.6 / 1.0 | — | — | — |
+| PrimoCache, S3 quiet Oct 18 12:28–12:40 | 120.5 (105.0–141.0) | 59.9 (40.5–67.1) | 126.9 (98.0–134.2) | 1.90 | 130.9 |
+| PrimoCache, S3 loaded 14:34–15:12 | 81.2 (46.5–104.8) | 37.6 (25.9–51.4) | 82.4 (78.3–122.7) | 1.92 | 200.9 |
+| PrimoCache paused, 14:22 / 15:12 | 41.6 / 44.4 | 1.4 / 1.3 | 27.9 (14:37) | — | — |
+| QueueCache 1024 KiB × 4 Idle, S4a Oct 18 20:00, foreign load | 23.0 (14.6–30.3) | 8.9 (4.4–24.9) | — | 1.71 | — |
+| QueueCache 1024 KiB × 4 Idle, S4 Oct 20 16:52–17:49 | 96.5 (93.8–101.0) | 59.0 (46.4–64.8) | 92.6 (74.0–103.2) | 1.19 | — |
+| QueueCache 2048 KiB × 8 Idle, S4 | 126.5 (106.0–156.0) | 50.6 (34.9–95.3) | — | 1.18 | 127.4 |
+| QueueCache 2048 KiB × 8 Eager, S4 | 141.3 (79.9–314.3) | 173.3 (38.2–204.1) | 125.5 (124.8–144.6) | 1.40 | 116.8 |
+| QueueCache paused, S4 start / end | 81.9 / 113.3 | 2.4 / 7.2 | — | — | — |
+
+S1 pools four complete six-case runs per settings arm (twelve repetitions per
+shape) and two sustained runs per arm. Primo has five complete six-case runs and
+two sustained runs; S4 has one or two runs per arm. All **47 complete runs and
+454,794 cache-bypassed file hashes passed**, including Primo's first real
+post-oracle pause proofs. Incomplete anchor, sustained and lock-diagnostic runs
+are excluded and never combined.
+
+**Read this table across windows only with the backend in mind.** The paused
+rows show the same disk about three times slower at queue depth 1 in the
+afternoon of October 18 than at 06:21. `ceph health` showed the same warnings
+throughout. From 17:30 another Ceph client read 50–80 MB/s (later up to
+215 MB/s), and the held S4 arms waited until October 20. Primo's drain latency
+at 2 MiB × 8 was 111–151 ms in its quiet window. QueueCache 2048 × 8 Idle
+measured 102–142 ms in S4, so S4 and Primo's quiet window are the
+latency-matched comparison. There, the default trails Primo by 20% for the large
+file, matches it for small files and trails by 27% sustained. Eager 2048 × 8
+beats Primo's medians by 17% for the large file and 2.9× for small files, and
+matches it sustained. Large-file ranges overlap, and matching by latency is not
+a simultaneous run.
+
+Two results do not depend on the backend. QueueCache absorbed the 4,096 small
+files in a median 1.15–1.19 s under Idle; Primo took 1.90 s. Both absorbed the
+1 GiB file in about 0.15 s. Second, Eager draining overlaps the drain with the
+writes. Small-file drain left after the application finished fell to
+0.07–0.12 s, against 1.3–4.2 s under Idle, while Eager's own application phase
+grew to 1.37–1.40 s. Eager also exposed a TRIM stall: after deletes, a 1 GiB
+write's application time reached 6.7 s and 25.1 s.
+
+Plans 153/154 compared QueueCache at 22:05–22:20 with Primo at 00:02. The
+"23.2% / 33.7% behind Primo" stated there is a cross-window comparison on this
+disk and does not isolate the products. Method, corrections and the TRIM details
+are in [performance findings](PERFORMANCE_FINDINGS.md#matched-158).
 
 ## Short write plus drain comparison (2026-10-16)
 
@@ -139,7 +199,8 @@ Loaded native hashes, exact run identities, allocation checks and CI are in
 QueueCache's controls changed +15.1% large / +112.2% small across grouped arms.
 Its 2 MiB × 8 large-file range narrowly exceeds both control ranges, but small-file
 ranges overlap; a stable small-file gain is unproven. That arm's medians remain
-23.2% / 33.7% below fresh Primo. Compared with the earlier plan-148 session,
+23.2% / 33.7% below fresh Primo (a cross-window comparison; see the
+[plan-158 correction](#matched-in-session-comparison-2026-10-1820)). Compared with the earlier plan-148 session,
 Primo changes 78.96 → 109.68 MB/s large and 57.62 → 54.47 small. Both sessions
 already had Defender/Search disabled; the difference is not an isolated effect
 of those settings. Direct stays near 48 / 1.3 MB/s. Ceph availability/scrub

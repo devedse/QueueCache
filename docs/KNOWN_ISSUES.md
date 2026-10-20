@@ -1,7 +1,7 @@
 # Known issues and verification gaps
 
 What is known to be limited or not yet proven in the current QueueCache source.
-Evidence through 2026-10-16 uses the unchanged 0.4.687.1 native driver; its scope is recorded below.
+Production evidence uses the unchanged 0.4.687.1 native driver; experiment-branch builds through 2026-10-20 are scoped below.
 Fixed defects are listed at the end with the build that
 fixed them; do not report them as current bugs without a reproduction on the
 current driver. Performance results and decisions are in
@@ -102,6 +102,17 @@ now guard that path. The new Primo proof path is host-tested but not yet run on
 Primo. Retirement/parser edits are not separately VM-deployed. Defaults and
 broader qualification gaps remain. [Result and full plan](PERFORMANCE_FINDINGS.md#small-file-gather-156).
 
+The October 18–20 matched research (plan 158) compared products at matched
+drain latency, because this Ceph-backed disk changed speed up to threefold
+within hours. Against PrimoCache's quiet window (120.5 / 59.9 / 126.9 MB/s for
+the 1 GiB, 4,096-file and 8 GiB workloads), the 1024 KiB × 4 Idle default
+measured 96.5 / 59.0 / 92.6. Draining during writes (Eager) at 2 MiB × 8
+measured 141.3 / 173.3 / 125.5. All 47 complete runs and 454,794 hashes passed.
+Parity is not qualified: large-file ranges overlap and the runs were not
+simultaneous. Eager also has the TRIM stall below, and foreground-read
+interference is unmeasured. Defaults are unchanged.
+[Results](PERFORMANCE_FINDINGS.md#matched-158).
+
 ### Low-priority programs read cached data slower (performance)
 
 A program started below normal priority (Task Scheduler's default) read 1 MiB Q8
@@ -142,12 +153,31 @@ therefore enters QueueCache's read cache only when it was written or read
 unbuffered; Windows' file cache holds it otherwise. NTFS metadata write-back is
 admitted like any other write.
 
-### The test VM's own disks cannot TRIM
+### Each TRIM waits for every drain write already in flight (performance)
 
-Windows 11 with the VirtIO SCSI driver gives up on TRIM (the disk rejects GET LBA
-STATUS; virtio-win issue #1574), with or without QueueCache. TRIM handling is
-verified on a VHDX (`trim-cache`): trimmed pending data is dropped, not written,
-and everything else reads back exactly.
+A TRIM runs on the ordered request path. QueueCache pauses its drainers and waits
+until every lower write already issued has finished, whether or not it overlaps
+the trimmed ranges. Only then does it forward the TRIM, and later writes wait
+behind it. With Idle draining, little is in flight while a program writes. With
+Eager draining, or under capacity pressure, each TRIM costs about one round trip
+of the whole drain window (up to 16 MiB at 2 MiB × 8).
+
+In plan 158 (2026-10-18), NTFS sent TRIMs for 4,096 just-deleted files during the
+next measured write. At 2 MiB × 8 Eager, 144 and 272 TRIM requests stretched a
+new 1 GiB file's application time from about 0.16 s to 6.7 s and 25.1 s. Three
+small-file cases rose from about 1.3 s to 2.2–4.2 s. The driver's queue-wait
+counter matched those stalls. Fitting Fast writes then wait for lower I/O,
+contrary to the RAM-first goal. A candidate fix, not built yet: wait only for
+in-flight writes that overlap a trimmed range, and keep other drains running.
+[Evidence](PERFORMANCE_FINDINGS.md#matched-158).
+
+The test VM's disk now accepts TRIM. On 2026-10-18 the hypervisor counted about
+891,000 successful unmap operations on it, none failed, and QueueCache's TRIM
+counter rose in 32 of 132 cases. That counter only counts TRIMs the lower disk
+accepted. The earlier VirtIO rejection (virtio-win issue #1574) therefore no
+longer applies to this VM; when that changed was not recorded. TRIM correctness
+is verified on a VHDX (`trim-cache`): trimmed pending data is dropped, not
+written, and everything else reads back exactly.
 
 ### An older build cannot be installed over a newer one
 
@@ -178,7 +208,8 @@ worker.
 | Equal-work read tails | Complete 24-case, 100,000-operation comparison: cold-random p99.9 191.7 → 60.7 ms; median case maximum 271.6 → 123.5 ms; every cold pair improves | Fixed-duration maxima sample unequal amounts of work; backing-store profile and pool size were not varied |
 | Drain settings (#15) | Complete timing-off 512 MiB comparison: 12.7 → 8.0 s, every pair improves; separate cold-read/write-drain comparisons also improve | Qualifies explicit drain time, not disk-speed parity, general foreground throughput or Strict impact |
 | Short completed writes | Plan 148: all 18 provider cases, 36,873 file hashes, zero pending/disk queue and restored state | New files fitting in cache; no new native code, sustained/Strict qualification or power-loss test |
-| Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / sustained / default Idle foreground / release qualification unrun. New Primo post-oracle path and retired-policy native build not VM-exercised. |
+| Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / default Idle foreground / release qualification unrun. The Primo post-oracle path ran on Primo in plan 158; the retired-policy native build was not separately VM-exercised. |
+| Matched provider research | Plan 158: 47 complete runs / 454,794 hashes; latency-matched medians default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 MB/s against Primo 120.5 / 59.9 / 126.9 (1 GiB / 4,096 files / 8 GiB) | Not simultaneous; large-file ranges overlap; TRIM stall under Eager; three foreground-read diagnostic attempts incomplete |
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 
