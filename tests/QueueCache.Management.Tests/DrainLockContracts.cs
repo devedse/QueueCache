@@ -67,6 +67,19 @@ internal static class DrainLockContracts
         reject(() => DrainLockDiagnostic.Validate(cold with { Before = cold.Before with
             { State = cold.Before.State with { Options = cold.Before.State.Options! with { Allocation = CacheAllocation.Automatic, WritePercent = 50 } } } }));
         reject(() => DrainLockDiagnostic.Validate(cold with { After = cold.After with { State = cold.After.State with { ReadHitBytes = 4096 } } }));
+        // Plan 159: background writes in a standalone window are a distinct, retryable failure, never a score.
+        Exception? Thrown(Action action) { try { action(); return null; } catch (Exception ex) { return ex; } }
+        var alone = windows.First(w => !w.Case.Writer && !w.Case.Resident);
+        var noisy = alone with { After = alone.After with { State = alone.After.State with { DrainedBytes = 4096 },
+            Diagnostics = alone.After.Diagnostics with { Attribution = alone.After.Diagnostics.Attribution! with { LowerWriteAttempts = 1 } } } };
+        check(Thrown(() => DrainLockDiagnostic.Validate(noisy)) is StandaloneNoiseException { LowerWrites: 1, DrainedBytes: 4096 } &&
+            DrainLockDiagnostic.StandaloneAttempts == 3,
+            "a standalone window with one background 4 KiB write is a recorded, retryable noise failure (three attempts)");
+        check(Thrown(() => DrainLockDiagnostic.Validate(timed with { After = timed.After with { State = timed.After.State with { DrainedBytes = 0 } } }))
+                is InvalidDataException &&
+            Thrown(() => DrainLockDiagnostic.Validate(alone with { Writer = alone.Reader })) is InvalidDataException,
+            "missing writer drain and a standalone writer score stay hard failures, never retried as noise");
+        reject(() => DrainLockDiagnostic.RequireComplete(cases, windows.Select(w => w == alone ? noisy : w).ToArray()));
         Console.WriteLine("Drain lock diagnostic matrix, counter scope, path purity, missing evidence and timing contracts passed (no driver access).");
     }
 }

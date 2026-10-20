@@ -2,12 +2,23 @@ using QueueCache.Management;
 
 namespace QueueCache.Developer.Verification;
 
+/// <summary>A standalone window saw background writes (file-system metadata, TRIM); it is never scored, only
+/// recorded and remeasured within <see cref="DrainLockDiagnostic.StandaloneAttempts"/> (plan 159).</summary>
+public sealed class StandaloneNoiseException(ulong lowerWrites, ulong drainedBytes) : IOException(
+    $"Clean standalone control is missing: {lowerWrites} background lower write(s), {drainedBytes} bytes drained.")
+{
+    public ulong LowerWrites { get; } = lowerWrites;
+    public ulong DrainedBytes { get; } = drainedBytes;
+}
+
 public sealed record DrainLockWindow(PerformanceCase Case, CacheLayoutSnapshot Before, CacheLayoutSnapshot After,
     DateTimeOffset Start, DateTimeOffset End, DiskSpdScore Reader, DiskSpdScore? Writer);
 
 /// <summary>Short same-build attribution screen. Global lock timings include readers, writer, drainers and observers.</summary>
 public static class DrainLockDiagnostic
 {
+    /// <summary>Recorded measurements per standalone case before a background-write window fails the run.</summary>
+    public const int StandaloneAttempts = 3;
     public const string Suite = "drain-lock-diagnostic";
     // PromoteOnRead controls promotion of retained write blocks, not miss admission.
     // A Fixed 100% write partition makes ReadLimit zero and keeps the disk-read arm uncached.
@@ -96,8 +107,10 @@ public static class DrainLockDiagnostic
             hits != 0 || misses < (ulong)window.Reader.Bytes || reads == 0)
             throw new InvalidDataException("Reader did not stay in its declared RAM-hit/disk-miss path.");
         if (c.Writer ? window.Writer is null || window.Writer.Operations <= 0 || writes == 0 || drained < 64UL << 20 :
-            window.Writer is not null || writes != 0 || drained != 0)
+            window.Writer is not null)
             throw new InvalidDataException("Expected concurrent drain activity or clean standalone control is missing.");
+        if (!c.Writer && (writes != 0 || drained != 0))
+            throw new StandaloneNoiseException(writes, drained);
         foreach (var (first, last) in new[]
         {
             (a.Performance.LockAcquires, b.Performance.LockAcquires), (a.Performance.LockWaitTicks, b.Performance.LockWaitTicks),
@@ -113,6 +126,10 @@ public static class DrainLockDiagnostic
         if (cases.Count != 48 || windows.Count != cases.Count || windows.Select(w => w.Case.Id).Distinct().Count() != windows.Count ||
             cases.Any(c => windows.Count(w => w.Case == c) != 1))
             throw new InvalidDataException("Incomplete or inconsistent lock diagnostic matrix; no complete report.");
-        foreach (var window in windows) Validate(window);
+        foreach (var window in windows)
+        {
+            try { Validate(window); }
+            catch (StandaloneNoiseException ex) { throw new InvalidDataException("A scored window is not a clean standalone control.", ex); }
+        }
     }
 }

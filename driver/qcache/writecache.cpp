@@ -1113,6 +1113,8 @@ static void Drainer(PVOID context)
         else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
         else ++c->Performance.DrainSizeLarge;
         c->State.InFlightBytes += transferBytes;
+        worker->InFlightStart = io.Offset.QuadPart;
+        worker->InFlightEnd = io.Offset.QuadPart + io.Length;
         // Lab gate (one shot): keep this overlapping batch in flight, after its
         // lower write completed, for a bounded hold. Newer overlapping direct
         // writes must wait for its retirement, not merely for its submission.
@@ -1197,6 +1199,7 @@ static void Drainer(PVOID context)
         c->Performance.LowerIoTicks += lowerTicks;
         c->Performance.DrainCopyTicks += copyTicks;
         c->State.InFlightBytes -= transferBytes;
+        worker->InFlightStart = worker->InFlightEnd = 0;
         for (ULONG i = 0; i < merged; ++i)
         {
             c->Slots[selected[i]].InFlight = FALSE;
@@ -2928,11 +2931,26 @@ static void SortTrimRanges(DEVICE_DATA_SET_RANGE* ranges, ULONG count)
         sift(0, end);
     }
 }
+// Mutex held. True while a drainer's outstanding lower write overlaps one of these
+// sorted, merged TRIM ranges: the TRIM must not reach the disk first, or that write
+// would land afterwards on sectors the file system has just freed.
+static bool TrimOverlapsInFlight(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG count)
+{
+    for (const auto& worker : c->Workers)
+    {
+        if (worker.InFlightStart == worker.InFlightEnd)
+            continue;
+        for (ULONG i = 0; i < count && ranges[i].StartingOffset < worker.InFlightEnd; ++i)
+            if (ranges[i].StartingOffset + static_cast<LONGLONG>(ranges[i].LengthInBytes) > worker.InFlightStart)
+                return true;
+    }
+    return false;
+}
 // TRIM: the file system declares these sectors free. Cached writes for them are
 // dropped instead of written (they would overwrite what the disk now treats as
-// unallocated), clean copies are dropped, and only already-issued writes are awaited.
-// Any number of sector-aligned ranges is handled; only unknown flags or malformed
-// input take the conservative ordered path.
+// unallocated), clean copies are dropped, and only already-issued writes that
+// overlap a trimmed range are awaited. Any number of sector-aligned ranges is
+// handled; only unknown flags or malformed input take the conservative ordered path.
 static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* result)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -2991,8 +3009,10 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     AcquireCache(c);
     c->TrimPaused = TRUE;
     // The serialized request worker admits no subsequent writes while this request
-    // runs. Wait only for the already-issued lower write, NOT all queued payload.
-    while (c->State.InFlightBytes && !c->Gone)
+    // runs, and TrimPaused starts no new drain batch. Wait only for already-issued
+    // lower writes that overlap a trimmed range, NOT all queued payload: waiting for
+    // every in-flight batch stalled Eager writes behind each TRIM (plan 158).
+    while (TrimOverlapsInFlight(c, ranges, merged) && !c->Gone)
     {
         KeClearEvent(&c->Changed);
         ReleaseCache(c);
@@ -3032,6 +3052,7 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             }
             if (!mask)
                 continue;
+            NT_ASSERT(!slot->InFlight); // overlapping writes were awaited and no batch started since
             if (!slot->Dirty)
             {
                 RetireSlot(c, i);

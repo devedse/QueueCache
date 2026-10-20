@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 158, "plan 158 adds the larger-than-cache drain workload and in-session paused-provider anchors");
+        Check(VerificationPlan.Version == 159, "plan 159 remeasures noisy standalone lock windows and adds the unrelated-drain TRIM check");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

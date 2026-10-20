@@ -355,6 +355,8 @@ struct QC_DRAIN_WORKER
     QC_CACHE* Cache;
     ULONG Number;
     HANDLE Thread;
+    // Mutex: disk range of this drainer's one outstanding lower write; empty when equal.
+    LONGLONG InFlightStart, InFlightEnd;
 };
 // Offloaded-request executors: reads that need the disk (paging reads, and ordinary
 // misses with QcCopyOffloadMisses), large reads served entirely from RAM and large

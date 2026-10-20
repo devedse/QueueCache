@@ -7,7 +7,8 @@ namespace QueueCache.Operations;
 /// <summary>
 /// File-level TRIM (FSCTL_FILE_LEVEL_TRIM; NTFS sends the volume a data-set TRIM) while the cache holds data for
 /// the trimmed range: pending writes are dropped rather than written, clean copies are dropped, an already
-/// issued write completes first, and untrimmed neighbours and later rewrites are exact. Needs a disk that accepts
+/// issued overlapping write completes first while unrelated in-flight writes are not awaited, and untrimmed
+/// neighbours and later rewrites are exact. Needs a disk that accepts
 /// TRIM (for example a VHDX); otherwise the case is SKIP. New files only; trimmed bytes are never compared.
 /// </summary>
 [SupportedOSPlatform("windows")]
@@ -36,7 +37,8 @@ public static class TrimScenarios
             return [new("trim-cache", "SKIP", $"The disk under {target.Device} does not accept TRIM: Win32 {ex.NativeErrorCode} ({ex.Message}). " +
                 "Run this suite on a lab-disk volume (qcache developer lab-disk create).")];
         }
-        return [Pending(device, directory), Clean(device, directory), InFlight(target, device, directory)];
+        return [Pending(device, directory), Clean(device, directory), InFlight(target, device, directory),
+            Unrelated(target, device, directory)];
     }
 
     // Accepted, undrained writes in the trimmed range are dropped, not drained to the disk.
@@ -86,7 +88,7 @@ public static class TrimScenarios
             $"untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk after dropping clean data.");
     }
 
-    // TRIM arriving while a drain of the same file is in progress: it waits for the issued write only,
+    // TRIM arriving while a drain of the same file is in progress: it waits for the overlapping issued write only,
     // and the remaining drain and the guards stay exact.
     private static CheckResult InFlight(DiskTarget target, CacheDevice device, string directory)
     {
@@ -130,6 +132,54 @@ public static class TrimScenarios
             $"TRIM of 2 MiB inside 8 MiB pending while {before.InFlightBytes} bytes were in flight (300 ms lab delay per drain batch): " +
             $"{after.TrimRequests - before.TrimRequests} TRIM request(s); the flush wrote {written} bytes and the TRIM dropped {dropped} " +
             $"(at most its 2 MiB); untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk.");
+    }
+
+    // TRIM of a range no drainer is writing returns without waiting for those unrelated writes (plan 159): oldest
+    // first, the first batches hold the file's start, and each stays in flight for the 2 s lab delay. Waiting for
+    // every in-flight write instead held later application writes behind each TRIM.
+    private static CheckResult Unrelated(DiskTarget target, CacheDevice device, string directory)
+    {
+        var path = Path.Combine(directory, "unrelated.bin");
+        var data = VolumeScenarios.Pattern(16 * MiB, 0x7126);
+        VolumeScenarios.WriteNew(path, data);
+        var start = device.GetWriteCacheState();
+        device.Control(WriteCacheAction.LabDelay, value: 2000);
+        Task flush;
+        WriteCacheState before, after;
+        TimeSpan elapsed;
+        try
+        {
+            flush = Task.Run(() =>
+            {
+                using var control = new CacheDevice(target.Device, writable: true);
+                control.Control(WriteCacheAction.Flush);
+            });
+            if (!SpinWait.SpinUntil(() => device.GetWriteCacheState().InFlightBytes != 0 || flush.IsCompleted, 5000) || flush.IsCompleted)
+                throw new IOException("Could not observe a drain in flight before TRIM.");
+            before = device.GetWriteCacheState();
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            Trim(path, 12 * MiB, 4 * MiB);
+            elapsed = timer.Elapsed;
+            after = device.GetWriteCacheState();
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabDelay, value: 0);
+        }
+        flush.GetAwaiter().GetResult();
+        var drained = device.GetWriteCacheState();
+        var written = drained.DrainedBytes - start.DrainedBytes;
+        var dropped = drained.DiscardedBytes - start.DiscardedBytes;
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+        var guards = Guards(path, data, 12 * MiB, 4 * MiB);
+        var pass = after.TrimRequests > before.TrimRequests && elapsed < TimeSpan.FromSeconds(1) && Healthy(drained) &&
+            written + dropped >= 16UL * MiB && dropped <= 4UL * MiB && guards;
+        return new("trim-cache/unrelated-drain-not-awaited", pass ? "PASS" : "FAIL",
+            $"TRIM of the last 4 MiB of 16 MiB pending while {before.InFlightBytes} bytes of the file's start were in flight " +
+            $"(2 s lab delay per drain batch) returned in {elapsed.TotalMilliseconds:F0} ms (must be under 1000), " +
+            $"{after.InFlightBytes} bytes still in flight; the flush wrote {written} bytes and the TRIM dropped {dropped} " +
+            $"(at most its 4 MiB); untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk.");
     }
 
     private static void Trim(string path, long offset, long length)
