@@ -1071,7 +1071,7 @@ public static class VerificationWorker
                 ReportFailures(stressChecks, Console.Error);
                 return stressChecks.Count > 0 && stressChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
-                var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
+                var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine), workDirectory: job.WorkDirectory);
                 RunStorage.AtomicJson(job.Reply, pressureChecks);
                 ReportFailures(pressureChecks, Console.Error);
                 if (pressureChecks.Count == 0)

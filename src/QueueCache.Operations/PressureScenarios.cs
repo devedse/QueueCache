@@ -14,8 +14,10 @@ public static class PressureScenarios
     private const int BudgetMiB = 64;
     private const int TransferBytes = 64 << 10;
 
+    /// <param name="workDirectory">Parent for the scenario files (the runner's work directory, removed after a
+    /// completed run; plan 166). Files left on the volume root fragment a lab volume.</param>
     public static Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target,
-        IProgress<string>? progress = null, CancellationToken token = default) =>
+        IProgress<string>? progress = null, CancellationToken token = default, string? workDirectory = null) =>
         Task.Run<IReadOnlyList<CheckResult>>(() =>
         {
             using var gate = ConfigurationGate.Enter(target.Instance);
@@ -25,7 +27,7 @@ public static class PressureScenarios
             if (!original.SupportsReadWrite || !original.SupportsDeferredDrain)
                 throw new NotSupportedException("Pressure verification requires the current read/write and deferred-drain protocol.");
 
-            var directory = Path.Combine(target.Root, "QueueCache-Pressure-" + Guid.NewGuid().ToString("N"));
+            var directory = Path.Combine(workDirectory ?? target.Root, "QueueCache-Pressure-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
             var results = new List<CheckResult>();
             try
