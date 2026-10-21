@@ -167,7 +167,7 @@ internal static class ReadmeImages
             var capacity = budget - budget / 64;
             return new(flags, 0, (ulong)volume.Bytes, budget, budget, dirty, 0, capacity, 1, accepted, drained, 0, read, 0, 0, dirty)
             {
-                Options = new(Drain: DrainAlgorithm.Idle),
+                Options = new(),
                 CleanReadBytes = readCache, CleanWriteBytes = onDisk, ReadHitBytes = hits, ReadMissBytes = read - hits,
                 ExtendedCountersAvailable = true, Instance = 1, Generation = 1, OldestDirtyMs = dirty == 0 ? 0UL : 1800UL,
                 GlobalLimitBytes = 48 * GiB, GlobalReservedBytes = 40 * GiB

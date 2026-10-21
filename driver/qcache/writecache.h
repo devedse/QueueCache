@@ -307,11 +307,12 @@ enum : ULONG
     QcLabCallerBackoff,
     // Reserved rejected gather experiment: 0 harmless reset; 1 unsupported.
     QcLabDrainGather,
-    // Lab: Value 0 (default) = off; 1..8 = while foreground lower reads are in flight
+    // Lab: Value 0 = off; 1..8 (default QcDefaultReadAware) = while foreground lower reads are in flight
     // or completed within QcReadAwareHoldMs, start a drain batch only while fewer than
     // Value batches are outstanding. Barriers and paging-write fences are never held.
     QcLabReadAware,
-    // Lab: Value = QcTrimLookup | QcTrimAsync | QcTrimLabHold (0 default: full slot scan, ordered lower TRIM).
+    // Lab: Value = QcTrimLookup | QcTrimAsync | QcTrimLabHold (default QcDefaultTrimMode;
+    // 0: full slot scan, ordered lower TRIM).
     QcLabTrimMode
 };
 enum : ULONG
@@ -324,6 +325,11 @@ enum : ULONG
     // Lab (trim-cache): hold each asynchronous lower TRIM for QcTrimLabHoldMs first.
     QcTrimLabHold = 4
 };
+// Defaults since plan 164 (issue #15, plans 162/163): with Eager 2048 KiB x 8 drains, a
+// concurrent disk reader keeps the 1024 KiB x 4 default's IOPS, and mass-delete TRIMs no longer
+// stall the ordered request path. The lab switches still set any value for A/B.
+static constexpr LONG QcDefaultReadAware = 2;
+static constexpr LONG QcDefaultTrimMode = QcTrimLookup | QcTrimAsync;
 static constexpr ULONG QcTrimLabHoldMs = 2000;
 static constexpr ULONG QcReadAwareHoldMs = 10;
 static constexpr ULONG QcTrimFenceSlots = 16;
@@ -443,7 +449,7 @@ struct QC_CACHE
     PKEVENT RequestAvailable;
     KEVENT Wake, Changed;
     KEVENT Stopping; // Set once by QcCacheDestroy; drainers above Parallelism wait on it, never on Wake.
-    QC_DRAIN_WORKER Workers[8]; // Experiment ceiling; default stays four active drainers.
+    QC_DRAIN_WORKER Workers[8]; // Ceiling; eight active drainers by default since plan 164.
     QC_SLOT* Slots;
     // One MDL per 256 KiB payload slab: physical pages from the memory manager
     // (MmAllocatePagesForMdlEx), mapped once, never nonpaged pool. Indexed by
@@ -492,12 +498,12 @@ struct QC_CACHE
     volatile LONG64 RecalledFills, RecallDenied;
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
-    volatile LONG ReadAware;  // QcLabReadAware limit (0 off), read by drainers.
+    volatile LONG ReadAware;  // QcLabReadAware limit (0 off, QcDefaultReadAware), read by drainers.
     // Foreground lower reads in flight and the last completion (NowMs), from every
     // read the filter sends down for a request (worker, offload threads, direct path).
     volatile LONG ForegroundReads;
     volatile LONG64 LastForegroundReadMs, ReadAwareWaits;
-    volatile LONG TrimMode; // QcLabTrimMode.
+    volatile LONG TrimMode; // QcLabTrimMode (QcDefaultTrimMode).
     // Mutex: ranges of asynchronous lower TRIMs not yet completed. Drainers never
     // select a version inside one, and forwarded writes wait for an overlapping one.
     QC_TRIM_FENCE TrimFences[QcTrimFenceSlots];

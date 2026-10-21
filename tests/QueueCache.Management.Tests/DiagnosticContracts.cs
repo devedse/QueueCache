@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 163, "plan 163 replaces async-fence with async-eager-ordering: NTFS orders a file's rewrite after its file-level TRIM");
+        Check(VerificationPlan.Version == 164, "plan 164 measures the Eager 2048 KiB x 8 product default (read-aware 2, TRIM mode 3); Eager TRIM checks pin 1024 KiB x 4");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

@@ -34,8 +34,10 @@ static_assert(sizeof(QC_OPTIONS) == 48);
 constexpr QC_OPTIONS QcDefaultOptions()
 {
     return {
-        // 1024 KiB batches with 4 lower writes in flight since plan 125 (issue #15; 256 KiB and 2 before).
-        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcIdle, 40, 80, 5000, 250, 1024, 4};
+        // Eager draining with 2048 KiB batches and 8 lower writes in flight since plan 164 (issue #15):
+        // the read-aware limit (QcDefaultReadAware) keeps foreground disk reads responsive. Idle,
+        // 1024 KiB and 4 from plan 125; 256 KiB and 2 before.
+        1, sizeof(QC_OPTIONS), QcAutomatic, 50, QcRetainWrites | QcPromoteReads, QcEager, 40, 80, 5000, 250, 2048, 8};
 }
 // QcCallerPath default: serve RAM hits and fitting writes on the calling thread
 // when the device has no other request queued or active.

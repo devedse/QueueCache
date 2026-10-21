@@ -31,8 +31,8 @@ internal static class LegacyCommands
           qcache lab-delay <device> <0..2000 ms>
           qcache lab-copy-flags <device> <0..15: 1 prefetch next block | 2 copy memory-neighbour runs at once | 4 one lookup per block and run-based recency moves | 8 read misses on the offloaded-read threads (several at the disk at once); default 15>
           qcache lab-read-recall <device> <1 keep a re-read miss as recent when it was used more recently than the oldest cached block (default) | 0 earlier bimodal insertion>
-          qcache lab-read-aware <device> <0 off (default) | 1..8 most drain batches outstanding while foreground disk reads wait>
-          qcache lab-trim-mode <device> <0..7: 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM asynchronously with a range fence | 4 lab: hold that TRIM for 2 s; default 0>
+          qcache lab-read-aware <device> <0 off | 1..8 most drain batches outstanding while foreground disk reads wait; default 2>
+          qcache lab-trim-mode <device> <0..7: 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM asynchronously with a range fence | 4 lab: hold that TRIM for 2 s; default 3>
           qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted|10=direct paging write error|11=paging write map failure>
         Write-cache controls require the explicit lab write-cache build and elevation.
         Configure only while disabled and clean. Abrupt failure loses volatile dirty data.

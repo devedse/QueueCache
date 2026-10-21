@@ -76,8 +76,9 @@ machine's physical RAM.
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
 default test (1 GiB, 5 passes), the better of two clean runs per column. Both Q:
-columns: QueueCache 0.4.687.1 (2026-10-15 UTC), Defender/Search disabled; Fast uses
-1024 KiB batches and four drainers. RAM disk: QueueCache 0.4.583.1 (2026-10-11).
+columns: QueueCache 0.4.687.1 (2026-10-15 UTC), Defender/Search disabled; Fast with that
+release's Idle drain, 1024 KiB batches and four drainers. New caches now default to
+Eager draining with 2 MiB batches and eight drainers. RAM disk: QueueCache 0.4.583.1 (2026-10-11).
 
 | Test machine | |
 |---|---|

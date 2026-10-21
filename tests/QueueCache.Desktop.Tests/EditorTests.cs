@@ -14,8 +14,9 @@ internal static class EditorTests
 
         // Cache settings
         var add = new CacheSettingsViewModel(stick, volumes.NoCache with { Options = null }, false, 8192);
-        Check(add.IsFast && add.Drain == (int)DrainAlgorithm.Idle && add.ApplyText == "Add cache" && add.Title == "Add a cache to S: Stick",
-            "a new cache defaults to Fast and the Idle drain");
+        Check(add.IsFast && add.Drain == (int)DrainAlgorithm.Eager && add.BatchChoices[add.SelectedBatch] == "2 MiB" && !add.IsCustomBatch &&
+            add.Parallelism == 8 && add.ApplyText == "Add cache" && add.Title == "Add a cache to S: Stick",
+            "a new cache defaults to Fast, the Eager drain and 2 MiB x 8 disk writes (plan 164)");
         Check(add.MemoryChoices[add.SelectedMemory] == "4 GiB" && add.AvailableText == "Up to 8 GiB available", "a new cache starts at 4 GiB of what is available");
         var edit = new CacheSettingsViewModel(volumes.Volumes[1], volumes.State, true, 8192);
         Check(edit.MemoryChoices[edit.SelectedMemory] == "4 GiB" && !edit.IsCustomMemory && edit.StartWithWindows && edit.ApplyText == "Save",

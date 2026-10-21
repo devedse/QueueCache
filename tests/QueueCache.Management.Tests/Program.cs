@@ -84,8 +84,8 @@ var s = CacheStatistics.Decode(data);
 var alphaDefault = new CacheConfiguration();
 alphaDefault.Validate(true);
 Check(alphaDefault.Preset == CachePreset.Fast && alphaDefault.Enabled && alphaDefault.Options == new CacheOptions(
-    Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
-    IdleMs: 250, BatchKiB: 1024, Parallelism: 4), "new task uses explicit Fast/Idle defaults (1024 KiB x 4 drain since plan 125)");
+    Drain: DrainAlgorithm.Eager, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
+    IdleMs: 250, BatchKiB: 2048, Parallelism: 8), "new task uses explicit Fast/Eager defaults (2048 KiB x 8 drain since plan 164; Idle 1024 KiB x 4 from plan 125)");
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
     foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
         foreach (var share in new[] { 0, 50, 100 })
@@ -96,10 +96,10 @@ foreach (var allocation in Enum.GetValues<CacheAllocation>())
 Reject(() => new CacheOptions(WritePercent: 101).Validate(), "invalid share");
 Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inverted watermarks");
 Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
-Check(CacheOptions.Decode(new CacheOptions(BatchKiB: 2048, Parallelism: 8).Encode()) ==
-    new CacheOptions(BatchKiB: 2048, Parallelism: 8), "experimental 2 MiB / eight-drainer policy wire roundtrip");
+Check(CacheOptions.Decode(new CacheOptions(Drain: DrainAlgorithm.Idle, BatchKiB: 1024, Parallelism: 4).Encode()) ==
+    new CacheOptions(Drain: DrainAlgorithm.Idle, BatchKiB: 1024, Parallelism: 4), "earlier Idle 1 MiB / four-drainer default wire roundtrip");
 Reject(() => new CacheOptions(Parallelism: 9).Validate(), "unbounded parallelism");
-Reject(() => new CacheOptions(BatchKiB: 2052).Validate(), "batch above experiment ceiling");
+Reject(() => new CacheOptions(BatchKiB: 2052).Validate(), "batch above the 2 MiB ceiling");
 Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
 var deferredHour = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000);
 Check(CacheOptions.Decode(deferredHour.Encode()) == deferredHour, "deferred one-hour wire roundtrip");

@@ -80,15 +80,15 @@ internal static class Commands
         var writePercent = new Option<int>("--write-percent") { DefaultValueFactory = _ => 50, Description = "Fixed allocation: 0 = read-only, 100 = write-only." };
         // Drain scheduling. Eager ignores the watermark/age/idle settings; Balanced adds watermarks and
         // maximum age; Idle adds the write-idle interval. Batch size and parallelism apply to all three.
-        var drain = new Option<DrainAlgorithm>("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Idle, Description = "Eager: drain as writes arrive. Balanced: watermarks/age. Idle (default): Balanced plus write-idle. Deferred: age only, no early watermark/idle trigger; explicit flush/capacity boundaries still apply." };
+        var drain = new Option<DrainAlgorithm>("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Eager, Description = "Eager (default): drain as writes arrive. Balanced: watermarks/age. Idle: Balanced plus write-idle. Deferred: age only, no early watermark/idle trigger; explicit flush/capacity boundaries still apply." };
         var discard = new Option<bool>("--discard-drained") { Description = "Release written blocks after draining instead of retaining them for reads." };
         var noPromotion = new Option<bool>("--no-promotion") { Description = "Keep retained writes in the write quota when read." };
         var low = new Option<int>("--low-percent") { DefaultValueFactory = _ => 40, Description = "Balanced/Idle: stop pressure draining at this share of the write pool." };
         var high = new Option<int>("--high-percent") { DefaultValueFactory = _ => 80, Description = "Balanced/Idle: start pressure draining at this share of the write pool." };
         var age = new Option<int>("--max-dirty-age-ms") { DefaultValueFactory = _ => 5000, Description = "Balanced/Idle/Deferred: first-dirty age trigger, 10..3600000 ms (one hour). Not a durability deadline. Deferred ignores watermarks and idle." };
         var idle = new Option<int>("--idle-ms") { DefaultValueFactory = _ => 250, Description = "Idle only: drain after this long without a newly cached write." };
-        var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 1024, Description = "All algorithms: maximum adjacent-write gather size per lower write." };
-        var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 4, Description = "All algorithms: maximum simultaneous lower writes." };
+        var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 2048, Description = "All algorithms: maximum adjacent-write gather size per lower write, 4..2048." };
+        var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 8, Description = "All algorithms: maximum simultaneous lower writes, 1..8; fewer while foreground disk reads wait." };
         foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel })
             apply.Options.Add(option);
         apply.SetAction(async (p, token) =>

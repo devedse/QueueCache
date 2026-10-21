@@ -296,7 +296,7 @@ internal static class CompareDrainContracts
         ComparisonDrain.ValidateBypass(oraclePaused, oraclePaused);
         foreach (var changed in new[] { active, oraclePaused with { ReadHitBytes = 1 }, oraclePaused with { ReadMissBytes = 4096 },
             oraclePaused with { AcceptedBytes = 512 }, oraclePaused with { Instance = oraclePaused.Instance + 1 },
-            oraclePaused with { DirtyBytes = 512 }, oraclePaused with { Options = oraclePaused.Options! with { BatchKiB = 2048 } } })
+            oraclePaused with { DirtyBytes = 512 }, oraclePaused with { Options = oraclePaused.Options! with { BatchKiB = 1024 } } })
             reject(() => ComparisonDrain.ValidateBypass(oraclePaused, changed));
 
         foreach (var (batch, parallelism) in new[] { (1024, 4), (1024, 8), (2048, 4), (2048, 8) })
@@ -321,7 +321,7 @@ internal static class CompareDrainContracts
             active with { Instance = original.Instance + 1 }, active with { DeviceBytes = original.DeviceBytes + 4096 },
             active with { Options = null }, active with { Options = original.Options! with { RetainWrites = false } },
             active with { Options = original.Options! with { BatchKiB = 256 } }, active with { Options = original.Options! with { Parallelism = 2 } },
-            active with { Options = original.Options! with { BatchKiB = 2048 } }, active with { Options = original.Options! with { Parallelism = 8 } },
+            active with { Options = original.Options! with { BatchKiB = 1024 } }, active with { Options = original.Options! with { Parallelism = 4 } },
             active with { BudgetBytes = 1UL << 30 }, active with { ReservedBytes = 0 }, active with { PayloadCapacity = 0 },
             active with { Flags = active.Flags & ~32u }, active with { Errors = original.Errors + 1 }, active with { LastError = 5 },
             active with { Flags = active.Flags | 2u }, active with { Flags = active.Flags | 4u }, active with { Flags = active.Flags | 16u },

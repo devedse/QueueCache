@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 163, "plan 163 replaces async-fence with async-eager-ordering: NTFS orders a file's rewrite after its file-level TRIM");
+        Check(VerificationPlan.Version == 164, "plan 164 measures the Eager 2048 KiB x 8 product default (read-aware 2, TRIM mode 3); Eager TRIM checks pin 1024 KiB x 4");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&

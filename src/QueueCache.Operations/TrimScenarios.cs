@@ -168,7 +168,11 @@ public static class TrimScenarios
         var path = Path.Combine(directory, name + ".bin");
         var data = VolumeScenarios.Pattern(16 * MiB, 0x7126 + offset / MiB);
         device.Control(WriteCacheAction.Flush);
-        ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast) { Options = new(Drain: DrainAlgorithm.Eager) }, true);
+        // 1024 KiB x 4 keeps the first 4 MiB in flight; the 2048 KiB x 8 default would issue the whole file at once.
+        ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast)
+        {
+            Options = new(Drain: DrainAlgorithm.Eager, BatchKiB: 1024, Parallelism: 4)
+        }, true);
         var start = device.GetWriteCacheState();
         WriteCacheState before, after;
         TimeSpan elapsed;

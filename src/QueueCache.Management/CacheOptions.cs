@@ -28,8 +28,8 @@ public enum DrainAlgorithm
 /// <see cref="BatchKiB"/> and <see cref="Parallelism"/> describe how a drain is issued and apply to every algorithm;
 /// the watermark/age/idle settings are algorithm-specific as documented on <see cref="DrainAlgorithm"/>.</summary>
 public sealed record CacheOptions(CacheAllocation Allocation = CacheAllocation.Automatic, int WritePercent = 50,
-    bool RetainWrites = true, bool PromoteOnRead = true, DrainAlgorithm Drain = DrainAlgorithm.Idle,
-    int LowPercent = 40, int HighPercent = 80, int MaxDirtyAgeMs = 5000, int IdleMs = 250, int BatchKiB = 1024, int Parallelism = 4)
+    bool RetainWrites = true, bool PromoteOnRead = true, DrainAlgorithm Drain = DrainAlgorithm.Eager,
+    int LowPercent = 40, int HighPercent = 80, int MaxDirtyAgeMs = 5000, int IdleMs = 250, int BatchKiB = 2048, int Parallelism = 8)
 {
     public const int WireSize = 48;
 

@@ -12,7 +12,7 @@ public sealed record CacheSettingsResult(CacheConfiguration Configuration, bool 
 public sealed partial class CacheSettingsViewModel : ObservableObject
 {
     private static readonly int[] Sizes = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
-    private static readonly int[] Batches = [4, 64, 256, 512, 1024];
+    private static readonly int[] Batches = [4, 64, 256, 512, 1024, 2048];
     private readonly int[] sizes;
     private readonly bool newCache;
     private readonly bool enabled;

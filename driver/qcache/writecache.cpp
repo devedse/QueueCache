@@ -12,7 +12,7 @@
 #include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
-static constexpr ULONG MaxBatchBytes = 2 * 1024 * 1024; // Experiment ceiling; default stays 1 MiB.
+static constexpr ULONG MaxBatchBytes = 2 * 1024 * 1024; // Ceiling and default since plan 164.
 static QC_MEMORY_BUDGET SharedMemoryBudget{};
 static volatile LONG64 NextInstance;
 static ULONGLONG MemoryLimit()
@@ -1363,6 +1363,8 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses;
     // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
     c->ReadRecall = 1;
+    c->ReadAware = QcDefaultReadAware;
+    c->TrimMode = QcDefaultTrimMode;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;

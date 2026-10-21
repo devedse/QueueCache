@@ -128,7 +128,7 @@ ones in use:
 | `quick` | File integrity through the cache | Default; no DiskSpd |
 | `policies`, `pressure` | Sector edge cases, each policy, drain/age/watermark/backpressure, disk bytes afterwards | No DiskSpd |
 | `paging-coherence`, `partial-read-accounting`, `ordering-faults` | Mapped/paging coherence, partly cached reads (plan 126: 16 simultaneous cold/partial readers with byte and pin-retirement checks), write ordering under injected lower failures | In every campaign; `ordering-faults` runs last |
-| `volumes`, `trim-cache` | Several volumes on one disk; TRIM (plan 160 adds `trim-cache/eager-unrelated-not-awaited` and `eager-overlap-awaited`: with background Eager draining and a 2 s lab delay per batch, a TRIM outside the in-flight batches returns within 1 s with no write landing meanwhile, and one inside them returns only after a write landed. An explicit flush holds the ordered request path, so `during-drain` queues its TRIM behind the whole flush. Plan 162 runs those five checks with `lab-trim-mode` 0 and again with 3 (index lookup + asynchronous lower TRIM, suffix `-async`), then `async-request-path-free` (another file's rewrite and read finish within 1 s while a TRIM is held 2 s) and, since plan 163, `async-eager-ordering`. Under Eager with a TRIM held 2 s, another file's rewrite drains while the TRIM is outstanding, and a queued rewrite of the held range ends on the disk exactly. NTFS normally keeps that rewrite until the TRIM completes, so the check reports whether the fence path was reached; a rewrite completed during the TRIM must stay dirty. The plan-162 `async-fence` check assumed the rewrite reached the cache at once and failed against NTFS's ordering. 12 checks; the original mode is restored) | Lab VHDX volume |
+| `volumes`, `trim-cache` | Several volumes on one disk; TRIM (plan 160 adds `trim-cache/eager-unrelated-not-awaited` and `eager-overlap-awaited`: with background Eager draining and a 2 s lab delay per batch, a TRIM outside the in-flight batches returns within 1 s with no write landing meanwhile, and one inside them returns only after a write landed. An explicit flush holds the ordered request path, so `during-drain` queues its TRIM behind the whole flush. Plan 162 runs those five checks with `lab-trim-mode` 0 and again with 3 (index lookup + asynchronous lower TRIM, suffix `-async`), then `async-request-path-free` (another file's rewrite and read finish within 1 s while a TRIM is held 2 s) and, since plan 163, `async-eager-ordering`. Under Eager with a TRIM held 2 s, another file's rewrite drains while the TRIM is outstanding, and a queued rewrite of the held range ends on the disk exactly. NTFS normally keeps that rewrite until the TRIM completes, so the check reports whether the fence path was reached; a rewrite completed during the TRIM must stay dirty. The plan-162 `async-fence` check assumed the rewrite reached the cache at once and failed against NTFS's ordering. 12 checks; the original mode is restored. Since plan 164 the Eager TRIM checks pin 1024 KiB × 4, so that only the file's first 4 MiB is in flight) | Lab VHDX volume |
 | `stress-races` | Both lab NTFS volumes at once under concurrent writers of 4 KiB to 4 MiB, cancelled overlapped I/O, cache flush/resize/teardown/drop/delay/allocation faults, refused settings and RAM disk churn; then fault and Retry at drain parallelism 1, 2 and 4; every byte read back. Plan 128 flushes filesystem metadata before fault injection and after retry, and requires retained-byte drainage plus a clean result | Lab VHDX; `--soak-seconds` (default 240); run under Driver Verifier and without |
 | `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram`, `managed-cli`, `managed-broker-restart`, `managed-lifecycle-*` | Managed disk creation, checkpoints, broker restart and restart lifecycle | Owned fixtures only |
 | `disk-removal`, `disk-removal-windows` | Eject with pending writes, reconnect | Disposable disk identity required |
@@ -245,15 +245,15 @@ the backend's other client load and each case's drain-phase latency
 (mean queue depth ÷ write IOPS). They issue no product
 drain; the oracle proves QueueCache admitted nothing since the run's pause, or that
 the Primo task stayed paused. QueueCache requires
-active Fast, 2 GiB, timing diagnostics off. On the experiment branch, batches may
-be 1024/2048 KiB and parallelism 4/8; normal defaults remain 1024 KiB × 4.
+active Fast, 2 GiB, timing diagnostics off. Batches may be 1024/2048 KiB and
+parallelism 4/8; the default is Eager 2048 KiB × 8 since plan 164.
 Apply each runtime profile explicitly before its run, name it in `--product`,
 and check the recorded `compare-drain-recovery.json` original state and case
 snapshots. The runner rejects settings changes within a run. Use the same build
 for controls and candidates, changing one factor at a time; bracket candidate
-runs with a repeated 1024 KiB × 4 control. Restore captured runtime/saved settings
-afterward. This branch raises the native/managed experiment limits to 2 MiB × 8
-and reserves staging for that ceiling in every arm. Check the lower adapter's
+runs with a repeated control. Restore captured runtime/saved settings
+afterward. The native/managed limits are 2 MiB × 8, and staging is reserved for
+that ceiling in every arm. Check the lower adapter's
 transfer/page/alignment limits before testing 2 MiB; these results are not a
 qualification of new production defaults.
 Plan 154 additionally waits up to 30 seconds for Direct's backing queue to reach

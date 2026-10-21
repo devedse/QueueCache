@@ -81,9 +81,9 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 
 | Algorithm | Behaviour |
 |---|---|
-| Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
+| Eager (default) | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. Default since plan 164, with 2048 KiB batches and parallelism 8. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 1024 KiB batches and parallelism 4 (256 KiB and 2 before plan 125; parallelism 1 before plan 56). |
+| Idle | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle and 40/80 watermarks. Idle with 1024 KiB batches and parallelism 4 was the default from plan 125 to plan 163 (256 KiB and 2 before; parallelism 1 before plan 56). |
 | Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
@@ -101,12 +101,22 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); that goal is not yet implemented and qualified, so the current warning still applies.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes
-(default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4
-since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain
-thread waits for its write before gathering the next. Overlapping versions remain
-ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Saved
-profiles keep their configured settings. The complete plan-132 comparison
+Adjacent 4 KiB blocks are gathered into configurable 4..2048 KiB lower writes
+(default 2048 since plan 164; 1024 from plan 125, 256 before). `--drain-parallelism 1..8`
+(default 8 since plan 164; 4 from plan 125, 2 from plan 56, 1 before) bounds concurrent
+writes; each drain thread waits for its write before gathering the next. Overlapping
+versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB.
+Saved profiles keep their configured settings.
+
+While a foreground read is waiting on the disk, or one finished in the last 10 ms,
+drainers start a new write only while fewer than two are outstanding. A concurrent
+disk reader then keeps the responsiveness it had under the earlier 1024 KiB × 4
+default, and draining runs at full concurrency again once reads stop. Explicit flushes,
+shutdown and paging-write fences are never held back. TRIMs drop cached data for their
+ranges at once and reach the disk from a background thread; newer writes to those
+ranges are not drained before that TRIM. Both are driver defaults since plan 164; the
+`lab-read-aware` and `lab-trim-mode` switches still change them for A/B tests
+([findings](PERFORMANCE_FINDINGS.md#prio-162)). The complete plan-132 comparison
 (three alternated repetitions) reduced median drain time during cold reads from
 6.52 to 3.86 seconds at 1024 KiB × 4 versus 256 KiB × 2. A separate write-only
 repeat reduced median flush time from 127.61 to 92.16 seconds, with every pair
