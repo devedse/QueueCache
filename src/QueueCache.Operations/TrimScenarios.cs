@@ -44,7 +44,7 @@ public static class TrimScenarios
         try
         {
             // Plan 162: every check with the ordered full-scan TRIM, then again with index lookup and
-            // asynchronous lower TRIMs, then the two checks only an asynchronous TRIM can fail.
+            // asynchronous lower TRIMs, then the two checks only an asynchronous TRIM can fail (plan 163 ordering).
             foreach (var (mode, suffix) in new[] { (0UL, ""), (3UL, "-async") })
             {
                 device.Control(WriteCacheAction.LabTrimMode, value: mode);
@@ -55,7 +55,7 @@ public static class TrimScenarios
                 checks.Add(EagerTrim(target, device, directory, "eager-overlap-awaited" + suffix, 0, 2 * MiB, true));
             }
             checks.Add(AsyncPathFree(device, directory));
-            checks.Add(AsyncFence(target, device, directory));
+            checks.Add(AsyncEagerOrdering(target, device, directory));
         }
         finally
         {
@@ -261,53 +261,76 @@ public static class TrimScenarios
             $"from RAM and disk; other file {(otherDisk ? "exact" : "DIFFERS")} from disk.");
     }
 
-    // A rewrite of a range whose asynchronous lower TRIM is still held (QcTrimLabHold) is admitted at once but
-    // must not drain before that TRIM: under Eager it would drain within milliseconds, and the TRIM would then
-    // erase it. Afterwards the disk holds the rewrite (plan 162).
-    private static CheckResult AsyncFence(DiskTarget target, CacheDevice device, string directory)
+    // Under Eager, while an asynchronous lower TRIM of one file is held 2 s (QcTrimLabHold): another file's rewrite
+    // is admitted and drains meanwhile, so the live fence holds back only its own ranges. A rewrite of the held
+    // range is queued too. NTFS keeps a file's writes behind its outstanding file-level TRIM, so that rewrite
+    // normally reaches the cache only after the TRIM. If it completes while the TRIM is outstanding, it must stay
+    // dirty, because the fence keeps it from draining before the TRIM. Afterwards the disk holds both rewrites (plan 163).
+    private static CheckResult AsyncEagerOrdering(DiskTarget target, CacheDevice device, string directory)
     {
-        var path = Path.Combine(directory, "async-fence.bin");
+        var path = Path.Combine(directory, "async-ordering.bin");
+        var other = Path.Combine(directory, "async-ordering-other.bin");
         var data = VolumeScenarios.Pattern(4 * MiB, 0x7133);
         var rewrite = VolumeScenarios.Pattern(MiB, 0x7134);
+        var next = VolumeScenarios.Pattern(4 * MiB, 0x7135);
         device.Control(WriteCacheAction.Flush);
         ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast) { Options = new(Drain: DrainAlgorithm.Eager) }, true);
         VolumeScenarios.WriteNew(path, data);
+        VolumeScenarios.WriteNew(other, VolumeScenarios.Pattern(4 * MiB, 0x7136));
         device.Control(WriteCacheAction.Flush);
         device.Control(WriteCacheAction.DropClean);
         var before = device.GetWriteCacheState();
+        var asyncBefore = device.GetDiagnostics().DrainPriority!.TrimAsync;
         device.Control(WriteCacheAction.LabTrimMode, value: 7);
-        TimeSpan rewriteElapsed;
-        bool overlapped, heldDirty;
-        ulong dirtyDuringHold;
+        TimeSpan otherElapsed;
+        bool drained, overlapped = false, admittedDuringTrim = false;
+        ulong dirtyDuringHold = 0;
         try
         {
             var trim = Task.Run(() => Trim(path, MiB, MiB, shared: true));
             Thread.Sleep(200);
-            if (trim.IsCompleted) throw new IOException("The held TRIM returned before the rewrite started.");
-            var timer = Stopwatch.StartNew();
-            using (var file = new AlignedFile(path, MiB, create: false, shareAll: true))
+            if (trim.IsCompleted) throw new IOException("The held TRIM returned before the rewrites started.");
+            var same = Task.Run(() =>
+            {
+                using var file = new AlignedFile(path, MiB, create: false, shareAll: true);
                 file.Write(MiB, rewrite);
-            rewriteElapsed = timer.Elapsed;
-            Thread.Sleep(500); // Eager would have drained 1 MiB many times over by now
-            dirtyDuringHold = device.GetWriteCacheState().DirtyBytes;
-            overlapped = !trim.IsCompleted;
-            heldDirty = dirtyDuringHold >= (ulong)MiB;
+            });
+            var timer = Stopwatch.StartNew();
+            using (var file = new AlignedFile(other, MiB, create: false))
+                for (var offset = 0; offset < next.Length; offset += MiB)
+                    file.Write(offset, next[offset..(offset + MiB)]);
+            otherElapsed = timer.Elapsed;
+            // Eager drains 4 MiB within milliseconds; only a fenced rewrite may stay dirty.
+            drained = SpinWait.SpinUntil(() =>
+            {
+                var sameDone = same.IsCompleted;
+                dirtyDuringHold = device.GetWriteCacheState().DirtyBytes;
+                overlapped = !trim.IsCompleted;
+                admittedDuringTrim |= sameDone && overlapped; // observed in that order: it finished first
+                return dirtyDuringHold <= (sameDone ? (ulong)MiB : 0);
+            }, 1200);
             trim.GetAwaiter().GetResult();
+            same.GetAwaiter().GetResult();
         }
         finally { device.Control(WriteCacheAction.LabTrimMode, value: 3); }
+        var held = !admittedDuringTrim || dirtyDuringHold >= (ulong)MiB;
         device.Control(WriteCacheAction.Flush);
         var after = device.GetWriteCacheState();
+        var asyncAfter = device.GetDiagnostics().DrainPriority!.TrimAsync;
         device.Control(WriteCacheAction.DropClean);
         var actual = VolumeScenarios.ReadAll(path);
         var rewritten = actual.Length == data.Length && actual.AsSpan(MiB, MiB).SequenceEqual(rewrite);
         var guards = Guards(path, data, MiB, MiB);
+        var otherDisk = VolumeScenarios.ReadAll(other).AsSpan().SequenceEqual(next);
         ConfigurationManager.Apply(target, VolumeScenarios.Pending(256), true);
-        var pass = overlapped && heldDirty && rewriteElapsed < TimeSpan.FromSeconds(1) && after.TrimRequests > before.TrimRequests &&
-            rewritten && guards && Healthy(after);
-        return new("trim-cache/async-fence", pass ? "PASS" : "FAIL",
-            $"Eager drain; a 1 MiB rewrite of a range whose asynchronous TRIM was held took {rewriteElapsed.TotalMilliseconds:F0} ms (under 1000); " +
-            $"{dirtyDuringHold} dirty bytes 0.5 s later {(overlapped ? "while" : "NOT while")} the TRIM was outstanding (at least 1 MiB: fenced); " +
-            $"after the TRIM and a flush the disk holds the rewrite {(rewritten ? "exactly" : "NOT (erased or stale)")}; guards {(guards ? "exact" : "DIFFER")}.");
+        var pass = overlapped && drained && held && otherElapsed < TimeSpan.FromSeconds(1) && asyncAfter > asyncBefore &&
+            after.TrimRequests > before.TrimRequests && rewritten && guards && otherDisk && Healthy(after);
+        return new("trim-cache/async-eager-ordering", pass ? "PASS" : "FAIL",
+            $"Eager drain with an asynchronous TRIM held 2 s: another file's 4 MiB rewrite took {otherElapsed.TotalMilliseconds:F0} ms (under 1000) " +
+            $"and {(drained ? "drained" : "did NOT drain")} to {dirtyDuringHold} dirty bytes {(overlapped ? "while" : "NOT while")} the TRIM was outstanding; " +
+            $"the rewrite of the held range {(admittedDuringTrim ? (held ? "completed during the TRIM and stayed fenced" : "completed during the TRIM and was NOT fenced") : "waited for the TRIM (NTFS ordered it)")}; " +
+            $"{asyncAfter - asyncBefore} asynchronous TRIM(s); after a flush the disk holds the rewrite {(rewritten ? "exactly" : "NOT (erased or stale)")}, " +
+            $"guards {(guards ? "exact" : "DIFFER")}, other file {(otherDisk ? "exact" : "DIFFERS")}.");
     }
 
     private static void Trim(string path, long offset, long length, bool shared = false)

@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 162, "plan 162 runs every TRIM check in both TRIM modes and adds the asynchronous TRIM checks");
+        Check(VerificationPlan.Version == 163, "plan 163 replaces async-fence with async-eager-ordering: NTFS orders a file's rewrite after its file-level TRIM");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
