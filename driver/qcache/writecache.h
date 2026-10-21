@@ -516,7 +516,8 @@ struct QC_CACHE
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
-    // PagingStop. Only the request worker inserts; only ReadThreads execute.
+    // PagingStop. PagingQueued counts read and write-copy entries, not asynchronous
+    // TRIMs. Only the request worker inserts; only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
     // paging thread waits only for Mutex and lower completion, never the worker.
     KSPIN_LOCK PagingLock;

@@ -3017,8 +3017,9 @@ static void PagingReader(PVOID context)
         }
         c->CompleteRequest(c->ServiceContext, irp, status);
         KeAcquireSpinLock(&c->PagingLock, &irql);
+        if (!next->Trim)
+            --c->PagingQueued;
         next->Irp = nullptr;
-        --c->PagingQueued;
         KeReleaseSpinLock(&c->PagingLock, irql);
         KeSetEvent(&c->PagingDone, IO_NO_INCREMENT, FALSE);
     }
@@ -3166,7 +3167,8 @@ static bool OffloadTrim(QC_CACHE* c, PIRP irp, ULONG fence, LONGLONG low, LONGLO
         entry->Trim = TRUE;
         entry->Fence = fence;
         entry->Source = nullptr;
-        RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
+        // Not counted in PagingQueued: the caller path must not back off while a slow lower TRIM
+        // is outstanding (plan 164). Its cache side is applied and its ranges are fenced.
     }
     KeReleaseSpinLock(&c->PagingLock, irql);
     if (!entry)
