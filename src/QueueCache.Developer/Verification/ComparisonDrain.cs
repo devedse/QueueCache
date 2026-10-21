@@ -100,7 +100,7 @@ public static class ComparisonDrain
             $"sustained-r{r}", 'W', 1024, SustainedWorkers, 1, Bytes: SustainedBytes)).ToArray();
     }
 
-    public static bool IsSuite(string suite) => suite is "compare-drain" or SustainedSuite or DrainBatching.Suite;
+    public static bool IsSuite(string suite) => suite is "compare-drain" or SustainedSuite or DrainBatching.Suite or ComparisonDrainRead.Suite;
 
     public static void ValidateBrokerStartup(ManagedBrokerObservation? broker)
     {

@@ -20,7 +20,9 @@ public static class ComparisonReport
     {
         var shapes = Shapes(directory, plan);
         var steps = Steps(directory, plan);
-        var drains = ComparisonDrain.IsSuite(suite) ? Drains(directory, plan,
+        var reads = suite == ComparisonDrainRead.Suite ? Reads(directory, plan,
+            provider ?? throw new InvalidDataException("Missing comparison provider.")) : [];
+        var drains = ComparisonDrain.IsSuite(suite) && suite != ComparisonDrainRead.Suite ? Drains(directory, plan,
             provider ?? throw new InvalidDataException("Missing comparison provider."), suite == DrainBatching.Suite,
             suite == ComparisonDrain.SustainedSuite) : [];
         var memory = plan.Where(c => c.Kind == "memory")
@@ -33,7 +35,7 @@ public static class ComparisonReport
         RunStorage.AtomicJson(Path.Combine(directory, "comparison.json"), new
         {
             SchemaVersion = 1, Suite = suite, Product = product, PlanVersion = VerificationPlan.Version,
-            Provider = provider, Shapes = shapes, Steps = steps, Drains = drains, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
+            Provider = provider, Shapes = shapes, Steps = steps, Drains = drains, Reads = reads, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
         });
         var md = new StringBuilder($"# Comparison: {product}\n\nSuite `{suite}`, plan {VerificationPlan.Version}. Medians of the repetitions " +
             "(range in brackets). MB/s are decimal (1,000,000 bytes/s). Raw evidence: `compare.<step>.*`. Not a verdict.\n");
@@ -44,6 +46,13 @@ public static class ComparisonReport
             foreach (var r in drains)
                 md.AppendLine($"| {r.Shape} | {r.Provider} | {r.Samples} | {N(r.MBPerSecond)} ({N(r.MinMBPerSecond)}–{N(r.MaxMBPerSecond)}) | {N(r.ApplicationSeconds, "F3")} | {N(r.DrainSeconds, "F3")} | {N(r.TotalSeconds, "F3")} | {N(r.DiskBytesWritten, "F0")} | {N(r.DiskWriteOperations, "F0")} | {N(r.AverageWriteBytes, "F0")} |");
             md.AppendLine("\nApplication time includes new file/directory creation and close. Drain time includes FlushVolume metadata, explicit product drain, zero pending and disk queue confirmation. Verification and preparation are outside timing. Disk counters describe the observed virtual disk stack, not physical-media/power-loss durability. Shuffled small-file names do not establish random LBA placement.");
+        }
+        if (reads.Count > 0)
+        {
+            md.AppendLine("\n| Random 4 KiB Q1 reader | Provider | n | IOPS (range) | p50 / p99 / p99.9 ms | Disk write MB/s in the reader window | Writer MB/s |\n|---|---|---:|---:|---|---:|---:|");
+            foreach (var r in reads)
+                md.AppendLine($"| {r.Shape} | {r.Provider} | {r.Samples} | {N(r.Iops, "F0")} ({N(r.MinIops, "F0")}–{N(r.MaxIops, "F0")}) | {N(r.ReadP50Ms, "F3")} / {N(r.ReadP99Ms, "F3")} / {N(r.ReadP999Ms, "F3")} | {N(r.WindowDiskMBPerSecond)} | {N(r.WriterMBPerSecond)} |");
+            md.AppendLine("\nLoaded windows start 12 s after a sequential 1 MiB Q8 writer began filling the product's 2 GiB cache, so the product drains at its own rate throughout; both reader boundaries confirmed pending data. Alone windows start from a drained, cleared cache. The reader file is 8 GiB and cleared from the product cache before every window. Writer MB/s covers the writer's whole run.");
         }
         if (shapes.Count > 0)
         {
@@ -78,6 +87,35 @@ public static class ComparisonReport
                 md.AppendLine($"\n{churn.Unreadable.Count} file(s) could not be read: " + string.Join("; ", churn.Unreadable.Take(5)) + (churn.Unreadable.Count > 5 ? "; ..." : ""));
         }
         File.WriteAllText(Path.Combine(directory, "COMPARISON.md"), md.ToString());
+    }
+
+    public sealed record ReadRow(ComparisonProvider Provider, string Shape, int Samples, double Iops, double MinIops, double MaxIops,
+        double? ReadP50Ms, double? ReadP99Ms, double? ReadP999Ms, double WindowDiskMBPerSecond, double? WriterMBPerSecond);
+
+    public static IReadOnlyList<ReadRow> Reads(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider)
+    {
+        if (!plan.SequenceEqual(ComparisonDrainRead.Cases(3)))
+            throw new InvalidDataException("Cannot publish an incomplete or mixed compare-drain-read plan.");
+        var scores = plan.Select(test =>
+        {
+            var score = Read<ComparisonReadScore>(directory, test.Id, "score");
+            ComparisonDrainRead.ValidateScore(test, score, provider);
+            return score;
+        }).ToArray();
+        static double? Median(IEnumerable<double?> values)
+        {
+            var list = values.Select(v => v ?? throw new InvalidDataException("Missing reader latency.")).ToArray();
+            return ComparisonPlan.Spread(list).Median;
+        }
+        return scores.GroupBy(s => ComparisonPlan.Shape(s.Id)).Select(group =>
+        {
+            var iops = ComparisonPlan.Spread(group.Select(s => s.Reader.Iops).ToArray());
+            var writers = group.Where(s => s.Writer is not null).Select(s => s.Writer!.MBPerSecond).ToArray();
+            return new ReadRow(provider, group.Key, group.Count(), iops.Median, iops.Min, iops.Max,
+                Median(group.Select(s => s.Reader.ReadP50Ms)), Median(group.Select(s => s.Reader.ReadP99Ms)), Median(group.Select(s => s.Reader.ReadP999Ms)),
+                ComparisonPlan.Spread(group.Select(s => s.ReaderWindowDiskBytesWritten / 1_000_000.0 / s.Reader.Seconds).ToArray()).Median,
+                writers.Length == 0 ? null : ComparisonPlan.Spread(writers).Median);
+        }).ToArray();
     }
 
     private static string Share(SectorCounts c) => string.Create(CultureInfo.InvariantCulture,

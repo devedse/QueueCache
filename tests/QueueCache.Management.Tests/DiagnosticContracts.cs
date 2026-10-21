@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 160, "plan 160 remeasures noisy standalone lock windows and checks TRIM during background Eager drains");
+        Check(VerificationPlan.Version == 161, "plan 161 adds the provider-neutral read-during-drain comparison");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
@@ -35,6 +35,7 @@ internal static class DiagnosticContracts
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
         CompareDrainContracts.Run(Check, Reject);
+        CompareDrainReadContracts.Run(Check, Reject);
         DrainLockContracts.Run(Check, Reject);
         RunTreeDecisionContracts(Check, Reject);
         RunReadTailDecisionContracts(Check, Reject);

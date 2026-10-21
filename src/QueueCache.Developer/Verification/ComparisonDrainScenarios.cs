@@ -22,7 +22,7 @@ internal static class ComparisonDrainScenarios
 
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(WorkerJob job, ComparisonTarget target, IReadOnlyList<ComparisonCase> plan)
     {
-        var freeGiB = job.Operation == ComparisonDrain.SustainedSuite ? 12 : 7;
+        var freeGiB = job.Operation == ComparisonDrainRead.Suite ? 20 : job.Operation == ComparisonDrain.SustainedSuite ? 12 : 7;
         if (target.DiskNumber is null || target.VolumeName is null || target.FreeBytes < (long)freeGiB << 30)
             throw new IOException($"{job.Operation} requires an observable physical backing disk and at least {freeGiB} GiB free.");
         var directory = Path.GetDirectoryName(job.Reply)!;
@@ -30,6 +30,8 @@ internal static class ComparisonDrainScenarios
         await provider.PreflightAsync(target);
         var work = job.WorkDirectory ?? throw new InvalidDataException("Missing compare-drain work directory.");
         Directory.CreateDirectory(work);
+        if (job.Operation == ComparisonDrainRead.Suite)
+            return await RunReadAsync(job, target, plan, provider, directory, work);
         Progress("Preparing unique full-GiB payload and every SHA-256 oracle outside timing.");
         using var files = new ComparisonDrainFiles();
         RunStorage.AtomicJson(Path.Combine(directory, "compare-drain-oracle.json"), new
@@ -144,6 +146,128 @@ internal static class ComparisonDrainScenarios
                 Directory.Delete(path, recursive: true);
                 RunStorage.AtomicJson(prefix + ".cleanup.json", new { Directory = path, Removed = true, At = DateTimeOffset.UtcNow });
                 Progress(test.Id + ": PASS; byte verification and original active state restored.");
+            }
+            catch (Exception ex)
+            {
+                RunStorage.AtomicJson(prefix + ".failure.json", new { Error = ex.ToString(), At = DateTimeOffset.UtcNow });
+                Console.Error.WriteLine($"FAIL: {test.Id}: {ex.Message}"); Console.Error.Flush();
+                throw;
+            }
+            finally { RunStorage.AtomicJson(prefix + ".interval.json", new { Start = started, End = DateTimeOffset.UtcNow }); }
+        }
+        return checks;
+    }
+
+    /// <summary>Plan 161: the same reader alone and while the writer keeps the product draining (ComparisonDrainRead).</summary>
+    private static async Task<IReadOnlyList<CheckResult>> RunReadAsync(WorkerJob job, ComparisonTarget target,
+        IReadOnlyList<ComparisonCase> plan, Provider provider, string directory, string work)
+    {
+        var diskSpd = job.DiskSpd ?? throw new ArgumentException("compare-drain-read requires --diskspd.");
+        var disk = target.DiskNumber!.Value;
+        var readerPath = Path.Combine(work, ComparisonDrainRead.ReaderFile);
+        var writerPath = Path.Combine(work, ComparisonDrainRead.WriterFile);
+        Progress("Creating the 8 GiB reader and writer files outside timing.");
+        foreach (var (path, bytes) in new[] { (readerPath, ComparisonDrainRead.ReaderBytes), (writerPath, ComparisonDrainRead.WriterBytes) })
+            RunStorage.AtomicJson(Path.Combine(directory, "compare-read-prepare-" + Path.GetFileNameWithoutExtension(path) + ".json"),
+                ComparisonScenarios.Sequential(path, bytes, write: true, queue: 8, create: true));
+        async Task<ProcessResult> Disk(ComparisonCase window, string path, long bytes, string prefix) =>
+            await OwnedProcess.RunAsync(diskSpd, [.. ComparisonPlan.Arguments(window, bytes), path], prefix,
+                TimeSpan.FromSeconds(window.Seconds + ComparisonPlan.WarmupSeconds + 120), CancellationToken.None);
+        ComparisonScore Score(ComparisonCase window, ProcessResult result, long bytes, string prefix)
+        {
+            if (result.ExitCode != 0) throw new IOException($"DiskSpd exit {result.ExitCode}; inspect {prefix}.stderr.txt.");
+            if (result.Error.Trim().Length != 0) throw new InvalidDataException($"Unexpected DiskSpd stderr; inspect {prefix}.stderr.txt.");
+            var score = ComparisonPlan.Score(window, result.Output, bytes);
+            RunStorage.AtomicJson(prefix + ".score.json", score);
+            return score;
+        }
+        var checks = new List<CheckResult>();
+        foreach (var test in plan)
+        {
+            var prefix = Path.Combine(directory, "compare." + test.Id);
+            var loaded = test.Kind == "read-loaded";
+            var started = DateTimeOffset.UtcNow;
+            Progress($"{test.Id}: preparation ({checks.Count + 1}/{plan.Count}).");
+            try
+            {
+                // Drain, then drop clean data, so the reader file is uncached in every product at the start.
+                var prepared = await ComparisonDrain.PrepareCleanAsync(provider.Kind, async attempt =>
+                {
+                    ComparisonScenarios.FlushVolume(target.Letter);
+                    await provider.DrainAsync(prefix + $".prepare-{attempt:D4}-drain");
+                    await provider.ClearAsync(prefix + $".prepare-{attempt:D4}-clear");
+                    return await provider.PendingAsync(prefix + $".prepare-{attempt:D4}-pending");
+                });
+                RunStorage.AtomicJson(prefix + ".preparation.json", new { prepared.Attempt, Pending = prepared.Pending });
+                var diskBefore = await ComparisonDrain.WaitForDirectDiskIdleAsync(ComparisonScenarios.DiskCounters(disk),
+                    () => ComparisonScenarios.DiskCounters(disk),
+                    (attempt, value) => RunStorage.AtomicJson(prefix + $".prepare-disk-{attempt:D4}.json", value));
+                using var stop = new CancellationTokenSource();
+                var samples = new List<ComparisonDiskCounters>();
+                var ready = prefix + ".ready.json";
+                var observer = Task.Factory.StartNew(() => ObserveDisk(disk, prefix, ready, samples, stop.Token),
+                    CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                ComparisonReadScore score;
+                try
+                {
+                    await TelemetryCoverage.WaitReadyAsync(ready, observer, TimeSpan.FromSeconds(45), CancellationToken.None);
+                    var readyUtc = samples[0].Utc;
+                    var writerWindow = ComparisonDrainRead.WriterWindow(test);
+                    Task<ProcessResult>? writer = null;
+                    DateTimeOffset? writerStarted = null, writerEnded = null;
+                    ComparisonPending? atStart = null, atEnd = null;
+                    if (loaded)
+                    {
+                        Progress(test.Id + ": writer filling the cache; the reader starts once the product is draining.");
+                        writerStarted = DateTimeOffset.UtcNow;
+                        writer = Disk(writerWindow, writerPath, ComparisonDrainRead.WriterBytes, prefix + ".writer");
+                        await Task.Delay(TimeSpan.FromSeconds(ComparisonDrainRead.WriterLeadSeconds));
+                        if (writer.IsCompleted) throw new IOException("The writer ended before the reader window.");
+                        atStart = await provider.PendingAsync(prefix + ".reader-start");
+                    }
+                    var readerWindow = ComparisonDrainRead.ReaderWindow(test);
+                    var readerStarted = DateTimeOffset.UtcNow;
+                    var readerResult = await Disk(readerWindow, readerPath, ComparisonDrainRead.ReaderBytes, prefix + ".reader");
+                    var readerEnded = DateTimeOffset.UtcNow;
+                    ComparisonScore? writerScore = null;
+                    if (writer is not null)
+                    {
+                        if (writer.IsCompleted) throw new IOException("The writer ended before the reader window completed.");
+                        atEnd = await provider.PendingAsync(prefix + ".reader-end");
+                        var writerResult = await writer;
+                        writerEnded = DateTimeOffset.UtcNow;
+                        writerScore = Score(writerWindow, writerResult, ComparisonDrainRead.WriterBytes, prefix + ".writer");
+                    }
+                    var readerScore = Score(readerWindow, readerResult, ComparisonDrainRead.ReaderBytes, prefix + ".reader");
+                    // Unscored endpoint: drain what the writer left, then confirm zero pending and an idle disk.
+                    ComparisonScenarios.FlushVolume(target.Letter);
+                    await provider.DrainAsync(prefix + ".drain");
+                    var endpoint = Stopwatch.StartNew();
+                    ComparisonPending after;
+                    ComparisonDiskCounters diskAfter;
+                    var poll = 0;
+                    do
+                    {
+                        after = await provider.PendingAsync(prefix + $".after-{++poll:D4}");
+                        diskAfter = ComparisonScenarios.DiskCounters(disk);
+                        if (after.DirtyBytes is not > 0 && after.InFlightBytes is not > 0 && after.DeferredBlocks is not > 0 && diskAfter.QueueDepth == 0) break;
+                        if (endpoint.Elapsed > TimeSpan.FromSeconds(180)) throw new TimeoutException("Drain after the window did not reach zero pending counters and disk queue zero.");
+                        await Task.Delay(100);
+                    } while (true);
+                    var ended = DateTimeOffset.UtcNow;
+                    stop.Cancel(); await observer;
+                    score = new(test.Id, provider.Kind, loaded, readyUtc, writerStarted, readerStarted, readerEnded, writerEnded, ended,
+                        readerScore, writerScore, prepared.Pending, atStart, atEnd, after, diskBefore, diskAfter, samples.ToArray(),
+                        ComparisonDrainRead.WindowBytes(samples, readerStarted, readerEnded));
+                    RunStorage.AtomicJson(prefix + ".score.json", score);
+                    ComparisonDrainRead.ValidateScore(test, score, provider.Kind);
+                }
+                finally { stop.Cancel(); await observer; }
+                checks.Add(new(test.Id, "PASS", $"reader {score.Reader.Iops:F0} IOPS, p99 {score.Reader.ReadP99Ms:F3} ms; " +
+                    $"backing disk wrote {score.ReaderWindowDiskBytesWritten / 1_000_000.0 / score.Reader.Seconds:F1} MB/s during the reader window" +
+                    (score.Writer is { } w ? $"; writer {w.MBPerSecond:F1} MB/s over its run." : ".")));
+                RunStorage.AtomicJson(Path.Combine(directory, "compare-drain-checks.json"), checks);
+                Progress(test.Id + ": PASS.");
             }
             catch (Exception ex)
             {
