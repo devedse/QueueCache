@@ -123,8 +123,15 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
                 await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                     main.Recovery, Path.Combine(directory, "maintenance"), false, progress, token);
             if (target.Role == CampaignTargetRole.Performance)
+            {
+                // A lab filesystem whose image lives on this volume can still write back metadata after its
+                // phase ended; flush it first so those writes reach this cache before its own preparation drains.
+                foreach (var lab in LabTargetsBackedBy(baselines.Values, target.Recovery.Target.Device))
+                    await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
+                        lab.Recovery, Path.Combine(directory, "maintenance"), false, progress, token, prepare: true);
                 await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                     target.Recovery, Path.Combine(directory, "maintenance"), false, progress, token, prepare: true);
+            }
             var exit = await runner.RunAsync(phase.Options with { Output = Path.Combine(directory, "phases", phase.Id) }, progress, token);
             var child = runner.DirectoryPath ?? throw new InvalidDataException("Phase did not allocate its evidence directory.");
             result = VerificationCampaignEvidence.ReadPhase(phase, child, exit, timer.Elapsed.TotalSeconds, target, diskSpdHash);
@@ -157,6 +164,11 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
         }
         return result! with { Seconds = timer.Elapsed.TotalSeconds };
     }
+
+    /// <summary>Lab targets whose image file is stored on <paramref name="volume"/>.</summary>
+    public static IReadOnlyList<CampaignTargetEvidence> LabTargetsBackedBy(IEnumerable<CampaignTargetEvidence> targets, string volume) =>
+        targets.Where(t => t.Role != CampaignTargetRole.Performance && t.BackingVolume is { } backing &&
+            string.Equals(backing.TrimEnd('\\'), volume.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)).ToArray();
 
     private static void EnsureAllStopped(string directory)
     {

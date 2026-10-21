@@ -143,6 +143,10 @@ internal static class DiagnosticContracts
         catch (IOException) { }
         var finalTarget = new CampaignTargetEvidence(CampaignTargetRole.Performance, recovery, "NTFS", "fixture", "fixture", null,
             false, null, null, new(true, null, []));
+        var labOnQ = finalTarget with { Role = CampaignTargetRole.NtfsLab, BackingVolume = "Q:" };
+        Check(VerificationCampaignHost.LabTargetsBackedBy([finalTarget, labOnQ, labOnQ with { Role = CampaignTargetRole.RefsLab, BackingVolume = "C:" },
+                finalTarget with { BackingVolume = "Q:" }], "q:").SequenceEqual([labOnQ]),
+            "a performance phase first prepares only the lab targets whose images live on its volume");
         var finalOrder = new List<string>(); var finalClean = false;
         VerificationCampaignHost.FinalizeTargetsAsync([finalTarget],
             _ => { finalOrder.Add("prepare"); finalClean = true; return Task.CompletedTask; },
