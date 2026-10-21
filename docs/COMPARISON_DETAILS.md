@@ -51,6 +51,12 @@ about 30% slower than either. Alone, QueueCache's uncached Q1 reads were 20–35
 slower than Primo's. All 10 runs completed; method, limits and the plan that
 follows are in [performance findings](PERFORMANCE_FINDINGS.md#read-161).
 
+Later the same day, QueueCache only (plans 162/163, native 0.4.771.1): with the
+default-off read-aware limit 2, Eager 2048 KiB × 8 left the same reader 1,031–1,141
+IOPS (p99 10.2–11.3 ms) while draining 245–247 MB/s. That is the default's
+level (1,152 IOPS, 10.4 ms, 249 MB/s), against 340 IOPS (29.4 ms) without the
+limit. No PrimoCache ran in that window; [details](PERFORMANCE_FINDINGS.md#prio-162).
+
 ## Same-window comparison (2026-10-20/21)
 
 Plans 159/160 on `experiment/drain-batch-concurrency`: native 0.4.766.1 with the

@@ -194,6 +194,21 @@ therefore still add roughly 0.5–1 s to an Eager small-file case on the test di
 Production 0.4.687.1 keeps the old behavior.
 [Fix evidence](PERFORMANCE_FINDINGS.md#trim-160).
 
+Native 0.4.771.1 (plans 162/163) adds a default-off TRIM mode 3. Small TRIMs use
+an index lookup, and an offload thread sends the lower TRIM while the ordered
+request path continues. A fence keeps newer versions of the trimmed ranges from
+draining before the lower TRIM completes, and forwarded writes to those ranges
+wait for it. Under Driver Verifier, `trim-cache` passed 12/12 and the focused
+campaign 98/98 with it on. In Eager mass-delete cases, application time fell from
+2.52–2.58 to 2.01 s.
+**Verification gap:** the fence's holding path and the forwarded-write wait have
+not been reached. NTFS keeps a file's writes behind that file's outstanding
+file-level TRIM, so a rewrite always arrived after the TRIM. Reaching the fence
+needs a writer outside that ordering, such as raw volume writes, which the
+verifier never performs. `trim-cache/async-eager-ordering` reports which path
+occurred.
+[Evidence](PERFORMANCE_FINDINGS.md#prio-162).
+
 The test VM's disk now accepts TRIM. On 2026-10-18 the hypervisor counted about
 891,000 successful unmap operations on it, none failed, and QueueCache's TRIM
 counter rose in 32 of 132 cases. That counter only counts TRIMs the lower disk
@@ -234,6 +249,7 @@ worker.
 | Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / default Idle foreground / release qualification unrun. The Primo post-oracle path ran on Primo in plan 158; the retired-policy native build was not separately VM-exercised. |
 | Matched provider research | Plan 158: latency-matched, default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 against Primo 120.5 / 59.9 / 126.9 MB/s. Plans 159/160 same-window A–B–A: Primo 285.5 / 70.4 / 315.8, Eager 2 MiB × 8 304.9 and 298.3 / 142.6 and 132.2 / 294.1 and 288.9, default 184.1 and 170.0 / 86.6 and 80.0; 22 runs / 233,538 hashes | Configuration, not defaults; large-file ranges overlap; sustained 7–9% behind; release/Strict qualification unrun |
 | Read during drain, provider-neutral (plan 161) | A–B–A against PrimoCache: concurrent disk reader 163 IOPS under Primo, 277–331 under Eager 2 MiB × 8 and 959–1,153 under the default, at drain rates of about 360 / 360–420 / 250 MB/s; 10 complete runs | One Ceph-backed VM; uncached Q1 reads alone were 20–35% slower than Primo's |
+| Read-aware limit and asynchronous TRIM (plans 162/163) | Lab switches on native 0.4.771.1. Read-aware 2 keeps a concurrent disk reader at 1,031–1,141 IOPS (p99 10–11 ms) during Eager 2 MiB × 8 drains, against 340 without it, while #15 medians stay 300.3 / 122.2 MB/s with 0 gate waits; Verifier campaign 98/98 and `trim-cache` 12/12 with both on | One Ceph-backed VM, one session; default-off; the TRIM fence's holding path is unexercised through NTFS |
 | Read/drain lock diagnostic (plan 160 repeat) | Complete 48/48 on native 0.4.766.1, one noisy standalone window remeasured: eight versus four drainers +15% drainage, disk reader 1,094 → 545 IOPS, p99 15.4 → 28.5 ms | Same Eager screen; reproduces plan 151's magnitude; read-aware limit unbuilt |
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
