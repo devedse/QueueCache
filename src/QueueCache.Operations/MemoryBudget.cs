@@ -31,11 +31,12 @@ public static class MemoryBudget
         var headroom = RequiredSystemHeadroom(status.TotalPhysical);
         return status.AvailablePhysical > headroom ? status.AvailablePhysical - headroom : 0;
     }
+    public const string InsufficientMessage = "Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.";
     [SupportedOSPlatform("windows")]
     public static void ValidateIncrease(ulong current, ulong requested)
     {
         if (requested > current && requested - current > AvailableForReservation())
-            throw new InsufficientMemoryForCacheException("Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.");
+            throw new InsufficientMemoryForCacheException(InsufficientMessage);
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct MemoryStatus

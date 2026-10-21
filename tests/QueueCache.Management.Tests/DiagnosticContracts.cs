@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 166, "plan 166 keeps policies files in the run work directory and refuses request-splitting file layouts");
+        Check(VerificationPlan.Version == 167, "plan 167 retries a stress RAM-disk creation refused by the RAM headroom guard and counts it");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
