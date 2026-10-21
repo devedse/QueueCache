@@ -1,7 +1,7 @@
 # QueueCache performance findings
 
 This is the consolidated reference for performance findings and decisions from
-the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-21.
+the RAM-first, RAM-disk and cache-layout investigations and the competitor comparison through 2026-10-21 (plan 161).
 Read it before proposing another experiment. Detailed methods and raw-evidence
 identities are in the dated reports under [history](history/README.md); their
 findings are consolidated here, including negative results and limits. How tests
@@ -111,6 +111,14 @@ both new-file workloads, while preserving correctness, RAM-first admission and
 explicit durability. The defaults reduced paired drain time; parity is not yet
 shown. The latest [aligned-gather test](#small-file-gather-156) passed its byte
 checks but lost performance.
+
+**Read during drain (plan 161, October 21): PrimoCache does not protect reads;
+Eager 2 MiB × 8 hurts them half as much.** At the same drain and writer rate
+(about 360 / 295 MB/s), a concurrent 4 KiB Q1 disk reader got 163 IOPS (p99 64 ms)
+under Primo, against 277–331 IOPS (p99 29–30 ms) under QueueCache Eager 2 MiB × 8.
+The 1024 KiB × 4 Idle default kept 959–1,153 IOPS (p99 11–12 ms), but drained
+only about 250 MB/s. A read-aware limit is therefore not needed for Primo
+parity. [Results](#read-161) and [the plan to finish #15](#finish-15).
 
 **Same-window result (plans 159/160, October 20–21): Eager 2 MiB × 8 meets the
 #15 medians; defaults unchanged.** TRIM now waits only for overlapping in-flight
@@ -285,6 +293,61 @@ control `20261016-132412-6209369546514c2f974d041502ca6979`; eight drainers
 `20261016-132900-e8107338c2094977b5890ac873ffd9a8`; ending control
 `20261016-133018-7b62779ae82c43aea3c25c11d75550cf`. Verifier smoke:
 `20261016-130550-0a059f72bc3e431cba1e18f3d290bcb3`.
+
+<a id="read-161"></a>
+
+**Read during drain against PrimoCache (plan 161, October 21).** The question
+was whether PrimoCache protects foreground reads while it drains, which would
+make a read-aware limit necessary before Eager 2 MiB × 8 could be the default.
+The new `compare-drain-read` suite runs the same DiskSpd windows for every
+product. A 4 KiB random Q1 reader works on an uncached 8 GiB file, alone, and
+12 s after a sequential 1 MiB Q8 writer started keeping the product's 2 GiB
+cache full. The product therefore drains at its own full rate throughout.
+Loaded windows must show pending data at both reader boundaries and at least
+64 MiB written to the disk; alone windows at most 16 MiB.
+
+Native 0.4.766.1 (the plan-159/160 TRIM-fix build; loaded hashes matched
+`D68C25AD…0C11` / `489EE1D3…6CC8`) ran with controller 0.4.769.1 (`4441f09`,
+plan 161). The session was A–B–A in one afternoon: QueueCache, PrimoCache 4.4.1
+(same task settings as before), then QueueCache again after rollback and
+redeploy. Foreign Ceph reads averaged 1.8 MB/s. All 10 runs completed; each has
+three alone and three loaded windows. Reader figures are medians; ranges are
+across the three loaded windows.
+
+| Product and setting | Reader alone, IOPS | Reader while draining, IOPS (range) | p99 ms | Disk writes in the window, MB/s | Writer, MB/s |
+|---|---:|---:|---:|---:|---:|
+| PrimoCache, 2 runs | 2,598 | 163 (107–366) | 64.0 | 356 | 294 |
+| QueueCache Eager 2 MiB × 8, A / C | 1,936 / 1,852 | 331 / 277 (250–377) | 29.4 / 30.0 | 363 / 420 | 296 / 320 |
+| QueueCache Eager 2 MiB × 4, A / C | 2,012 / 1,673 | 497 / 414 (400–769) | 23.3 / 21.1 | 244 / 282 | 213 / 246 |
+| QueueCache 1024 KiB × 4 Idle (default), A / C | 2,107 / 1,747 | 1,153 / 959 (948–1,216) | 10.7 / 11.6 | 251 / 248 | 203 / 201 |
+
+**PrimoCache does not protect reads while it drains.** At the same drain and
+writer rate, Eager 2 MiB × 8 left the reader about twice Primo's IOPS and half
+its p99. So making Eager 2 MiB × 8 the default costs nothing relative to Primo,
+and a read-aware limit is not needed for parity. The cost is relative to today's
+default: during heavy draining a disk reader gets about 300 instead of about
+1,000 IOPS, with p99 around 30 instead of 11 ms. In exchange, sustained drains
+are 45–70% faster (363–420 against 248–251 MB/s), and the #15 workloads were 65–75% faster
+(plans 159/160).
+Reader slowdown follows the bytes in flight (4 → 8 → 16 MiB), as the plan-151
+and plan-160 diagnostics also showed.
+
+One side observation: alone, QueueCache's uncached 4 KiB Q1 reads ran at
+1,673–2,107 IOPS against Primo's 2,598. That is a 20–35% slower single-request
+miss path, separate from draining and not investigated here.
+
+Eager 2 MiB × 4 is not a useful middle ground. It drained no faster than the
+default under sustained writes, slowed the reader about twice as much, and
+measured 238.0 / 235.2 MB/s for the new 1 GiB file (small files 111.3 / 124.5).
+That is short of Primo's 285.5 in the plan-159/160 window.
+
+Evidence: exports `BC349AE7…ACC2`, `F2EFA896…8568` and `08BF8AAE…A39C`, checked file
+by file against guest SHA-256 manifests. One arm stopped before measuring,
+because Steam's first post-boot shutdown exceeded the helper's 45 s wait; it was
+rerun from scratch. The VM was then restored and checked: original 0.4.687.1
+hashes, the Fast 2 GiB 1024 KiB × 4 Idle profile, flags 15, timing and Verifier
+off, original apps and Everything service. Primo is absent, no owned files
+remain, the snapshot is deleted (none remain), and the guard passed.
 
 <a id="trim-160"></a>
 
@@ -525,6 +588,42 @@ flags 15, timing and Verifier off. Its original apps and the Everything service
 are running, Primo is absent, and no owned files remain. The temporary snapshot
 is deleted (none remain), and the final capacity guard passed with 298.4 GB free.
 
+<a id="finish-15"></a>
+
+**Plan to finish #15 (after plan 161; step 1 awaits the owner's decision).**
+This replaces the step table below, which is kept as history. The research questions are answered:
+
+- *Write speed.* Drain speed follows the bytes in flight, and small files need
+  draining during writes. Eager 2 MiB × 8 meets both #15 medians in a same-window
+  comparison (+5–7% for the 1 GiB file, about 2× for small files) and is 7–9%
+  behind on 8 GiB sustained writes ([plans 159/160](#trim-160)).
+- *Reads during drain.* PrimoCache does not protect them. At the same drain rate,
+  Eager 2 MiB × 8 slows a concurrent disk reader about half as much as Primo
+  ([plan 161](#read-161)).
+- *Cost against today's default.* During heavy draining, a disk reader drops
+  from about 1,000 to about 300 IOPS. In exchange, drains run 45–70% faster and
+  the #15 workloads 65–75% faster.
+- *What will not help:* more batching or gap work, lock rewrites, larger batches,
+  more drainers, or Eager 2 MiB × 4.
+
+| Step | Work | Done when | Estimate |
+|---|---|---|---|
+| 1. Make Eager 2 MiB × 8 the default | New Fast caches default to Eager, 2048 KiB × 8; saved profiles keep their settings. Driver defaults, management defaults, UI text, docs and contract tests change together. | Host tests and CI pass; focused correctness campaign plus `trim-cache` pass under Driver Verifier on the new build | Small code change; about 1 h VM |
+| 2. Final qualification | `release-performance` on that build, then one same-window Primo check (`compare-drain` and `compare-drain-read`, A–B–A) | Release campaign completes and restores; Eager default at or above Primo on both #15 medians, reads during drain no worse than Primo | About 4 h VM |
+| 3. Close #15 | Publish the final numbers in the comparison, findings and issue | Owner agrees | — |
+
+After #15, as separate issues, none blocking:
+- *Asynchronous lower TRIM.* It removes the remaining 0.5–1 s that about 200
+  TRIMs add after mass deletes. It needs a range fence, so that a newer write
+  to a trimmed range never reaches the disk before the TRIM.
+- *Read-aware drain limit.* It would recover read responsiveness toward today's
+  default during heavy drains, which is better than Primo, not parity.
+- *Uncached Q1 read miss path.* Alone, it ran 20–35% slower than Primo's.
+- *#13 power-loss safety* and *#16 Strict stalls.*
+
+All evidence so far comes from one Ceph-backed VM. Hard disks and SATA SSDs were
+not measured; on them eight 2 MiB drain writes may cost reads more.
+
 <a id="drain-decision-153"></a>
 
 **Plan to match or exceed Primo (updated after the October 17 batching test).**
@@ -533,7 +632,7 @@ produced much larger small-file backing writes in this session; explain that
 change and refresh the provider controls before choosing another kernel policy.
 Parity means matching a contemporaneous Primo run, not beating its older score.
 
-*Status after plans 159/160:* the TRIM fix and step 3's foreground-read
+*Superseded by the [plan to finish #15](#finish-15).* *Status after plans 159/160:* the TRIM fix and step 3's foreground-read
 measurement are complete, and a same-window comparison shows Eager 2 MiB × 8
 meeting both #15 medians ([results](#trim-160)). Next comes a read-aware
 outstanding-write limit and an asynchronous lower TRIM. Step 5 (qualification)
@@ -2360,7 +2459,7 @@ runs that found and fixed the issues described under
 | 40,000-file create/copy/read/hash slowdown | **Environmental: Windows Defender real-time scans, not the driver.** The complete plan-134 same-build matrix (`20261014-175457-b7459c972da24d5a809c98512e31245b`) measured 160.07–170.45 s read+hash in every arm including cache-off, with no QueueCache read hits or writes. A diagnostic case (`20261015-000302-165f7519bbf14c7fac6b28b0e648ef16`, not decision-grade) found `MsMpEng.exe` using 156.5 CPU-seconds of the 164.2-second phase and 40,024 `OnOpen` scans (151.6 s) in the tree worker, with zero Q: disk I/O. Defender stayed enabled for that diagnosis; no exclusion or driver change. The owner later disabled Defender and Search on the dedicated VM (2026-10-15); one subsequent observation completed read/hash in 6.86 s with every hash verified. The cache path also changed, so this is not an isolated driver gain or a complete matrix. Why the 0.4.604.1 session took 4.9 s is unresolved (Defender state was not recorded). `tree-build-decision` was removed unrun. | A recorded Defender-off or excluded baseline that shows a driver-dependent cost, a tree phase that stays slow with Defender scan time near zero, or a new driver path in file reads. |
 | Random-read latency tails | **Accepted** (plan 141): 24/24 fixed-operation cases (`20261014-230805-92a9f1ac4191423cbd05b571db4595b2`) show flags 15 cold-random p99.9 60.7 versus 191.7 ms, maximum 123.5 versus 271.6 ms, >100 ms counts down in every pair, none above 500 ms, with equal lower-read counts. Resident random/sequential and fitting-write controls had zero misses and no flag-driven loss; run order explained their pair differences. | A repeated order-balanced control loss of 3% or more, a different backing store, or an observed starvation tail in another workload. |
 | Drain batch size and parallelism | **Default 1024 KiB × 4 retained on explicit-drain evidence only.** Plan 132 (issue #15): complete 42-case comparison and 18-case write repeat (cold-read flush 3.86 against 6.52 s; write-repeat 92.16 against 127.61 s; every pair improves). Plan 142 `20261015-002709-cad2f47e9da14a0ba9a386a4240c607f`, timing off with a ready/start handshake: explicit Flush of a 512 MiB seed 12.7 → 8.0 s median, every pair improves (−18.6% to −47.9%), ranges separated. The separate plan 148 [short new-file comparison](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16) completed all 18 provider cases and all hashes; it does not isolate a batch-setting gain or settle larger-than-cache throughput. The broader goal in [#15](https://github.com/devedse/QueueCache/issues/15), matching or exceeding a contemporaneous PrimoCache control on both shapes, remains open. **Foreground interference under default Idle draining is unmeasured:** `drain-overlap-decision` failed twice at its seed and was removed (see the plan 142/143 paragraph); fixed-window foreground write IOPS from plan 132 stay variable and are not qualified as invariant. | Storage with a different latency profile, drain-thread changes, a repeated foreground-control loss under a measurement that isolates its active interval, or a new overlap measurement (needs a seed design the driver permits). |
-| Next drain improvement | **Eager 2 MiB × 8 meets both #15 medians in a same-window A–B–A comparison; defaults unchanged.** Plans 159/160 ([results](#trim-160)): against Primo 285.5 / 70.4 / 315.8 MB/s (1 GiB, 4,096 files, 8 GiB), Eager 2 MiB × 8 measured 304.9 and 298.3 / 142.6 and 132.2 / 294.1 and 288.9 in the two bracketing QueueCache blocks, and the default 1024 × 4 measured 184.1 and 170.0 / 86.6 and 80.0. 22 complete runs and 233,538 hashes passed; matched drain latency 50–53 ms. Plan 158 explained the mechanism: drain speed follows bytes in flight, and small files are limited by write-then-drain sequencing. Aligned gather (plans 155/156) stays rejected. | A read-aware outstanding-write limit, because eight drainers halve a concurrent disk reader's IOPS. Then a same-window re-check and `release-performance` before a default change. Batching, lock rewrites and ceilings above 16 MiB in flight still need discriminating evidence. |
+| Next drain improvement | **Proposed, awaiting the owner's decision: make Eager 2 MiB × 8 the default, then qualify ([plan](#finish-15)).** Plans 159/160 ([results](#trim-160)): Eager 2 MiB × 8 meets both #15 medians in a same-window A–B–A against Primo (304.9 and 298.3 / 142.6 and 132.2 MB/s against 285.5 / 70.4), and is 7–9% behind on 8 GiB sustained writes. Plan 161 ([results](#read-161)): Primo does not protect reads while draining. At the same drain rate a concurrent disk reader got 163 IOPS under Primo, 277–331 under Eager 2 MiB × 8 and 959–1,153 under the 1024 × 4 default, which drains about 250 MB/s. Eager 2 MiB × 4 is no useful middle. Aligned gather (plans 155/156) stays rejected. | The default change and its final qualification (`release-performance` plus a same-window Primo check). Asynchronous TRIM, a read-aware limit and the Q1 miss path are later, separate improvements. |
 | TRIM while draining | **Fixed on the experiment branch (native 0.4.766.1, plans 159/160):** a TRIM waits only for in-flight drain writes that overlap it. Under Verifier, an unrelated TRIM returned in 2 ms with 3 MiB still in flight and an overlapping one after 2,008 ms; 103/103 subchecks passed. Residual cost: the lower TRIM is still synchronous on the ordered path, so about 200 TRIMs add roughly 0.5–1 s to a small-file Eager case. Production 0.4.687.1 still waits for every in-flight write. [Known issue](KNOWN_ISSUES.md#each-trim-waits-for-every-drain-write-already-in-flight-performance). | An asynchronous lower TRIM with a range fence, re-measured with Eager and the plan-160 `trim-cache` checks. |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |

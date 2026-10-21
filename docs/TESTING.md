@@ -152,6 +152,7 @@ ones in use:
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 | `compare-drain` | Two fixed new-file workloads through explicit product drain; three repeats, two median/range rows per provider | Explicit `--provider`, `--product`, `--budget-mib 2048 --repeats 3`; no DiskSpd |
 | `compare-drain-sustained` | Plan 158: one new 8 GiB file (four times the cache) through explicit product drain; three repeats | Same options as `compare-drain`; at least 12 GiB free |
+| `compare-drain-read` | Plan 161: a 4 KiB random Q1 reader on an uncached 8 GiB file, alone and 12 s after a sequential 1 MiB Q8 writer began keeping the product's 2 GiB cache full; three alternating alone/loaded pairs | Same provider options as `compare-drain` plus `--diskspd`; at least 20 GiB free. Loaded windows need pending data at both reader boundaries and ≥64 MiB written to the disk; alone windows ≤16 MiB |
 
 **Comparisons with other products** (plan 121). These suites measure any RAM
 disk or cached volume the same way, without QueueCache's controls, hooks or

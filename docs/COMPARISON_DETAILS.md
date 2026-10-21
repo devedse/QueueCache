@@ -17,7 +17,8 @@ loss of pending writes with a healthy filesystem. The results below do not certi
 that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 
-Contents: [Same-window comparison](#same-window-comparison-2026-10-2021) ·
+Contents: [Read during drain](#read-during-drain-2026-10-21) ·
+[Same-window comparison](#same-window-comparison-2026-10-2021) ·
 [Matched in-session comparison](#matched-in-session-comparison-2026-10-1820) ·
 [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
 [Latest drain decision](#drain-decision-screen-2026-10-1617) ·
@@ -27,6 +28,28 @@ Contents: [Same-window comparison](#same-window-comparison-2026-10-2021) ·
 [Column definitions](#cache-column-definitions) ·
 [Power cuts](#power-cut-while-the-cache-is-writing) ·
 [Original setup](#how-this-was-measured)
+
+## Read during drain (2026-10-21)
+
+Plan 161 `compare-drain-read`: native 0.4.766.1 with controller 0.4.769.1, A–B–A
+in one afternoon (QueueCache, PrimoCache 4.4.1, then QueueCache after rollback).
+A 4 KiB random Q1 reader works on an uncached 8 GiB file, alone, and while a
+sequential 1 MiB Q8 writer keeps the product's 2 GiB cache full. Medians;
+reader ranges are across the three loaded windows of each run.
+
+| Product and setting | Reader alone, IOPS | Reader while draining, IOPS (range) | p99 ms | Disk writes in the window, MB/s | Writer, MB/s |
+|---|---:|---:|---:|---:|---:|
+| PrimoCache, shared 2 GiB L1, Native defer 10 s (2 runs) | 2,598 | 163 (107–366) | 64.0 | 356 | 294 |
+| QueueCache Eager 2048 KiB × 8, A / C | 1,936 / 1,852 | 331 / 277 (250–377) | 29.4 / 30.0 | 363 / 420 | 296 / 320 |
+| QueueCache Eager 2048 KiB × 4, A / C | 2,012 / 1,673 | 497 / 414 (400–769) | 23.3 / 21.1 | 244 / 282 | 213 / 246 |
+| QueueCache 1024 KiB × 4 Idle (default), A / C | 2,107 / 1,747 | 1,153 / 959 (948–1,216) | 10.7 / 11.6 | 251 / 248 | 203 / 201 |
+
+PrimoCache does not throttle its drain for waiting reads. At the same drain and
+writer rate, QueueCache Eager 2 MiB × 8 left a concurrent reader about twice
+Primo's IOPS and half its p99. The default protects reads best, but drains
+about 30% slower than either. Alone, QueueCache's uncached Q1 reads were 20–35%
+slower than Primo's. All 10 runs completed; method, limits and the plan that
+follows are in [performance findings](PERFORMANCE_FINDINGS.md#read-161).
 
 ## Same-window comparison (2026-10-20/21)
 
