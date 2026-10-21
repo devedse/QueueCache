@@ -113,6 +113,15 @@ simultaneous. Eager also has the TRIM stall below, and foreground-read
 interference is unmeasured. Defaults are unchanged.
 [Results](PERFORMANCE_FINDINGS.md#matched-158).
 
+The October 20–21 same-window comparison (plans 159/160) bracketed PrimoCache
+between two QueueCache blocks at matched drain latency. Primo measured
+285.5 / 70.4 / 315.8 MB/s. Eager 2 MiB × 8 measured 304.9 and 298.3 / 142.6 and
+132.2 / 294.1 and 288.9: it meets both #15 medians, with large-file ranges
+overlapping and sustained writes 7–9% behind. The 1024 KiB × 4 Idle default
+measured 184.1 and 170.0 / 86.6 and 80.0. It is still not the default: eight
+drainers cut a concurrent disk reader's IOPS about in half (545 against 1,094),
+and release qualification has not run. [Results](PERFORMANCE_FINDINGS.md#trim-160).
+
 ### Low-priority programs read cached data slower (performance)
 
 A program started below normal priority (Task Scheduler's default) read 1 MiB Q8
@@ -167,9 +176,16 @@ next measured write. At 2 MiB × 8 Eager, 144 and 272 TRIM requests stretched a
 new 1 GiB file's application time from about 0.16 s to 6.7 s and 25.1 s. Three
 small-file cases rose from about 1.3 s to 2.2–4.2 s. The driver's queue-wait
 counter matched those stalls. Fitting Fast writes then wait for lower I/O,
-contrary to the RAM-first goal. A candidate fix, not built yet: wait only for
-in-flight writes that overlap a trimmed range, and keep other drains running.
-[Evidence](PERFORMANCE_FINDINGS.md#matched-158).
+contrary to the RAM-first goal. [Evidence](PERFORMANCE_FINDINGS.md#matched-158).
+
+The experiment branch (native 0.4.766.1, plans 159/160) waits only for in-flight
+writes that overlap a trimmed range. Under Driver Verifier, a TRIM outside the
+in-flight batches returned in 2 ms while 3 MiB stayed in flight, and an
+overlapping one waited 2,008 ms for its write; all data checks passed. The lower
+TRIM itself is still sent synchronously on the ordered path. About 200 TRIMs
+therefore still add roughly 0.5–1 s to an Eager small-file case on the test disk.
+Production 0.4.687.1 keeps the old behavior.
+[Fix evidence](PERFORMANCE_FINDINGS.md#trim-160).
 
 The test VM's disk now accepts TRIM. On 2026-10-18 the hypervisor counted about
 891,000 successful unmap operations on it, none failed, and QueueCache's TRIM
@@ -209,7 +225,8 @@ worker.
 | Drain settings (#15) | Complete timing-off 512 MiB comparison: 12.7 → 8.0 s, every pair improves; separate cold-read/write-drain comparisons also improve | Qualifies explicit drain time, not disk-speed parity, general foreground throughput or Strict impact |
 | Short completed writes | Plan 148: all 18 provider cases, 36,873 file hashes, zero pending/disk queue and restored state | New files fitting in cache; no new native code, sustained/Strict qualification or power-loss test |
 | Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / default Idle foreground / release qualification unrun. The Primo post-oracle path ran on Primo in plan 158; the retired-policy native build was not separately VM-exercised. |
-| Matched provider research | Plan 158: 47 complete runs / 454,794 hashes; latency-matched medians default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 MB/s against Primo 120.5 / 59.9 / 126.9 (1 GiB / 4,096 files / 8 GiB) | Not simultaneous; large-file ranges overlap; TRIM stall under Eager; three foreground-read diagnostic attempts incomplete |
+| Matched provider research | Plan 158: latency-matched, default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 against Primo 120.5 / 59.9 / 126.9 MB/s. Plans 159/160 same-window A–B–A: Primo 285.5 / 70.4 / 315.8, Eager 2 MiB × 8 304.9 and 298.3 / 142.6 and 132.2 / 294.1 and 288.9, default 184.1 and 170.0 / 86.6 and 80.0; 22 runs / 233,538 hashes | Configuration, not defaults; large-file ranges overlap; sustained 7–9% behind; release/Strict qualification unrun |
+| Read/drain lock diagnostic (plan 160 repeat) | Complete 48/48 on native 0.4.766.1, one noisy standalone window remeasured: eight versus four drainers +15% drainage, disk reader 1,094 → 545 IOPS, p99 15.4 → 28.5 ms | Same Eager screen; reproduces plan 151's magnitude; read-aware limit unbuilt |
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
 | Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
 

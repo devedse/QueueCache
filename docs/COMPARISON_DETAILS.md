@@ -3,7 +3,7 @@
 [Comparison tables](COMPARISON.md) contain the scores. This document keeps the
 methods, explanations, failed attempts and limits behind them. The original
 comparison is dated October 12–14; the disabled-background-service refresh and
-short drain comparisons are dated October 15–20, 2026. Cross-date scores describe
+short drain comparisons are dated October 15–21, 2026. Cross-date scores describe
 their sessions; they do not isolate a driver change or the effect of disabling
 Defender/Search.
 
@@ -17,7 +17,8 @@ loss of pending writes with a healthy filesystem. The results below do not certi
 that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 
-Contents: [Matched in-session comparison](#matched-in-session-comparison-2026-10-1820) ·
+Contents: [Same-window comparison](#same-window-comparison-2026-10-2021) ·
+[Matched in-session comparison](#matched-in-session-comparison-2026-10-1820) ·
 [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
 [Latest drain decision](#drain-decision-screen-2026-10-1617) ·
 [Cache refresh](#current-cache-refresh-2026-10-1516) ·
@@ -26,6 +27,38 @@ Contents: [Matched in-session comparison](#matched-in-session-comparison-2026-10
 [Column definitions](#cache-column-definitions) ·
 [Power cuts](#power-cut-while-the-cache-is-writing) ·
 [Original setup](#how-this-was-measured)
+
+## Same-window comparison (2026-10-20/21)
+
+Plans 159/160 on `experiment/drain-batch-concurrency`: native 0.4.766.1 with the
+TRIM fix (TRIM waits only for overlapping in-flight drain writes), controller
+0.4.767.1. Same VM, Q: disk, payload, workloads and scored endpoint as the
+sections below. One time window, A–B–A: QueueCache (block A), PrimoCache 4.4.1
+(block B), then QueueCache again after rollback to the same snapshot and
+redeployment (block C). The paused anchors stayed at 108.7–114.5 MB/s
+(1 GiB) and 6.9–8.5 MB/s (small files) from the end of A through C. Drain
+latency at 2 MiB × 8 was 52.6 / 51.9 / 50.3 ms, and another Ceph client's reads
+were near zero. Medians with full ranges, decimal MB/s.
+
+| Mode, block | New 1 GiB + drain | New 4,096 × 64 KiB + drain | New 8 GiB + drain | Small-file application s |
+|---|---:|---:|---:|---:|
+| PrimoCache, shared 2 GiB L1, Native defer 10 s, B | 285.5 (248.7–300.8) | 70.4 (55.6–87.0) | 315.8 (246.0–324.1) | 2.55 |
+| QueueCache Eager 2048 KiB × 8, A | 304.9 (116.6–324.6) | 142.6 (87.8–193.1) | 294.1 (259.4–304.9) | 1.64 |
+| QueueCache Eager 2048 KiB × 8, C | 298.3 (281.7–328.1) | 132.2 (120.9–163.1) | 288.9 (284.0–314.6) | 1.97 |
+| QueueCache 2048 KiB × 8 Idle, A / C | 284.3 / 214.1 | 91.0 / 69.3 | — | 1.74 / 2.06 |
+| QueueCache 1024 KiB × 4 Idle (default), A / C | 184.1 / 170.0 | 86.6 / 80.0 | — | 1.34 / 1.77 |
+
+All **22 complete runs and 233,538 cache-bypassed file hashes passed**. Eager
+2 MiB × 8 meets PrimoCache's medians for both #15 workloads in both blocks that
+bracket it: +4.5–6.8% for the 1 GiB file, with overlapping ranges, and about
+twice as fast for small files. It trails by 7–9% on sustained 8 GiB writes,
+also with overlapping ranges. The default trails by 36–41% for the 1 GiB file
+and leads by 14–23% for small files. This is a configuration result, not a
+default change. Eager drains compete with foreground I/O, and at eight drainers
+a concurrent disk reader's IOPS fell from 1,094 to 545 in the same session.
+Correctness under Driver Verifier (103/103 subchecks, plus an Eager file-integrity
+run), the TRIM evidence and the decision are in
+[performance findings](PERFORMANCE_FINDINGS.md#trim-160).
 
 ## Matched in-session comparison (2026-10-18/20)
 
