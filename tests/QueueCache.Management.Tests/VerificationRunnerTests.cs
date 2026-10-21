@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 165, "plan 165 adds the parallel-copies diagnostic suite (2048/1024 KiB batches, per-chunk mismatch evidence)");
+        Check(VerificationPlan.Version == 166, "plan 166 keeps policies files in the run work directory and refuses request-splitting file layouts");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -206,6 +206,11 @@ internal static class VerificationRunnerTests
         Check(QueueCache.Operations.CacheScenarios.DescribeParallelRead(1, 2, 5, 6, new byte[1 << 20]).EndsWith("chunks 0-255:zeros", StringComparison.Ordinal) &&
             QueueCache.Operations.CacheScenarios.DescribeParallelRead(1, 2, 5, 6, Enumerable.Repeat((byte)7, 1 << 20).ToArray()).Contains("0-255:unknown"),
             "a mismatching parallel read is described per 4 KiB chunk");
+        Check(QueueCache.Operations.CacheScenarios.SplitOffset([], 1 << 20) == -1 &&
+            QueueCache.Operations.CacheScenarios.SplitOffset([1L << 20, 3L << 20], 1 << 20) == -1 &&
+            QueueCache.Operations.CacheScenarios.SplitOffset([1L << 20, (1L << 20) + (800L << 10)], 1 << 20) == (1L << 20) + (800L << 10) &&
+            QueueCache.Operations.CacheScenarios.SplitOffset([(456L * 4096)], 64 << 10) == 456L * 4096,
+            "an extent boundary inside a request is found (plan 165: the torn read at 1 MiB + 800 KiB)");
         try { QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 1, 3, 4, 0, true, ["concurrent writer 0 block 1 passes 2..3: 4 KiB chunks 0-127:pass 2, 128-255:pass 3"]); throw new Exception("Accepted a torn read."); }
         catch (IOException ex) { Check(ex.Message.Contains("0-127:pass 2, 128-255:pass 3"), "the parallel-copies failure carries its chunk evidence"); }
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(test => test.Id.StartsWith("volume-") || test.Id == "trim-cache"),

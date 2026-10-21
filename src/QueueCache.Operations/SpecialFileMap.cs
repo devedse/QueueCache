@@ -119,7 +119,27 @@ public static class SpecialFileMap
                 .Select(run => new DiskRange(partitionStart + run.Lcn * clusterBytes, run.Clusters * clusterBytes))
                 .ToList();
         }
-        var ranges = new List<DiskRange>();
+        return RetrievalRuns(file, path).Where(run => run.Lcn >= 0)
+            .Select(run => new DiskRange(partitionStart + run.Lcn * clusterBytes, (run.NextVcn - run.Vcn) * clusterBytes)).ToList();
+    }
+
+    /// <summary>File byte offsets after 0 where a new extent starts. A request that crosses one reaches the
+    /// volume as several requests, so nothing below the file system makes it atomic.</summary>
+    public static IReadOnlyList<long> ExtentStarts(string path, string root)
+    {
+        if (!GetDiskFreeSpaceW(root, out var sectorsPerCluster, out var bytesPerSector, out _, out _))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        var clusterBytes = (long)sectorsPerCluster * bytesPerSector;
+        using var file = CreateFileW(path, 0x80 /* FILE_READ_ATTRIBUTES */, 7, IntPtr.Zero, 3,
+            0x02000000 /* FILE_FLAG_BACKUP_SEMANTICS */, IntPtr.Zero);
+        if (file.IsInvalid)
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open " + path + " for its layout.");
+        return RetrievalRuns(file, path).Select(run => run.Vcn * clusterBytes).Where(offset => offset > 0).ToList();
+    }
+
+    private static List<(long Vcn, long NextVcn, long Lcn)> RetrievalRuns(SafeFileHandle file, string path)
+    {
+        var runs = new List<(long Vcn, long NextVcn, long Lcn)>();
         var output = new byte[64 * 1024];
         long vcn = 0;
         while (true)
@@ -136,16 +156,14 @@ public static class SpecialFileMap
             for (var index = 0; index < count; index++)
             {
                 var next = BitConverter.ToInt64(output, 16 + index * 16);
-                var lcn = BitConverter.ToInt64(output, 24 + index * 16);
-                if (lcn >= 0)
-                    ranges.Add(new(partitionStart + lcn * clusterBytes, (next - current) * clusterBytes));
+                runs.Add((current, next, BitConverter.ToInt64(output, 24 + index * 16)));
                 current = next;
             }
             if (ok || count == 0)
                 break;
             vcn = current;
         }
-        return ranges;
+        return runs;
     }
 
     /// <summary>Allocated cluster runs of a file's unnamed $DATA attribute, read from its NTFS file record. Sparse

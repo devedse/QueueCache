@@ -1000,7 +1000,7 @@ public static class VerificationWorker
                     ReportFailures(report.Checks, Console.Error);
                 return report.Passed ? 0 : 1;
             case "policies":
-                var checks = await CacheScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
+                var checks = await CacheScenarios.RunAsync(target, new Progress<string>(Console.WriteLine), workDirectory: job.WorkDirectory);
                 RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);
                 if (checks.Count == 0)
@@ -1038,7 +1038,7 @@ public static class VerificationWorker
                 await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
                 return 0;
             case "parallel-copies-2048" or "parallel-copies-1024":
-                var copyChecks = CacheScenarios.RunParallelCopiesOnly(target, job.Seconds, job.Operation.EndsWith("2048", StringComparison.Ordinal) ? 2048 : 1024);
+                var copyChecks = CacheScenarios.RunParallelCopiesOnly(target, job.Seconds, job.Operation.EndsWith("2048", StringComparison.Ordinal) ? 2048 : 1024, job.WorkDirectory);
                 RunStorage.AtomicJson(job.Reply, copyChecks);
                 ReportFailures(copyChecks, Console.Error);
                 return copyChecks.Count > 0 && copyChecks.All(c => c.Result == "PASS") ? 0 : 1;

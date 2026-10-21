@@ -11,13 +11,14 @@ public static class CacheScenarios
 {
     /// <summary>The parallel-copies scenario alone, for <paramref name="seconds"/> with an explicit drain batch size
     /// (plan 165 diagnostic suite). Runtime settings are restored as in <see cref="RunAsync"/>.</summary>
-    public static IReadOnlyList<CheckResult> RunParallelCopiesOnly(DiskTarget target, int seconds, int batchKiB, CancellationToken token = default)
+    public static IReadOnlyList<CheckResult> RunParallelCopiesOnly(DiskTarget target, int seconds, int batchKiB,
+        string? workDirectory = null, CancellationToken token = default)
     {
         using var gate = ConfigurationGate.Enter(target.Instance);
         using var device = new CacheDevice(target.Device, writable: true);
         var original = device.GetWriteCacheState();
         ConfigurationManager.EnsureHealthy(original);
-        var directory = Path.Combine(target.Root, "QueueCache-Scenarios-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(workDirectory ?? target.Root, "QueueCache-Scenarios-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var results = new List<CheckResult>();
         try { RunParallelCopies(target, device, directory, results, null, token, seconds, batchKiB); }
@@ -33,8 +34,10 @@ public static class CacheScenarios
         return results.Select(r => r with { Name = $"parallel-copies-{batchKiB}" }).ToArray();
     }
 
+    /// <param name="workDirectory">Parent for the scenario files; the verification runner passes its own work
+    /// directory, which it removes after the run (plan 165). Files left on the volume root fragment a lab volume.</param>
     public static Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, IProgress<string>? progress = null,
-        CancellationToken token = default) => Task.Run<IReadOnlyList<CheckResult>>(() =>
+        CancellationToken token = default, string? workDirectory = null) => Task.Run<IReadOnlyList<CheckResult>>(() =>
     {
         using var gate = ConfigurationGate.Enter(target.Instance);
         using var device = new CacheDevice(target.Device, writable: true);
@@ -42,7 +45,7 @@ public static class CacheScenarios
         ConfigurationManager.EnsureHealthy(original);
         if (!original.SupportsReadWrite)
             throw new NotSupportedException("Read/write driver required.");
-        var directory = Path.Combine(target.Root, "QueueCache-Scenarios-" + Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine(workDirectory ?? target.Root, "QueueCache-Scenarios-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var results = new List<CheckResult>();
         CacheOptions[] cases = [new(), new(CacheAllocation.Fixed, 50, Drain: DrainAlgorithm.Balanced, Parallelism: 2),
@@ -161,10 +164,14 @@ public static class CacheScenarios
             Options = batchKiB is { } batch ? parallelOptions with { BatchKiB = batch } : parallelOptions
         }, true);
         var paths = Enumerable.Range(0, ParallelWriters).Select(writer => Path.Combine(directory, $"parallel-{writer}.bin")).ToArray();
+        // Each 1 MiB request must reach the cache whole; see CreateUnsplit.
         for (var writer = 0; writer < ParallelWriters; writer++)
-            using (var file = new AlignedFile(paths[writer], ParallelBlockBytes, create: true))
+            CreateUnsplit(paths[writer], ParallelBlockBytes, target.Root, label, path =>
+            {
+                using var file = new AlignedFile(path, ParallelBlockBytes, create: true);
                 for (var block = 0; block < ParallelBlocks; block++)
                     file.Write((long)block * ParallelBlockBytes, ParallelPattern(writer, 0, block));
+            });
         var passes = new int[ParallelWriters, ParallelBlocks];
         var before = device.GetDiagnostics();
         long writes = 0, reads = 0, readBackMismatches = 0, concurrentMismatches = 0;
@@ -263,6 +270,30 @@ public static class CacheScenarios
             before.CopyOffloadWrites is null || after.CopyOffloadWrites is null ? null : after.CopyOffloadWrites - before.CopyOffloadWrites,
             state.LastError, persisted, mismatches.ToArray()));
     }
+
+    /// <summary>Creates <paramref name="path"/> so that no extent boundary falls inside one of its
+    /// <paramref name="requestBytes"/> requests. A request crossing one reaches the volume as several, and nothing
+    /// below the file system makes those atomic or keeps them on one thread (plan 165: a fragmented lab volume
+    /// produced torn 1 MiB reads at an extent boundary). A file that stays split fails the check rather than
+    /// weakening it.</summary>
+    private static void CreateUnsplit(string path, int requestBytes, string root, string label, Action<string> create)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            create(path);
+            var split = SplitOffset(SpecialFileMap.ExtentStarts(path, root), requestBytes);
+            if (split < 0)
+                return;
+            File.Delete(path);
+            if (attempt == 3)
+                throw new IOException(FormattableString.Invariant(
+                    $"{label}: the lab volume is too fragmented: {Path.GetFileName(path)} had an extent boundary at {split} bytes inside a {requestBytes >> 10} KiB request in 3 attempts. Free space on it first."));
+        }
+    }
+
+    /// <summary>The first extent start that is not a multiple of the request size, or -1.</summary>
+    internal static long SplitOffset(IReadOnlyList<long> extentStarts, int requestBytes) =>
+        extentStarts.FirstOrDefault(offset => offset % requestBytes != 0, -1);
 
     /// <summary>Which written pass each 4 KiB of a mismatching 1 MiB read matches, as runs, so a failure tells a
     /// torn read (several passes), a stale one (an older whole pass) and foreign or zeroed data apart.</summary>
@@ -485,9 +516,16 @@ public static class CacheScenarios
             return block;
         }).ToArray();
         var actual = new byte[transferBytes];
-        using var file = new AlignedFile(Path.Combine(directory, "foreground-background.bin"), transferBytes, true);
-        for (var index = 0; index < blocks.Length; index++)
-            file.Write((long)index * transferBytes, blocks[index]);
+        var hotPath = Path.Combine(directory, "foreground-background.bin");
+        // A 64 KiB request split by an extent boundary arrives as two; the second finds the first in progress and
+        // sends the next requests to the worker, which is not the caller-path behaviour this check measures.
+        CreateUnsplit(hotPath, transferBytes, target.Root, label, path =>
+        {
+            using var create = new AlignedFile(path, transferBytes, true);
+            for (var index = 0; index < blocks.Length; index++)
+                create.Write((long)index * transferBytes, blocks[index]);
+        });
+        using var file = new AlignedFile(hotPath, transferBytes, create: false);
         device.Control(WriteCacheAction.Flush);
         device.Control(WriteCacheAction.DropClean);
 

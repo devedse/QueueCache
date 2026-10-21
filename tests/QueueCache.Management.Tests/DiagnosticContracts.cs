@@ -15,7 +15,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 165, "plan 165 adds the parallel-copies diagnostic suite (2048/1024 KiB batches, per-chunk mismatch evidence)");
+        Check(VerificationPlan.Version == 166, "plan 166 keeps policies files in the run work directory and refuses request-splitting file layouts");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
