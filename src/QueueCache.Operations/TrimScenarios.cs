@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 
@@ -37,15 +38,38 @@ public static class TrimScenarios
             return [new("trim-cache", "SKIP", $"The disk under {target.Device} does not accept TRIM: Win32 {ex.NativeErrorCode} ({ex.Message}). " +
                 "Run this suite on a lab-disk volume (qcache developer lab-disk create).")];
         }
-        return [Pending(device, directory), Clean(device, directory), InFlight(target, device, directory),
-            EagerTrim(target, device, directory, "eager-unrelated-not-awaited", 12 * MiB, 4 * MiB, false),
-            EagerTrim(target, device, directory, "eager-overlap-awaited", 0, 2 * MiB, true)];
+        var original = device.GetDiagnostics().DrainPriority?.TrimMode
+            ?? throw new NotSupportedException("TRIM verification requires V24 diagnostics (QcLabTrimMode).");
+        var checks = new List<CheckResult>();
+        try
+        {
+            // Plan 162: every check with the ordered full-scan TRIM, then again with index lookup and
+            // asynchronous lower TRIMs, then the two checks only an asynchronous TRIM can fail.
+            foreach (var (mode, suffix) in new[] { (0UL, ""), (3UL, "-async") })
+            {
+                device.Control(WriteCacheAction.LabTrimMode, value: mode);
+                checks.Add(Pending(device, directory, suffix));
+                checks.Add(Clean(device, directory, suffix));
+                checks.Add(InFlight(target, device, directory, suffix));
+                checks.Add(EagerTrim(target, device, directory, "eager-unrelated-not-awaited" + suffix, 12 * MiB, 4 * MiB, false));
+                checks.Add(EagerTrim(target, device, directory, "eager-overlap-awaited" + suffix, 0, 2 * MiB, true));
+            }
+            checks.Add(AsyncPathFree(device, directory));
+            checks.Add(AsyncFence(target, device, directory));
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.LabTrimMode, value: original);
+            device.Control(WriteCacheAction.LabDelay, value: 0);
+            ConfigurationManager.Apply(target, VolumeScenarios.Pending(256), true);
+        }
+        return checks;
     }
 
     // Accepted, undrained writes in the trimmed range are dropped, not drained to the disk.
-    private static CheckResult Pending(CacheDevice device, string directory)
+    private static CheckResult Pending(CacheDevice device, string directory, string suffix)
     {
-        var path = Path.Combine(directory, "pending.bin");
+        var path = Path.Combine(directory, "pending" + suffix + ".bin");
         var first = VolumeScenarios.Pattern(4 * MiB, 0x7122);
         VolumeScenarios.WriteNew(path, first);
         var before = device.GetWriteCacheState();
@@ -62,16 +86,16 @@ public static class TrimScenarios
         var rewrite = VolumeScenarios.ReadAll(path).AsSpan().SequenceEqual(second);
         var pass = after.TrimRequests > before.TrimRequests && dropped >= (ulong)MiB && after.DrainedBytes == before.DrainedBytes &&
             Healthy(after) && guards && rewrite;
-        return new("trim-cache/pending-writes-dropped", pass ? "PASS" : "FAIL",
+        return new("trim-cache/pending-writes-dropped" + suffix, pass ? "PASS" : "FAIL",
             $"TRIM of the middle 1 MiB of 4 MiB pending: {after.TrimRequests - before.TrimRequests} TRIM request(s), {dropped} pending bytes dropped, " +
             $"{after.DrainedBytes - before.DrainedBytes} bytes drained; untrimmed guards {(guards ? "exact" : "DIFFER")} from RAM; " +
             $"full rewrite after flush and dropping clean data {(rewrite ? "exact" : "DIFFERS")} from the disk.");
     }
 
     // Drained, retained copies in the trimmed range are released; nothing is written.
-    private static CheckResult Clean(CacheDevice device, string directory)
+    private static CheckResult Clean(CacheDevice device, string directory, string suffix)
     {
-        var path = Path.Combine(directory, "clean.bin");
+        var path = Path.Combine(directory, "clean" + suffix + ".bin");
         var data = VolumeScenarios.Pattern(4 * MiB, 0x7124);
         VolumeScenarios.WriteNew(path, data);
         device.Control(WriteCacheAction.Flush);
@@ -84,16 +108,16 @@ public static class TrimScenarios
         var guards = Guards(path, data, MiB, MiB);
         var pass = after.TrimRequests > before.TrimRequests && released >= (ulong)MiB && after.DrainedBytes == before.DrainedBytes &&
             Healthy(after) && guards;
-        return new("trim-cache/clean-copies-released", pass ? "PASS" : "FAIL",
+        return new("trim-cache/clean-copies-released" + suffix, pass ? "PASS" : "FAIL",
             $"TRIM of the middle 1 MiB of 4 MiB drained and retained: {released} clean bytes released, {after.DrainedBytes - before.DrainedBytes} bytes drained; " +
             $"untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk after dropping clean data.");
     }
 
     // TRIM arriving while a drain of the same file is in progress: it waits for the overlapping issued write only,
     // and the remaining drain and the guards stay exact.
-    private static CheckResult InFlight(DiskTarget target, CacheDevice device, string directory)
+    private static CheckResult InFlight(DiskTarget target, CacheDevice device, string directory, string suffix)
     {
-        var path = Path.Combine(directory, "in-flight.bin");
+        var path = Path.Combine(directory, "in-flight" + suffix + ".bin");
         var data = VolumeScenarios.Pattern(8 * MiB, 0x7125);
         VolumeScenarios.WriteNew(path, data);
         var start = device.GetWriteCacheState();
@@ -129,7 +153,7 @@ public static class TrimScenarios
         var guards = Guards(path, data, 3 * MiB, 2 * MiB);
         var pass = after.TrimRequests > before.TrimRequests && Healthy(drained) && written + dropped >= 8UL * MiB &&
             dropped <= 2UL * MiB && guards;
-        return new("trim-cache/during-drain", pass ? "PASS" : "FAIL",
+        return new("trim-cache/during-drain" + suffix, pass ? "PASS" : "FAIL",
             $"TRIM of 2 MiB inside 8 MiB pending while {before.InFlightBytes} bytes were in flight (300 ms lab delay per drain batch): " +
             $"{after.TrimRequests - before.TrimRequests} TRIM request(s); the flush wrote {written} bytes and the TRIM dropped {dropped} " +
             $"(at most its 2 MiB); untrimmed guards {(guards ? "exact" : "DIFFER")} from the disk.");
@@ -155,7 +179,7 @@ public static class TrimScenarios
             if (!SpinWait.SpinUntil(() => device.GetWriteCacheState().InFlightBytes != 0, 5000))
                 throw new IOException("Could not observe a background drain in flight before TRIM.");
             before = device.GetWriteCacheState();
-            var timer = System.Diagnostics.Stopwatch.StartNew();
+            var timer = Stopwatch.StartNew();
             Trim(path, offset, length);
             elapsed = timer.Elapsed;
             after = device.GetWriteCacheState();
@@ -186,9 +210,109 @@ public static class TrimScenarios
             $"{(guards ? "exact" : "DIFFER")} from the disk.");
     }
 
-    private static void Trim(string path, long offset, long length)
+    // While an asynchronous lower TRIM is held for 2 s (QcTrimLabHold), the ordered request path is free:
+    // another file's rewrite and read finish meanwhile. The TRIM still drops its pending range (plan 162).
+    private static CheckResult AsyncPathFree(CacheDevice device, string directory)
     {
-        using var file = new AlignedFile(path, MiB, create: false);
+        var path = Path.Combine(directory, "async-held.bin");
+        var other = Path.Combine(directory, "async-other.bin");
+        var data = VolumeScenarios.Pattern(4 * MiB, 0x7130);
+        var next = VolumeScenarios.Pattern(4 * MiB, 0x7131);
+        VolumeScenarios.WriteNew(path, data);
+        VolumeScenarios.WriteNew(other, VolumeScenarios.Pattern(4 * MiB, 0x7132));
+        var before = device.GetWriteCacheState();
+        var asyncBefore = device.GetDiagnostics().DrainPriority!.TrimAsync;
+        device.Control(WriteCacheAction.LabTrimMode, value: 7);
+        TimeSpan trimElapsed, otherElapsed;
+        bool overlapped, otherExact;
+        try
+        {
+            var timer = Stopwatch.StartNew();
+            var trim = Task.Run(() => Trim(path, MiB, MiB, shared: true));
+            Thread.Sleep(200);
+            if (trim.IsCompleted) throw new IOException("The held TRIM returned before the concurrent I/O started.");
+            var otherTimer = Stopwatch.StartNew();
+            using (var file = new AlignedFile(other, MiB, create: false))
+                for (var offset = 0; offset < next.Length; offset += MiB)
+                    file.Write(offset, next[offset..(offset + MiB)]);
+            otherExact = VolumeScenarios.ReadAll(other).AsSpan().SequenceEqual(next);
+            otherElapsed = otherTimer.Elapsed;
+            overlapped = !trim.IsCompleted;
+            trim.GetAwaiter().GetResult();
+            trimElapsed = timer.Elapsed;
+        }
+        finally { device.Control(WriteCacheAction.LabTrimMode, value: 3); }
+        var after = device.GetWriteCacheState();
+        var asyncAfter = device.GetDiagnostics().DrainPriority!.TrimAsync;
+        var guardsRam = Guards(path, data, MiB, MiB);
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+        var guardsDisk = Guards(path, data, MiB, MiB);
+        var otherDisk = VolumeScenarios.ReadAll(other).AsSpan().SequenceEqual(next);
+        var dropped = after.DiscardedBytes - before.DiscardedBytes;
+        var pass = overlapped && otherElapsed < TimeSpan.FromSeconds(1) && trimElapsed >= TimeSpan.FromSeconds(1.5) &&
+            asyncAfter > asyncBefore && after.TrimRequests > before.TrimRequests && dropped >= (ulong)MiB &&
+            otherExact && otherDisk && guardsRam && guardsDisk && Healthy(after);
+        return new("trim-cache/async-request-path-free", pass ? "PASS" : "FAIL",
+            $"Asynchronous TRIM of 1 MiB inside 4 MiB pending, held 2 s, returned in {trimElapsed.TotalMilliseconds:F0} ms (at least 1500); " +
+            $"meanwhile another file's 4 MiB rewrite and read took {otherElapsed.TotalMilliseconds:F0} ms (under 1000, " +
+            $"{(overlapped ? "while" : "NOT while")} the TRIM was outstanding) and read back {(otherExact ? "exact" : "DIFFERENT")}; " +
+            $"{asyncAfter - asyncBefore} asynchronous TRIM(s), {dropped} pending bytes dropped; guards {(guardsRam && guardsDisk ? "exact" : "DIFFER")} " +
+            $"from RAM and disk; other file {(otherDisk ? "exact" : "DIFFERS")} from disk.");
+    }
+
+    // A rewrite of a range whose asynchronous lower TRIM is still held (QcTrimLabHold) is admitted at once but
+    // must not drain before that TRIM: under Eager it would drain within milliseconds, and the TRIM would then
+    // erase it. Afterwards the disk holds the rewrite (plan 162).
+    private static CheckResult AsyncFence(DiskTarget target, CacheDevice device, string directory)
+    {
+        var path = Path.Combine(directory, "async-fence.bin");
+        var data = VolumeScenarios.Pattern(4 * MiB, 0x7133);
+        var rewrite = VolumeScenarios.Pattern(MiB, 0x7134);
+        device.Control(WriteCacheAction.Flush);
+        ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast) { Options = new(Drain: DrainAlgorithm.Eager) }, true);
+        VolumeScenarios.WriteNew(path, data);
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.DropClean);
+        var before = device.GetWriteCacheState();
+        device.Control(WriteCacheAction.LabTrimMode, value: 7);
+        TimeSpan rewriteElapsed;
+        bool overlapped, heldDirty;
+        ulong dirtyDuringHold;
+        try
+        {
+            var trim = Task.Run(() => Trim(path, MiB, MiB, shared: true));
+            Thread.Sleep(200);
+            if (trim.IsCompleted) throw new IOException("The held TRIM returned before the rewrite started.");
+            var timer = Stopwatch.StartNew();
+            using (var file = new AlignedFile(path, MiB, create: false, shareAll: true))
+                file.Write(MiB, rewrite);
+            rewriteElapsed = timer.Elapsed;
+            Thread.Sleep(500); // Eager would have drained 1 MiB many times over by now
+            dirtyDuringHold = device.GetWriteCacheState().DirtyBytes;
+            overlapped = !trim.IsCompleted;
+            heldDirty = dirtyDuringHold >= (ulong)MiB;
+            trim.GetAwaiter().GetResult();
+        }
+        finally { device.Control(WriteCacheAction.LabTrimMode, value: 3); }
+        device.Control(WriteCacheAction.Flush);
+        var after = device.GetWriteCacheState();
+        device.Control(WriteCacheAction.DropClean);
+        var actual = VolumeScenarios.ReadAll(path);
+        var rewritten = actual.Length == data.Length && actual.AsSpan(MiB, MiB).SequenceEqual(rewrite);
+        var guards = Guards(path, data, MiB, MiB);
+        ConfigurationManager.Apply(target, VolumeScenarios.Pending(256), true);
+        var pass = overlapped && heldDirty && rewriteElapsed < TimeSpan.FromSeconds(1) && after.TrimRequests > before.TrimRequests &&
+            rewritten && guards && Healthy(after);
+        return new("trim-cache/async-fence", pass ? "PASS" : "FAIL",
+            $"Eager drain; a 1 MiB rewrite of a range whose asynchronous TRIM was held took {rewriteElapsed.TotalMilliseconds:F0} ms (under 1000); " +
+            $"{dirtyDuringHold} dirty bytes 0.5 s later {(overlapped ? "while" : "NOT while")} the TRIM was outstanding (at least 1 MiB: fenced); " +
+            $"after the TRIM and a flush the disk holds the rewrite {(rewritten ? "exactly" : "NOT (erased or stale)")}; guards {(guards ? "exact" : "DIFFER")}.");
+    }
+
+    private static void Trim(string path, long offset, long length, bool shared = false)
+    {
+        using var file = new AlignedFile(path, MiB, create: false, shareAll: shared);
         file.Trim(offset, length);
     }
 

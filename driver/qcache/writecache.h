@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <ntifs.h>
+#include <ntddstor.h> // DEVICE_DATA_SET_RANGE (asynchronous TRIM fences)
 #include "cachepolicy.h"
 
 #define IOCTL_QCACHE_STATE_V1 CTL_CODE(0x8844UL, 0xD10UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -156,6 +157,10 @@ struct QC_DIAGNOSTICS
     // V23: caller-routing candidates and mutually exclusive first-decline reasons.
     ULONGLONG CallerBackoff, CallerCandidates, CallerControls, CallerQueued;
     ULONGLONG CallerWorkerActive, CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
+    // V24: QcLabReadAware limit and drainer waits it caused; QcLabTrimMode, TRIMs that
+    // dropped cached data by range lookup, lower TRIMs sent asynchronously, and
+    // asynchronous TRIMs that fell back to the ordered path (fence or table full).
+    ULONGLONG ReadAware, ReadAwareWaits, TrimMode, TrimLookups, TrimAsync, TrimAsyncFallbacks;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -179,7 +184,9 @@ static constexpr ULONG QcDiagnosticsV19Size = 952;
 static constexpr ULONG QcDiagnosticsV20Size = 976;
 static constexpr ULONG QcDiagnosticsV21Size = 1008;
 static constexpr ULONG QcDiagnosticsV22Size = 1064;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1136);
+static constexpr ULONG QcDiagnosticsV23Size = 1136;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1184);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadAware) == QcDiagnosticsV23Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
@@ -299,7 +306,32 @@ enum : ULONG
     // ownership checks still apply to every request. Runtime only.
     QcLabCallerBackoff,
     // Reserved rejected gather experiment: 0 harmless reset; 1 unsupported.
-    QcLabDrainGather
+    QcLabDrainGather,
+    // Lab: Value 0 (default) = off; 1..8 = while foreground lower reads are in flight
+    // or completed within QcReadAwareHoldMs, start a drain batch only while fewer than
+    // Value batches are outstanding. Barriers and paging-write fences are never held.
+    QcLabReadAware,
+    // Lab: Value = QcTrimLookup | QcTrimAsync | QcTrimLabHold (0 default: full slot scan, ordered lower TRIM).
+    QcLabTrimMode
+};
+enum : ULONG
+{
+    // Drop cached data of small TRIMs by index lookup per trimmed block instead of a full slot scan.
+    QcTrimLookup = 1,
+    // Apply the TRIM to cached data, fence its ranges from draining, and send the lower
+    // TRIM from an offload thread, so the ordered request path continues meanwhile.
+    QcTrimAsync = 2,
+    // Lab (trim-cache): hold each asynchronous lower TRIM for QcTrimLabHoldMs first.
+    QcTrimLabHold = 4
+};
+static constexpr ULONG QcTrimLabHoldMs = 2000;
+static constexpr ULONG QcReadAwareHoldMs = 10;
+static constexpr ULONG QcTrimFenceSlots = 16;
+struct QC_TRIM_FENCE
+{
+    DEVICE_DATA_SET_RANGE* Ranges; // Sorted, merged, owned (pool); null when the slot is free.
+    ULONG Count;
+    LONGLONG Low, High;
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -348,6 +380,8 @@ struct QC_PAGING_READ
     ULONGLONG Sequence;
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
+    BOOLEAN Trim; // Asynchronous lower TRIM of TrimFences[Fence]; ignored by range waits.
+    ULONG Fence;
     PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER
@@ -458,6 +492,17 @@ struct QC_CACHE
     volatile LONG64 RecalledFills, RecallDenied;
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
+    volatile LONG ReadAware;  // QcLabReadAware limit (0 off), read by drainers.
+    // Foreground lower reads in flight and the last completion (NowMs), from every
+    // read the filter sends down for a request (worker, offload threads, direct path).
+    volatile LONG ForegroundReads;
+    volatile LONG64 LastForegroundReadMs, ReadAwareWaits;
+    volatile LONG TrimMode; // QcLabTrimMode.
+    // Mutex: ranges of asynchronous lower TRIMs not yet completed. Drainers never
+    // select a version inside one, and forwarded writes wait for an overlapping one.
+    QC_TRIM_FENCE TrimFences[QcTrimFenceSlots];
+    ULONG TrimFenceCount;
+    volatile LONG64 TrimLookups, TrimAsync, TrimAsyncFallbacks;
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     volatile LONG64 StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
@@ -521,6 +566,8 @@ void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
 void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major, PIRP original = nullptr);
+// A foreground lower read completed: pairs with an increment of ForegroundReads.
+void QcCacheForegroundReadDone(QC_CACHE* cache);
 void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath);
 void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
                                ULONGLONG processId);

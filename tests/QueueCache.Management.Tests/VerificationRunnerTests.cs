@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 161, "plan 161 adds the provider-neutral read-during-drain comparison");
+        Check(VerificationPlan.Version == 162, "plan 162 runs every TRIM check in both TRIM modes and adds the asynchronous TRIM checks");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -1152,7 +1152,10 @@ internal static class VerificationRunnerTests
             (uint)QueueCache.Management.WriteCacheAction.LabCopyFlags == 17 &&
             (uint)QueueCache.Management.WriteCacheAction.LabReadRecall == 18 &&
             (uint)QueueCache.Management.WriteCacheAction.LabRamReadQueue == 19 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabCallerBackoff == 20, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.LabCallerBackoff == 20 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabDrainGather == 21 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabReadAware == 22 &&
+            (uint)QueueCache.Management.WriteCacheAction.LabTrimMode == 23, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),

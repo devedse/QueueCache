@@ -175,6 +175,10 @@ static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
     auto ext = static_cast<QC_EXTENSION*>(context);
     if (irp->PendingReturned)
         IoMarkIrpPending(irp);
+#if QCACHE_CACHE_DRIVER
+    if (IoGetCurrentIrpStackLocation(irp)->MajorFunction == IRP_MJ_READ)
+        QcCacheForegroundReadDone(&ext->Cache);
+#endif
     KIRQL irql;
     KeAcquireSpinLock(&ext->QueueLock, &irql);
     if (--ext->DirectCount == 0)
@@ -1090,6 +1094,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV23Size ? QcDiagnosticsV23Size :
                 outputLength >= QcDiagnosticsV22Size ? QcDiagnosticsV22Size :
                 outputLength >= QcDiagnosticsV21Size ? QcDiagnosticsV21Size :
                 outputLength >= QcDiagnosticsV20Size ? QcDiagnosticsV20Size :
@@ -1121,7 +1126,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV16Size ? 16 : returned == QcDiagnosticsV17Size ? 17 :
                 returned == QcDiagnosticsV18Size ? 18 : returned == QcDiagnosticsV19Size ? 19 :
                 returned == QcDiagnosticsV20Size ? 20 : returned == QcDiagnosticsV21Size ? 21 :
-                returned == QcDiagnosticsV22Size ? 22 : 23;
+                returned == QcDiagnosticsV22Size ? 22 : returned == QcDiagnosticsV23Size ? 23 : 24;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1405,6 +1410,8 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             IoSetCompletionRoutine(irp, DirectCompletion, ext, TRUE, TRUE, TRUE);
 #if QCACHE_CACHE_DRIVER
             QcCacheRecordLowerAttempt(&ext->Cache, stack->MajorFunction, irp);
+            if (stack->MajorFunction == IRP_MJ_READ)
+                InterlockedIncrement(&ext->Cache.ForegroundReads); // QcLabReadAware
 #endif
             return IoCallDriver(ext->Lower, irp);
         }

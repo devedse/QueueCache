@@ -72,8 +72,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int StagedReadWireSize = 1008;
     public const int RamReadQueueWireSize = 1064;
     public const int CallerRoutingWireSize = 1136;
+    public const int DrainPriorityWireSize = 1184;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = CallerRoutingWireSize;
+    public const int CurrentWireSize = DrainPriorityWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -115,6 +116,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheRamReadQueue? RamReadQueue { get; init; }
     /// <summary>V23: configured post-overlap backoff and first-decline dispatch attribution.</summary>
     public CacheCallerRouting? CallerRouting { get; init; }
+    /// <summary>V24: lab read-aware drain limit and TRIM mode with their counters; null on older drivers.</summary>
+    public CacheDrainPriority? DrainPriority { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -142,6 +145,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             StagedReadWireSize => 21u,
             RamReadQueueWireSize => 22u,
             CallerRoutingWireSize => 23u,
+            DrainPriorityWireSize => 24u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -315,6 +319,15 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(RamReadQueueWireSize + 64)..]))
             : null;
         if (callerRouting?.Backoff > 256) throw new InvalidDataException("Invalid caller routing backoff.");
+        var drainPriority = bytes.Length >= DrainPriorityWireSize
+            ? new CacheDrainPriority(BinaryPrimitives.ReadUInt64LittleEndian(bytes[CallerRoutingWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 24)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 32)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 40)..]))
+            : null;
+        if (drainPriority is { ReadAware: > 8 } or { TrimMode: > 7 }) throw new InvalidDataException("Invalid read-aware limit or TRIM mode.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -341,7 +354,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             ReadRecall = readRecall,
             StagedReads = stagedReads,
             RamReadQueue = ramReadQueue,
-            CallerRouting = callerRouting
+            CallerRouting = callerRouting,
+            DrainPriority = drainPriority
         };
     }
 }
@@ -364,6 +378,11 @@ public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed
 /// <summary>Dispatch candidates only (eligible buffer/IRQL/stack, active routing). Each
 /// declined candidate has one first reason; later cache-service declines are in CallerPath.
 /// Snapshots are individually atomic. Backoff is configured length, not requests remaining.</summary>
+/// <summary>V24: ReadAware 0 = off, else the most drain batches outstanding while foreground reads wait;
+/// ReadAwareWaits counts the drainers' 1 ms holds. TrimMode 1 = index lookup, 2 = asynchronous lower TRIM, 4 = lab hold of that TRIM for 2 s;
+/// TrimLookups/TrimAsync count TRIMs that used them, TrimAsyncFallbacks the ordered sends instead.</summary>
+public sealed record CacheDrainPriority(ulong ReadAware, ulong ReadAwareWaits, ulong TrimMode, ulong TrimLookups,
+    ulong TrimAsync, ulong TrimAsyncFallbacks);
 public sealed record CacheCallerRouting(ulong Backoff, ulong Candidates, ulong Controls, ulong Queued,
     ulong WorkerActive, ulong OwnerActive, ulong Offloaded, ulong BackoffRequests, ulong Probes)
 {

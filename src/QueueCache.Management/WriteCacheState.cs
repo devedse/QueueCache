@@ -196,5 +196,11 @@ public enum WriteCacheAction : uint
     LabCallerBackoff,
     /// <summary>Reserved rejected gather experiment: 0 harmless reset, 1 unsupported.
     /// Historical experimental drivers accepted 1.</summary>
-    LabDrainGather
+    LabDrainGather,
+    /// <summary>Lab: value 0 (default) = off; 1..8 = while foreground disk reads are in flight or ended
+    /// within 10 ms, drainers start a batch only while fewer than value batches are outstanding.</summary>
+    LabReadAware,
+    /// <summary>Lab: value = 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM
+    /// asynchronously with a range fence | 4 lab: hold that TRIM for 2 s (0 default: full slot scan, ordered lower TRIM).</summary>
+    LabTrimMode
 }

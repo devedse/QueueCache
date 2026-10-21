@@ -611,6 +611,19 @@ Check(callerAfter.Since(callerBefore) == new CacheCallerRouting(16, 20, 1, 2, 3,
 Reject(() => (callerAfter with { Backoff = 0 }).Since(callerBefore), "caller delta requires unchanged backoff");
 Reject(() => (callerAfter with { Controls = 0 }).Since(callerBefore), "caller counter reset rejected");
 Reject(() => (callerAfter with { Candidates = 11 }).Since(callerBefore), "quiescent declines cannot exceed candidates");
+var drainPriorityBytes = new byte[CacheDiagnostics.DrainPriorityWireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(drainPriorityBytes, 24);
+BinaryPrimitives.WriteUInt32LittleEndian(drainPriorityBytes.AsSpan(4), CacheDiagnostics.DrainPriorityWireSize);
+foreach (var (offset, value) in new[] { (0, 2UL), (8, 41UL), (16, 3UL), (24, 200UL), (32, 198UL), (40, 2UL) })
+    BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize + offset), value);
+Check(CacheDiagnostics.Decode(drainPriorityBytes).DrainPriority == new CacheDrainPriority(2, 41, 3, 200, 198, 2) &&
+    CacheDiagnostics.Decode(callerRoutingBytes).DrainPriority is null,
+    "V24 diagnostics report the read-aware limit, TRIM mode and their counters; V23 reports none");
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 9);
+Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "read-aware limit above eight drainers rejected");
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 2);
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize + 16), 8);
+Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "unknown TRIM mode bits rejected");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))
