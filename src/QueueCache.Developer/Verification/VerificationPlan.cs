@@ -46,7 +46,8 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 164;
+    public const int Version = 165;
+    public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
@@ -92,6 +93,7 @@ public static class VerificationPlan
         "read-tail-decision",
         "volumes",
         "trim-cache",
+        ParallelCopiesSuite,
         "trim-diagnostic",
         "trim-file",
         "cache-concurrency",
@@ -232,6 +234,9 @@ public static class VerificationPlan
             new("volume-snapshot", "volume-snapshot")
         ],
         "trim-cache" => [new("trim-cache", "trim-cache")],
+        // Plan 165: the policies parallel-copies scenario alone, alternating the 2048 KiB default and 1024 KiB batches.
+        ParallelCopiesSuite => Enumerable.Range(1, options.Repeats).SelectMany(r => (r % 2 == 1 ? new[] { 2048, 1024 } : [1024, 2048])
+            .Select(batch => new IntegrityCase($"parallel-copies-b{batch}-r{r}", $"parallel-copies-{batch}"))).ToArray(),
         var suite when ComparisonPlan.IsComparison(suite) => [new(suite, suite)],
         _ => []
     };

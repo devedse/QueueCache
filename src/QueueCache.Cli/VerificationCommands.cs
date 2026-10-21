@@ -76,6 +76,8 @@ internal static class VerificationCommands
               read-tail-decision Same seeded 100,000 operations per case, flags 7/15: cold/resident reads and fitting writes.
                                  p50/p99/p99.9/max, exact latency threshold counts and durable write-byte oracle; 24 cases.
                                  Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
+              parallel-copies    The policies parallel-copies case alone on a lab volume for --duration-seconds per case,
+                                 alternating 2048 and 1024 KiB drain batches; failures name the pass of every 4 KiB.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.

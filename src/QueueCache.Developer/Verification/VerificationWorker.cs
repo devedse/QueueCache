@@ -1037,6 +1037,11 @@ public static class VerificationWorker
             case "ram-read-cleanup":
                 await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
                 return 0;
+            case "parallel-copies-2048" or "parallel-copies-1024":
+                var copyChecks = CacheScenarios.RunParallelCopiesOnly(target, job.Seconds, job.Operation.EndsWith("2048", StringComparison.Ordinal) ? 2048 : 1024);
+                RunStorage.AtomicJson(job.Reply, copyChecks);
+                ReportFailures(copyChecks, Console.Error);
+                return copyChecks.Count > 0 && copyChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);

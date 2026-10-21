@@ -9,6 +9,30 @@ namespace QueueCache.Operations;
 [SupportedOSPlatform("windows")]
 public static class CacheScenarios
 {
+    /// <summary>The parallel-copies scenario alone, for <paramref name="seconds"/> with an explicit drain batch size
+    /// (plan 165 diagnostic suite). Runtime settings are restored as in <see cref="RunAsync"/>.</summary>
+    public static IReadOnlyList<CheckResult> RunParallelCopiesOnly(DiskTarget target, int seconds, int batchKiB, CancellationToken token = default)
+    {
+        using var gate = ConfigurationGate.Enter(target.Instance);
+        using var device = new CacheDevice(target.Device, writable: true);
+        var original = device.GetWriteCacheState();
+        ConfigurationManager.EnsureHealthy(original);
+        var directory = Path.Combine(target.Root, "QueueCache-Scenarios-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var results = new List<CheckResult>();
+        try { RunParallelCopies(target, device, directory, results, null, token, seconds, batchKiB); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { results.Add(new($"parallel-copies-{batchKiB}", "FAIL", ex.Message)); }
+        finally
+        {
+            if (original.BudgetBytes == 0)
+                device.Control(WriteCacheAction.Release);
+            else
+                ConfigurationManager.Apply(target, CacheConfiguration.FromState(original), true);
+        }
+        return results.Select(r => r with { Name = $"parallel-copies-{batchKiB}" }).ToArray();
+    }
+
     public static Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, IProgress<string>? progress = null,
         CancellationToken token = default) => Task.Run<IReadOnlyList<CheckResult>>(() =>
     {
@@ -127,14 +151,14 @@ public static class CacheScenarios
     /// offloaded-request threads while write-back runs. Every read-back after a write and every concurrent read
     /// must return one whole written version of its block; the disk must hold each block's last version.</summary>
     private static void RunParallelCopies(DiskTarget target, CacheDevice device, string directory,
-        List<CheckResult> results, IProgress<string>? progress, CancellationToken token)
+        List<CheckResult> results, IProgress<string>? progress, CancellationToken token, int durationSeconds = 20, int? batchKiB = null)
     {
         const string label = "parallel-copies";
-        const int durationSeconds = 20;
         progress?.Report($"{label}: {durationSeconds}s of 1 MiB writes/read-backs on {ParallelWriters} threads with {ParallelReaders} concurrent readers");
+        var parallelOptions = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 2);
         ConfigurationManager.Apply(target, new CacheConfiguration(256, CachePreset.Fast)
         {
-            Options = new CacheOptions(Drain: DrainAlgorithm.Eager, Parallelism: 2)
+            Options = batchKiB is { } batch ? parallelOptions with { BatchKiB = batch } : parallelOptions
         }, true);
         var paths = Enumerable.Range(0, ParallelWriters).Select(writer => Path.Combine(directory, $"parallel-{writer}.bin")).ToArray();
         for (var writer = 0; writer < ParallelWriters; writer++)
@@ -144,6 +168,12 @@ public static class CacheScenarios
         var passes = new int[ParallelWriters, ParallelBlocks];
         var before = device.GetDiagnostics();
         long writes = 0, reads = 0, readBackMismatches = 0, concurrentMismatches = 0;
+        var mismatches = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        void Record(string kind, int writer, int block, int first, int last, byte[] actual)
+        {
+            if (mismatches.Count < 4)
+                mismatches.Enqueue(kind + " " + DescribeParallelRead(writer, block, first, last, actual));
+        }
         Exception? loadError = null;
         var deadline = Stopwatch.StartNew();
         var handles = paths.Select(path => new AlignedFile(path, ParallelBlockBytes, create: false, shareRead: true)).ToArray();
@@ -163,7 +193,10 @@ public static class CacheScenarios
                             Interlocked.Increment(ref writes);
                             handles[writer].Read((long)block * ParallelBlockBytes, actual);
                             if (!actual.AsSpan().SequenceEqual(data))
+                            {
                                 Interlocked.Increment(ref readBackMismatches);
+                                Record("read-back", writer, block, pass, pass, actual);
+                            }
                         }
                 }
                 catch (Exception exception) { loadError ??= exception; }
@@ -188,7 +221,10 @@ public static class CacheScenarios
                             for (var candidate = Math.Max(0, first - 1); candidate <= last + 1 && !whole; candidate++)
                                 whole = actual.AsSpan().SequenceEqual(ParallelPattern(writer, candidate, block));
                             if (!whole)
+                            {
                                 Interlocked.Increment(ref concurrentMismatches);
+                                Record("concurrent", writer, block, first, last, actual);
+                            }
                             Interlocked.Increment(ref reads);
                         }
                     }
@@ -225,7 +261,33 @@ public static class CacheScenarios
         results.Add(VerifyParallelCopies(label, writes, reads, readBackMismatches, concurrentMismatches,
             before.CopyOffloadReads is null || after.CopyOffloadReads is null ? null : after.CopyOffloadReads - before.CopyOffloadReads,
             before.CopyOffloadWrites is null || after.CopyOffloadWrites is null ? null : after.CopyOffloadWrites - before.CopyOffloadWrites,
-            state.LastError, persisted));
+            state.LastError, persisted, mismatches.ToArray()));
+    }
+
+    /// <summary>Which written pass each 4 KiB of a mismatching 1 MiB read matches, as runs, so a failure tells a
+    /// torn read (several passes), a stale one (an older whole pass) and foreign or zeroed data apart.</summary>
+    internal static string DescribeParallelRead(int writer, int block, int first, int last, byte[] actual)
+    {
+        var low = Math.Max(0, first - 8);
+        var candidates = Enumerable.Range(low, last + 3 - low).Select(pass => (pass, ParallelPattern(writer, pass, block))).ToArray();
+        var chunks = new int[ParallelBlockBytes / 4096];
+        for (var chunk = 0; chunk < chunks.Length; chunk++)
+        {
+            var span = actual.AsSpan(chunk * 4096, 4096);
+            chunks[chunk] = span.IndexOfAnyExcept((byte)0) < 0 ? -2 : -1;
+            foreach (var (pass, data) in candidates)
+                if (chunks[chunk] == -1 && span.SequenceEqual(data.AsSpan(chunk * 4096, 4096)))
+                    chunks[chunk] = pass;
+        }
+        var runs = new List<string>();
+        for (int start = 0, end = 1; end <= chunks.Length; end++)
+            if (end == chunks.Length || chunks[end] != chunks[start])
+            {
+                runs.Add($"{start}-{end - 1}:{(chunks[start] == -2 ? "zeros" : chunks[start] == -1 ? "unknown" : "pass " + chunks[start])}");
+                start = end;
+            }
+        return FormattableString.Invariant($"writer {writer} block {block} passes {first}..{last}: 4 KiB chunks ") +
+            string.Join(", ", runs.Take(12)) + (runs.Count > 12 ? FormattableString.Invariant($" (+{runs.Count - 12} runs)") : "");
     }
 
     /// <summary>A kept read miss must be the disk's data, not the application's buffer: another thread overwrites
@@ -383,11 +445,13 @@ public static class CacheScenarios
     }
 
     internal static CheckResult VerifyParallelCopies(string label, long writes, long reads, long readBackMismatches,
-        long concurrentMismatches, ulong? offloadedReads, ulong? offloadedWrites, int lastError, bool persisted)
+        long concurrentMismatches, ulong? offloadedReads, ulong? offloadedWrites, int lastError, bool persisted,
+        IReadOnlyList<string>? mismatches = null)
     {
         if (readBackMismatches != 0 || concurrentMismatches != 0)
             throw new IOException(FormattableString.Invariant(
-                $"{label}: {readBackMismatches} read-backs and {concurrentMismatches} concurrent reads did not return one whole written version ({writes} writes, {reads} reads)"));
+                $"{label}: {readBackMismatches} read-backs and {concurrentMismatches} concurrent reads did not return one whole written version ({writes} writes, {reads} reads)") +
+                (mismatches is { Count: > 0 } ? "; " + string.Join("; ", mismatches) : ""));
         if (lastError != 0)
             throw new IOException(FormattableString.Invariant($"{label}: the cache faulted (0x{lastError:X8})"));
         if (!persisted)

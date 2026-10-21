@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 164, "plan 164 measures the Eager 2048 KiB x 8 product default (read-aware 2, TRIM mode 3); Eager TRIM checks pin 1024 KiB x 4");
+        Check(VerificationPlan.Version == 165, "plan 165 adds the parallel-copies diagnostic suite (2048/1024 KiB batches, per-chunk mismatch evidence)");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -197,6 +197,17 @@ internal static class VerificationRunnerTests
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
             ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk", "volume-resize", "volume-snapshot"]), "volumes runs registration, raw disk commands, a shared disk, a resize and a snapshot as separate cases");
         Check(VerificationPlan.Integrity(options with { Suite = "trim-cache" }).Single() == new IntegrityCase("trim-cache", "trim-cache"), "trim-cache is one case");
+        Check(VerificationPlan.Integrity(options with { Suite = VerificationPlan.ParallelCopiesSuite, Repeats = 2 }).Select(c => c.Id + "=" + c.Operation)
+                .SequenceEqual(["parallel-copies-b2048-r1=parallel-copies-2048", "parallel-copies-b1024-r1=parallel-copies-1024",
+                    "parallel-copies-b1024-r2=parallel-copies-1024", "parallel-copies-b2048-r2=parallel-copies-2048"]) &&
+            VerificationPlan.Suites.Contains(VerificationPlan.ParallelCopiesSuite),
+            "plan 165 parallel-copies alternates the 2048 KiB default and 1024 KiB batches with unique case IDs");
+        VerificationPlan.Validate(new VerificationOptions("V:", VerificationPlan.ParallelCopiesSuite, DurationSeconds: 60));
+        Check(QueueCache.Operations.CacheScenarios.DescribeParallelRead(1, 2, 5, 6, new byte[1 << 20]).EndsWith("chunks 0-255:zeros", StringComparison.Ordinal) &&
+            QueueCache.Operations.CacheScenarios.DescribeParallelRead(1, 2, 5, 6, Enumerable.Repeat((byte)7, 1 << 20).ToArray()).Contains("0-255:unknown"),
+            "a mismatching parallel read is described per 4 KiB chunk");
+        try { QueueCache.Operations.CacheScenarios.VerifyParallelCopies("p", 10, 5, 0, 1, 3, 4, 0, true, ["concurrent writer 0 block 1 passes 2..3: 4 KiB chunks 0-127:pass 2, 128-255:pass 3"]); throw new Exception("Accepted a torn read."); }
+        catch (IOException ex) { Check(ex.Message.Contains("0-127:pass 2, 128-255:pass 3"), "the parallel-copies failure carries its chunk evidence"); }
         Check(!VerificationPlan.Integrity(options with { Suite = "full" }).Any(test => test.Id.StartsWith("volume-") || test.Id == "trim-cache"),
             "full does not include the volume or TRIM suites (they need a lab disk)");
         Check(VerificationRunner.AllowsSkips("volumes") && VerificationRunner.AllowsSkips("trim-cache") && VerificationRunner.AllowsSkips("trim-file") &&
