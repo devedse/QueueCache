@@ -120,7 +120,7 @@ the drain) against PrimoCache's 261.0 / 52.5. A concurrent disk reader got 757 I
 (p99 11.8 ms) against 170 (50.7 ms). Under Driver Verifier the final native build
 passed `trim-cache` 12/12, the focused campaign 98/98 and an integrity run with
 12,291 hashes. Qualification found and fixed one driver bug (asynchronous TRIMs
-switched the caller path off) and four test-environment faults. `release-performance` on the final build is still running.
+switched the caller path off) and four test-environment faults. `release-performance` on the final build then completed all 11 phases and 106 cases; its RAM-path rates were host-bound that day, which a same-window 0.4.687.1 control confirmed.
 [Results](#final-164).
 
 **Read-aware drain limit and asynchronous TRIM (plans 162/163, October 21):
@@ -413,16 +413,67 @@ degraded backend. The reader alone fell to 456 IOPS and the small-file anchor to
 small-file median (49.6) is below block B's Primo (52.5); per anchor it stays ahead
 (10.05 against 7.84). Other Ceph clients read 4.8 MB/s on average then, against
 0.9–1.5 during A and B; the cause is not established.
-A same-deployment repeat of block C on 2026-10-22 is still to be exported.
+The same-deployment repeat of block C on the morning of 2026-10-22 ran at matched
+anchors (91.4 / 6.3 MB/s, drain latency 52.4 ms). The default measured 301.1
+(282.9–313.3) / 74.9 (47.1–105.9) MB/s, 3.30 and 11.86 times its anchors, and the
+4 KiB reader kept 554 of 1,226 IOPS (p99 12.0 ms) while it drained. That confirms block
+A. Both medians are above block B's PrimoCache, but the small-file range overlaps it
+and the repeat was not in Primo's window. Runs 54 and 58–61: 49,164 bypass-verified
+file hashes, nothing excluded.
 
-*Release qualification:* still running. Attempts 13 and 14 stopped in
-`ram-read-reference`: the second owned 2 GiB RAM disk, created right after the
-first was stopped, was refused by the RAM headroom guard while that memory was
-still returning to Windows. Plan 168 waits up to 60 s for headroom first; attempt
-15 runs on controller 0.4.784.1 beside native 0.4.776.1.
+*Release qualification:* **completed.** Attempt 18 (`QueueCache-Campaign-20261022-142222-19bc4dd86a9b4f03b74d9c9b0f099a92`,
+14:22–16:29 UTC, controller 0.4.788.1, plan 171, beside native 0.4.776.1) finished
+11/11 phases and 106/106 outer cases with every phase restored, and `verify-completion`
+accepted it. Attempts 13–17 stopped on test-runner faults, none in the driver:
+- 13 and 14 (`ram-read-reference`): the second owned 2 GiB RAM disk, created right
+  after the first was stopped, was refused by the headroom guard while that memory was
+  still returning to Windows. Plan 168 waits up to 60 s for headroom first.
+- 15 and 17 (campaign preflight, then phase 5's capture): Q: still held a few
+  milliseconds of writes from the lab image stored on it. The native disk listing
+  (`ecbe709`) made the inspection under a second instead of 3–9 s, which removed the
+  slack that had hidden this. Plans 169 and 171 wait, bounded, for those writes to
+  drain on their own; nothing is drained for them.
+- 16 (`policies`, on the previous controller because a staging check refused a
+  mislabelled bundle): `foreground-background.bin` split at 4 MiB inside a gap left
+  by the run's own small files, on all three attempts. Plan 170 reserves such files'
+  whole allocation first.
 
-Evidence: exports `20DE474A…61F0` (10,133 files) and `08B586A2…FE50` (675 files),
-checked file by file against guest SHA-256 manifests. Verifier runs
+*The release run's rates against the 0.4.687.1 release run (October 14).* Disk-bound
+cases were 1.2–3.2 times faster (for example cache-off random 4 KiB Q1 writes 255 →
+751 IOPS, the sustained mixed phase 4,027 → 8,704 IOPS), but RAM-only paths were
+50–70% lower: cached 4 KiB Q8 reads about 395k → 133k–180k IOPS, RAM-admitted random
+writes 238k → 118k, recall re-reads 36.9k → 10.3k. The RAM-disk reference, whose
+driver is unchanged on this branch, was 35–73% lower too. The Proxmox host was busy
+throughout: load average 22–35 on its 32 threads, 9.9 GiB merged by KSM, and the VM
+auto-ballooned to 8.0–12.6 of its 16 GiB. A same-window control settled it. The
+unchanged `cache-map-cost` suite measured 107k–156k IOPS on the final build (run A,
+`QueueCache-Verify-20261022-170234-2df61acaa3fa4a27bbb8e90b6ef423be`, mean host load
+29.2) and 114k–163k on production 0.4.687.1 from the restore snapshot, run by its own
+controller (run B, `QueueCache-Verify-20261022-172901-a5b6b01a96064e09b750ba4255300911`,
+load 28.2). The branch shows no RAM-path regression. Those RAM-path rates are host-bound
+and not comparable across days; the ballooning is also the likely reason RAM-headroom
+refusals became common in these sessions.
+
+*Installer check on the final build (0.4.788.1, VM).* Upgrade from 0.4.776.1, a
+setup re-run, uninstall, a forced rollback and a reinstall, with a restart after each
+step that changes the registration. Results:
+- Setup registered the boot filter last. The re-run rewrote no desktop file: checksums
+  and timestamps were unchanged.
+- Uninstall removed the filter and kept the service at demand start for recovery.
+- The rollback check ran the installed `Install-Driver.ps1` with one injected failure
+  after activation. Setup exited 1 and restored the previous registration exactly:
+  filter list, start type, driver path and group.
+- After the reinstall and a restart the 0.4.788.1 filter loaded at boot, and the
+  installed CLI listed C: and Q:. Q:'s saved profile came back by itself.
+- The rollback leaves the steps before activation in place (RAM provider, broker,
+  sign-in task, PATH) by design. Run from a package folder, as in this check, they
+  then point at that folder.
+
+Evidence: exports `20DE474A…61F0` (10,133 files), `08B586A2…FE50` (675 files),
+`D31602C1…F1B3` (31,441 files, release attempts 12–18, the block-C repeat and the
+installer check), `214D84A7…15C7` (33,868 files, adds run A) and `4547C5BB…4587`
+(2,460 files, run B on the restore snapshot), each checked file by file against guest
+SHA-256 manifests. Verifier runs
 `QueueCache-Verify-20261021-184820-9e4b93dcd4654e1badf709e762fa2750` (`trim-cache`),
 `20261021-185202-c0307530a60c494e8fe0fc65674abf3a` (integrity) and
 `QueueCache-Campaign-20261021-203107-a44bd25af1bb47f38c8b88260b872897` (focused).
@@ -842,7 +893,7 @@ This replaces the step table below, which is kept as history. The research quest
 | Step | Work | Done when | Estimate |
 |---|---|---|---|
 | 1. Done: make the candidate the default | New caches default to Eager, 2048 KiB × 8; the driver enables read-aware 2 and TRIM mode 3 at cache creation; the lab switches stay for A/B tests. Saved profiles keep their drain settings. (`ce21c5a`; driver fix `87de299`.) | Done: host tests and CI pass; under Driver Verifier `trim-cache` 12/12, the focused campaign 98/98 and a 12,291-hash integrity run on native 0.4.776.1 ([results](#final-164)) | Took about 4 h of VM time, mostly the four findings in the results |
-| 2. Final qualification | One same-window Primo check (`compare-drain` and `compare-drain-read`, A–B–A), then `release-performance` | A against B: the default at 292.4 / 90.7 MB/s against Primo's 261.0 / 52.5, and the reader at 757 against 170 IOPS. `release-performance`: still running (attempt 15). | About 4 h VM |
+| 2. Done: final qualification | One same-window Primo check (`compare-drain` and `compare-drain-read`, A–B–A), then `release-performance` | A against B: the default at 292.4 / 90.7 MB/s against Primo's 261.0 / 52.5, and the reader at 757 against 170 IOPS. `release-performance`: 11/11 phases, 106/106 cases, restored (attempt 18, plan 171). Its RAM-path rates were host-bound that day; a same-window 0.4.687.1 control matched them. | About 4 h VM |
 | 3. Close #15 | Publish the final numbers in the comparison, findings and issue | Owner agrees | — |
 
 After #15, as separate issues, none blocking:
@@ -2690,6 +2741,7 @@ runs that found and fixed the issues described under
 | Next drain improvement | **Done for #15 (plans 159–167).** Eager 2 MiB × 8 with read-aware 2 and asynchronous TRIM is the default and beats a same-window PrimoCache on both workloads ([results](#final-164)). Rejected on the way: aligned gather (plans 155/156), Eager 2 MiB × 4 and read-aware limit 1 (plans 161/162). The uncached Q1 miss path, alone 20–35% slower than Primo's, is a separate improvement. | A workload where Primo leads at matched backend latency, or the Q1 miss-path issue. |
 | TRIM while draining | **Fixed; default since plan 164.** A TRIM waits only for overlapping in-flight drain writes (native 0.4.766.1, plans 159/160); TRIM mode 3 adds an index lookup and an asynchronous lower TRIM with a range fence (plans 162/163). Native 0.4.776.1 also keeps the caller path while a lower TRIM is outstanding (`87de299`). Under Verifier `trim-cache` passed 12/12. The fence's holding path is unexercised, because NTFS orders a file's writes after its own TRIM. Production 0.4.687.1 still waits for every in-flight write. [Known issue](KNOWN_ISSUES.md#trim-no-longer-waits-for-unrelated-drain-writes). | A file system or tool that writes trimmed ranges before the TRIM completes. |
 | Strict durability barriers | **Open weakness, not measured for the new defaults** (plan 121, issue #16): write-through and flushes drain the whole cache while holding all writes; stalls of 100 s or more after random write bursts. Plan 143 `strict-impact-decision` failed twice at its first seed and was removed: in Strict mode 2 application flushes and 1 write-through write, not issued by the seed worker (no write-through flag, no flush); source unattributed, most likely NTFS metadata, drained 280,502,272 of 536,890,368 seeded bytes mid-seed, so a large dirty backlog does not survive between such barriers. No Strict boundary latency was collected and no driver or default change was made for Strict. | A Strict design that bounds barrier cost (issue #16), or a new Strict measurement with a seed that can hold its backlog between barriers. |
+| RAM-path rates on the test VM | **Host-bound on 2026-10-22, not a branch regression.** The release run's cached reads, RAM-admitted writes and RAM-disk reference were 35–73% below the October 14 run, while disk-bound cases were faster. A same-window `cache-map-cost` pair measured 107k–156k IOPS on the final build and 114k–163k on 0.4.687.1 (host load 28–29 of 32 threads, VM ballooned to 8–12.6 GiB). ([Results](#final-164).) | Before comparing RAM-path rates across days: check host load and the VM's balloon, and run both builds in the same window. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
 
 For a missing-span experiment, first record how many missing runs each partly

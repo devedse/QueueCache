@@ -24,21 +24,23 @@ still to do. Open items link to their details.
 | [ReFS: fewer requests take the fast caller-thread path](#refs-fewer-requests-take-the-fast-caller-thread-path-performance) | ❌ | Not planned (measured trade-off) |
 | [A re-read file briefly takes space from a random workload](#a-re-read-file-briefly-takes-space-from-a-random-workload-performance) | ❌ | By design (most recent read wins) |
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
-| [Buffered reads enter the cache only through writes or unbuffered reads](#buffered-reads-enter-the-cache-only-through-writes-or-unbuffered-reads) | ❌ | By design (page-in safety) |
+| [Files read through Windows' file cache (Explorer copies, most programs) never enter the read cache](#buffered-reads-enter-the-cache-only-through-writes-or-unbuffered-reads) | ❌ | By design for now (page-in safety); change proposed in [#19](https://github.com/devedse/QueueCache/issues/19) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
 | [Power loss not re-tested on the current driver](#not-yet-proven) | ❌ | Last tested on 0.4.604.1 |
-| [Sleep, hibernate, Fast Startup, crash dumps and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix (caches and managed disks) |
-| [Cached system disk (C:): full boot, paging, hibernation and dump acceptance](#not-yet-proven) | ❌ | Restart soaks only |
+| [Hibernate, Fast Startup, crash dumps and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC |
+| [Cached system disk (C:): full boot, paging, hibernation and dump acceptance](#not-yet-proven) | ❌ | Restart soaks on the VM; restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
 | [Asynchronous TRIM: the fence's holding path is unexercised](#trim-no-longer-waits-for-unrelated-drain-writes) | ❌ | NTFS never reaches it |
 | [Faults during the busy window, every fault point at every parallelism, Windows memory pressure](#not-yet-proven) | ❌ | Open |
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
-| [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | Only one Ceph-backed VM measured |
-| [Setup rollback after a failed step](#not-yet-proven) | ❌ | Implemented in 0.4.782.1, not yet forced on the VM |
+| [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
+| [The virtual-disk service once missed its 120 s preshutdown time (event 7043)](#not-yet-proven) | ❌ | Open: seen once, during a restart with a Windows update |
+| QueueCache driver events show no text in Event Viewer (`qcachelab` event 157) | ❌ | Open |
+| Two test disks briefly shared a disk signature while `managed-lifecycle` prepared them (`partmgr` event 58) | ❌ | Open: to check which disks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
 | Setup failed, and the app listed no volumes, on a PC whose Storage Management provider lists no disks (seen on an iSCSI-booted Windows 11) | ✅ | Setup 0.4.781.1; app, CLI and cache targets 0.4.784.1 (disks and volumes are read natively, without `Get-Disk`/`Get-Volume`) |
-| A failed setup could leave the new boot-start filter registered without the rest of the installation | ✅ | 0.4.782.1 (the filter is registered last; the previous registration is restored on failure) |
+| A failed setup could leave the new boot-start filter registered without the rest of the installation | ✅ | 0.4.782.1 (the filter is registered last; the previous registration is restored on failure; forced on the VM with 0.4.788.1) |
 | Every install rewrote the desktop update files and shortcut, moving their icons | ✅ | 0.4.782.1 (written only when missing or changed) |
 | [New files plus their drain were slower than with PrimoCache (#15)](#drain-speed-against-primocache-15-met-on-the-test-vm-with-limits) | ✅ | Native 0.4.776.1: Eager 2 MiB × 8, read-aware limit 2, asynchronous TRIM for new caches |
 | [Each TRIM waited for every drain write in flight, stalling writes for seconds](#trim-no-longer-waits-for-unrelated-drain-writes) | ✅ | Native 0.4.766.1 (overlapping writes only); asynchronous since 0.4.771.1, default with 0.4.776.1 |
@@ -186,19 +188,31 @@ cache or a disk.
 - **Removal and power:** Windows eject with pending writes passes; live reconnect
   failed in Proxmox hotplug and stays unqualified. Surprise removal under load,
   FAT32/ReFS removal, sleep, hibernate, Fast Startup and crash-dump handling have
-  not passed the maintained matrix.
+  not passed the maintained matrix. Sleep (S3) passed on one real PC (Windows 11
+  booted from iSCSI, 0.4.784.1, 2026-10-22). Five `managed-lifecycle` fixtures kept
+  their creations, states and bytes. A Fast cache holding 512 MiB of unwritten data
+  kept it through 3 minutes of sleep, wrote it out on flush and read back correctly
+  from the disk. Hibernate and Fast Startup could not run on that PC: its iSCSI boot
+  has no crash-dump driver (`volmgr` 45/46), and hibernation writes through that driver.
 - **System disk:** a saved C: profile with a fixed pagefile passed restart soaks
   (paging I/O bypasses the RAM cache), but full boot, paging, hibernation and dump
   acceptance is open. A pre-alpha large-image crash on the old engine left no dump
-  and was never reproduced.
-- **Lab fixture margins (plans 165–167):** on the 16 GiB test VM, `stress-races`'
-  2 GiB RAM-disk churn has about 200 MiB of headroom margin. It now retries
-  creations the headroom guard refuses (8 of 19 attempts in the final run), but
-  why refusals became common on the plan-164 builds is not established.
+  and was never reproduced. On the iSCSI-booted PC above, a 2 GiB Fast cache on C:
+  passed normal use (7.4 GB written and drained), a restart, a sleep and a saved
+  profile across restarts that included Windows updates, with 2,000 hashed files
+  unchanged throughout. A short Strict run had no errors. That PC cannot write a
+  crash dump, so a crash there leaves no evidence.
+- **Lab fixture margins (plans 165–171):** on the 16 GiB test VM, `stress-races`'
+  2 GiB RAM-disk churn has about 200 MiB of headroom margin. It retries creations
+  the headroom guard refuses (8 of 19 attempts in one run), and `ram-read-reference`
+  waits up to 60 s for headroom before each disk (plan 168). The likely cause of the
+  frequent refusals: on 2026-10-22 the Proxmox host auto-ballooned the VM to
+  8.0–12.6 of its 16 GiB. Campaign preflight and every clean-cache capture wait,
+  bounded, for a lab image's writes to drain on their own (plans 169/171).
   `parallel-copies` and `foreground-background` refuse a file whose extent
-  boundary would split one of their requests. On a lab volume whose free space is
-  fragmented they then fail rather than run: three diagnostic cases did, before
-  the free space was consolidated.
+  boundary would split one of their requests, and since plan 170 reserve their whole
+  allocation first. Before that, a run's own small files could leave a gap that
+  split them on every attempt (release attempt 16).
 - **Edge cases:** `stress-races` now covers flush, live resize, teardown,
   drop-clean, slowed and transiently failing lower writes, refused and rolled-back
   settings, Strict switches, cancelled requests, 4 MiB requests and RAM disks
@@ -209,14 +223,23 @@ cache or a disk.
   pressure from Windows itself rather than from QueueCache's own reservation. A
   lower request that cannot be allocated is retried for about 5 s before the
   cache faults.
-- **Managed disks:** sleep, hibernate, Fast Startup and a crash during a checkpoint
-  commit are not covered.
+- **Managed disks:** sleep passed once on a real PC (above); hibernate, Fast
+  Startup and a crash during a checkpoint commit are not covered.
+- **Shutdown:** on that PC the virtual-disk service once did not stop within its
+  120 s preshutdown time (Service Control Manager event 7043), during a restart that
+  installed a Windows update. The cached files were unaffected (0 mismatches). The
+  cause is not established.
 - **Hardware:** everything above was measured on one Ceph-backed VM. Hard disks,
-  SATA and NVMe SSDs were not measured; an iSCSI-booted PC has run the app and a
-  RAM disk, not a qualification.
-- **Setup rollback:** setup registers the boot filter last and restores the
-  previous registration when a later step fails (0.4.782.1). That restore path
-  has not been forced to run on the VM.
+  SATA and NVMe SSDs were not measured. An iSCSI-booted PC ran the app, a RAM disk
+  and the functional checks above, not a performance qualification. Performance
+  rates on the VM also depend on host load: RAM-path rates on 2026-10-22 were 35–73%
+  below October 14 on both the final and the production driver
+  ([findings](PERFORMANCE_FINDINGS.md#final-164)).
+- **Setup rollback:** forced once on the VM (0.4.788.1, 2026-10-22). With one
+  injected failure after activation, setup exited 1 and restored the filter list,
+  start type, driver path and group exactly. The steps before activation (RAM
+  provider, broker, sign-in task, PATH) stay installed by design; rerunning setup
+  completes them.
 
 Do not use automatic reboot, driver deletion or discarding dirty data as failure
 recovery: a faulted cache must be inspected and recovered explicitly.
@@ -232,7 +255,7 @@ default measured 292.4 / 90.7 MB/s for a new 1 GiB file / 4,096 new 64 KiB files
 including the drain. PrimoCache 4.4.1 measured 261.0 / 52.5, and a concurrent disk
 reader got 757 against 170 IOPS. The third block ran on a degraded backend (the
 small-file anchor fell 25%); its raw small-file median of 49.6 was below Primo's,
-while per anchor it stayed ahead. Release qualification on the final build is still running. Limits:
+while per anchor it stayed ahead. Release qualification on the final build passed (11/11 phases, 106 cases). Limits:
 - One Ceph-backed VM; hard disks and SATA SSDs were not measured.
 - The 8 GiB sustained workload trailed Primo by 7–9% in plans 159/160 and was not
   repeated.
@@ -314,7 +337,7 @@ worker.
 | Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / default Idle foreground / release qualification unrun. The Primo post-oracle path ran on Primo in plan 158; the retired-policy native build was not separately VM-exercised. |
 | Matched provider research | Plan 158: latency-matched, default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 against Primo 120.5 / 59.9 / 126.9 MB/s. Plans 159/160 same-window A–B–A: Primo 285.5 / 70.4 / 315.8, Eager 2 MiB × 8 304.9 and 298.3 / 142.6 and 132.2 / 294.1 and 288.9, default 184.1 and 170.0 / 86.6 and 80.0; 22 runs / 233,538 hashes | Configuration, not defaults; large-file ranges overlap; sustained 7–9% behind; release/Strict qualification unrun |
 | Read during drain, provider-neutral (plan 161) | A–B–A against PrimoCache: concurrent disk reader 163 IOPS under Primo, 277–331 under Eager 2 MiB × 8 and 959–1,153 under the default, at drain rates of about 360 / 360–420 / 250 MB/s; 10 complete runs | One Ceph-backed VM; uncached Q1 reads alone were 20–35% slower than Primo's |
-| New default, same-window PrimoCache (plans 164–167) | Native 0.4.776.1, Eager 2 MiB × 8 with read-aware 2 and TRIM mode 3 as shipped. A–B–A at matched anchors: 292.4 / 90.7 MB/s against Primo 261.0 / 52.5; disk reader 757 against 170 IOPS; 12 runs, 110,619 hashes. Under Verifier: `trim-cache` 12/12, focused campaign 98/98, integrity 12,291 hashes. `release-performance` on the final build: still running. | One Ceph-backed VM; block C on a degraded backend; 8 GiB sustained not repeated; Strict boundaries under the new default unmeasured |
+| New default, same-window PrimoCache (plans 164–167) | Native 0.4.776.1, Eager 2 MiB × 8 with read-aware 2 and TRIM mode 3 as shipped. A–B–A at matched anchors: 292.4 / 90.7 MB/s against Primo 261.0 / 52.5; disk reader 757 against 170 IOPS; 12 runs, 110,619 hashes. Under Verifier: `trim-cache` 12/12, focused campaign 98/98, integrity 12,291 hashes. `release-performance` on the final build: 11/11 phases, 106/106 cases, restored (plan 171); its RAM-path rates were host-bound that day and matched by a same-window 0.4.687.1 control. Block C repeat: 301.1 / 74.9 MB/s. | One Ceph-backed VM; block C on a degraded backend; 8 GiB sustained not repeated; Strict boundaries under the new default unmeasured |
 | Read-aware limit and asynchronous TRIM (plans 162/163) | Lab switches on native 0.4.771.1. Read-aware 2 keeps a concurrent disk reader at 1,031–1,141 IOPS (p99 10–11 ms) during Eager 2 MiB × 8 drains, against 340 without it, while #15 medians stay 300.3 / 122.2 MB/s with 0 gate waits; Verifier campaign 98/98 and `trim-cache` 12/12 with both on | One Ceph-backed VM, one session; default-off; the TRIM fence's holding path is unexercised through NTFS |
 | Read/drain lock diagnostic (plan 160 repeat) | Complete 48/48 on native 0.4.766.1, one noisy standalone window remeasured: eight versus four drainers +15% drainage, disk reader 1,094 → 545 IOPS, p99 15.4 → 28.5 ms | Same Eager screen; reproduces plan 151's magnitude; read-aware limit unbuilt |
 | Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |

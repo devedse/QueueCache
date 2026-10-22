@@ -63,7 +63,11 @@ PrimoCache for the 1 GiB file and 73% faster for small files. It leaves a concur
 disk reader 4.5 times Primo's IOPS. Block C ran on a degraded backend: disk reads
 were three times slower and the small-file anchor 25% lower. Raw, its small-file
 median is below block B's Primo; per anchor it stays ahead.
-A repeat of block C on 2026-10-22 is still to be exported.
+A same-deployment repeat of block C on the morning of 2026-10-22, at matched anchors
+(91.4 / 6.3 MB/s, drain latency 52.4 ms), measured 301.1 (282.9–313.3) / 74.9
+(47.1–105.9) MB/s, 3.30 and 11.86 times its anchors. The disk reader kept 554 of
+1,226 IOPS (p99 12.0 ms). Both medians are above block B's PrimoCache. The small-file
+range overlaps it, and the repeat did not run in Primo's window.
 Method, correctness and every excluded run:
 [performance findings](PERFORMANCE_FINDINGS.md#final-164).
 
