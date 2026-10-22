@@ -111,9 +111,11 @@ try
             # Only lettered volumes can have caching enabled; drain and disable each one
             # with a cache. Exit code 4 means no filter answers there (not loaded yet), so
             # that volume has no cache; any other failure stops uninstall.
-            foreach ($volume in Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' })
+            # DriveInfo, not Get-Volume: the Storage WMI provider does not list every
+            # system's volumes (some machines report no MSFT_Volume for C:).
+            foreach ($drive in [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' })
             {
-                $letter = "$($volume.DriveLetter):"
+                $letter = $drive.Name.Substring(0, 2)
                 $json = & $controller cache-status $letter --json
                 if ($LASTEXITCODE -eq 4)
                 {
@@ -153,18 +155,30 @@ try
     # alter Secure Boot/test mode automatically as part of application setup.
     Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
-public static class QueueCacheCodeIntegrity {
+public static class QueueCacheSetupNative {
     [StructLayout(LayoutKind.Sequential)] public struct Info { public uint Length; public uint Options; }
     [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int cls, ref Info info, uint size, out uint required);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool FlushFileBuffers(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     public static bool TestSigningActive() { var i = new Info { Length = 8 }; uint n;
         int s = NtQuerySystemInformation(103, ref i, 8, out n);
         if (s < 0) throw new InvalidOperationException("Cannot query active Code Integrity: " + s);
         return (i.Options & 2) != 0;
     }
+    // What Write-VolumeCache does, without the Storage WMI provider (which may list no volume for C:).
+    public static void FlushVolume(string letter) {
+        IntPtr h = CreateFileW(@"\\.\" + letter + ":", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (h == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open volume " + letter + ": to flush it");
+        try { if (!FlushFileBuffers(h)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot flush volume " + letter + ":"); }
+        finally { CloseHandle(h); }
+    }
 }
 '@
-    if (-not [QueueCacheCodeIntegrity]::TestSigningActive())
+    if (-not [QueueCacheSetupNative]::TestSigningActive())
     {
         throw 'This driver is test-signed. Enable Windows test-signing with Secure Boot disabled, reboot, then rerun setup. No security settings were changed.'
     }
@@ -265,7 +279,7 @@ public static class QueueCacheCodeIntegrity {
     # cannot leave a zero-filled boot-start driver behind.
     $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
     try { $systemHive.Flush() } finally { $systemHive.Dispose() }
-    Write-VolumeCache -DriveLetter $env:SystemDrive.Substring(0, 1)
+    [QueueCacheSetupNative]::FlushVolume($env:SystemDrive.Substring(0, 1))
     & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
     if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
     Native $controller @('--managed-service-install')
