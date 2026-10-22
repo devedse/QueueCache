@@ -46,7 +46,11 @@ Image host directories (and their parents) must be owned by Administrators or SY
 and must not give unprivileged accounts delete, permission or ownership rights. Volumes
 formatted through the Windows storage service are often owned by NETWORK SERVICE; take
 ownership (`icacls X:\ /setowner Administrators`) or choose another volume. Windows'
-default root ACL is accepted.
+default root ACL is accepted. A folder created in Explorer directly under a drive
+inherits "Authenticated Users: Modify" and is refused; the error names the command
+that restricts it to Administrators and SYSTEM:
+`icacls "X:\Folder" /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F"`.
+Folders that QueueCache creates itself already have that protection.
 
 The desktop **New disk** dialog and `qcache disk` use one LocalSystem Windows
 service and Operations API. Disk ownership outlives either frontend. The signed

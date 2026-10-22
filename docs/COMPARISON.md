@@ -168,7 +168,7 @@ does not establish a crash-safety guarantee.
 The requested QueueCache goal is to permit loss of unpersisted writes while
 keeping NTFS healthy, without damage to untouched, durably checkpointed files.
 This supersedes the earlier acceptance of filesystem damage as merely expected
-Fast-mode behavior; it does not change the current driver's warning or make
+Fast-mode behavior; it does not change QueueCache's Fast-mode warning or make
 ordinary Fast-mode application flushes durable.
 [Issue #13](https://github.com/devedse/QueueCache/issues/13) defines the scope,
 remaining design work and acceptance checks. PrimoCache is a useful performance
@@ -938,7 +938,7 @@ retains observational clean/full/partial/absent/filling forward-gap and backward
 stop counters; one forward reason, backward reason and size bucket accounts for
 each batch. V1–V4 layouts remain available, with absent V5 fields null on older
 drivers. Policy/aligned-stop fields are reserved for historical evidence; the
-current driver retains its original gather and refuses the retired policy.
+newer drivers keep the original gather and refuse the retired policy.
 See the [result and full parity plan](PERFORMANCE.md#small-file-gather-156).
 
 `--provider` selects explicit drain and verification controls independently of
