@@ -93,6 +93,53 @@ function Assert-RegistryMultiString([string]$Path, [string[]]$Expected)
         }
     }
 }
+# Restores the registration recorded before this setup changed it, for the next boot, with the
+# semantics of Recover-Registration.ps1. A driver that is loaded now keeps running until then; the
+# registry only takes effect at the next boot. Never point the boot filter at a missing file.
+function Restore-PreviousRegistration([string[]]$Filters, $Service, [string]$BackupPath)
+{
+    $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
+    if ($null -ne $Service)
+    {
+        $previousDriver = Join-Path $env:windir (([string]$Service.ImagePath) -replace '^\\SystemRoot\\', '')
+        if (-not (Test-Path -LiteralPath $previousDriver))
+        {
+            throw "the previous driver $($Service.ImagePath) no longer exists, so the new registration was kept. Rerun setup, or restore it with Recover-Registration.ps1 -BackupFile $BackupPath."
+        }
+    }
+    [string[]]$previous = @($Filters | Where-Object { $_ })
+    if ($previous.Count)
+    {
+        New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value $previous -Force | Out-Null
+        Assert-RegistryMultiString -Path $volumeClassPath -Expected $previous
+    }
+    else
+    {
+        Remove-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $Service)
+    {
+        if (Test-Path $servicePath) { Native sc.exe @('delete', 'qcachelab') }
+    }
+    else
+    {
+        foreach ($name in @('ImagePath', 'Group', 'LabAllowedDriverKey'))
+        {
+            $value = $Service.$name
+            if ($null -eq $value) { Remove-ItemProperty -LiteralPath $servicePath -Name $name -ErrorAction SilentlyContinue }
+            else { New-ItemProperty -LiteralPath $servicePath -Name $name -PropertyType $(if ($name -eq 'ImagePath') { 'ExpandString' } else { 'String' }) -Value ([string]$value) -Force | Out-Null }
+        }
+        foreach ($name in @('Start', 'Type', 'ErrorControl', 'ClassCoverage'))
+        {
+            $value = $Service.$name
+            if ($null -eq $value) { Remove-ItemProperty -LiteralPath $servicePath -Name $name -ErrorAction SilentlyContinue }
+            else { New-ItemProperty -LiteralPath $servicePath -Name $name -PropertyType DWord -Value ([int]$value) -Force | Out-Null }
+        }
+    }
+    $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
+    try { $systemHive.Flush() } finally { $systemHive.Dispose() }
+}
+$activating = $false
 try
 {
     if (-not [Environment]::Is64BitProcess)
@@ -246,7 +293,32 @@ public static class QueueCacheSetupNative {
     {
         throw 'Staged driver verification failed.'
     }
+    # Everything the next boot does not load comes first, so a failure (or a crash) here leaves
+    # Windows booting exactly as before. Installing the RAM provider starts its root adapter
+    # immediately; with no new boot filter registered yet, a crash there cannot leave a boot-start
+    # driver behind that points at an unflushed file.
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    UpdatePath $false
+    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
+    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
+    # One startup coordinator owns managed resources before regular saved profiles.
+    # Start at the required reboot, after the intended native modules are loaded.
+    Native $controller @('--managed-service-install')
+    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
+    Register-SignInTask
     $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
+    if (Test-Path $servicePath)
+    {
+        $service = Get-ItemProperty $servicePath
+        if ($service.Type -ne 1 -or $service.ImagePath -notmatch '^(\\SystemRoot\\)?System32\\drivers\\(qcachelab|QueueCache-[\w.-]+)\.sys$')
+        {
+            throw 'Unexpected existing service; refusing to replace it.'
+        }
+    }
+    # Activation, last: the boot-start filter service points at the staged driver and the Volume
+    # class lists it. From here a failure restores the saved registration (see catch).
+    $activating = $true
     if (-not (Test-Path $servicePath))
     {
         Native sc.exe @('create', 'qcachelab', 'type=', 'kernel', 'start=', 'demand', 'error=', 'normal', 'binPath=', $relative, 'DisplayName=', 'QueueCache')
@@ -254,15 +326,9 @@ public static class QueueCacheSetupNative {
     }
     else
     {
-        $service = Get-ItemProperty $servicePath
-        if ($service.Type -ne 1 -or $service.ImagePath -notmatch '^(\\SystemRoot\\)?System32\\drivers\\(qcachelab|QueueCache-[\w.-]+)\.sys$')
-        {
-            throw 'Unexpected existing service; refusing to replace it.'
-        }
         # Preserve existing target and start type, including an explicitly selected boot target.
         Native sc.exe @('config', 'qcachelab', 'binPath=', $relative, 'DisplayName=', 'QueueCache')
     }
-    UpdatePath $false
     # Volume-class registration covers volumes created in future as well as existing
     # volumes after restart. Preserve every unrelated filter and its ordering.
     New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
@@ -271,29 +337,34 @@ public static class QueueCacheSetupNative {
     [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $volumeClassPath -Expected $filters
-    # Use the same signed distribution and root-device SetupAPI entrypoint.
-    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-    # Installing the provider starts its root adapter immediately. Persist the staged
-    # boot filter, its registration and the installed files first, so a crash there
-    # cannot leave a zero-filled boot-start driver behind.
+    # Persist the registration and the staged driver before reporting success.
     $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
     try { $systemHive.Flush() } finally { $systemHive.Dispose() }
     [QueueCacheSetupNative]::FlushVolume($env:SystemDrive.Substring(0, 1))
-    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
-    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
-    Native $controller @('--managed-service-install')
-    # One startup coordinator owns managed resources before regular saved profiles.
-    # Start at the required reboot, after the intended native modules are loaded.
-    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
-    Register-SignInTask
     Write-Output "Driver staged at $destination. Reboot to load automatic volume coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 }
 catch
 {
     Write-Output "SETUP FAILED: $_"
-    exit 1
+    if ($Uninstall) { exit 1 }
+    if (-not $activating)
+    {
+        Write-Output 'The driver registration was not changed; the next restart loads what it loaded before.'
+        exit 1
+    }
+    try
+    {
+        Restore-PreviousRegistration $volumeFilters $previousService $backup
+        Write-Output "The previous driver registration was restored from $backup; the next restart loads what it loaded before."
+        exit 1
+    }
+    catch
+    {
+        # Exit 5: setup tells the user not to restart before recovering.
+        Write-Output "ROLLBACK FAILED: $_"
+        exit 5
+    }
 }
 finally
 {
