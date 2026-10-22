@@ -1,5 +1,5 @@
-; Event log messages for the qcachelab System log source. Setup registers the installed
-; driver file as this source's EventMessageFile; %1 is filled in by the I/O manager.
+;// Event log messages for the qcachelab System log source. Setup registers the installed
+;// driver file as this source's EventMessageFile; %1 is filled in by the I/O manager.
 MessageIdTypedef=NTSTATUS
 
 SeverityNames=(Success=0x0:STATUS_SEVERITY_SUCCESS
