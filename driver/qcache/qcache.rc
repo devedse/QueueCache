@@ -1,5 +1,6 @@
 #include <winver.h>
 #include "qcache-version.h"
+#include "qcachemsg.rc" // Event log message table (qcachemsg.mc).
 #ifndef QCACHE_VERSION_STRING
 #define QCACHE_VERSION_STRING "0.1.0.0"
 #endif

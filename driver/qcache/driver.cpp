@@ -4,6 +4,8 @@
 #include <ntifs.h>
 #include <ntdddisk.h>
 #include <ntddstor.h>
+#include <ntstrsafe.h>
+#include "qcachemsg.h"
 #include "qcstats.h"
 #include "observation.h"
 #include "readselection.h"
@@ -168,6 +170,54 @@ static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
 #endif
     return IoCallDriver(ext->Lower, irp);
 }
+
+#if QCACHE_CACHE_DRIVER
+// Records a cached volume's removal in the System log (qcachemsg.mc): %2 is the volume device
+// (\Device\HarddiskVolumeN, the bottom of this stack) and %3 the pending Fast-mode bytes, which
+// are also kept as dump data. Pending bytes are a snapshot of possible volatile loss, not a claim
+// that this many bytes were lost on the physical disk. PASSIVE_LEVEL (surprise removal).
+static void LogRemoval(PDEVICE_OBJECT device, ULONGLONG pending)
+{
+    WCHAR volume[80] = L"(unknown)";
+    if (auto bottom = IoGetDeviceAttachmentBaseRef(device))
+    {
+        UCHAR nameBuffer[sizeof(OBJECT_NAME_INFORMATION) + 80 * sizeof(WCHAR)];
+        auto name = reinterpret_cast<POBJECT_NAME_INFORMATION>(nameBuffer);
+        ULONG returned = 0;
+        if (NT_SUCCESS(ObQueryNameString(bottom, name, sizeof(nameBuffer), &returned)) && name->Name.Length)
+            (void)RtlStringCchCopyNW(volume, RTL_NUMBER_OF(volume), name->Name.Buffer, name->Name.Length / sizeof(WCHAR));
+        ObDereferenceObject(bottom);
+    }
+    WCHAR bytes[24];
+    if (!NT_SUCCESS(RtlStringCchPrintfW(bytes, RTL_NUMBER_OF(bytes), L"%I64u", pending)))
+        return;
+    size_t volumeChars = 0, byteChars = 0;
+    if (!NT_SUCCESS(RtlStringCchLengthW(volume, RTL_NUMBER_OF(volume), &volumeChars)) ||
+        !NT_SUCCESS(RtlStringCchLengthW(bytes, RTL_NUMBER_OF(bytes), &byteChars)))
+        return;
+    const ULONG dumpBytes = 2 * sizeof(ULONG);
+    const ULONG stringOffset = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + dumpBytes;
+    const ULONG volumeBytes = static_cast<ULONG>((volumeChars + 1) * sizeof(WCHAR));
+    const ULONG size = stringOffset + volumeBytes + static_cast<ULONG>((byteChars + 1) * sizeof(WCHAR));
+    if (size > ERROR_LOG_MAXIMUM_SIZE)
+        return;
+    auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(device, static_cast<UCHAR>(size)));
+    if (!entry)
+        return;
+    RtlZeroMemory(entry, size);
+    entry->ErrorCode = pending ? QC_LOG_REMOVED_WITH_PENDING_WRITES : QC_LOG_REMOVED;
+    entry->FinalStatus = STATUS_DEVICE_NOT_CONNECTED;
+    entry->DumpDataSize = static_cast<USHORT>(dumpBytes);
+    entry->DumpData[0] = static_cast<ULONG>(pending);
+    entry->DumpData[1] = static_cast<ULONG>(pending >> 32);
+    entry->NumberOfStrings = 2;
+    entry->StringOffset = static_cast<USHORT>(stringOffset);
+    auto strings = reinterpret_cast<PUCHAR>(entry) + stringOffset;
+    RtlCopyMemory(strings, volume, volumeBytes);
+    RtlCopyMemory(strings + volumeBytes, bytes, (byteChars + 1) * sizeof(WCHAR));
+    IoWriteErrorLogEntry(entry);
+}
+#endif
 
 #if QCACHE_SERIALIZED_IO
 static NTSTATUS DirectCompletion(PDEVICE_OBJECT, PIRP irp, PVOID context)
@@ -931,26 +981,11 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         if (stack->MinorFunction == IRP_MN_SURPRISE_REMOVAL)
         {
             QC_STATE removalSnapshot;
-            if (QcCacheDisconnect(&ext->Cache, &removalSnapshot))
-            {
-                // The cache IOCTL disappears with the volume. Keep a one-shot
-                // event in the Windows System log for post-removal diagnosis.
-                // Dirty bytes are a snapshot of possible volatile loss, not a
-                // claim that this many bytes were lost on the physical disk.
-                const ULONGLONG pending = removalSnapshot.DirtyBytes;
-                auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(
-                    device, static_cast<UCHAR>(sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG))));
-                if (entry)
-                {
-                    RtlZeroMemory(entry, sizeof(IO_ERROR_LOG_PACKET) + 2 * sizeof(ULONG));
-                    entry->ErrorCode = STATUS_DEVICE_NOT_CONNECTED;
-                    entry->FinalStatus = STATUS_DEVICE_NOT_CONNECTED;
-                    entry->DumpDataSize = 2 * sizeof(ULONG);
-                    entry->DumpData[0] = static_cast<ULONG>(pending);
-                    entry->DumpData[1] = static_cast<ULONG>(pending >> 32);
-                    IoWriteErrorLogEntry(entry);
-                }
-            }
+            // The cache IOCTL disappears with the volume. Keep a one-shot event in the
+            // Windows System log for post-removal diagnosis, only for a volume that had a
+            // cache or pending writes: every removed volume has a filter instance.
+            if (QcCacheDisconnect(&ext->Cache, &removalSnapshot) && (removalSnapshot.BudgetBytes || removalSnapshot.DirtyBytes))
+                LogRemoval(device, removalSnapshot.DirtyBytes);
             // A notification cannot be vetoed and must reach the lower stack
             // promptly, independently of the request worker's lower-I/O wait.
             irp->IoStatus.Status = STATUS_SUCCESS;

@@ -19,6 +19,8 @@ public static class WindowsManagedBrokerService
 {
     public const string ServiceName = "QueueCache.ManagedDisks";
     private const uint OwnProcess = 0x10, Stopped = 1, StartPending = 2, StopPending = 3, Running = 4;
+    // SERVICE_CONTROL_* codes. Running accepts STOP | SHUTDOWN | PRESHUTDOWN (0x105).
+    internal const uint ControlStop = 1, ControlInterrogate = 4, ControlShutdown = 5, ControlPreshutdown = 15;
     private static readonly object statusGate = new(), logGate = new();
     private static readonly ServiceMain main = Main;
     private static readonly Handler handler = Handle;
@@ -67,7 +69,7 @@ public static class WindowsManagedBrokerService
             // broker handles. Committed saves and Windows formatting finish their actual outcome.
             serving.Cancel();
             await endpoint;
-            if (control is 16 or 5)
+            if (SavesBeforeStopping(control))
             {
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(110));
                 await engine.AttemptShutdownSavesAsync(deadline.Token);
@@ -75,10 +77,17 @@ public static class WindowsManagedBrokerService
         }
         finally { heartbeatDone.Cancel(); await heartbeat; }
     }
+    /// <summary>Stop, shutdown and preshutdown stop the broker. Until October 2026 the preshutdown code was
+    /// written as 16 (TIMECHANGE), so Windows' preshutdown control went unanswered: every shutdown waited
+    /// for the service (event 7043) and image saves ran only in the short SHUTDOWN phase.</summary>
+    internal static bool Stops(uint control) => control is ControlStop or ControlShutdown or ControlPreshutdown;
+    /// <summary>Windows is shutting down: attempt the configured shutdown saves. Preshutdown gives the service
+    /// its configured 120 s; a plain SHUTDOWN only arrives if preshutdown was not delivered.</summary>
+    internal static bool SavesBeforeStopping(uint control) => control is ControlShutdown or ControlPreshutdown;
     private static uint Handle(uint control, uint eventType, IntPtr eventData, IntPtr context)
     {
-        if (control is 1 or 5 or 16) { stopping.TrySetResult(control); return 0; }
-        if (control == 4) { lock (statusGate) _ = SetServiceStatus(statusHandle, ref status); return 0; }
+        if (Stops(control)) { stopping.TrySetResult(control); return 0; }
+        if (control == ControlInterrogate) { lock (statusGate) _ = SetServiceStatus(statusHandle, ref status); return 0; }
         return 120; // ERROR_CALL_NOT_IMPLEMENTED
     }
     private static void Report(uint state, uint error = 0)

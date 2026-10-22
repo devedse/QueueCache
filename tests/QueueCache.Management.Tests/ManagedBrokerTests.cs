@@ -5,6 +5,18 @@ internal static class ManagedBrokerTests
 {
     public static async Task RunAsync()
     {
+        // SERVICE_CONTROL_PRESHUTDOWN is 15; 16 is TIMECHANGE. Preshutdown must stop the broker and run the
+        // shutdown saves, or every Windows shutdown waits for it (event 7043).
+        Check(WindowsManagedBrokerService.Stops(WindowsManagedBrokerService.ControlPreshutdown) && WindowsManagedBrokerService.ControlPreshutdown == 15 &&
+            WindowsManagedBrokerService.Stops(5) && WindowsManagedBrokerService.Stops(1) && !WindowsManagedBrokerService.Stops(16) && !WindowsManagedBrokerService.Stops(4),
+            "stop, shutdown and preshutdown stop the broker; time changes and interrogation do not");
+        Check(WindowsManagedBrokerService.SavesBeforeStopping(15) && WindowsManagedBrokerService.SavesBeforeStopping(5) &&
+            !WindowsManagedBrokerService.SavesBeforeStopping(1) && !WindowsManagedBrokerService.SavesBeforeStopping(16),
+            "shutdown saves run on preshutdown and shutdown, not on an ordinary stop");
+        var unprotected = ManagedDiskHostProtection.UnprotectedMessage(@"C:\QCTests", false);
+        Check(unprotected.Contains(@"icacls ""C:\QCTests"" /inheritance:r /grant:r ""*S-1-5-32-544:(OI)(CI)F"" ""*S-1-5-18:(OI)(CI)F""") &&
+            !ManagedDiskHostProtection.UnprotectedMessage(@"D:\", true).Contains("icacls"),
+            "a refused folder's message gives the fix, but never suggests re-permissioning a drive root");
         var request = new ManagedBrokerRequest(1, Guid.NewGuid(), "create", ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam));
         using var wire = new MemoryStream(); await ManagedDiskBrokerProtocol.WriteAsync(wire, request);
         var bytes = wire.ToArray();
