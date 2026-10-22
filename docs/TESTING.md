@@ -104,7 +104,10 @@ qcache developer verify Q: --suite quick --output C:\QueueCache-Results
 
 `--lab-ntfs` names the attached lab NTFS volume. `--pause-backing-cache` lets the
 runner pause `Q:`'s cache while lab phases run (the lab VHDX lives on `Q:`) and
-restores it afterwards. There is no `--detach`: run the foreground command and let
+restores it afterwards. A freshly attached lab image keeps writing to `Q:` for a few
+seconds; since plan 169 the campaign preflight waits up to about 30 s for those
+writes to drain on their own before its strict clean-cache capture, and fails if
+they do not. There is no `--detach`: run the foreground command and let
 it finish. Results go to a new folder under `--output`.
 
 Use the smallest thing that answers the question: a single suite or `experiment`

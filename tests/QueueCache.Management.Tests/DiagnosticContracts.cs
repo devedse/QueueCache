@@ -7,6 +7,11 @@ using QueueCache.Operations;
 
 internal static class DiagnosticContracts
 {
+    private sealed class InlineProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string message) => report(message);
+    }
+
     public static void Run()
     {
         static void Check(bool value, string name) { if (!value) throw new Exception(name); }
@@ -15,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 168, "plan 168 waits, bounded, for RAM headroom before each owned RAM-reference disk");
+        Check(VerificationPlan.Version == 169, "plan 169 waits, bounded, for a lab image's writes to drain before the campaign preflight capture");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
@@ -175,6 +180,31 @@ internal static class DiagnosticContracts
             throw new Exception("Final restoration retried a non-drain failure.");
         }
         catch (IOException) { Check(attempts == 1, "other capture failures are never retried"); }
+        VerificationCampaignHost.PreflightCleanDelay = TimeSpan.Zero;
+        var reports = new List<string>(); var preflightProgress = new InlineProgress(reports.Add);
+        var settling = 2; attempts = 0;
+        var settled = VerificationCampaignHost.WhenCleanAsync(() => { attempts++; return settling-- > 0
+                ? Task.FromException<CampaignTargetEvidence>(new IOException("worker: " + VerificationWorker.NotCleanMessage)) : Task.FromResult(finalTarget); },
+            CampaignTargetRole.Performance, "Q:", preflightProgress, CancellationToken.None).GetAwaiter().GetResult();
+        Check(settled == finalTarget && attempts == 3 && reports.Count == 2 && reports[0].Contains("Q: still has pending writes"),
+            "preflight waits for a lab image's lazy writes to drain, and says so");
+        attempts = 0;
+        try
+        {
+            VerificationCampaignHost.WhenCleanAsync(() => { attempts++; return Task.FromException<CampaignTargetEvidence>(new IOException(VerificationWorker.NotCleanMessage)); },
+                CampaignTargetRole.Performance, "Q:", preflightProgress, CancellationToken.None).GetAwaiter().GetResult();
+            throw new Exception("Preflight accepted a cache that never became clean.");
+        }
+        catch (IOException) { Check(attempts == VerificationCampaignHost.PreflightCleanAttempts, "a cache that never becomes clean fails preflight after the bounded attempts"); }
+        attempts = 0;
+        try
+        {
+            VerificationCampaignHost.WhenCleanAsync(() => { attempts++; return Task.FromException<CampaignTargetEvidence>(new IOException("identity changed")); },
+                CampaignTargetRole.Performance, "Q:", preflightProgress, CancellationToken.None).GetAwaiter().GetResult();
+            throw new Exception("Preflight retried a non-drain failure.");
+        }
+        catch (IOException) { Check(attempts == 1, "preflight never retries other capture failures"); }
+        VerificationCampaignHost.PreflightCleanDelay = TimeSpan.FromSeconds(2);
         finalOrder.Clear();
         var disabledTarget = finalTarget with { Recovery = recovery with { State = recovery.State with { Flags = 0 } } };
         VerificationCampaignHost.FinalizeTargetsAsync([disabledTarget],
