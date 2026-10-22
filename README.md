@@ -115,25 +115,34 @@ with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
 25,353 MB/s before).
 [How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
 
-**Short writes including the final drain (2026-10-16).** Separate new-file tests,
-three repetitions per provider, with Defender/Search disabled and the same temporary
-snapshot present. Both workloads fit the 2 GiB caches; these scores include file
-creation, all writes, filesystem flush and explicit drain, with file hashes checked
-after pausing the cache. The direct control has QueueCache absent.
+**Writes including the final drain (2026-10-21).** One evening on the same VM, with
+Defender/Search disabled: QueueCache with the new drain default (Eager, 2 MiB batches,
+eight drainers, at most two while programs read from the disk), then PrimoCache 4.4.1
+with QueueCache uninstalled. Both workloads fit the 2 GiB caches; the scores include
+file creation, all writes, the filesystem flush and the explicit drain, with every file
+hash checked after pausing the cache. The paused-disk column measures the backing disk
+in the same window.
 
-| Completed writes, MB/s | Direct disk | QueueCache Fast | PrimoCache Defer-Write |
+| Completed writes, MB/s (median of 6) | Disk, cache paused | QueueCache Fast | PrimoCache Defer-Write |
 |---|---:|---:|---:|
-| One new 1 GiB file, 1 MiB Q4 | 48.41 | 52.71 | 78.96 |
-| 4,096 new 64 KiB files, 4 KiB writes | 1.25 | 41.71 | 57.62 |
+| One new 1 GiB file, 1 MiB Q4 | 95.9 | 292.4 | 261.0 |
+| 4,096 new 64 KiB files, 4 KiB writes | 6.5 | 90.7 | 52.5 |
 
-The small-file workload totals 256 MiB. These virtual-disk measurements use
-unbuffered file data; ordinary buffered copies and larger-than-cache workloads can
-behave differently. [Ranges, backing-write sizes and method](docs/COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16).
+While each cache drained a sustained write, a 4 KiB disk reader got 757 IOPS with
+QueueCache and 170 with PrimoCache. A third block, QueueCache again after a rollback,
+ran on a slower backend; its results, the ranges and the method are in the
+[comparison details](docs/COMPARISON_DETAILS.md#the-new-default-against-primocache-2026-10-21).
+These are unbuffered virtual-disk measurements; ordinary buffered copies and
+larger-than-cache workloads can behave differently.
 
 How QueueCache compares with other RAM disks and RAM caches on the same machine,
 including where it is slower: [comparison](docs/COMPARISON.md).
 
 ## Getting started
+
+The driver is test-signed for now, so Windows must first allow test-signed drivers:
+turn off Secure Boot in the PC's firmware settings, run `bcdedit /set testsigning on`
+in an administrator terminal and restart. Windows then shows "Test Mode" on the desktop.
 
 1. Download the installer from the [latest release](https://github.com/devedse/QueueCache/releases)
    and run it.

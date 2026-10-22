@@ -8,16 +8,18 @@ their sessions; they do not isolate a driver change or the effect of disabling
 Defender/Search.
 
 The read-miss fix is merged ([#14](https://github.com/devedse/QueueCache/issues/14)).
-Larger drain defaults are also merged, but **matching or exceeding PrimoCache on
-both new-file workloads remains the goal**
-([#15](https://github.com/devedse/QueueCache/issues/15)). Filesystem safety after a
+On the drain-batch branch, the plan-164 default (Eager 2 MiB × 8 with read-aware
+limit 2 and asynchronous TRIM) **beats a same-window PrimoCache on both new-file
+workloads** at matched backend speed
+([#15](https://github.com/devedse/QueueCache/issues/15)); see the first section below. Filesystem safety after a
 Fast-mode power cut is a separate open goal
 ([#13](https://github.com/devedse/QueueCache/issues/13)); the desired behavior is
 loss of pending writes with a healthy filesystem. The results below do not certify
 that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 
-Contents: [Read during drain](#read-during-drain-2026-10-21) ·
+Contents: [New default against PrimoCache](#the-new-default-against-primocache-2026-10-21) ·
+[Read during drain](#read-during-drain-2026-10-21) ·
 [Same-window comparison](#same-window-comparison-2026-10-2021) ·
 [Matched in-session comparison](#matched-in-session-comparison-2026-10-1820) ·
 [Short write plus drain](#short-write-plus-drain-comparison-2026-10-16) ·
@@ -28,6 +30,42 @@ Contents: [Read during drain](#read-during-drain-2026-10-21) ·
 [Column definitions](#cache-column-definitions) ·
 [Power cuts](#power-cut-while-the-cache-is-writing) ·
 [Original setup](#how-this-was-measured)
+
+## The new default against PrimoCache (2026-10-21)
+
+Plan 164: native 0.4.776.1 with controller 0.4.780.1, QueueCache on its product
+default (Eager, 2048 KiB × 8, read-aware limit 2, TRIM mode 3), applied with no drain
+options. One evening, A–B–A:
+- **A** (21:02–21:13 UTC): QueueCache.
+- **B** (21:35–21:47): PrimoCache 4.4.1 with QueueCache uninstalled; shared 2 GiB L1,
+  Native defer 10 s.
+- **C** (22:16–22:30): QueueCache again, after rollback to the same snapshot and
+  redeployment.
+
+Same VM, Q: disk, payload and workloads as the sections below. All 12 runs completed,
+with 110,619 bypassed file hashes. Medians with full ranges, decimal MB/s; "÷ anchor"
+divides by that block's paused-disk run.
+
+| Product, block | Paused anchor, 1 GiB / small | New 1 GiB + drain | ÷ anchor | New 4,096 × 64 KiB + drain | ÷ anchor | Drain latency ms |
+|---|---:|---:|---:|---:|---:|---:|
+| QueueCache default, A | 95.9 / 6.5 | 292.4 (212.6–322.4) | 3.05 | 90.7 (80.7–99.1) | 13.96 | 53.1 |
+| PrimoCache 4.4.1, B | 96.3 / 6.7 | 261.0 (242.6–290.3) | 2.71 | 52.5 (49.7–59.3) | 7.84 | 53.7 |
+| QueueCache default, C | 93.9 / 4.9 | 295.0 (128.2–323.0) | 3.14 | 49.6 (34.8–111.2) | 10.05 | 51.9 |
+
+| Read during drain, block | Reader alone, IOPS | Reader while draining, IOPS (range) | p99 ms | Disk writes in the window, MB/s |
+|---|---:|---:|---:|---:|
+| QueueCache default, A | 1,524 | 757 (732–800) | 11.8 | 234 |
+| PrimoCache 4.4.1, B | 1,944 | 170 (131–243) | 50.7 | 421 |
+| QueueCache default, C | 456 | 398 (274–401) | 14.7 | 210 |
+
+With matched anchors and drain latency (A against B), the default is 12% faster than
+PrimoCache for the 1 GiB file and 73% faster for small files. It leaves a concurrent
+disk reader 4.5 times Primo's IOPS. Block C ran on a degraded backend: disk reads
+were three times slower and the small-file anchor 25% lower. Raw, its small-file
+median is below block B's Primo; per anchor it stays ahead.
+A repeat of block C on 2026-10-22 is still to be exported.
+Method, correctness and every excluded run:
+[performance findings](PERFORMANCE_FINDINGS.md#final-164).
 
 ## Read during drain (2026-10-21)
 

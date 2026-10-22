@@ -7,9 +7,13 @@ Scores are decimal MB/s unless stated otherwise; ranges are minimum–maximum.
 [Methods, findings and limitations](COMPARISON_DETAILS.md) explain each measurement.
 
 QueueCache leads large cached reads, and the read-miss fix is merged
-([#14](https://github.com/devedse/QueueCache/issues/14)). The larger drain defaults
-help, but matching PrimoCache remains open
-([#15](https://github.com/devedse/QueueCache/issues/15)). Power-loss filesystem
+([#14](https://github.com/devedse/QueueCache/issues/14)). With the plan-164 drain
+default (Eager 2 MiB × 8, read-aware limit 2, asynchronous TRIM), QueueCache beats a
+same-window PrimoCache on completed new-file writes including the drain: 292.4
+against 261.0 MB/s for one 1 GiB file and 90.7 against 52.5 MB/s for 4,096 64 KiB
+files, at matched backend speed
+([details](COMPARISON_DETAILS.md#the-new-default-against-primocache-2026-10-21), #15).
+The tables below keep their original dates. Power-loss filesystem
 safety also remains open ([#13](https://github.com/devedse/QueueCache/issues/13));
 both Fast mode and PrimoCache Defer-Write damaged NTFS in historical cuts.
 
