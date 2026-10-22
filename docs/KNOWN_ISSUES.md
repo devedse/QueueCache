@@ -1,12 +1,15 @@
-# Known issues and verification gaps
+# Known issues and stability
 
-What is known to be limited, not yet proven, or fixed in QueueCache. Verification
+What is known to be limited, not yet proven, or fixed in QueueCache, and the
+correctness checks behind it. The overview lists every issue; then come the open
+issues, what is not yet proven, a fix with a remaining gap, the verification record
+and the fixed issues. Verification
 happens on one recoverable 4-vCPU Windows 11 VM on Ceph-backed storage, including
 under Driver Verifier; that is not production qualification. Production evidence
 uses the unchanged 0.4.687.1 native driver; experiment-branch builds through
 2026-10-22 (native 0.4.776.1) are scoped below. Do not report a fixed issue as a
 current bug without a reproduction on the current driver. Performance results and
-decisions are in [performance findings](PERFORMANCE_FINDINGS.md); how things are
+decisions are in [performance](PERFORMANCE.md); how things are
 tested is in [testing](TESTING.md).
 
 ## Overview
@@ -42,12 +45,12 @@ still to do. Open items link to their details.
 | Setup failed, and the app listed no volumes, on a PC whose Storage Management provider lists no disks (seen on an iSCSI-booted Windows 11) | ✅ | Setup 0.4.781.1; app, CLI and cache targets 0.4.784.1 (disks and volumes are read natively, without `Get-Disk`/`Get-Volume`) |
 | A failed setup could leave the new boot-start filter registered without the rest of the installation | ✅ | 0.4.782.1 (the filter is registered last; the previous registration is restored on failure; forced on the VM with 0.4.788.1) |
 | Every install rewrote the desktop update files and shortcut, moving their icons | ✅ | 0.4.782.1 (written only when missing or changed) |
-| [New files plus their drain were slower than with PrimoCache (#15)](#drain-speed-against-primocache-15-met-on-the-test-vm-with-limits) | ✅ | Native 0.4.776.1: Eager 2 MiB × 8, read-aware limit 2, asynchronous TRIM for new caches |
+| [Writing new files, including the drain to disk, was too slow (#15)](PERFORMANCE.md#drain-15-status) | ✅ | Native 0.4.776.1: Eager 2 MiB × 8, read-aware limit 2, asynchronous TRIM for new caches |
 | [Each TRIM waited for every drain write in flight, stalling writes for seconds](#trim-no-longer-waits-for-unrelated-drain-writes) | ✅ | Native 0.4.766.1 (overlapping writes only); asynchronous since 0.4.771.1, default with 0.4.776.1 |
 | Ordinary cache misses reached the disk one at a time, and requeued service reads could repeatedly delay older misses (#14) | ✅ | 0.4.687.1: bounded misses overlap and requeueing keeps arrival order |
 | New cache tasks drained in small 256 KiB batches with two writes in flight | ✅ | 0.4.687.1 (1024 KiB × 4); 2 MiB × 8 Eager since native 0.4.776.1. Saved profiles keep their settings |
 | With "keep written data" off, re-reading a large file (reads over 1 MiB) while it drained could return an older 256 KiB piece; the disk was always right | ✅ | 0.4.601.1 (found by `stress-races`) |
-| One program reading a RAM disk topped out at about 26 GB/s whatever its queue depth | ✅ | 0.4.583.1: queued reads overlap, 47,583 MB/s ([findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)) |
+| One program reading a RAM disk topped out at about 26 GB/s whatever its queue depth | ✅ | 0.4.583.1: queued reads overlap, 47,583 MB/s ([findings](PERFORMANCE.md#ram-disk-asynchronous-split-reads-accepted-pr-9)) |
 | Sequential cached reads up to 45% slower after drop-clean and refill | ✅ | 0.4.431.1 chunk allocator; 0.4.434.1 prefetch and coalesced copies |
 | A read miss was kept from the application's own buffer, so a program changing its buffer mid-read changed what others read | ✅ | 0.4.169.1 (driver-owned miss buffer) |
 | Programs on a cached C: crashed: page-in misses were kept from a buffer that can repeat a shared page (0.4.148.1–0.4.162.1) | ✅ | 0.4.166.1 |
@@ -71,9 +74,10 @@ can lose those writes and damage the filesystem. The requested goal in
 writes while keeping NTFS healthy and untouched, durably checkpointed files
 intact. Filesystem damage is an unresolved safety issue, not the desired
 volatile-cache contract. The power-cut evidence is historical (0.4.604.1), not a
-qualification of the current 0.4.687.1 driver. PrimoCache also damaged NTFS in
-partial-drain cuts; its clean early cut does not establish a general guarantee.
-[Evidence and scope](COMPARISON_DETAILS.md#power-cut-while-the-cache-is-writing).
+qualification of the current 0.4.687.1 driver. Another write-back cache tested the
+same way also damaged NTFS when cut during its write-out; one clean early cut does
+not establish a general guarantee.
+[Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
@@ -167,13 +171,6 @@ cache or a disk.
   Other flag-mutating suites share the tested restore path and host contracts;
   they were not individually interrupted on the VM. Older recovery snapshots
   without original copy-flag evidence cannot be reported fully restored.
-- **File-tree environment:** tracing attributed the 160–170-second read/hash
-  slowdown to Defender. The full disabled-baseline generic refresh took
-  2.84 s Fast, 2.90 s paused and 2.87 s PrimoCache, with every hash verified
-  (one repetition each). The earlier 6.86-second diagnostic and historical
-  4.9-second session retain their own scope; the latter did not record Defender
-  state. PrimoCache also has a post-run Ceph near-full warning; its onset and
-  effect are unknown; the warnings cleared after restoration. See [findings](PERFORMANCE_FINDINGS.md) for controls and exact runs.
 - **Foreground interference and Strict impact:** neither has a valid isolated
   comparison for the new drain defaults. The removed overlap fixture drained its
   large seed after the default dirty-age trigger; the removed Strict fixture saw
@@ -181,7 +178,7 @@ cache or a disk.
   refuses option changes while enabled or dirty, so seeding under held-off
   settings and switching afterwards is not supported. This leaves the known
   whole-cache Strict barrier cost (#16) open, rather than proving a regression of
-  the new defaults. Failed runs and counters remain in [findings](PERFORMANCE_FINDINGS.md).
+  the new defaults. Failed runs and counters remain in [findings](PERFORMANCE.md).
 - **Power-loss evidence for 0.4.687.1:** no power-cut test was repeated on the
   fix build. Existing 0.4.604.1 and competitor results remain historical and do
   not establish the newer build's crash behavior.
@@ -234,7 +231,7 @@ cache or a disk.
   and the functional checks above, not a performance qualification. Performance
   rates on the VM also depend on host load: RAM-path rates on 2026-10-22 were 35–73%
   below October 14 on both the final and the production driver
-  ([findings](PERFORMANCE_FINDINGS.md#final-164)).
+  ([findings](PERFORMANCE.md#final-164)).
 - **Setup rollback:** forced once on the VM (0.4.788.1, 2026-10-22). With one
   injected failure after activation, setup exited 1 and restored the filter list,
   start type, driver path and group exactly. The steps before activation (RAM
@@ -244,38 +241,7 @@ cache or a disk.
 Do not use automatic reboot, driver deletion or discarding dirty data as failure
 recovery: a faulted cache must be inspected and recovered explicitly.
 
-## Fixed, with limits
-
-### Drain speed against PrimoCache (#15): met on the test VM, with limits
-
-Since plan 164 new caches drain Eager with 2 MiB batches and eight drainers, with
-read-aware limit 2 and asynchronous TRIM. In a same-window A–B–A at matched
-backend speed (paused anchors 95.9 / 96.3 MB/s, drain latency 53.1 / 53.7 ms), the
-default measured 292.4 / 90.7 MB/s for a new 1 GiB file / 4,096 new 64 KiB files
-including the drain. PrimoCache 4.4.1 measured 261.0 / 52.5, and a concurrent disk
-reader got 757 against 170 IOPS. The third block ran on a degraded backend (the
-small-file anchor fell 25%); its raw small-file median of 49.6 was below Primo's,
-while per anchor it stayed ahead. Release qualification on the final build passed (11/11 phases, 106 cases). Limits:
-- One Ceph-backed VM; hard disks and SATA SSDs were not measured.
-- The 8 GiB sustained workload trailed Primo by 7–9% in plans 159/160 and was not
-  repeated.
-- Saved profiles keep their old settings: an upgraded machine with a saved
-  1 MiB × 4 Idle profile keeps it until it is changed.
-- Strict caches also inherit the new default, and their boundaries were not
-  measured under it (#16).
-[Results](PERFORMANCE_FINDINGS.md#final-164).
-
-Earlier steps, each with its own results and limits: the October 15/16 8 GiB
-refresh ([comparison](COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516)), plan 148's
-short new-file comparison ([method and ranges](COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16)),
-the October 16/17 decision screen ([details](COMPARISON_DETAILS.md#drain-decision-screen-2026-10-1617)),
-plan 156's rejected aligned gather ([result](PERFORMANCE_FINDINGS.md#small-file-gather-156)),
-plan 158's matched research ([results](PERFORMANCE_FINDINGS.md#matched-158)), the
-plan 159/160 same-window comparison ([results](PERFORMANCE_FINDINGS.md#trim-160)) and plan
-161's reads during a drain ([plan](PERFORMANCE_FINDINGS.md#finish-15)). Plan 161 found that
-PrimoCache does not protect reads while it drains (a 4 KiB Q1 disk reader got 163
-IOPS, p99 64 ms) and that eight drainers alone halved that reader's IOPS; the
-read-aware limit of plans 162/163 kept it at the old default's level.
+## Fixed, with a remaining verification gap
 
 ### TRIM no longer waits for unrelated drain writes
 
@@ -285,13 +251,13 @@ trimmed ranges; later writes waited behind it. Under Eager draining each TRIM co
 about one round trip of the whole drain window (up to 16 MiB at 2 MiB × 8). In
 plan 158, 144 and 272 TRIMs stretched a new 1 GiB file's application time from
 about 0.16 s to 6.7 s and 25.1 s, so fitting Fast writes waited for lower I/O,
-contrary to the RAM-first goal ([evidence](PERFORMANCE_FINDINGS.md#matched-158)).
+contrary to the RAM-first goal ([evidence](PERFORMANCE.md#matched-158)).
 Production 0.4.687.1 keeps that behavior.
 
 - **0.4.766.1 (plans 159/160):** a TRIM waits only for in-flight writes that
   overlap it. Under Driver Verifier a TRIM outside the in-flight batches returned in
   2 ms while 3 MiB stayed in flight; an overlapping one waited 2,008 ms for its
-  write ([evidence](PERFORMANCE_FINDINGS.md#trim-160)).
+  write ([evidence](PERFORMANCE.md#trim-160)).
 - **0.4.771.1 (plans 162/163), TRIM mode 3:** small TRIMs use an index lookup, and
   an offload thread sends the lower TRIM while the ordered request path continues.
   A fence keeps newer versions of the trimmed ranges from draining before the lower
@@ -300,7 +266,7 @@ Production 0.4.687.1 keeps that behavior.
   plan 164.
 - **0.4.776.1:** the caller-thread path stays on while a slow lower TRIM is
   outstanding; before, the lab VHDX's TRIMs switched it off
-  ([results](PERFORMANCE_FINDINGS.md#final-164)).
+  ([results](PERFORMANCE.md#final-164)).
 
 Under Driver Verifier, `trim-cache` passed 12/12 and the focused campaign 98/98
 with mode 3 on. **Verification gap:** the fence's holding path and the forwarded-write wait have
@@ -309,7 +275,7 @@ file-level TRIM, so a rewrite always arrived after the TRIM. Reaching the fence
 needs a writer outside that ordering, such as raw volume writes, which the
 verifier never performs. `trim-cache/async-eager-ordering` reports which path
 occurred.
-[Evidence](PERFORMANCE_FINDINGS.md#prio-162).
+[Evidence](PERFORMANCE.md#prio-162).
 
 The test VM's disk now accepts TRIM. On 2026-10-18 the hypervisor counted about
 891,000 successful unmap operations on it, none failed, and QueueCache's TRIM
@@ -319,56 +285,249 @@ longer applies to this VM; when that changed was not recorded. TRIM correctness
 is verified on a VHDX (`trim-cache`): trimmed pending data is dropped, not
 written, and everything else reads back exactly.
 
-## Fix branch verification (#14 / #15)
+## Verification record
 
-The branch overlaps ordinary read misses, preserves each read's original pin
-identities, and defaults new tasks to Eager draining with 2048 KiB batches, eight
-drainers, read-aware limit 2 and TRIM mode 3 (1024 KiB × 4 Idle from 0.4.687.1 until plan 164). Saved
-profiles retain their settings. Misses spanning more than 256 cache blocks
-(1 MiB when aligned), or arriving when the offload table is full, use the ordered
-worker.
+Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
-| Area | Qualified evidence | Limit |
-|---|---|---|
-| Read misses (#14) | Latest complete 24-case same-build screen: cold random 9.95×, sequential 3.13×, every cold p99 improves; no resident pair loses 3%, and resident misses/lower reads are zero | Both arms use the new pool and queue order; this isolates miss offload, not every old-driver difference |
-| Equal-work read tails | Complete 24-case, 100,000-operation comparison: cold-random p99.9 191.7 → 60.7 ms; median case maximum 271.6 → 123.5 ms; every cold pair improves | Fixed-duration maxima sample unequal amounts of work; backing-store profile and pool size were not varied |
-| Drain settings (#15) | Complete timing-off 512 MiB comparison: 12.7 → 8.0 s, every pair improves; separate cold-read/write-drain comparisons also improve | Qualifies explicit drain time, not disk-speed parity, general foreground throughput or Strict impact |
-| Short completed writes | Plan 148: all 18 provider cases, 36,873 file hashes, zero pending/disk queue and restored state | New files fitting in cache; no new native code, sustained/Strict qualification or power-loss test |
-| Experimental drain ceilings / gather | Plans 153/154 retain the earlier provider screen. Later plans 155/156 complete paired current/aligned selection: 227.95/219.98 MB/s large, 111.85/93.58 small, 12 performance cases / 24,582 hashes and bypass proofs; separate Verifier matrix passed. Aligned policy rejected/removed, diagnostics retained. | Defaults unchanged. Fresh same-session Primo is needed; current request sizes changed substantially. Strict / default Idle foreground / release qualification unrun. The Primo post-oracle path ran on Primo in plan 158; the retired-policy native build was not separately VM-exercised. |
-| Matched provider research | Plan 158: latency-matched, default 96.5 / 59.0 / 92.6 and Eager 2 MiB × 8 141.3 / 173.3 / 125.5 against Primo 120.5 / 59.9 / 126.9 MB/s. Plans 159/160 same-window A–B–A: Primo 285.5 / 70.4 / 315.8, Eager 2 MiB × 8 304.9 and 298.3 / 142.6 and 132.2 / 294.1 and 288.9, default 184.1 and 170.0 / 86.6 and 80.0; 22 runs / 233,538 hashes | Configuration, not defaults; large-file ranges overlap; sustained 7–9% behind; release/Strict qualification unrun |
-| Read during drain, provider-neutral (plan 161) | A–B–A against PrimoCache: concurrent disk reader 163 IOPS under Primo, 277–331 under Eager 2 MiB × 8 and 959–1,153 under the default, at drain rates of about 360 / 360–420 / 250 MB/s; 10 complete runs | One Ceph-backed VM; uncached Q1 reads alone were 20–35% slower than Primo's |
-| New default, same-window PrimoCache (plans 164–167) | Native 0.4.776.1, Eager 2 MiB × 8 with read-aware 2 and TRIM mode 3 as shipped. A–B–A at matched anchors: 292.4 / 90.7 MB/s against Primo 261.0 / 52.5; disk reader 757 against 170 IOPS; 12 runs, 110,619 hashes. Under Verifier: `trim-cache` 12/12, focused campaign 98/98, integrity 12,291 hashes. `release-performance` on the final build: 11/11 phases, 106/106 cases, restored (plan 171); its RAM-path rates were host-bound that day and matched by a same-window 0.4.687.1 control. Block C repeat: 301.1 / 74.9 MB/s. | One Ceph-backed VM; block C on a degraded backend; 8 GiB sustained not repeated; Strict boundaries under the new default unmeasured |
-| Read-aware limit and asynchronous TRIM (plans 162/163) | Lab switches on native 0.4.771.1. Read-aware 2 keeps a concurrent disk reader at 1,031–1,141 IOPS (p99 10–11 ms) during Eager 2 MiB × 8 drains, against 340 without it, while #15 medians stay 300.3 / 122.2 MB/s with 0 gate waits; Verifier campaign 98/98 and `trim-cache` 12/12 with both on | One Ceph-backed VM, one session; default-off; the TRIM fence's holding path is unexercised through NTFS |
-| Read/drain lock diagnostic (plan 160 repeat) | Complete 48/48 on native 0.4.766.1, one noisy standalone window remeasured: eight versus four drainers +15% drainage, disk reader 1,094 → 545 IOPS, p99 15.4 → 28.5 ms | Same Eager screen; reproduces plan 151's magnitude; read-aware limit unbuilt |
-| Read/drain lock diagnostic | Plan 151: 48 windows; at 2 MiB, eight versus four drainers raised drainage about 34% during disk reads but reduced reader IOPS 56%, p99 13.684 → 24.473 ms; global lock held about 1% | Short Eager screen with write retention off and separate pure RAM/disk paths; no Idle-default, Strict or sustained qualification. Storage scheduling is the first follow-up; a locking speedup is unproven. Exact methods, variability and excluded setup failure are in [findings](PERFORMANCE_FINDINGS.md). |
-| Correctness | Qualification includes 98 Driver Verifier checks, the 37-case concurrency matrix with 24 zero-lower-I/O RAM-only windows, and the October 14 release campaign's 11 phases / 106 cases / 93 retained correctness checks | Exact builds, loaded hashes, byte oracles, telemetry and run identities are in [performance findings](PERFORMANCE_FINDINGS.md) |
+### Correctness qualification
 
-The experimental branch now bounds drain staging at small cache budgets and
-checks the remaining allocation before unsigned subtraction. This fixes the
-source-reviewed 16 MiB underflow introduced by the larger experimental staging
-ceiling. Plan 152's fourteen small-budget Fast/Strict byte-oracle checks passed on native
-0.4.756.1 under Driver Verifier, as did the maximum-settings quick file-integrity
-smoke. Broader promotion qualification remains pending. Production 0.4.687.1 is unchanged.
+**Issues #14 / #15, plan 126:** signed 0.4.675.1 completed the focused Driver
+Verifier campaign `QueueCache-Campaign-20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`:
+six phases, 98 correctness checks, all PASS, restoration RESTORED. This includes
+12 rounds of 16 overlapping cold/partial readers, exact byte checks and a
+post-drain/drop-clean check for leaked pins. The 304-second stress window checked
+168,502 reads on V: and 224,676 on W:, cancelled 185,091 and 243,829 overlapped
+requests, exercised every chaos action at least seven times per volume, and
+created and removed 23 RAM disks. Fault and Retry passed at drain parallelism
+1, 2 and 4; the shared reservation returned exactly to its starting value.
+The native filter hash was `4EA5DCACCFFC09DB362C6BB5361764676D5090300DFE0737777142812549F744`,
+the RAM provider hash `A5510BEB87D3190739021A3A4D99BD931259831F795BED7DF86E2064415D2905`;
+Verifier flags `0x209bb` targeted both. Final performance qualification on
+0.4.687.1 was completed under plan 132; this paragraph records the older plan-126
+campaign only.
 
-The earlier same-build Defender/Search-off drain-settings repeat has no complete matrix: extra small writes
-invalidated seed/end snapshots. A failed file-handle experiment was removed in
-plan 146; its failed case never reached the byte oracle. The write source is
-untraced. Earlier accepted drain evidence remains valid within its recorded scope.
+The first non-Verifier stress attempt on 0.4.677.1 passed the 302-second busy
+window but stopped at the first Retry check with 8 KiB dirty. Between the faulted
+and retried snapshots, 16 KiB of new writes were admitted and 56 MiB plus 8 KiB
+drained; the original dirty set was 56 MiB. The fixture had not flushed lazy
+filesystem metadata around its closed handles. Plan 128 adds those filesystem
+flushes and a retained-byte drainage check, while preserving the zero-dirty,
+zero-in-flight and stable-identity requirements. The failed attempt is retained
+as incomplete (`20261013-181833-229f91cc19354cee801dd03e63e11da1`); restoration
+succeeded. The corrected plan-128 fixture completed on signed 0.4.679.1
+(`QueueCache-Campaign-20261013-225440-cf15f15164264cbcb2b63c3886f8b2c8`), all five
+checks PASS, restoration RESTORED. Its 307-second busy window checked 380,986
+reads on V: and 603,948 on W:, exercised every chaos action at least three times
+per volume and created and removed 13 RAM disks. At drain parallelism 1, 2 and 4,
+each retry drained at least the original captured dirty bytes and left zero dirty
+and in-flight bytes; every region then matched from disk after cache release.
+The shared reservation returned exactly to 2 GiB. The loaded filter hash was
+`71BB75DC99CBF6B138AC30F8448961CC17711C76138AC8D68F8E16623EAA2955`, provider
+`5236851804D9A016017C7B4145865DB8271B7E2BDC038BEB82FEBCA924083A4A`.
 
-The October 15 release repeat stopped at 8/11 phases: map-cost case 7 recorded
-six lower reads / 4,608 miss bytes in a RAM-only window, without lower writes,
-flushes, draining or driver errors. Hit-byte growth exceeded scored bytes, but
-the counters cannot identify the read source. Restoration succeeded. Separate
-unchanged map 9/9, write 72/72 and ordering/fault 8/8 follow-ups completed and
-restored; they do not turn the original campaign into a completed one.
+**Plan 120 stress suite.** `stress-races` runs both lab NTFS volumes at once:
+writers of 4 KiB, 64 KiB, 1 MiB and 4 MiB blocks and an overlapped writer/reader
+whose requests are cancelled at random, every read checked per 4 KiB sector
+against the versions written, while a chaos actor per volume flushes, resizes,
+tears down, drops clean data, slows the disk, injects transient allocation
+failures, applies refused and rolled-back settings and switches to Strict, and
+owned 2 GiB RAM disks are created and removed against the same reservation. It
+then faults each drain parallelism (1, 2, 4) with dirty data, requires reads to
+fail rather than return data, retries, and reads every byte back from disk.
 
-After sustained churn, the first Q1 reread missed entirely; the following Q8
-reread reached 99.750–99.988% hits but still made lower reads. These are sequential
-recovery stages, not independent queue-depth controls. Natural idle left
-768–897 MiB dirty with 56–70-second oldest ages: the 5-second age starts scheduling
-and cannot guarantee a drain deadline. Timing diagnostics cost about 6–10% in
-cached random writes and must match between comparisons. Product comparisons and
-CrystalDiskMark keep their own sessions; see [comparison](COMPARISON.md).
+Its first long runs found one real driver bug and three of its own: (1) **stale
+cached data after large partly cached reads** (fixed in plan 120, see
+[known issues](KNOWN_ISSUES.md#fixed-issues)): with retained writes off, a read
+over 1 MiB fetched the range from disk while the dirty version of some blocks
+finished draining, and kept those blocks from the older disk bytes. Under Driver
+Verifier this gave 38 stale reads in 90 s, always whole 256 KiB drain batches of
+an older version in 4 MiB blocks, with no unwritten (poisoned) sectors and the
+disk verified correct; it reproduced with copy flags 3, so it predates the
+bookkeeping change. After the fix, two 300 s busy windows under Verifier checked
+about 390,000 reads with no stale data. (2) A RAM churn disk was stopped with a
+generation read before its oracle was written. (3) The "refused budget" request
+was sized from the free reservation, which a concurrent RAM disk removal could
+enlarge, so the driver correctly accepted it. (4) Weighted random actions left
+rare ones out of slow Verifier windows; actions now run in shuffled rounds. Wiring
+it into campaigns also exposed three runner gaps, now fixed: restoration accepted
+deliberately raised lab-fault error counts only for `ordering-faults` (and
+`verify-recover` never did); later phases compared against the preflight baseline
+instead of the one updated after such errors; and the final capture of the backing
+volume could catch the lab image's late writes right after its drain.
+
+**Final Driver Verifier run:** the focused campaign with `stress-races`
+(`QueueCache-Campaign-20261011-214930-07f2ed10a5cf42978fbf1cc002c0db35`, signed
+0.4.601.1 drivers with the stale-read fix, runner from the final source) completed
+**6/6 phases, restored**: partial reads, paging coherence, policies, pressure,
+`stress-races` and ordering faults all PASS. Its busy window ran 312 s with
+254,894 (W:) and 182,739 (V:) verified reads, 268,875 and 198,640 cancelled
+overlapped requests, every chaos action at least three times per volume and 11
+RAM disks created and removed; fault and Retry passed at drain parallelism 1, 2
+and 4, and the shared reservation returned exactly to its start. Later builds
+change only managed code. Without Verifier on the final signed 0.4.604.1
+(`QueueCache-Campaign-20261011-221957-8b19fe05c36b4caabb02c12e5149f237`, COMPLETED,
+restored) the 306 s window checked 431,437 (W:) and 342,337 (V:) reads, cancelled
+362,277 and 308,174 overlapped requests, ran every chaos action at least seven
+times per volume and churned 23 RAM disks, with every check passing.
+
+Current: the final `release-performance` regression on 0.4.583.1 passed all 118
+retained correctness sub-checks (see the accepted change above). Earlier, the
+signed 0.4.514.1 native driver and managed `1788970` preview completed
+these maintained plan-113 scenarios on the owned NTFS lab V:. Each is an
+independent run with one outer scenario, not a combined performance matrix.
+Every inner check is PASS; no check was skipped. Raw reports, worker replies,
+native hashes, ownership/exits, control/restoration traces and exact original
+settings were inspected. Each has four successful owned-process exit records.
+
+| Suite | Inner checks | Exact run ID suffix | Runtime UTC |
+|---|---:|---|---|
+| `partial-read-accounting` | 10 | `20261010-081109-aad11964b4d8470e9573e64f19b7787a` | 08:11:09–08:11:15 |
+| `paging-coherence` | 8 | `20261010-081454-87a8b7c777be4ea19ccdc2c653758b83` | 08:14:54–08:15:07 |
+| `policies` | 42 | `20261010-081712-d0b3498f7f144372871f769fc7c0ec91` | 08:17:12–08:18:52 |
+| `pressure` | 13 | `20261010-082056-811b8c23b4c4417088273d84fdf83686` | 08:20:56–08:21:42 |
+| `ordering-faults` | 8 | `20261010-082430-0afa9979205a4ea6b2988c9ad7458685` | 08:24:30–08:24:54 |
+
+Coverage includes partial sectors, mapped/cached coherence, observed and gated
+old-write ordering, parallel pinned copies, zero-lower-I/O fitting admission,
+retention/policy variants, capacity backpressure, failed/short drains, cancellation,
+allocation retry/exhaustion, release under load and paging-write failures. The
+fault suite deliberately increments the lab error counter by three; final state
+is non-faulted, with last error zero. Other suites have zero errors. All restore
+disabled/zero-budget state, original options, no pending bytes and backoff 256.
+This qualifies retained behavior at default 256; it does not qualify a new
+request-size policy or the removed queue's lifecycle paths.
+Immutable five-run raw archive SHA-256:
+`3E475F93750E588D0A172DF09F4F5C991384B77027D763AB9CA642E789900DFD`.
+
+Final cleanup detached both owned lab VHDX files and resumed Q: runtime-only on
+its original active 2 GiB Fast/Idle configuration, with no errors or pending bytes.
+Saved profile text matches the before capture exactly; the installed tray is
+running again. Private evidence and lab files remain preserved.
+
+### Recorded verification time
+
+These selected completed runs total approximately **8 hours 38 minutes**. This
+is measured run time, not a reconstruction of all engineering work or every
+earlier investigation. Installation/restarts, CI, coding, analysis, incomplete
+attempts and inactive conversation gaps add time. The NTFS/ReFS gap from 04:54
+to 06:55 was not two hours spent executing that benchmark.
+
+| Completed run | Wall time |
+|---|---:|
+| PR #8 write matrix, 72 windows | 54 min 05 s |
+| Original partial-read accounting | 7 s |
+| RAM reference, 36 windows | 15 min 29 s |
+| RAM queue comparison, 54 windows | 22 min 37 s |
+| NTFS caller comparison, 24 windows | 19 min 31 s |
+| ReFS caller comparison, 24 windows | 20 min 08 s |
+| Complete priority retry, 36 windows | 19 min 03 s |
+| Traced priority subset, four windows | 2 min 38 s |
+| Focused churn, six episodes | 9 min 38 s |
+| Five retained-driver scenarios | 3 min 09 s |
+| Plan-114 campaign smoke, two phases | 59 s |
+| Plan-114 focused campaign, 81 correctness checks + 30 RAM windows | 17 min 21 s |
+| Controller/restoration retry smoke, two phases | 1 min 07 s |
+| Plan-116 RAM attribution, 81 correctness checks + 3 traced windows | 7 min 38 s |
+| Plan-116 cached priority/affinity, 81 correctness checks + 36 untraced windows | 25 min 02 s |
+| Plan-117 coordination diagnostic, nine windows | 4 min 33 s |
+| Plan-117 controller smoke, two phases | 1 min 18 s |
+| Wake-up smoke, two phases | 1 min 03 s |
+| Plan-118 asynchronous-read comparison, 18 windows | 8 min 50 s |
+| Plan-119 revision comparison, 18 windows | 8 min 52 s |
+| Plan-119 lifecycle checks, with / without Driver Verifier | 1 min 10 s / 55 s |
+| Final `release-performance` regression, 11 phases / 106 cases | 1 h 56 min 23 s |
+| Plan-120 cached-read attribution, 18 windows | 9 min 45 s |
+| Plan-120 RAM write reference, 36 windows | 6 min 43 s |
+| Plan-120 streaming-store comparison, 18 windows | 5 min 30 s |
+| Plan-120 read-bookkeeping comparison, 18 windows | 9 min 57 s |
+| Plan-120 Driver Verifier campaign with `stress-races`, 6 phases | 10 min 56 s |
+| Plan-120 `stress-races` without Verifier | 5 min 55 s |
+| Plan-120 final `release-performance` regression, 11 phases / 106 cases | 1 h 47 min 34 s |
+
+The original priority run's main scores total about six minutes within its nineteen-minute
+run. Preparation, residency proofs, warmup, worker/process ownership and
+restoration account for the rest. The write matrix includes explicit 45–53
+second drains between some ten-second scores. A single command removes repeated
+agent orchestration; it does not remove required disk preparation or durability
+checks. The [campaign plan](TESTING.md#3-running-tests-one-command) records phase times and
+delivers terminal events so those costs become visible without periodic agent
+polling.
+
+The latest two plan-116 campaigns together take **32 min 40 s**. The cache
+priority/affinity phase accounts for 20 min 29 s of its 25 min 02 s campaign;
+the RAM trace phase takes 2 min 40 s of its 7 min 38 s campaign. The surrounding
+policy/pressure checks, preparation and restoration explain much of the remaining
+time. Tool/bootstrap failures and engineering/CI time remain separate from these
+completed measurements.
+
+Not counted above (preserved separately; none contributes a result): the Driver
+Verifier run that bugchecked (0x3B, fixed before measurement), a Verifier run and
+a lifecycle run stopped by over-strict activation checks, one comparison refused
+at start because Q: still had unwritten data, and the first final regression,
+which stopped after 33 minutes in the sustained phase: a 197 GB resident reread
+saw six background metadata reads (4.5 KiB) on Q:, most likely the Everything
+file indexer that had restarted at sign-in. Everything and Steam were closed and
+the complete regression rerun passed. Plan 120 adds the first RAM write reference run
+(stopped by its oracle rewrite bug), 13 stress, Verifier and stale-data diagnosis
+runs that found and fixed the issues described under
+[correctness qualification](#correctness-qualification), and their recoveries.
+
+### Volume filter: boot reset on C:'s volume (found and fixed before merge)
+
+0.4.183.1 booted with the filter on Q:'s volume only, but with it on C:'s volume
+the VM reset silently a few seconds into boot (no stop screen, no dump, no event),
+with or without Driver Verifier, until Automatic Repair gave up. Recovery each
+time: the Windows recovery command prompt, loading the offline SYSTEM hive and
+restricting the filter to Q:'s volume again (`ClassCoverage` 0 and
+`LabAllowedDriverKey`).
+
+Bisected with a lab `DiagnosticMode` service value (0.4.185.1) on C:'s volume:
+pure pass-through booted; the full driver booted with the power-pageable mirror,
+dispatch paging classification and the post-start queries all disabled, and with
+each of the first two re-enabled; with only the post-start queries enabled it
+reset again. The driver sent `IOCTL_DISK_GET_LENGTH_INFO` and
+`IOCTL_DISK_GET_DRIVE_GEOMETRY` down the volume stack from its
+`IRP_MN_START_DEVICE` handler. On the disk stack that was harmless; on the boot
+volume (snapshots, BitLocker and the volume manager below) it resets the machine.
+
+Fix (0.4.187.1, `e7150b7`): the length and sector size are queried once, on first
+need, from a PASSIVE_LEVEL thread: the caller of the first QueueCache management
+request or the request worker. With it the filter covers every volume and boots.
+
+### Volume filter verification (2026-09-28)
+
+Maintained checks: `qcache developer verify <volume> --suite volumes` (registration,
+raw disk commands, shared disk, resize, snapshot) and `--suite trim-cache` on the lab
+VHDX from `qcache developer lab-disk create`; the raw `write-tests` on its unformatted
+volume; host contract tests and desktop fixture tests in CI. Results on 0.4.219.1
+(`7a18a57`) under standard Driver Verifier, VM with 16 GB:
+
+| Check | Result |
+|---|---|
+| `volumes` on V: (lab VHDX) | 5/5 PASS, including the shadow copy containing 32 MiB that were pending in RAM |
+| `volumes` on Q: (VirtIO disk) | registration, raw disk commands and snapshot PASS; shared-disk and resize SKIP by design (no lab volume there) |
+| `trim-cache` on V: | PASS (pending dropped, clean released, TRIM during a drain) |
+| `quick`, `policies`, `paging-coherence`, `ordering-faults`, `app-write-profile`, `pressure` on V: | PASS |
+| `policies` on Q: | PASS |
+| `write-tests` on X: (base, concurrent, toggle, write-through, verify) and `developer test` on V: | PASS |
+| Install over the disk filter, uninstall (drained Q:'s 2 GiB cache), restart without the filter, reinstall (profile restored at startup) | PASS (0.4.191.1 - 0.4.217.1) |
+| `Recover-Registration.ps1` on copies of the SYSTEM hive | Restores the backed-up lists; live registry untouched |
+| Desktop on the VM console | Volumes grouped by disk; live Q: card; unformatted X: shown without settings |
+| FAT32 lab disk (0.4.229.1, Driver Verifier): `volumes`, `quick`, `policies`, `paging-coherence`, `ordering-faults`, `app-write-profile`, `pressure` | PASS; snapshot SKIP (Windows takes no shadow copies of FAT), resize SKIP (Windows cannot resize FAT), `trim-cache` SKIP (FAT takes no file-level TRIM) |
+| ReFS Dev Drive lab disk (0.4.229.1, Driver Verifier): same suites plus `trim-cache` | PASS, including the snapshot and TRIM; resize SKIP (Windows cannot shrink ReFS); the caller-thread share is lower on ReFS (KNOWN_ISSUES) |
+| Saved-C:-profile restart soak (10 cycles, 512 MiB C: profile) | 10/10 PASS; paging recognition unexercised in 2 cycles (16 GB: no page-file I/O under the applied pressure) |
+| CrystalDiskMark on Q: (Verifier off, 3 runs) | SEQ1M Q8T1 36.6-37.2 / 20.6-21.4 GB/s; RND4K Q32T1 1,576-1,638 / 1,555-1,648 MB/s; RND4K Q1T1 1,230-1,328 / 1,023-1,073 MB/s: same as or faster than the disk filter |
+
+Earlier branch results (0.4.187.1): every volume boots; the C: program-file check
+passes 3/3; a 10-cycle saved-C:-profile restart soak passed 10/10 under Driver
+Verifier. CrystalDiskMark on Q: (0.4.183.1): SEQ1M Q8T1 about 36/21.6 GB/s, RND4K
+Q32T1 about 1,570/1,630 MB/s, RND4K Q1T1 about 1,340/1,030 MB/s (disk filter:
+36.5/21.3 GB/s, 1,550/1,310, 1,010/855).
+
+The volume suites found six defects that the disk-level suites could not (boot reset,
+resize, two shadow-copy problems, removal of a cache on an unformatted volume, and a
+restoration RAM wait); all are fixed and each has a maintained check
+([known issues](KNOWN_ISSUES.md)).
 
 ## Fixed issues
 

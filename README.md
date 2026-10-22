@@ -75,10 +75,8 @@ machine's physical RAM.
 ## Performance
 
 [CrystalDiskMark](https://crystalmark.info/en/software/crystaldiskmark/) 9.0.3,
-default test (1 GiB, 5 passes), the better of two clean runs per column. Both Q:
-columns: QueueCache 0.4.687.1 (2026-10-15 UTC), Defender/Search disabled; Fast with that
-release's Idle drain, 1024 KiB batches and four drainers. New caches now default to
-Eager draining with 2 MiB batches and eight drainers. RAM disk: QueueCache 0.4.583.1 (2026-10-11).
+default test (1 GiB, 5 passes), on the test machine below. The cache columns were
+measured with QueueCache 0.4.687.1, the RAM disk with 0.4.583.1.
 
 | Test machine | |
 |---|---|
@@ -98,45 +96,18 @@ Eager draining with 2 MiB batches and eight drainers. RAM disk: QueueCache 0.4.5
 | Random 4K read (RND4K Q1T1) | 19.4 | 1,306 | 1,657 |
 | Random 4K write (RND4K Q1T1) | 5.1 | 1,095 | 1,310 |
 
-The test file fits in RAM, so this shows what QueueCache does for data already
-in its cache; Fast writes can finish before reaching the disk. The paused
-control retains QueueCache's loaded filter. The issue-fix checks below use
-separate workloads.
-Ordinary misses spanning at most 256 cache blocks can overlap. A same-build
-comparison with Defender/Search disabled measured 9.95× cold random and 3.13×
-cold sequential throughput, better p99 and no repeated resident-control loss.
-A separate equal-work test improved cold-random p99.9 from 192 to 61 ms and the
-median case maximum from 272 to 124 ms
-([results, controls and limits](docs/PERFORMANCE_FINDINGS.md#competitor-comparison-three-cache-weaknesses-plan-121-2026-10-13)).
-The drive's speed on this shared network storage varies; both Q: columns are
-measured in one session, without a restart in between. The RAM disk
-column was re-measured after RAM-disk reads became asynchronous: one program
-with eight reads queued now keeps every processor copying (SEQ1M Q8T1 read was
-25,353 MB/s before).
-[How these were measured](docs/TESTING.md#7-readme-benchmark-crystaldiskmark).
+The test file fits in RAM, so this shows what QueueCache does for data that is
+already in its cache: reads come from RAM, and in Fast mode writes finish before
+they reach the disk. "Cache paused" is the same drive with QueueCache installed
+but not caching. How much of this you see depends on your disk and your programs:
+data that is not in RAM yet still comes from the disk, and once a long write has
+filled the cache it continues at the disk's own speed. New caches write their data
+to the disk while programs are still writing, so large copies and many small files
+reach the disk sooner.
 
-**Writes including the final drain (2026-10-21).** One evening on the same VM, with
-Defender/Search disabled: QueueCache with the new drain default (Eager, 2 MiB batches,
-eight drainers, at most two while programs read from the disk), then PrimoCache 4.4.1
-with QueueCache uninstalled. Both workloads fit the 2 GiB caches; the scores include
-file creation, all writes, the filesystem flush and the explicit drain, with every file
-hash checked after pausing the cache. The paused-disk column measures the backing disk
-in the same window.
-
-| Completed writes, MB/s (median of 6) | Disk, cache paused | QueueCache Fast | PrimoCache Defer-Write |
-|---|---:|---:|---:|
-| One new 1 GiB file, 1 MiB Q4 | 95.9 | 292.4 | 261.0 |
-| 4,096 new 64 KiB files, 4 KiB writes | 6.5 | 90.7 | 52.5 |
-
-While each cache drained a sustained write, a 4 KiB disk reader got 757 IOPS with
-QueueCache and 170 with PrimoCache. A third block, QueueCache again after a rollback,
-ran on a slower backend; its results, the ranges and the method are in the
-[comparison details](docs/COMPARISON_DETAILS.md#the-new-default-against-primocache-2026-10-21).
-These are unbuffered virtual-disk measurements; ordinary buffered copies and
-larger-than-cache workloads can behave differently.
-
-How QueueCache compares with other RAM disks and RAM caches on the same machine,
-including where it is slower: [comparison](docs/COMPARISON.md).
+Every other measurement, and the reasons behind the defaults, are in
+[performance](docs/PERFORMANCE.md). How QueueCache compares with other RAM disks
+and RAM caches, including where it is slower: [comparison](docs/COMPARISON.md).
 
 ## Getting started
 
@@ -172,7 +143,8 @@ QueueCache is young and not battle-tested. It runs as a driver in Windows'
 storage stack, so a bug can crash Windows or damage data. In Fast mode and on
 RAM disks, data that is only in RAM is lost when Windows crashes or the power
 fails. Keep backups, start with data you can afford to lose, and use it at your
-own risk.
+own risk. What is known to be limited or not yet tested is listed in
+[known issues](docs/KNOWN_ISSUES.md).
 
 ## For developers
 

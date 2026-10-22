@@ -285,7 +285,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool driverTiming;
     [ObservableProperty] private bool callerPath;
 
-    /// <summary>What timing costs, measured on the lab VM (docs/DESKTOP_UI.md).</summary>
+    /// <summary>What timing costs, measured on the lab VM (docs/DEVELOPMENT.md, Desktop app).</summary>
     public string DriverTimingDescription { get; } = "Measures how long every read and write takes inside the cache and RAM disk drivers. " +
         "The figures appear on each cache and virtual disk, and on the Diagnostics page. Applies while QueueCache runs. " +
         "Measured cost while on: small random writes into a cache's RAM up to 12% slower, small random reads from a RAM disk up to 8% slower, " +

@@ -6,13 +6,17 @@
 - `docs/TESTING.md`: how to test (host tests, the VM, one-command campaigns,
   suites, reading results, judging a performance change, the README benchmark).
   Follow it for every verification run.
-- `docs/PERFORMANCE_FINDINGS.md`: read it before any performance investigation and
-  update it when a result changes a decision. Do not rerun an established
-  experiment merely because its finding was forgotten (its decisions table says
-  when to reopen); repeat relevant regressions when code, environment or
-  measurement contracts change.
-- `docs/KNOWN_ISSUES.md`: current limitations and verification gaps; it ships with
-  the installer. Update it when you fix or find an issue.
+- `docs/PERFORMANCE.md`: decisions first, then every performance result. Read it
+  before any performance investigation and update it when a result changes a
+  decision. Do not rerun an established experiment merely because its finding was
+  forgotten (its decisions table says when to reopen); repeat relevant regressions
+  when code, environment or measurement contracts change.
+- `docs/KNOWN_ISSUES.md`: stability and bugs (every issue with its status, gaps,
+  the correctness verification record, fixed issues); it ships with the installer.
+  Update it when you fix or find an issue.
+- `docs/COMPARISON.md`: other products. Name competing products only there and in
+  `docs/PERFORMANCE.md`. The README is for users: what QueueCache does and how to
+  use it, not test reports.
 - `docs/history/`: dated reports and the former tracker, not maintained. Add a
   report there only when it records evidence worth keeping; delete completed plans
   and handovers instead (Git keeps them). Update existing documents rather than
