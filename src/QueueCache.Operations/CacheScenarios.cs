@@ -169,6 +169,7 @@ public static class CacheScenarios
             CreateUnsplit(paths[writer], ParallelBlockBytes, target.Root, label, path =>
             {
                 using var file = new AlignedFile(path, ParallelBlockBytes, create: true);
+                file.Reserve((long)ParallelBlocks * ParallelBlockBytes);
                 for (var block = 0; block < ParallelBlocks; block++)
                     file.Write((long)block * ParallelBlockBytes, ParallelPattern(writer, 0, block));
             });
@@ -274,8 +275,9 @@ public static class CacheScenarios
     /// <summary>Creates <paramref name="path"/> so that no extent boundary falls inside one of its
     /// <paramref name="requestBytes"/> requests. A request crossing one reaches the volume as several, and nothing
     /// below the file system makes those atomic or keeps them on one thread (plan 165: a fragmented lab volume
-    /// produced torn 1 MiB reads at an extent boundary). A file that stays split fails the check rather than
-    /// weakening it.</summary>
+    /// produced torn 1 MiB reads at an extent boundary). Callers reserve the file's whole allocation before
+    /// writing (plan 170): a file grown request by request could fill a gap left by the run's own earlier files and
+    /// split there on every attempt. A file that stays split fails the check rather than weakening it.</summary>
     private static void CreateUnsplit(string path, int requestBytes, string root, string label, Action<string> create)
     {
         for (var attempt = 1; ; attempt++)
@@ -522,6 +524,7 @@ public static class CacheScenarios
         CreateUnsplit(hotPath, transferBytes, target.Root, label, path =>
         {
             using var create = new AlignedFile(path, transferBytes, true);
+            create.Reserve((long)blocks.Length * transferBytes);
             for (var index = 0; index < blocks.Length; index++)
                 create.Write((long)index * transferBytes, blocks[index]);
         });

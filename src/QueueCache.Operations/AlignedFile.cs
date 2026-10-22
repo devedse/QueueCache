@@ -44,6 +44,13 @@ internal sealed class AlignedFile : IDisposable
             throw new Win32Exception(error);
         }
     }
+    /// <summary>Allocates the file's clusters up front, leaving its end of file unchanged, so NTFS places them in one
+    /// run when it can instead of growing the file into whatever gap follows its first clusters.</summary>
+    public void Reserve(long bytes)
+    {
+        if (!SetFileInformationByHandle(handle, 5 /* FileAllocationInfo */, ref bytes, sizeof(long)))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
     /// <summary>The native transfer buffer (tests that modify it while a read is in flight).</summary>
     internal IntPtr TransferBuffer => memory;
     public void Write(long offset, byte[] data)
@@ -116,6 +123,9 @@ internal sealed class AlignedFile : IDisposable
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref long information, uint bytes);
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFilePointerEx(SafeFileHandle handle, long distance, out long position, uint method);
