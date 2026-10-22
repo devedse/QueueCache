@@ -26,7 +26,7 @@ ManagedLifecycleTests.Run();
 
 // Dependency-free protocol regression checks. No driver or disk writes required.
 var perfWire = new byte[CachePerformance.WireSize];
-BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(perfWire, 5);
 BinaryPrimitives.WriteUInt32LittleEndian(perfWire.AsSpan(4), CachePerformance.WireSize);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8), 10_000_000);
 BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 8), 2);
@@ -36,6 +36,30 @@ BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(8 + 8 * 52), 103);
 var perf = CachePerformance.Decode(perfWire);
 Check(perf.PhaseName == "Waiting for write capacity" && perf.Milliseconds(10_000) == 1, "performance wire phase and QPC conversion");
 Check(perf.DrainSelectionTicks == 101 && perf.DrainCopyTicks == 102 && perf.DrainRetirementTicks == 103, "performance v3 drain phase timings");
+for (var i = 0; i < 10; i++) BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(432 + i * 8), (ulong)(201 + i));
+var batchPerf = CachePerformance.Decode(perfWire);
+Check(batchPerf.DrainEndLimit == 201 && batchPerf.DrainEndGap == 202 && batchPerf.DrainEndInFlight == 203 &&
+    batchPerf.DrainEndFilling == 204 && batchPerf.DrainEndPartial == 205 && batchPerf.DrainEndFence == 206 &&
+    batchPerf.DrainPartialAnchor == 207 && batchPerf.DrainSizeSmall == 208 && batchPerf.DrainSizeMedium == 209 &&
+    batchPerf.DrainSizeLarge == 210, "performance v4 batch reasons and size buckets retain their wire offsets");
+var v4PerfWire = perfWire[..CachePerformance.V4WireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(v4PerfWire, 4);
+BinaryPrimitives.WriteUInt32LittleEndian(v4PerfWire.AsSpan(4), CachePerformance.V4WireSize);
+Check(CachePerformance.Decode(v4PerfWire).DrainGatherPolicy is null && CachePerformance.Decode(v4PerfWire).DrainEndGap == 202,
+    "V4 callers retain batch counters and distinguish unavailable gather diagnostics");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 1);
+for (var i = 1; i < 13; i++) BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512 + i * 8), (ulong)(300 + i));
+var gatherPerf = CachePerformance.Decode(perfWire);
+Check(gatherPerf.DrainGatherPolicy == 1 && gatherPerf.DrainGapCleanFull == 301 && gatherPerf.DrainGapAbsent == 303 &&
+    gatherPerf.DrainBackLimit == 304 && gatherPerf.DrainBackAligned == 311 && gatherPerf.DrainGapFilling == 312, "V5 gather/gap/backward counters preserve offsets");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 2);
+Reject(() => CachePerformance.Decode(perfWire), "reject unsupported gather policy");
+BinaryPrimitives.WriteUInt64LittleEndian(perfWire.AsSpan(512), 0);
+var v3PerfWire = perfWire[..CachePerformance.V3WireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire, 3);
+BinaryPrimitives.WriteUInt32LittleEndian(v3PerfWire.AsSpan(4), CachePerformance.V3WireSize);
+Check(CachePerformance.Decode(v3PerfWire).DrainEndGap is null && CachePerformance.Decode(v3PerfWire).DrainRetirementTicks == 103,
+    "older drivers distinguish unavailable batch evidence from a measured zero");
 var v2PerfWire = perfWire[..CachePerformance.V2WireSize];
 BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire, 2);
 BinaryPrimitives.WriteUInt32LittleEndian(v2PerfWire.AsSpan(4), CachePerformance.V2WireSize);
@@ -60,8 +84,8 @@ var s = CacheStatistics.Decode(data);
 var alphaDefault = new CacheConfiguration();
 alphaDefault.Validate(true);
 Check(alphaDefault.Preset == CachePreset.Fast && alphaDefault.Enabled && alphaDefault.Options == new CacheOptions(
-    Drain: DrainAlgorithm.Idle, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
-    IdleMs: 250, BatchKiB: 1024, Parallelism: 4), "new task uses explicit Fast/Idle defaults (1024 KiB x 4 drain since plan 125)");
+    Drain: DrainAlgorithm.Eager, LowPercent: 40, HighPercent: 80, MaxDirtyAgeMs: 5000,
+    IdleMs: 250, BatchKiB: 2048, Parallelism: 8), "new task uses explicit Fast/Eager defaults (2048 KiB x 8 drain since plan 164; Idle 1024 KiB x 4 from plan 125)");
 foreach (var allocation in Enum.GetValues<CacheAllocation>())
     foreach (var algorithm in Enum.GetValues<DrainAlgorithm>())
         foreach (var share in new[] { 0, 50, 100 })
@@ -72,7 +96,10 @@ foreach (var allocation in Enum.GetValues<CacheAllocation>())
 Reject(() => new CacheOptions(WritePercent: 101).Validate(), "invalid share");
 Reject(() => new CacheOptions(LowPercent: 90, HighPercent: 80).Validate(), "inverted watermarks");
 Reject(() => new CacheOptions(BatchKiB: 7).Validate(), "unaligned batch");
-Reject(() => new CacheOptions(Parallelism: 5).Validate(), "unbounded parallelism");
+Check(CacheOptions.Decode(new CacheOptions(Drain: DrainAlgorithm.Idle, BatchKiB: 1024, Parallelism: 4).Encode()) ==
+    new CacheOptions(Drain: DrainAlgorithm.Idle, BatchKiB: 1024, Parallelism: 4), "earlier Idle 1 MiB / four-drainer default wire roundtrip");
+Reject(() => new CacheOptions(Parallelism: 9).Validate(), "unbounded parallelism");
+Reject(() => new CacheOptions(BatchKiB: 2052).Validate(), "batch above the 2 MiB ceiling");
 Reject(() => new CacheOptions(MaxDirtyAgeMs: 0).Validate(), "invalid age");
 var deferredHour = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000);
 Check(CacheOptions.Decode(deferredHour.Encode()) == deferredHour, "deferred one-hour wire roundtrip");
@@ -226,15 +253,66 @@ RejectIo(() => profile.CheckIdentity("other-disk", volumeGuid, 150L << 30), "res
 Check(VolumeIds.Parse(@"\\?\Volume{0E0C7F9E-1C1B-4C7E-8D7A-1F9F2A3B4C5D}\") == volumeGuid, "volume GUID parsed from the mount-manager name, lowercase");
 foreach (var invalid in new[] { @"\\?\Volume{0e0c7f9e}\", @"\\.\Q:", @"\\?\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}", "" })
     RejectIo(() => VolumeIds.Parse(invalid), "reject malformed volume name " + invalid);
-var inventory = VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"Games","FileSystem":"NTFS","Bytes":161061273600,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false},{"Volume":"R:","Label":"","FileSystem":"","Bytes":53687091200,"VolumePath":"\\\\?\\Volume{00000000-0000-0000-0000-000000000002}\\","DiskNumber":1,"DiskName":"Test disk","Instance":"test","DiskBytes":214748364800,"IsBoot":false,"IsSystem":false,"IsPaging":false}]""");
+// Native storage inventory: the derivations behind the volume list, the disk list and cache targets.
+StorageVolume TestVolume(int n, string? letter, string fs, bool fixedDrive, params StorageExtent[] extents) =>
+    new($@"\\?\Volume{{00000000-0000-0000-0000-00000000000{n}}}\", letter, "", fs, fixedDrive, extents);
+var qVolume = new StorageVolume($@"\\?\Volume{volumeGuid}\", "Q:", "Games", "NTFS", true, [new(1, 1 << 20, 161061273600)]);
+var rVolume = TestVolume(2, "R:", "", true, new StorageExtent(1, 161062322176, 53687091200));
+var testDisk = new StorageDisk(1, "Test disk", 214748364800, "test", 2, false, false);
+var inventory = VolumeCatalog.Validate(new StorageInventory([testDisk], [rVolume, qVolume], null, null, []).LetteredVolumes());
+var windows = TestVolume(3, "C:", "NTFS", true, new StorageExtent(0, 101 << 20, 400L << 30));
+var esp = TestVolume(4, null, "FAT32", true, new StorageExtent(0, 1 << 20, 100 << 20));
+var machine = new StorageInventory([testDisk, new StorageDisk(0, "Boot disk", 500L << 30, "boot", 4, false, false)],
+    [qVolume, rVolume, windows, esp, TestVolume(5, "E:", "UDF", false), TestVolume(6, "S:", "NTFS", true, new StorageExtent(1, 1L << 40, 1 << 30), new StorageExtent(0, 1L << 39, 1 << 30))],
+    windows.Path.ToUpperInvariant(), esp.Path, [windows.Path, rVolume.Path]);
+var lettered = machine.LetteredVolumes();
+Check(string.Join(",", lettered.Select(v => v.Volume)) == "C:,Q:,R:", "the volume list keeps lettered fixed single-range volumes by letter, not CDs, spanned or unlettered volumes");
+Check(lettered[0] is { IsBoot: true, IsSystem: false, IsPaging: true, DiskNumber: 0, DiskName: "Boot disk", Instance: "boot" } &&
+    lettered[1] is { IsBoot: false, IsSystem: false, IsPaging: false, Bytes: 161061273600, DiskBytes: 214748364800 } && lettered[2].IsPaging,
+    "a volume's role flags are its own: it holds Windows, is the system partition or holds a page file");
+var diskList = machine.DiskList();
+Check(diskList.Select(d => d.Number).SequenceEqual([0, 1]) && diskList[0] is { IsBoot: true, IsSystem: true, IsPaging: true, PartitionCount: 4 } &&
+    diskList[0].Volumes.SequenceEqual(["C:"]) && diskList[1] is { IsBoot: false, IsSystem: false, IsPaging: true } &&
+    diskList[1].Volumes.SequenceEqual(["Q:", "R:"]), "the disk list orders disks and their lettered volumes, with the roles of every volume on the disk");
+Check(machine.DiskOf('q') is ({ Number: 1 }, false, false, true) && machine.DiskOf('C') is ({ Number: 0 }, true, true, true),
+    "a cache target carries its disk's role flags");
+RejectIo(() => machine.DiskOf('S'), "a cache target on more than one disk range is refused");
+RejectIo(() => machine.DiskOf('Z'), "a cache target needs a mounted volume");
+RejectIo(() => (machine with { Disks = [testDisk, testDisk] }).LetteredVolumes(), "a disk number listed twice is refused");
+Check((machine with { Disks = [testDisk] }).LetteredVolumes().Select(v => v.Volume).SequenceEqual(["Q:", "R:"]), "a volume on an unlisted disk is left out");
+var gptLayout = new byte[48 + 144 * 3];
+BinaryPrimitives.WriteUInt32LittleEndian(gptLayout, 1);
+BinaryPrimitives.WriteUInt32LittleEndian(gptLayout.AsSpan(4), 3);
+new Guid("c12a7328-f81f-11d2-ba4b-00a0c93ec93b").TryWriteBytes(gptLayout.AsSpan(48 + 32));
+new Guid("e3c9e316-0b5c-4db8-817d-f92df00215ae").TryWriteBytes(gptLayout.AsSpan(48 + 144 + 32));
+new Guid("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7").TryWriteBytes(gptLayout.AsSpan(48 + 288 + 32));
+var mbrLayout = new byte[48 + 144 * 4];
+BinaryPrimitives.WriteUInt32LittleEndian(mbrLayout.AsSpan(4), 4);
+mbrLayout[48 + 32] = 7;
+mbrLayout[48 + 144 * 2 + 32] = 0x0c;
+Check(StorageInventory.PartitionCount(gptLayout) == 2 && StorageInventory.PartitionCount(mbrLayout) == 2 && StorageInventory.PartitionCount(null) == 0 &&
+    StorageInventory.PartitionCount(gptLayout[..^144]) == 1, "partition counts leave out the GPT reserved partition and unused MBR slots, and stay within the reply");
+var extentReply = new byte[8 + 24 * 2];
+BinaryPrimitives.WriteUInt32LittleEndian(extentReply, 2);
+BinaryPrimitives.WriteInt32LittleEndian(extentReply.AsSpan(8), 3);
+BinaryPrimitives.WriteInt64LittleEndian(extentReply.AsSpan(16), 1 << 20);
+BinaryPrimitives.WriteInt64LittleEndian(extentReply.AsSpan(24), 5L << 30);
+BinaryPrimitives.WriteInt32LittleEndian(extentReply.AsSpan(32), 4);
+Check(StorageInventory.Extents(extentReply) is [{ Disk: 3, Start: 1 << 20, Length: 5L << 30 }, { Disk: 4 }] && StorageInventory.Extents(null).Count == 0 &&
+    StorageInventory.Extents(extentReply[..32]).Count == 1, "volume disk extents are read within the reply");
+Check(StorageInventory.PageFilePath(@"\??\C:\pagefile.sys") == @"C:\pagefile.sys" && StorageInventory.PageFilePath(@"D:\swapfile.sys") == @"D:\swapfile.sys",
+    "kernel page file names become Win32 paths");
+Check(StorageInventory.DosName(qVolume.Path) == $"Volume{volumeGuid}", "QueryDosDevice gets the volume GUID name");
 Check(FileSystems.IsMounted("NTFS") && FileSystems.IsMounted("ReFS") && FileSystems.IsMounted("FAT32") && FileSystems.IsMounted("exFAT") &&
     !FileSystems.IsMounted("RAW") && !FileSystems.IsMounted("") && !FileSystems.IsMounted(null), "any mounted file system can be cached; RAW cannot");
 Check(FileSystems.IsJournaled("NTFS") && FileSystems.IsJournaled("refs") && !FileSystems.IsJournaled("FAT32") && !FileSystems.IsJournaled("exFAT"),
     "FAT32 and exFAT are flagged as unjournaled");
 Check(inventory.Count == 2 && inventory[0].VolumeId == volumeGuid && inventory[0].HasFileSystem && !inventory[1].HasFileSystem, "volume inventory keeps each volume on a shared disk");
 Check(inventory[0].Display.Contains("Q: Games") && inventory[0].Display.Contains("disk 1") && inventory[1].Display.Contains("RAW"), "volume label names the volume, file system and disk");
-RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:","Label":"","FileSystem":"NTFS","Bytes":300,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume larger than its disk is refused");
-RejectIo(() => VolumeCatalog.Parse("""[{"Volume":"Q:\\","Label":"","FileSystem":"NTFS","Bytes":100,"VolumePath":"\\\\?\\Volume{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}\\","DiskNumber":1,"DiskName":"d","Instance":"test","DiskBytes":200,"IsBoot":false,"IsSystem":false,"IsPaging":false}]"""), "a volume must be a letter");
+var validVolume = inventory[0];
+RejectIo(() => VolumeCatalog.Validate([validVolume with { Bytes = 300, DiskBytes = 200 }]), "a volume larger than its disk is refused");
+RejectIo(() => VolumeCatalog.Validate([validVolume with { Volume = @"Q:\" }]), "a volume must be a letter");
+RejectIo(() => VolumeCatalog.Validate([validVolume with { Instance = "" }]), "a volume needs its disk's device instance");
 // The supported registration: topmost Volume-class filter, not on the disk class, every volume, no lab switches.
 var registration = new FilterRegistration(true, true, ["volsnap", "qcachelab"], ["partmgr"], "unconfigured", 0);
 Check(registration.Problems().Count == 0, "topmost volume registration is healthy");
@@ -584,6 +662,19 @@ Check(callerAfter.Since(callerBefore) == new CacheCallerRouting(16, 20, 1, 2, 3,
 Reject(() => (callerAfter with { Backoff = 0 }).Since(callerBefore), "caller delta requires unchanged backoff");
 Reject(() => (callerAfter with { Controls = 0 }).Since(callerBefore), "caller counter reset rejected");
 Reject(() => (callerAfter with { Candidates = 11 }).Since(callerBefore), "quiescent declines cannot exceed candidates");
+var drainPriorityBytes = new byte[CacheDiagnostics.DrainPriorityWireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(drainPriorityBytes, 24);
+BinaryPrimitives.WriteUInt32LittleEndian(drainPriorityBytes.AsSpan(4), CacheDiagnostics.DrainPriorityWireSize);
+foreach (var (offset, value) in new[] { (0, 2UL), (8, 41UL), (16, 3UL), (24, 200UL), (32, 198UL), (40, 2UL) })
+    BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize + offset), value);
+Check(CacheDiagnostics.Decode(drainPriorityBytes).DrainPriority == new CacheDrainPriority(2, 41, 3, 200, 198, 2) &&
+    CacheDiagnostics.Decode(callerRoutingBytes).DrainPriority is null,
+    "V24 diagnostics report the read-aware limit, TRIM mode and their counters; V23 reports none");
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 9);
+Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "read-aware limit above eight drainers rejected");
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 2);
+BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize + 16), 8);
+Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "unknown TRIM mode bits rejected");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

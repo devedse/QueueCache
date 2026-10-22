@@ -41,6 +41,30 @@ public sealed record TelemetrySnapshot(DateTimeOffset Utc, double ElapsedSeconds
 public static class VerificationWorker
 {
     public const string NotCleanMessage = "Start with a clean cache; drain your workload first.";
+    public static TimeSpan CleanWaitLimit { get; set; } = TimeSpan.FromSeconds(15);
+    public static TimeSpan CleanWaitInterval { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>Background writes to the volume (a lab image's file system stored on it, Windows' own metadata) can
+    /// leave a few pending bytes at any instant while the cache policy drains them. A clean-cache capture waits,
+    /// bounded, for the policy to drain them on its own (plan 171). It never drains; a fault stops it at once, and
+    /// a cache that stays dirty is refused as before.</summary>
+    public static async Task<WriteCacheState> AwaitCleanAsync(WriteCacheState state, Func<WriteCacheState> read,
+        Action<WriteCacheState> healthy, Action<TimeSpan> waited)
+    {
+        if (state.DirtyBytes == 0)
+            return state;
+        var timer = Stopwatch.StartNew();
+        while (state.DirtyBytes != 0)
+        {
+            if (timer.Elapsed >= CleanWaitLimit)
+                throw new IOException(NotCleanMessage);
+            await Task.Delay(CleanWaitInterval);
+            state = read();
+            healthy(state);
+        }
+        waited(timer.Elapsed);
+        return state;
+    }
     public static void ValidateFileTarget(DiskTarget target, DiskDescription inventory)
     {
         if (inventory.IsBoot || inventory.IsSystem || inventory.IsPaging)
@@ -732,8 +756,9 @@ public static class VerificationWorker
                 ConfigurationManager.EnsureHealthy(state);
                 if (!state.SupportsPerformance || !state.SupportsReadWrite || !state.SupportsDropClean)
                     throw new NotSupportedException("Verification requires the current cache/performance protocol.");
-                if (state.DirtyBytes != 0 && job.Operation != "campaign-prepare")
-                    throw new IOException(NotCleanMessage);
+                if (job.Operation != "campaign-prepare")
+                    state = await AwaitCleanAsync(state, device.GetWriteCacheState, ConfigurationManager.EnsureHealthy,
+                        waited => Stage(FormattableString.Invariant($"pending background writes drained on their own after {waited.TotalSeconds:F1} s")));
                 var capturedDiagnostics = device.GetDiagnostics();
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, capturedDiagnostics.ReadRecall?.Mode,
@@ -1000,12 +1025,17 @@ public static class VerificationWorker
                     ReportFailures(report.Checks, Console.Error);
                 return report.Passed ? 0 : 1;
             case "policies":
-                var checks = await CacheScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
+                var checks = await CacheScenarios.RunAsync(target, new Progress<string>(Console.WriteLine), workDirectory: job.WorkDirectory);
                 RunStorage.AtomicJson(job.Reply, checks);
                 ReportFailures(checks, Console.Error);
                 if (checks.Count == 0)
                     Console.Error.WriteLine("Policy suite returned no checks.");
                 return checks.Count > 0 && checks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "cache-allocation":
+                var allocationChecks = CacheAllocationScenarios.Run(target, device, job.WorkDirectory!);
+                RunStorage.AtomicJson(job.Reply, allocationChecks);
+                ReportFailures(allocationChecks, Console.Error);
+                return allocationChecks.Count == 14 && allocationChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "paging-coherence":
                 var pagingChecks = PagingCoherenceScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, pagingChecks);
@@ -1032,6 +1062,11 @@ public static class VerificationWorker
             case "ram-read-cleanup":
                 await RamReadReferenceScenarios.CleanupAsync(device, job.OraclePath!, job.Reply);
                 return 0;
+            case "parallel-copies-2048" or "parallel-copies-1024":
+                var copyChecks = CacheScenarios.RunParallelCopiesOnly(target, job.Seconds, job.Operation.EndsWith("2048", StringComparison.Ordinal) ? 2048 : 1024, job.WorkDirectory);
+                RunStorage.AtomicJson(job.Reply, copyChecks);
+                ReportFailures(copyChecks, Console.Error);
+                return copyChecks.Count > 0 && copyChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "app-write-profile":
                 var profileChecks = AppWriteProfileScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, profileChecks);
@@ -1061,7 +1096,7 @@ public static class VerificationWorker
                 ReportFailures(stressChecks, Console.Error);
                 return stressChecks.Count > 0 && stressChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "pressure":
-                var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine));
+                var pressureChecks = await PressureScenarios.RunAsync(target, new Progress<string>(Console.WriteLine), workDirectory: job.WorkDirectory);
                 RunStorage.AtomicJson(job.Reply, pressureChecks);
                 ReportFailures(pressureChecks, Console.Error);
                 if (pressureChecks.Count == 0)

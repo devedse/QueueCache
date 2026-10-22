@@ -92,7 +92,7 @@ internal static class ComparisonScenarios
         var product = job.Product ?? throw new ArgumentException("Comparisons require --product.");
         var queueCache = LoadedDriverInspection.Capture();
         if (!queueCache.Available) throw new IOException("Loaded drivers could not be observed: " + queueCache.Error);
-        var isQueueCache = job.Provider is { } provider ? provider == ComparisonProvider.QueueCache :
+        var isQueueCache = job.Provider is { } provider ? ComparisonDrain.Product(provider) == ComparisonProvider.QueueCache :
             product.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase);
         if (isQueueCache != queueCache.Modules.Count > 0)
             throw new IOException(isQueueCache ? "The product is QueueCache, but no QueueCache driver is loaded."
@@ -100,7 +100,7 @@ internal static class ComparisonScenarios
         RunStorage.AtomicJson(evidence + ".environment.json", CaptureEnvironment(target, product, queueCache));
         var plan = ComparisonPlan.CasesFor(job.Operation, job.ReferenceRepeats);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);
-        if (job.Operation == "compare-drain")
+        if (ComparisonDrain.IsSuite(job.Operation))
             return await ComparisonDrainScenarios.RunAsync(job, target, plan);
         var work = job.WorkDirectory;
         if (work is not null) Directory.CreateDirectory(work);

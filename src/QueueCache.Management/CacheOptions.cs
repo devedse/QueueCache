@@ -28,8 +28,8 @@ public enum DrainAlgorithm
 /// <see cref="BatchKiB"/> and <see cref="Parallelism"/> describe how a drain is issued and apply to every algorithm;
 /// the watermark/age/idle settings are algorithm-specific as documented on <see cref="DrainAlgorithm"/>.</summary>
 public sealed record CacheOptions(CacheAllocation Allocation = CacheAllocation.Automatic, int WritePercent = 50,
-    bool RetainWrites = true, bool PromoteOnRead = true, DrainAlgorithm Drain = DrainAlgorithm.Idle,
-    int LowPercent = 40, int HighPercent = 80, int MaxDirtyAgeMs = 5000, int IdleMs = 250, int BatchKiB = 1024, int Parallelism = 4)
+    bool RetainWrites = true, bool PromoteOnRead = true, DrainAlgorithm Drain = DrainAlgorithm.Eager,
+    int LowPercent = 40, int HighPercent = 80, int MaxDirtyAgeMs = 5000, int IdleMs = 250, int BatchKiB = 2048, int Parallelism = 8)
 {
     public const int WireSize = 48;
 
@@ -48,10 +48,10 @@ public sealed record CacheOptions(CacheAllocation Allocation = CacheAllocation.A
             throw new ArgumentException("Watermarks require 0 <= low < high <= 100.");
         if (MaxDirtyAgeMs is < 10 or > 3600000 || IdleMs is < 10 or > 60000)
             throw new ArgumentException("Dirty age must be 10..3600000 ms; idle interval 10..60000 ms.");
-        if (BatchKiB is < 4 or > 1024 || BatchKiB % 4 != 0)
-            throw new ArgumentException("Drain batch must be 4..1024 KiB, in multiples of 4.");
-        if (Parallelism is < 1 or > 4)
-            throw new ArgumentException("Drain parallelism must be 1..4.");
+        if (BatchKiB is < 4 or > 2048 || BatchKiB % 4 != 0)
+            throw new ArgumentException("Drain batch must be 4..2048 KiB, in multiples of 4.");
+        if (Parallelism is < 1 or > 8)
+            throw new ArgumentException("Drain parallelism must be 1..8.");
     }
     public byte[] Encode()
     {

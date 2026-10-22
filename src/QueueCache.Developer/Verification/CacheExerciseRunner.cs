@@ -78,7 +78,8 @@ public sealed partial class VerificationRunner
             {
                 Configuration = new CacheConfiguration(options.BudgetMiB, CachePreset.Fast, true)
                 {
-                    Options = new CacheOptions(Drain: scenario.BackgroundDrain ? sustained ? DrainAlgorithm.Idle : DrainAlgorithm.Eager : DrainAlgorithm.Deferred,
+                    // Sustained use runs the product default drain (Eager since plan 164, Idle before).
+                    Options = new CacheOptions(Drain: scenario.BackgroundDrain ? sustained ? new CacheOptions().Drain : DrainAlgorithm.Eager : DrainAlgorithm.Deferred,
                         HighPercent: scenario.BackgroundDrain ? 80 : 100, MaxDirtyAgeMs: scenario.BackgroundDrain ? 5000 : 3600000)
                 }
             }, token, 300);

@@ -4,7 +4,7 @@ Dated investigation reports, the former implementation tracker and earlier desig
 records. They are kept for their measurements and reasoning and are **not
 maintained**: statements about "current" code, versions or plans refer to the date
 of each document. Current behavior is described in the documents one level up;
-current decisions are in [performance findings](../PERFORMANCE_FINDINGS.md) and
+current decisions are in [performance findings](../PERFORMANCE.md) and
 gaps in [known issues](../KNOWN_ISSUES.md). Completed plans and handovers were
 removed; Git history keeps them.
 

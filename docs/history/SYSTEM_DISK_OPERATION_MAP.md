@@ -3,7 +3,7 @@
 Updated: 2026-09-24 (volume filter note 2026-09-28). This is the A07/T023 map of
 paths that can reach the filter. It records implemented behavior and gaps.
 
-Since the volume filter ([volume filtering](../VOLUME_FILTER.md)) the filter sits on
+Since the volume filter ([volume filtering](../CACHE_POLICIES.md)) the filter sits on
 C:'s volume stack, directly below NTFS and above `volsnap`, BitLocker (`fvevol`),
 `iorate`, ReadyBoost (`rdyboost`) and `volmgr`; offsets are volume offsets and
 page-file ranges are the target volume's own. Requests to the physical disk

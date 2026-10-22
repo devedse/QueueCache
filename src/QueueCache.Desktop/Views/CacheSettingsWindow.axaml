@@ -119,10 +119,10 @@
                 </StackPanel>
                 <StackPanel Spacing="4" Margin="0,0,16,8">
                   <TextBlock Classes="field" Text="Parallel disk writes" />
-                  <ui:FANumberBox Name="Parallelism" MinWidth="120" Value="{Binding Parallelism}" Minimum="1" Maximum="64" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
+                  <ui:FANumberBox Name="Parallelism" MinWidth="120" Value="{Binding Parallelism}" Minimum="1" Maximum="8" SimpleNumberFormat="F0" SpinButtonPlacementMode="Compact" />
                 </StackPanel>
               </WrapPanel>
-              <TextBlock Classes="caption secondary" Text="Neighboring pending blocks are combined into one disk write up to the largest size. More parallel writes help random writing on fast disks." />
+              <TextBlock Classes="caption secondary" Text="Neighboring pending blocks are combined into one disk write up to the largest size. More parallel writes help random writing on fast disks; while programs read from the disk, fewer run at once so reads stay quick." />
             </StackPanel>
           </Expander>
           <TextBlock Name="ErrorText" Classes="error" Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />

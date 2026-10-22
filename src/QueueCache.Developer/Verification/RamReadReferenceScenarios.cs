@@ -61,6 +61,15 @@ internal static class RamReadReferenceScenarios
             RunStorage.AtomicJson(ownership, journal);
             try
             {
+                // The previous owned disk's memory can still be returning to Windows right after its stop, and
+                // the headroom guard then refuses this one (plan 168, 16 GiB VM). Wait for it, bounded; the
+                // broker still decides.
+                var waited = await WaitForReservableAsync(definition.CapacityBytes, TimeSpan.FromSeconds(60));
+                if (waited > TimeSpan.Zero)
+                {
+                    Console.WriteLine($"Waited {waited.TotalSeconds:F1} s for {definition.CapacityBytes >> 20} MiB of RAM headroom before creating the owned disk.");
+                    Console.Out.Flush();
+                }
                 await service.CreateAsync(definition, new ProgressLog());
                 var current = (await service.ListAsync()).Single(r => r.ResourceId == definition.ResourceId);
                 if (current.Runtime?.State != ManagedDiskState.Ready || current.VolumePath is null || current.PhysicalDiskNumber is null)
@@ -323,6 +332,20 @@ internal static class RamReadReferenceScenarios
         if (!resources.SequenceEqual(journal.OriginalResources.Order()) || reserved != journal.OriginalReservedBytes)
             throw new IOException("RAM reference cleanup did not restore original resources and shared reservation.");
     }
+    /// <summary>Waits until Windows could reserve <paramref name="bytes"/> under the RAM headroom rule, at most
+    /// <paramref name="limit"/>; returns how long it waited (zero when there was room at once).</summary>
+    private static async Task<TimeSpan> WaitForReservableAsync(ulong bytes, TimeSpan limit)
+    {
+        var timer = Stopwatch.StartNew();
+        var waited = false;
+        while (MemoryBudget.AvailableForReservation() < bytes && timer.Elapsed < limit)
+        {
+            waited = true;
+            await Task.Delay(500);
+        }
+        return waited ? timer.Elapsed : TimeSpan.Zero;
+    }
+
     private static char FreeLetter() => Enumerable.Range('G', 'Z' - 'G' + 1).Select(n => (char)n)
         .FirstOrDefault(c => !Directory.Exists(c + @":\") && DriveInfo.GetDrives().All(d => char.ToUpperInvariant(d.Name[0]) != c)) is var letter && letter != '\0'
         ? letter : throw new IOException("No free drive letter for an owned RAM reference.");

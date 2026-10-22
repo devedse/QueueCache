@@ -2,7 +2,7 @@
 
 Everything needed to test QueueCache, in one place: host tests, VM verification
 runs, comparing performance, and the README benchmark. Results and decisions go
-in [performance findings](PERFORMANCE_FINDINGS.md); confirmed gaps in
+in [performance findings](PERFORMANCE.md); confirmed gaps in
 [known issues](KNOWN_ISSUES.md).
 
 There are three levels:
@@ -53,6 +53,10 @@ the drivers several times over.
 
 - Elevated terminal; nothing else testing or benchmarking; close the QueueCache
   tray app if the run changes caches it shows.
+- Wait for the installed `QueueCache.ManagedDisks` service to reach Running before
+  applying a temporary runtime profile, including for correctness runs. Its delayed
+  startup initializes managed disks and reapplies saved profiles before reporting
+  Running; starting a test earlier can overwrite its profile during a file oracle.
 - Close background indexers and launchers, which start again at every sign-in:
   Steam (`steam.exe -shutdown`), Everything (`Everything.exe -exit`) and its
   `Everything` service (`Stop-Service Everything`). Their disk activity fails the
@@ -100,7 +104,11 @@ qcache developer verify Q: --suite quick --output C:\QueueCache-Results
 
 `--lab-ntfs` names the attached lab NTFS volume. `--pause-backing-cache` lets the
 runner pause `Q:`'s cache while lab phases run (the lab VHDX lives on `Q:`) and
-restores it afterwards. There is no `--detach`: run the foreground command and let
+restores it afterwards. A freshly attached lab image keeps writing to `Q:` for a few
+seconds, and so does the lab volume's file system after a lab phase. Since plan 169
+the campaign preflight waits up to about 30 s, and since plan 171 every clean-cache
+capture waits up to 15 s, for those writes to drain on their own; nothing is drained
+for them, and a cache that stays dirty is still refused. There is no `--detach`: run the foreground command and let
 it finish. Results go to a new folder under `--output`.
 
 Use the smallest thing that answers the question: a single suite or `experiment`
@@ -122,16 +130,17 @@ ones in use:
 | Suite | What it checks | Notes |
 |---|---|---|
 | `quick` | File integrity through the cache | Default; no DiskSpd |
-| `policies`, `pressure` | Sector edge cases, each policy, drain/age/watermark/backpressure, disk bytes afterwards | No DiskSpd |
+| `policies`, `pressure` | Sector edge cases, each policy, drain/age/watermark/backpressure, disk bytes afterwards. Files whose requests must not cross an extent boundary (parallel copies, foreground-background) reserve their whole allocation first since plan 170, and are refused if they still split | No DiskSpd |
 | `paging-coherence`, `partial-read-accounting`, `ordering-faults` | Mapped/paging coherence, partly cached reads (plan 126: 16 simultaneous cold/partial readers with byte and pin-retirement checks), write ordering under injected lower failures | In every campaign; `ordering-faults` runs last |
-| `volumes`, `trim-cache` | Several volumes on one disk; TRIM | Lab VHDX volume |
-| `stress-races` | Both lab NTFS volumes at once under concurrent writers of 4 KiB to 4 MiB, cancelled overlapped I/O, cache flush/resize/teardown/drop/delay/allocation faults, refused settings and RAM disk churn; then fault and Retry at drain parallelism 1, 2 and 4; every byte read back. Plan 128 flushes filesystem metadata before fault injection and after retry, and requires retained-byte drainage plus a clean result | Lab VHDX; `--soak-seconds` (default 240); run under Driver Verifier and without |
+| `parallel-copies` | Plan 165 diagnostic: the `policies` parallel-copies case alone (four 1 MiB rewriters with read-back, two concurrent readers, Eager, parallelism 2) for `--duration-seconds` per case, alternating 2048 KiB (the default since plan 164) and 1024 KiB batches over `--repeats`. A failing read names the pass each 4 KiB chunk matches, which tells torn, stale and zeroed reads apart. Since plan 166, `policies` and this suite write under the run's work directory (removed after a completed run, not the volume root), and `parallel-copies` and `foreground-background` recreate a file whose extent boundary would split one of their requests: a split request reaches the volume as several, which nothing makes atomic or keeps on the caller's thread. A file that stays split fails the case | Lab NTFS volume |
+| `volumes`, `trim-cache` | Several volumes on one disk; TRIM (plan 160 adds `trim-cache/eager-unrelated-not-awaited` and `eager-overlap-awaited`: with background Eager draining and a 2 s lab delay per batch, a TRIM outside the in-flight batches returns within 1 s with no write landing meanwhile, and one inside them returns only after a write landed. An explicit flush holds the ordered request path, so `during-drain` queues its TRIM behind the whole flush. Plan 162 runs those five checks with `lab-trim-mode` 0 and again with 3 (index lookup + asynchronous lower TRIM, suffix `-async`), then `async-request-path-free` (another file's rewrite and read finish within 1 s while a TRIM is held 2 s) and, since plan 163, `async-eager-ordering`. Under Eager with a TRIM held 2 s, another file's rewrite drains while the TRIM is outstanding, and a queued rewrite of the held range ends on the disk exactly. NTFS normally keeps that rewrite until the TRIM completes, so the check reports whether the fence path was reached; a rewrite completed during the TRIM must stay dirty. The plan-162 `async-fence` check assumed the rewrite reached the cache at once and failed against NTFS's ordering. 12 checks; the original mode is restored. Since plan 164 the Eager TRIM checks pin 1024 KiB × 4, so that only the file's first 4 MiB is in flight) | Lab VHDX volume |
+| `stress-races` | Both lab NTFS volumes at once under concurrent writers of 4 KiB to 4 MiB, cancelled overlapped I/O, cache flush/resize/teardown/drop/delay/allocation faults, refused settings and RAM disk churn; then fault and Retry at drain parallelism 1, 2 and 4; every byte read back. Plan 128 flushes filesystem metadata before fault injection and after retry, and requires retained-byte drainage plus a clean result. Since plan 167, a churn RAM-disk creation that the RAM headroom guard refuses (on a 16 GiB VM the previous disk's 2 GiB may not have returned yet) is retried and counted; fewer than two completed cycles still fails | Lab VHDX; `--soak-seconds` (default 240); run under Driver Verifier and without |
 | `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram`, `managed-cli`, `managed-broker-restart`, `managed-lifecycle-*` | Managed disk creation, checkpoints, broker restart and restart lifecycle | Owned fixtures only |
 | `disk-removal`, `disk-removal-windows` | Eject with pending writes, reconnect | Disposable disk identity required |
 | `system-*` | Guarded checks on the OS disk | Explicit acknowledgement and off-disk output |
 | `write-performance` | 72 fitting-file write cases: random 4K Q1/Q32, sequential 1M Q1/Q8, Off/Eager/Idle, timing off/on | `--budget-mib 2048`; ~35-55 min |
 | `cache-recall`, `cache-sustained`, `cache-map-cost`, `cache-concurrency` | Read recall, long mixed use with byte oracles, map polling cost, concurrent streams. Plan 129 primes the write profile before RAM-only write counters start; the scored window still requires zero lower I/O | `cache-sustained` defaults to a 30-minute soak |
-| `ram-read-reference` | RAM-disk Direct and Standard reads, 1M and 4K, one and four threads | Product default |
+| `ram-read-reference` | RAM-disk Direct and Standard reads, 1M and 4K, one and four threads. Since plan 168 each owned 2 GiB disk waits up to 60 s for RAM headroom first, because the previous disk's memory can still be returning to Windows after its stop | Product default |
 | `ram-read-async` | Same-build off/adaptive comparison of asynchronous split reads, 18 windows | Prints a screen verdict |
 | `ram-read-async-lifecycle` | Verified overlapped reads, the in-flight cap, ending Direct access under load | Correctness only |
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
@@ -140,139 +149,20 @@ ones in use:
 | `tree-decision` | Same-build 40,000-file / 1.2 GiB create-copy-read-hash-delete workload; cache-off and flags 7/15 at 256 KiB × 2 / 1024 KiB × 4, three rotated repetitions | Timing OFF, Idle draining, byte/hash oracle, disk-idle settles, per-phase system-cache memory and lower-I/O attempt snapshots; collection only, about 1–2 hours |
 | `read-tail-decision` | Fixed 100,000-operation cold-random 4 KiB Q32, resident-random 4 KiB Q32, resident-sequential 1 MiB Q8 and fitting foreground-write 4 KiB Q32; flags 7/15 in three rotated repetitions (24 cases) | Timing OFF; per-operation p50/p99/p99.9/max and exact >50/100/250/500 ms counts, lower-I/O snapshots, resident warm-up and durable write-byte oracle after a stable clean-cache wait; collection only |
 | `drain-flush-decision` | Explicit cache Flush of a deterministic 512 MiB dirty seed at 256 KiB × 2 and 1024 KiB × 4, three alternated pairs (6 cases) | Timing OFF; owned control worker ready/start handshake; duration starts immediately before the Flush call; drain batches/bytes, lower write/flush attempts and persisted-byte oracle; collection only |
+| `cache-allocation` | Plan 152: 1/15/16/17/63/64/65 MiB caches, Fast and Strict, 2 MiB × 8 settings | Fourteen reservation-bound checks with live reads, explicit flushes and unbuffered bypassed byte oracles; correctness only. |
+| `drain-lock-diagnostic` | Plan 151: cached 1 MiB Q8 and uncached random 4 KiB Q1 reads, alone/with an Eager sequential writer, 2 MiB batches with 4/8 drainers, timing off/on, three reversed-order repetitions (48 windows) | Exactly `--budget-mib 2048 --repeats 3 --duration-seconds 6 --diskspd <same binary>`; 4m48s scored reads plus setup/settling/drainage. Cached cases use Automatic 50% writes; disk-read cases use Fixed 100% writes (zero read admission). Pure hit/miss paths, >=75% loaded-window pending observations, telemetry readiness/coverage and original-state restoration required. Global lock timings cover the reader process envelope and all callers; summed drainer waits can exceed wall time. Timing-on is diagnostic; timing-off is the performance score. Plan 160: a standalone window that saw background writes (file-system metadata, TRIM) is never scored; it is kept as `<case>-noisy.json` and remeasured as `<case>-retry<n>`, at most three attempts, and the case's evidence lists those attempts. Any other failure, or noise in all three, stops the run. Collection only; no lock/default change or correctness qualification. |
 | `cache-read-bookkeeping` | Same-build comparison of cached read bookkeeping (copy flags 11 and 15; 3 and 7 before plan 125) | Prints a screen verdict |
 | `sequential-resident`, `drain-decision`, `flush-interference`, `performance`, `full` | Older focused performance matrices; `drain-decision` compares drain batch 256/1024 KiB x parallelism 1/2/4 (plan 125) | Use when the area changes |
 | `cache-layout*`, `caller-backoff`, `priority-cost`, `priority-affinity`, `ram-read-scheduling`, `ram-read-coordination`, `ram-read-attribution` | Concluded comparisons and diagnostics | Results are in the findings; rerun only for a new question |
 | `compare-ram`, `compare-cache`, `compare-cache-cold`, `compare-durability-write`/`-churn`/`-verify`, `compare-snapshot` | Other products against QueueCache: see below | `--product` required; no QueueCache controls |
 | `compare-drain` | Two fixed new-file workloads through explicit product drain; three repeats, two median/range rows per provider | Explicit `--provider`, `--product`, `--budget-mib 2048 --repeats 3`; no DiskSpd |
+| `compare-drain-sustained` | Plan 158: one new 8 GiB file (four times the cache) through explicit product drain; three repeats | Same options as `compare-drain`; at least 12 GiB free |
+| `compare-drain-read` | Plan 161: a 4 KiB random Q1 reader on an uncached 8 GiB file, alone and 12 s after a sequential 1 MiB Q8 writer began keeping the product's 2 GiB cache full; three alternating alone/loaded pairs | Same provider options as `compare-drain` plus `--diskspd`; at least 20 GiB free. Loaded windows need pending data at both reader boundaries and ≥64 MiB written to the disk; alone windows ≤16 MiB |
 
-**Comparisons with other products** (plan 121). These suites measure any RAM
-disk or cached volume the same way, without QueueCache's controls, hooks or
-telemetry, so QueueCache and its competitors get identical treatment. The focused
-`compare-drain` suite below uses explicit provider controls for drainage and read
-verification. Each needs
-`--product "<name> <version> <mode>"`. QueueCache's drivers must be loaded
-exactly when the product is QueueCache, so one product never runs on top of
-another. Every run records the loaded third-party drivers, the storage filter
-lists, Secure Boot and Memory Integrity settings, and memory snapshots.
-
-- `compare-ram` runs on a 4 GiB RAM disk:
-  - 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes (36 windows at three
-    repeats), with p50/p99/p99.9 latency and CPU;
-  - memory used before and after a 2 GiB fill, and after deleting it;
-  - a seeded 40,000-file, 1.2 GiB tree: create, copy with four threads, read and
-    hash, delete;
-  - a final byte check.
-- `compare-cache` runs on a cached volume, keeping its workload files in
-  `<volume>\QCBench` so later runs overwrite the same disk areas:
-  - hot CrystalDiskMark shapes, buffered and write-through writes;
-  - random and sequential reads of an 8 GiB file larger than the cache;
-  - a 1 GiB absorb, 512 MiB plus `FlushFileBuffers`, and 8 GiB sustained writes
-    with per-second throughput;
-  - a five-minute 70/30 mix and the file tree.
-
-  After writes it waits for the disk below to go quiet: at least 45–90 s, at
-  most 300 s.
-- `compare-cache-cold` needs a cache that was emptied beforehand, with the
-  product's own command or a restart. It times a first and second read of a
-  1 GiB file and two random-read windows.
-- `compare-durability-write` works in three steps:
-  1. It writes generation 1 and lets it settle.
-  2. It writes generation 2: an application-style durable save, raw writes
-     without a flush, and 10,000 new small files.
-  3. It flushes the evidence volume before `FINISHED.txt`.
-
-  Reset the VM as soon as `FINISHED.txt` appears. After the restart, run
-  `compare-durability-verify --oracle <write run>\durability-oracle.json`. It
-  counts what survived and runs `chkdsk /scan`. These are measurements, not
-  verdicts.
-- `compare-durability-churn` (plan 122) tests a power cut while a write-back
-  cache is part-way through writing its data to the disk:
-  1. It writes 2,000 base files (4–32 KiB) and lets them settle.
-  2. For 40 s it creates 200 files per second without a flush. Every eighth step
-     it deletes a base file (the first half, so their space is reused), and from
-     step 1,000 also the file created 1,000 steps earlier.
-  3. Its oracle records when each file was created and deleted; `FINISHED.txt`
-     follows as for `compare-durability-write`.
-
-  Reset the VM while the disk below is still being written after `FINISHED.txt`
-  (the cache writing out the churn). Then `compare-durability-verify` reports
-  the base files and the churn files by their age when the churn ended
-  (30 s or older, 20–30, 10–20, under 10 s), each intact, damaged or missing, and
-  `chkdsk /scan`. From plan 123 it also says what damaged files hold: nothing
-  (empty), part of their data (short), zeros, another test file's data (old
-  contents of reused space), or other bytes. From plan 124 a file that Windows
-  cannot read (NTFS reports it corrupted) counts as damaged, "unreadable", and
-  the check continues to `chkdsk`.
-- `compare-snapshot` records memory and drivers only, for example before
-  creating a disk.
-
-**Focused write plus drain comparison (plan 148).** `compare-drain` runs two
-fixed workloads three times each, alternating large/small order:
-
-| Workload | Requests | Files |
-|---|---|---|
-| Large file | Sequential 1 MiB, four outstanding writes on an overlapped handle | One new 1 GiB file |
-| Small files | Unbuffered 4 KiB, four workers | 4,096 new 64 KiB files (256 MiB total) in a fixed shuffled order |
-
-A unique, incompressible 1 GiB SplitMix64 payload is precomputed with all
-SHA-256 oracles outside timing; small files use its first 256 MiB. File/directory
-creation and close are timed;
-shuffled names do not establish random disk placement. No overwrites are scored.
-
-Run each provider alone on the same non-OS NTFS disk after section 2 preflight.
-Direct and PrimoCache require QueueCache drivers absent. QueueCache requires
-active Fast, 2 GiB, 1024 KiB batches × four drainers, timing diagnostics off;
-PrimoCache requires shared 2 GiB L1, no L2, 4 KiB blocks, Native Defer-Write 10 s,
-prefetch off and its GUI closed. The runner checks these settings.
-
-```powershell
-qcache developer verify Q: --suite compare-drain --provider Direct --product "Direct disk" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
-qcache developer verify Q: --suite compare-drain --provider QueueCache --product "QueueCache Fast 2 GiB" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
-qcache developer verify Q: --suite compare-drain --provider PrimoCache --product "PrimoCache 2 GiB defer-write" --budget-mib 2048 --repeats 3 --output C:\QueueCache-Results
-```
-
-`--provider` selects explicit drain and verification controls independently of
-`--product`; `--primo-cli` overrides the default `%ProgramFiles%\PrimoCache\rxpcc.exe`.
-There is no DiskSpd phase or case filter. Each run needs 7 GiB free and owns a
-unique target folder; only successfully verified case data are deleted.
-
-Before each case, flush volume metadata, drain, drop clean contents and require
-zero pending data and disk queue. Start the disk observer before releasing ready
-writers. The headline **MB/s = payload bytes / monotonic elapsed seconds / 1,000,000**
-uses 1,073,741,824 bytes for large and 268,435,456 bytes for small files. It
-includes all writes, final volume metadata flush, explicit QueueCache `Flush`
-or PrimoCache `dwflush -v q -s`, and confirmation of zero dirty/in-flight bytes
-or Deferred Blocks plus zero disk queue. Ordinary Windows flush completion alone
-is insufficient. Primo CLI overhead is included and recorded separately.
-Primo's [Deferred Blocks](https://www.romexsoftware.com/en-us/primo-cache/terms-performance.html)
-counts blocks still awaiting disk writes; parse the integer, with its optional
-display percentage, and reject missing or malformed counters.
-
-Record application, explicit-drain and confirmation durations, UTC boundaries,
-and physical-disk `IOCTL_DISK_PERFORMANCE` write bytes/operations/queue depth every
-100 ms. Telemetry must bracket the score without gaps over two seconds; missing,
-regressing or insufficient byte counters fail collection. These virtual-disk
-observations do not prove power-loss durability. Preparation, verification and
-any quiet hold are outside the score.
-
-Persist each score before untimed verification. Pause the product, confirm
-bypass, read and SHA-256-check every file unbuffered, then restore in `finally`,
-including after failures. The recovery journal records target identity and
-original state. After confirming owned processes stopped, use the standard
-`qcache developer verify-recover <run>` if restoration failed.
-QueueCache pause confirmation records each full state and permits up to 30 seconds
-for a transient draining barrier to settle. Identity/settings changes, faults or
-unexpected enabled state fail immediately; Disable is never replayed.
-
-Reports require all six unique cases, every hash, telemetry and successful
-restoration. `comparison.json`/`COMPARISON.md` report two medians with ranges,
-application/drain times and backing write sizes per provider. Three complete
-provider runs supply the six published values; never fill gaps from partial runs.
-
-Results go in `COMPARISON.md` and `comparison.json` in the run folder, as medians
-with ranges. Bytes and flushes that reached the virtual disk come from the
-hypervisor's per-disk counters, joined by each step's `compare.<step>.interval.json`.
+**Comparisons with other products** (plan 121). The `compare-*` suites measure any RAM
+disk or cached volume the same way, without QueueCache's own controls, hooks or
+telemetry. Their workloads, provider options and rules are in
+[comparison: running a comparison](COMPARISON.md#running-a-comparison).
 
 DiskSpd: Microsoft DiskSpd (`amd64\diskspd.exe`) or CrystalDiskMark's bundled
 `CdmResource\DiskSpd\DiskSpd64.exe`, both in XML mode. Keep the same binary
@@ -292,7 +182,7 @@ then read the run folder:
 | `restoration.json` / `restored.json` | Independent restoration result |
 | per-case `*-before/after.json`, `*.score.json`, `*-telemetry.jsonl`, `*-interval.json`, raw DiskSpd output | The evidence behind each number |
 
-Current contracts (plan 148):
+Current contracts (plan 149):
 
 - **Telemetry (plans 130/131):** an owned thread samples every 200 ms, separately
   from persistence, with a bounded 256-sample buffer. The first persisted sample
@@ -312,7 +202,7 @@ Current contracts (plan 148):
   A `--case-filter` selection is diagnostic, not a complete matrix. To attribute
   scanning costs, use Defender's performance recorder/report and process CPU;
   keep the documented environment fixed across arms. Findings belong in
-  [performance findings](PERFORMANCE_FINDINGS.md).
+  [performance findings](PERFORMANCE.md).
 - **Equal-work tails (plans 135/140/141):** 100,000 operations per case, exact
   latency samples/threshold counts, cold and resident controls, and deterministic
   foreground-write content checks after flush/eviction. Before each start and
@@ -340,7 +230,7 @@ partial runs cannot produce an accepted aggregate.
 
 There is no maintained foreground-overlap or Strict-impact suite: both failed
 their seed contracts and were removed. Reasons and run identities remain in
-[performance findings](PERFORMANCE_FINDINGS.md).
+[performance findings](PERFORMANCE.md).
 
 A campaign folder holds one child run per phase plus `completion.json`.
 When copying a campaign from Windows, verify every file against a guest-side
@@ -370,12 +260,22 @@ deletes test data on its own.
 
 Do not judge a change by comparing with a different day's run: shared VM storage
 and Windows background work move results. `ram-read-async` is the worked example
-([findings](PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)).
+([findings](PERFORMANCE.md#ram-disk-asynchronous-split-reads-accepted-pr-9)).
 
 ## 7. README benchmark (CrystalDiskMark)
 
 The README's performance table and the `cdm-cache.png` / `cdm-ram-disk.png`
 screenshots come from real CrystalDiskMark 9.0.3 runs on the test VM.
+
+**Current README figures.** Default test (1 GiB, 5 passes), the better of two clean
+runs per column. Both Q: columns: QueueCache 0.4.687.1 (2026-10-15 UTC),
+Defender/Search disabled, Fast with that release's Idle drain, 1024 KiB batches and
+four drainers, measured in one session without a restart in between (the drive's
+speed on this shared network storage varies). The paused column keeps QueueCache's
+filter loaded. RAM disk: QueueCache 0.4.583.1 (2026-10-11), re-measured after RAM-disk
+reads became asynchronous (SEQ1M Q8T1 read was 25,353 MB/s before). New caches now
+default to Eager draining with 2 MiB batches and eight drainers; the cache columns
+have not been re-measured with that default.
 
 **Setup.** Installed release, Verifier off, the pre-run checklist above, Balanced
 power plan. Cache column: `qcache policy apply Q: --budget-mib 2048

@@ -242,10 +242,10 @@ internal static class ManagedDiskCommands
         public readonly Option<bool> Accept = new("--accept-volatile-flush"), Disabled = new("--disabled"), Discard = new("--discard-drained"), NoPromotion = new("--no-promotion");
         public readonly Option<CacheAllocation> Allocation = new("--allocation") { DefaultValueFactory = _ => CacheAllocation.Automatic };
         public readonly Option<int> WritePercent = new("--write-percent") { DefaultValueFactory = _ => 50 };
-        public readonly Option<DrainAlgorithm> Drain = new("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Idle };
+        public readonly Option<DrainAlgorithm> Drain = new("--drain") { DefaultValueFactory = _ => DrainAlgorithm.Eager };
         public readonly Option<int> Low = new("--low-percent") { DefaultValueFactory = _ => 40 }, High = new("--high-percent") { DefaultValueFactory = _ => 80 },
             Age = new("--max-dirty-age-ms") { DefaultValueFactory = _ => 5000 }, Idle = new("--idle-ms") { DefaultValueFactory = _ => 250 },
-            Batch = new("--batch-kib") { DefaultValueFactory = _ => 1024 }, Parallel = new("--drain-parallelism") { DefaultValueFactory = _ => 4 };
+            Batch = new("--batch-kib") { DefaultValueFactory = _ => 2048 }, Parallel = new("--drain-parallelism") { DefaultValueFactory = _ => 8 };
         private readonly Option[] options;
         public CacheBinding(Command command)
         {

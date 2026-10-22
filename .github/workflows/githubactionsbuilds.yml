@@ -128,7 +128,7 @@ jobs:
           prerelease: ${{ steps.identity.outputs.prerelease }}
           make_latest: ${{ steps.identity.outputs.prerelease == 'false' }}
           generate_release_notes: true
-          body: 'Development build. QueueCache caches volumes: installation registers the filter as the topmost volume filter, which covers every volume after a restart; each volume has its own cache, and caching stays off unless configured or restored from a saved per-volume profile. Commands sent to a physical disk (health and SMART tools, SCSI/ATA pass-through) never reach the cache. Test-signing prerequisites apply. Successful CI is not kernel correctness certification; see docs/VOLUME_FILTER.md for the VM verification record.'
+          body: 'Development build. QueueCache caches volumes: installation registers the filter as the topmost volume filter, which covers every volume after a restart; each volume has its own cache, and caching stays off unless configured or restored from a saved per-volume profile. Commands sent to a physical disk (health and SMART tools, SCSI/ATA pass-through) never reach the cache. Test-signing prerequisites apply. Successful CI is not kernel correctness certification; see docs/CACHE_POLICIES.md for the VM verification record.'
           files: |
             release/**/*.exe
             release/**/*.zip

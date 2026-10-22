@@ -19,12 +19,12 @@ medians and need not add up. Backing-write sizes
 include metadata at the observed virtual-disk counter layer. These scores do not
 replace the different historical workloads below or prove power-loss durability.
 
-[All three providers and method](../COMPARISON_DETAILS.md#short-write-plus-drain-comparison-2026-10-16);
+[All three providers and method](../COMPARISON.md#short-write-plus-drain-comparison-2026-10-16);
 per-case evidence and build identity are in the existing [data](data/C00-no-cache.json).
 
 ## Current cache refresh (2026-10-15)
 
-QueueCache paused. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON_DETAILS.md#current-cache-refresh-2026-10-1516).
+QueueCache paused. Defender/Search disabled; one complete repetition per comparison and two clean CDM runs. Normal priority, Verifier/timing off. [Common setup and sampled-disk timing limits](../COMPARISON.md#current-cache-refresh-2026-10-1516).
 
 Runs: `QueueCache-Verify-20261015-230825-83e24bca1049435592297d32084887d6`, `QueueCache-Verify-20261015-224743-b2572bf0e2a745129b59744d3ff3d31c`.
 All declared steps and raw XML totals, duration, CPU and latency fields were reviewed; every tree hash check passed.

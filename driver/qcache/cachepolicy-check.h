@@ -9,11 +9,16 @@ constexpr bool PolicyChecks()
     bool pressure = false;
     if (!QcValidOptions(o) || QcWriteLimit(o, 1000) != 1000)
         return false;
-    if (o.Drain != QcIdle || o.MaxAgeMs != 5000 || o.IdleMs != 250 || o.LowPercent != 40 ||
-        o.HighPercent != 80 || o.BatchKiB != 1024 || o.Parallelism != 4 ||
-        QcShouldDrain(o, 1, 100, 0, 0, false, pressure) || pressure ||
+    if (o.Drain != QcEager || o.MaxAgeMs != 5000 || o.IdleMs != 250 || o.LowPercent != 40 ||
+        o.HighPercent != 80 || o.BatchKiB != 2048 || o.Parallelism != 8 ||
+        !QcShouldDrain(o, 1, 100, 0, 0, false, pressure) || pressure)
+        return false;
+    // Idle (the default from plan 125 to 163) waits for a write-idle interval.
+    o.Drain = QcIdle;
+    if (QcShouldDrain(o, 1, 100, 0, 0, false, pressure) || pressure ||
         !QcShouldDrain(o, 1, 100, 0, o.IdleMs, false, pressure))
         return false;
+    o.Drain = QcEager;
     o.Allocation = QcFixed;
     o.WritePercent = 40;
     if (QcWriteLimit(o, 1000) != 400)
@@ -76,7 +81,15 @@ constexpr bool PolicyChecks()
     if (QcValidOptions(o))
         return false;
     o.MaxAgeMs = 3600000;
-    o.Parallelism = 5;
+    o.BatchKiB = 2048;
+    o.Parallelism = 8;
+    if (!QcValidOptions(o))
+        return false;
+    o.BatchKiB = 2052;
+    if (QcValidOptions(o))
+        return false;
+    o.BatchKiB = 1024;
+    o.Parallelism = 9;
     if (QcValidOptions(o))
         return false;
     o.Parallelism = 4;
@@ -93,7 +106,7 @@ constexpr bool WriteWakeChecks()
     for (ULONG policy = QcEager; policy <= QcDeferred; ++policy)
     {
         options.Drain = policy;
-        for (ULONG parallelism = 1; parallelism <= 4; ++parallelism)
+        for (ULONG parallelism = 1; parallelism <= 8; ++parallelism)
         {
             options.Parallelism = parallelism;
             bool pressure = false;

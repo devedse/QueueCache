@@ -132,7 +132,7 @@ internal static class StressRaceScenarios
         RunStorage.AtomicJson(evidence + ".busy.json", new
         {
             Seconds = timer.Elapsed.TotalSeconds, Volumes = volumes.Select(v => v.Summary()), RamDiskCycles = churn.Cycles,
-            RamDiskBytesVerified = churn.VerifiedBytes, Failures = failures.Select(f => f.ToString())
+            RamDiskBytesVerified = churn.VerifiedBytes, RamDiskRefusals = churn.Refusals, Failures = failures.Select(f => f.ToString())
         });
         if (failures.Count > 0)
             throw new IOException("stress/busy-volumes failed: " + failures[0].Message, failures[0]);
@@ -143,9 +143,9 @@ internal static class StressRaceScenarios
                 throw new IOException($"{volume.Target.Device} faulted during the busy window (0x{state.LastError:X8}).");
             volume.RequireCoverage();
         }
-        if (churn.Cycles < 2) throw new IOException($"Only {churn.Cycles} owned RAM disk cycles overlapped the busy window.");
+        if (churn.Cycles < 2) throw new IOException($"Only {churn.Cycles} owned RAM disk cycles overlapped the busy window ({churn.Refusals} creations refused for RAM headroom).");
         return new("stress/busy-volumes", "PASS", $"{timer.Elapsed.TotalSeconds:F0} s on {string.Join(" and ", volumes.Select(v => v.Target.Device))}: " +
-            string.Join("; ", volumes.Select(v => v.Describe())) + $"; {churn.Cycles} owned 2 GiB RAM disks created, written, verified and removed meanwhile. " +
+            string.Join("; ", volumes.Select(v => v.Describe())) + $"; {churn.Cycles} owned 2 GiB RAM disks created, written, verified and removed meanwhile ({churn.Refusals} refused for RAM headroom and retried). " +
             "Every read returned whole sectors of an allowed version.");
     }
 
@@ -560,7 +560,7 @@ internal static class StressRaceScenarios
     /// same shared memory as the caches. Every definition is journaled before it is created.</summary>
     private sealed class RamChurn(string ownership)
     {
-        public int Cycles;
+        public int Cycles, Refusals;
         public long VerifiedBytes;
         public void Loop(CancellationToken token)
         {
@@ -574,7 +574,20 @@ internal static class StressRaceScenarios
                 };
                 var journal = JsonSerializer.Deserialize<RamReadReferenceOwnership>(File.ReadAllText(ownership))!;
                 RunStorage.AtomicJson(ownership, journal with { Definitions = [.. journal.Definitions, definition] });
-                service.CreateAsync(definition, null).GetAwaiter().GetResult();
+                try { service.CreateAsync(definition, null).GetAwaiter().GetResult(); }
+                catch (IOException refused) when (refused.Message.StartsWith(MemoryBudget.InsufficientMessage, StringComparison.Ordinal))
+                {
+                    // The headroom guard refusing 2 GiB, not a fault: on a 16 GiB VM the previous disk's memory may not
+                    // have returned yet (plan 167). Remove any record it left, wait, and create another; fewer than two
+                    // completed cycles still fails the case.
+                    var left = service.ListAsync().GetAwaiter().GetResult().SingleOrDefault(r => r.ResourceId == definition.ResourceId);
+                    if (left is not null)
+                        service.ExecuteAsync(new(left.ResourceId, ManagedDiskAction.RemoveDefinition,
+                            left.Runtime is null ? null : ManagedDiskExpected.From(left.Runtime)), null).GetAwaiter().GetResult();
+                    Interlocked.Increment(ref Refusals);
+                    if (token.WaitHandle.WaitOne(1000)) break;
+                    continue;
+                }
                 var record = service.ListAsync().GetAwaiter().GetResult().Single(r => r.ResourceId == definition.ResourceId);
                 if (record.Runtime?.State != ManagedDiskState.Ready) throw new IOException("Owned stress RAM disk did not become Ready.");
                 var file = definition.PreferredLetter + @":\stress.dat";

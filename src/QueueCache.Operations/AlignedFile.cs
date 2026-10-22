@@ -15,8 +15,10 @@ internal sealed class AlignedFile : IDisposable
     /// <param name="sharedReadOnly">Open an existing file for reading only, sharing it with applications that
     /// still hold it open.</param>
     /// <param name="shareRead">Let a separate read-only handle read the file while this one writes.</param>
+    /// <param name="shareAll">Share read, write and delete, so another handle can write while this one is busy
+    /// (trim-cache: a write to a range whose TRIM is still outstanding).</param>
     public AlignedFile(string path, int capacity, bool create, int alignment = 4096, bool sharedReadOnly = false,
-        bool shareRead = false)
+        bool shareRead = false, bool shareAll = false)
     {
         if (alignment is not (512 or 4096))
             throw new ArgumentOutOfRangeException(nameof(alignment));
@@ -26,7 +28,7 @@ internal sealed class AlignedFile : IDisposable
         if (capacity <= 0 || capacity % 4096 != 0)
             throw new ArgumentException("Transfer buffer must be 4 KiB aligned.");
         this.capacity = capacity;
-        handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly ? 7u : shareRead ? 1u : 0u, IntPtr.Zero,
+        handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly || shareAll ? 7u : shareRead ? 1u : 0u, IntPtr.Zero,
             create ? 1u : 3u, 0x20000000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
@@ -41,6 +43,13 @@ internal sealed class AlignedFile : IDisposable
             handle.Dispose();
             throw new Win32Exception(error);
         }
+    }
+    /// <summary>Allocates the file's clusters up front, leaving its end of file unchanged, so NTFS places them in one
+    /// run when it can instead of growing the file into whatever gap follows its first clusters.</summary>
+    public void Reserve(long bytes)
+    {
+        if (!SetFileInformationByHandle(handle, 5 /* FileAllocationInfo */, ref bytes, sizeof(long)))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
     }
     /// <summary>The native transfer buffer (tests that modify it while a read is in flight).</summary>
     internal IntPtr TransferBuffer => memory;
@@ -114,6 +123,9 @@ internal sealed class AlignedFile : IDisposable
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass, ref long information, uint bytes);
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetFilePointerEx(SafeFileHandle handle, long distance, out long position, uint method);

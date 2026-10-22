@@ -7,11 +7,12 @@
 #include "observation.h"
 #include "sectorcoverage.h"
 #include "readrecall.h"
+#include "cacheallocation.h"
 #include "../shared/lockedpages.h"
 #include "../shared/memorybudget.h"
 static constexpr ULONG Chunk = 4096, SlabBytes = 262144, SlotsPerSlab = SlabBytes / Chunk, Tag = 'wCCQ';
 static constexpr ULONG NoSlot = MAXULONG;
-static constexpr ULONG MaxBatchBytes = 1024 * 1024;
+static constexpr ULONG MaxBatchBytes = 2 * 1024 * 1024; // Ceiling and default since plan 164.
 static QC_MEMORY_BUDGET SharedMemoryBudget{};
 static volatile LONG64 NextInstance;
 static ULONGLONG MemoryLimit()
@@ -35,8 +36,16 @@ static ULONGLONG NowMs()
 {
     return KeQueryInterruptTime() / 10000;
 }
+void QcCacheForegroundReadDone(QC_CACHE* c)
+{
+    InterlockedExchange64(&c->LastForegroundReadMs, static_cast<LONG64>(NowMs()));
+    InterlockedDecrement(&c->ForegroundReads);
+}
 #include "cacheblocks.inl"
 static void PagingReader(PVOID context);
+struct QC_PAGING_READ;
+static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry);
+static bool TrimsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end);
 static bool RangesOverlap(const QC_SPECIAL_RANGE* ranges, ULONG count, LONGLONG first, LONGLONG end);
 // Lab gate evidence: store the next per-disk sequence once. Returns true if set.
 static bool RecordLabSequence(QC_CACHE* c, volatile LONG64* field)
@@ -123,7 +132,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->DiagnosticsSnapshot = c->Diagnostics;
-    c->Performance.Version = 3;
+    c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
     c->Performance.TimingEnabled = c->Timing != 0;
     c->PerformanceSnapshot = c->Performance;
@@ -193,6 +202,12 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->CallerWorkerActive = InterlockedCompareExchange64(&c->CallerWorkerActive, 0, 0);
     output->CallerOwnerActive = InterlockedCompareExchange64(&c->CallerOwnerActive, 0, 0);
     output->CallerOffloaded = InterlockedCompareExchange64(&c->CallerOffloaded, 0, 0);
+    output->ReadAware = static_cast<ULONG>(InterlockedCompareExchange(&c->ReadAware, 0, 0));
+    output->ReadAwareWaits = InterlockedCompareExchange64(&c->ReadAwareWaits, 0, 0);
+    output->TrimMode = static_cast<ULONG>(InterlockedCompareExchange(&c->TrimMode, 0, 0));
+    output->TrimLookups = InterlockedCompareExchange64(&c->TrimLookups, 0, 0);
+    output->TrimAsync = InterlockedCompareExchange64(&c->TrimAsync, 0, 0);
+    output->TrimAsyncFallbacks = InterlockedCompareExchange64(&c->TrimAsyncFallbacks, 0, 0);
     output->CallerBackoffRequests = InterlockedCompareExchange64(&c->CallerBackoffRequests, 0, 0);
     output->CallerProbes = InterlockedCompareExchange64(&c->CallerProbes, 0, 0);
     output->LowerForwardedWrites = InterlockedCompareExchange64(&c->LowerForwardedWrites, 0, 0);
@@ -630,6 +645,10 @@ static void CallLowerAndWait(QC_CACHE* c, PIRP irp, UCHAR major, KEVENT* complet
     // servicing paging reads below until the lower completion.
     QC_LOWER_CALL call{c->Lower, irp};
     const bool offWorker = allowReadService && c->LowerCallItem && QcForwardOffWorker(major);
+    // Every foreground read the filter sends down passes here (OriginalIo, StagedRead);
+    // QcLabReadAware holds drain batches while one is in flight.
+    if (major == IRP_MJ_READ)
+        InterlockedIncrement(&c->ForegroundReads);
     NTSTATUS status;
     if (offWorker)
     {
@@ -669,6 +688,8 @@ static void CallLowerAndWait(QC_CACHE* c, PIRP irp, UCHAR major, KEVENT* complet
     // The work item (and the stack context it uses) must be idle before reuse.
     if (offWorker)
         KeWaitForSingleObject(&call.Returned, Executive, KernelMode, FALSE, nullptr);
+    if (major == IRP_MJ_READ)
+        QcCacheForegroundReadDone(c);
 }
 // A control that can change the device is forwarded after the barrier has drained
 // every earlier write, but the request worker does not wait for it. The lower device
@@ -728,6 +749,24 @@ static NTSTATUS ForwardControl(QC_CACHE* c, PIRP irp)
 static NTSTATUS OriginalIo(QC_CACHE* c, PIRP irp, bool allowReadService)
 {
     const auto major = IoGetCurrentIrpStackLocation(irp)->MajorFunction;
+    if (major == IRP_MJ_WRITE)
+    {
+        // A write sent straight to the disk must not run ahead of an outstanding
+        // asynchronous lower TRIM of the same sectors, which could then erase it.
+        // That TRIM completes on an offload thread that needs only Mutex.
+        const auto& write = IoGetCurrentIrpStackLocation(irp)->Parameters.Write;
+        const auto first = write.ByteOffset.QuadPart;
+        const auto end = first + static_cast<LONGLONG>(write.Length);
+        while (TrimsOverlap(c, first, end))
+        {
+            KeClearEvent(&c->PagingDone);
+            if (!TrimsOverlap(c, first, end))
+                break;
+            LARGE_INTEGER interval;
+            interval.QuadPart = -1000000;
+            KeWaitForSingleObject(&c->PagingDone, Executive, KernelMode, FALSE, &interval);
+        }
+    }
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
     IoCopyCurrentIrpStackLocationToNext(irp);
@@ -865,10 +904,49 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
     KeReleaseSpinLock(&c->RangeLock, irql);
     return STATUS_SUCCESS;
 }
+// Mutex held. True when block lies inside a TRIM whose lower request is still
+// outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
+static bool TrimFenced(QC_CACHE* c, LONGLONG block)
+{
+    if (!c->TrimFenceCount)
+        return false;
+    for (const auto& fence : c->TrimFences)
+    {
+        if (!fence.Ranges || block >= fence.High || block + Chunk <= fence.Low)
+            continue;
+        // First range ending after block (sorted, merged, disjoint).
+        ULONG low = 0, high = fence.Count;
+        while (low < high)
+        {
+            const auto mid = low + (high - low) / 2;
+            if (fence.Ranges[mid].StartingOffset + static_cast<LONGLONG>(fence.Ranges[mid].LengthInBytes) <= block)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        if (low < fence.Count && fence.Ranges[low].StartingOffset < block + Chunk)
+            return true;
+    }
+    return false;
+}
+// Mutex held. Lower writes the drainers have outstanding right now.
+static ULONG OutstandingBatches(QC_CACHE* c)
+{
+    ULONG count = 0;
+    for (const auto& worker : c->Workers)
+        count += worker.InFlightStart != worker.InFlightEnd;
+    return count;
+}
+static bool ReadPressure(QC_CACHE* c, ULONGLONG now)
+{
+    return InterlockedCompareExchange(&c->ForegroundReads, 0, 0) > 0 ||
+        now - static_cast<ULONGLONG>(InterlockedCompareExchange64(&c->LastForegroundReadMs, 0, 0)) < QcReadAwareHoldMs;
+}
 static bool DrainCandidate(QC_CACHE* c, ULONG index)
 {
     const auto slot = &c->Slots[index];
-    if (slot->InFlight || slot->Filling || FindOldestSlot(c, slot->Offset.QuadPart) != index)
+    if (slot->InFlight || slot->Filling || FindOldestSlot(c, slot->Offset.QuadPart) != index ||
+        TrimFenced(c, slot->Offset.QuadPart))
         return false;
     return !c->RangeDrain || !c->RangeForward ||
         !RangeOverlaps(c->RangeStart, c->RangeEnd, slot->Offset.QuadPart);
@@ -904,13 +982,15 @@ static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
     return NoSlot;
 }
 // writesOnly: only offloaded write copies (whose blocks are still Filling).
-static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool writesOnly = false)
+// Asynchronous lower TRIMs count only for trims: their cache effect is already
+// applied and their fence keeps drains out; a forwarded write waits in OriginalIo.
+static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool writesOnly = false, bool trims = false)
 {
     bool overlap = false;
     KIRQL irql;
     KeAcquireSpinLock(&c->PagingLock, &irql);
     for (const auto& read : c->PagingReads)
-        if (read.Irp && (!writesOnly || read.Write) && read.Start < end && read.End > first)
+        if (read.Irp && (!writesOnly || read.Write) && (trims || !read.Trim) && read.Start < end && read.End > first)
         {
             overlap = true;
             break;
@@ -924,13 +1004,13 @@ static bool PagingReadsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end, bool w
 // the blocked range, so the overlapping set only shrinks. A full wait (no range)
 // never services, so it cannot be extended indefinitely by new offloads.
 static void WaitForPagingReads(QC_CACHE* c, LONGLONG first, LONGLONG end, PIRP blockedWrite,
-                               volatile LONG64* counter, bool writesOnly = false)
+                               volatile LONG64* counter, bool writesOnly = false, bool trims = false)
 {
     bool counted = false;
     for (;;)
     {
         KeClearEvent(&c->PagingDone);
-        if (!PagingReadsOverlap(c, first, end, writesOnly))
+        if (!PagingReadsOverlap(c, first, end, writesOnly, trims))
             return;
         if (!counted)
         {
@@ -953,11 +1033,12 @@ static void WaitForPagingReads(QC_CACHE* c, LONGLONG first, LONGLONG end, PIRP b
 }
 bool QcCachePagingReadsOutstanding(QC_CACHE* c)
 {
-    return PagingReadsOverlap(c, MINLONGLONG, MAXLONGLONG);
+    return PagingReadsOverlap(c, MINLONGLONG, MAXLONGLONG, false, true);
 }
+// Every offloaded request, including asynchronous lower TRIMs (teardown, media changes).
 void QcCacheWaitPagingReads(QC_CACHE* c)
 {
-    WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits);
+    WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits, false, true);
 }
 // Called with Mutex released. Read service may perform one independent page-in;
 // waking on RequestAvailable is essential when a drainer needs that page-in.
@@ -1029,6 +1110,19 @@ static void Drainer(PVOID context)
             KeWaitForSingleObject(&c->Wake, Executive, KernelMode, FALSE, &interval);
             continue;
         }
+        // QcLabReadAware: while foreground reads wait on the disk, keep at most that many
+        // drain batches outstanding. Each outstanding byte delays a waiting read (plan 161).
+        // Explicit barriers and paging-write fences keep full speed.
+        const auto readAware = static_cast<ULONG>(InterlockedCompareExchange(&c->ReadAware, 0, 0));
+        if (readAware && !c->Barrier && !fenceDrain && ReadPressure(c, now) && OutstandingBatches(c) >= readAware)
+        {
+            InterlockedIncrement64(&c->ReadAwareWaits);
+            ReleaseCache(c);
+            LARGE_INTEGER interval;
+            interval.QuadPart = -10000; // 1 ms; the timer resolution may round it up
+            KeWaitForSingleObject(&c->Stopping, Executive, KernelMode, FALSE, &interval);
+            continue;
+        }
         // Gather disk-adjacent blocks into a preallocated staging buffer. Their RAM
         // addresses need not be adjacent. Always choose the oldest version of each
         // address so a later completion can never overwrite newer data on disk.
@@ -1057,39 +1151,64 @@ static void Drainer(PVOID context)
                                ? min(c->Options.BatchKiB * 1024, c->DrainCapacity) / Chunk : 1UL;
         const bool batchOverlapsFence = c->RangeDrain &&
             RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart);
+        auto backReason = &c->Performance.DrainBackLimit;
+        if (c->Slots[index].ValidSectors != 255) backReason = &c->Performance.DrainBackPartial;
         for (ULONG back = 1; back < batchBlocks && c->Slots[index].Offset.QuadPart >= Chunk; ++back)
         {
             auto previous = FindOldestSlot(c, c->Slots[index].Offset.QuadPart - Chunk);
-            if (previous == NoSlot || c->Slots[previous].InFlight || c->Slots[previous].Filling ||
-                c->Slots[previous].ValidSectors != 255)
-                break;
-            if (FenceSplitsBatch(c, c->Slots[previous].Offset.QuadPart, batchOverlapsFence))
-                break;
+            if (previous == NoSlot) { backReason = &c->Performance.DrainBackGap; break; }
+            if (c->Slots[previous].InFlight) { backReason = &c->Performance.DrainBackInFlight; break; }
+            if (c->Slots[previous].Filling) { backReason = &c->Performance.DrainBackFilling; break; }
+            if (c->Slots[previous].ValidSectors != 255) { backReason = &c->Performance.DrainBackPartial; break; }
+            if (FenceSplitsBatch(c, c->Slots[previous].Offset.QuadPart, batchOverlapsFence) ||
+                TrimFenced(c, c->Slots[previous].Offset.QuadPart))
+            { backReason = &c->Performance.DrainBackFence; break; }
             index = previous;
         }
+        if (batchBlocks > 1 && c->Slots[index].Offset.QuadPart < Chunk)
+            backReason = &c->Performance.DrainBackBoundary;
+        ++*backReason;
         auto first = &c->Slots[index];
         QC_SLOT io = *first;
         ULONG selected[MaxBatchBytes / Chunk];
         ULONG merged = 0;
         io.Buffer = c->DrainBuffer + worker->Number * c->DrainCapacity;
         io.Length = 0;
+        // Exactly one terminal reason per submitted batch; counters do not change selection.
+        auto endReason = &c->Performance.DrainEndLimit;
         while (index != NoSlot && merged < batchBlocks)
         {
             auto slot = &c->Slots[index];
-            if (slot->InFlight || slot->Filling)
-                break;
+            if (slot->InFlight) { endReason = &c->Performance.DrainEndInFlight; break; }
+            if (slot->Filling) { endReason = &c->Performance.DrainEndFilling; break; }
             if (merged && slot->ValidSectors != 255)
-                break;
-            if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence))
-                break;
+            { endReason = &c->Performance.DrainEndPartial; break; }
+            if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence) || TrimFenced(c, slot->Offset.QuadPart))
+            { endReason = &c->Performance.DrainEndFence; break; }
             selected[merged++] = index;
             slot->InFlight = TRUE;
             ++slot->Pins;
             io.Length += Chunk;
             index = FindOldestSlot(c, io.Offset.QuadPart + io.Length);
         }
+        if (io.ValidSectors != 255) endReason = &c->Performance.DrainPartialAnchor;
+        else if (merged < batchBlocks && index == NoSlot)
+        {
+            endReason = &c->Performance.DrainEndGap;
+            const auto neighbor = FindSlot(c, io.Offset.QuadPart + io.Length);
+            if (neighbor == NoSlot) ++c->Performance.DrainGapAbsent;
+            else if (c->Slots[neighbor].Filling) ++c->Performance.DrainGapFilling;
+            else if (c->Slots[neighbor].ValidSectors == 255) ++c->Performance.DrainGapCleanFull;
+            else ++c->Performance.DrainGapCleanPartial;
+        }
+        ++*endReason;
         const auto transferBytes = io.ValidSectors == 255 ? io.Length : QcValidBytes(io.ValidSectors);
+        if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
+        else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
+        else ++c->Performance.DrainSizeLarge;
         c->State.InFlightBytes += transferBytes;
+        worker->InFlightStart = io.Offset.QuadPart;
+        worker->InFlightEnd = io.Offset.QuadPart + io.Length;
         // Lab gate (one shot): keep this overlapping batch in flight, after its
         // lower write completed, for a bounded hold. Newer overlapping direct
         // writes must wait for its retirement, not merely for its submission.
@@ -1174,6 +1293,7 @@ static void Drainer(PVOID context)
         c->Performance.LowerIoTicks += lowerTicks;
         c->Performance.DrainCopyTicks += copyTicks;
         c->State.InFlightBytes -= transferBytes;
+        worker->InFlightStart = worker->InFlightEnd = 0;
         for (ULONG i = 0; i < merged; ++i)
         {
             c->Slots[selected[i]].InFlight = FALSE;
@@ -1243,6 +1363,8 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->CopyFlags = QcCopyPrefetch | QcCopyCoalesce | QcCopyBookkeeping | QcCopyOffloadMisses;
     // Read recall (readrecall.h) replaces bimodal insertion; QcLabReadRecall 0 restores it for A/B.
     c->ReadRecall = 1;
+    c->ReadAware = QcDefaultReadAware;
+    c->TrimMode = QcDefaultTrimMode;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;
@@ -1456,6 +1578,14 @@ void QcCacheDestroy(QC_CACHE* c)
                    "QueueCache removed with %llu dirty bytes; status 0x%08X\n",
                    c->State.DirtyBytes,
                    c->State.LastError);
+    // Offload threads finished every asynchronous TRIM before exiting; release defensively.
+    for (auto& fence : c->TrimFences)
+        if (fence.Ranges)
+        {
+            ExFreePoolWithTag(fence.Ranges, Tag);
+            fence.Ranges = nullptr;
+        }
+    c->TrimFenceCount = 0;
     FreeSlots(c); // Surprise removal cannot promise volatile data survival.
     if (c->LowerCallItem)
     {
@@ -1486,7 +1616,7 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     }
     c->State.BudgetBytes = budget;
     // Include both page-rounded descriptor and hash-index allocations in the hard budget.
-    c->DrainCapacity = budget < (16ULL << 20) ? SlabBytes / 4 : MaxBatchBytes;
+    c->DrainCapacity = QcDrainCapacityForBudget(budget, RTL_NUMBER_OF(c->Workers), MaxBatchBytes);
     auto stagingBytes = c->DrainCapacity * RTL_NUMBER_OF(c->Workers);
     // Reserve the page-rounded slab-handle table first (one PMDL per slab).
     const auto slabTableReserve = ((budget / SlabBytes + 1) * sizeof(PMDL) + PAGE_SIZE - 1) & ~(static_cast<ULONGLONG>(PAGE_SIZE) - 1);
@@ -1494,7 +1624,15 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     const auto slabCost = SlabBytes + SlotsPerSlab * (sizeof(QC_SLOT) + 2 * sizeof(ULONG)) + sizeof(QC_CHUNK) +
         QcLockedPageMetadataBytes(SlabBytes, 1);
     // Four page-rounded tables (descriptors, index, chunks, recall) each round up by less than a page.
-    auto n = static_cast<ULONG>((budget - 4 * PAGE_SIZE - stagingBytes - slabTableReserve) / slabCost) * SlotsPerSlab;
+    const auto slabs = QcCacheSlabCount(budget, stagingBytes, 4 * PAGE_SIZE + slabTableReserve, slabCost);
+    if (!slabs || slabs > MAXULONG / SlotsPerSlab)
+    {
+        FreeSlots(c);
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    auto n = static_cast<ULONG>(slabs) * SlotsPerSlab;
     auto descriptors =
         (static_cast<SIZE_T>(n) * sizeof(QC_SLOT) + PAGE_SIZE - 1) & ~(static_cast<SIZE_T>(PAGE_SIZE) - 1);
     c->Slots =
@@ -1722,6 +1860,29 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             status = STATUS_INVALID_PARAMETER;
         else
             InterlockedExchange(&c->CallerBackoff, static_cast<LONG>(command.Value));
+        break;
+    case QcLabDrainGather:
+        // ABI reservation for the rejected aligned-gather experiment. Reset is
+        // harmless; current selection is the retained pre-experiment algorithm.
+        if (command.Value > 1 || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else if (command.Value)
+            status = STATUS_NOT_SUPPORTED;
+        break;
+    case QcLabReadAware:
+        if (command.Value > RTL_NUMBER_OF(c->Workers) || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+        {
+            InterlockedExchange(&c->ReadAware, static_cast<LONG>(command.Value));
+            WakeDrainers(c);
+        }
+        break;
+    case QcLabTrimMode:
+        if (command.Value > (QcTrimLookup | QcTrimAsync | QcTrimLabHold) || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else
+            InterlockedExchange(&c->TrimMode, static_cast<LONG>(command.Value));
         break;
     case QcLabDelay:
         if (command.Value > 2000)
@@ -2146,6 +2307,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             entry->Started = FALSE;
             entry->Write = TRUE;
             entry->WriteThrough = writeThrough;
+            entry->Trim = FALSE;
             entry->Source = source;
             RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
         }
@@ -2761,6 +2923,7 @@ bool QcCacheOffloadPagingRead(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool 
         entry->Sequence = ++c->PagingSequence;
         entry->Started = FALSE;
         entry->Write = entry->WriteThrough = FALSE;
+        entry->Trim = FALSE;
         entry->Source = nullptr;
         RecordMaximum(&c->PagingOffloadMaxQueued, ++c->PagingQueued);
     }
@@ -2844,8 +3007,9 @@ static void PagingReader(PVOID context)
         const bool pagingIo = (irp->Flags & IRP_PAGING_IO) != 0;
         // Each read owns a stable pin snapshot, even when other misses fill the
         // same blocks during its lower wait. Ordinary staged misses are retained.
-        auto status = next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
-                                  : Read(c, irp, false, false, reader->Pins);
+        auto status = next->Trim ? RunAsyncTrim(c, next)
+                      : next->Write ? CopyOffloadedWrite(c, next, reader->Pins)
+                                    : Read(c, irp, false, false, reader->Pins);
         if (pagingIo)
         {
             InterlockedIncrement64(NT_SUCCESS(status) ? &c->PagingOffloadCompletions : &c->PagingOffloadFailures);
@@ -2853,8 +3017,9 @@ static void PagingReader(PVOID context)
         }
         c->CompleteRequest(c->ServiceContext, irp, status);
         KeAcquireSpinLock(&c->PagingLock, &irql);
+        if (!next->Trim)
+            --c->PagingQueued;
         next->Irp = nullptr;
-        --c->PagingQueued;
         KeReleaseSpinLock(&c->PagingLock, irql);
         KeSetEvent(&c->PagingDone, IO_NO_INCREMENT, FALSE);
     }
@@ -2889,11 +3054,195 @@ static void SortTrimRanges(DEVICE_DATA_SET_RANGE* ranges, ULONG count)
         sift(0, end);
     }
 }
+// Mutex held. One cached version whose block overlaps a TRIM: a clean copy is
+// released; a dirty version loses the trimmed sectors and is retired when none remain.
+static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask)
+{
+    auto slot = &c->Slots[i];
+    NT_ASSERT(!slot->InFlight); // overlapping writes were awaited and no batch started since
+    if (!slot->Dirty)
+    {
+        RetireSlot(c, i);
+        return;
+    }
+    const auto trimmed = slot->ValidSectors & mask;
+    if (!trimmed)
+        return;
+    c->DiscardedBytes += QcValidBytes(trimmed);
+    c->State.DirtyBytes -= QcValidBytes(trimmed);
+    slot->ValidSectors &= ~mask;
+    if (!slot->ValidSectors)
+    {
+        --c->DirtySlots;
+        RetireSlot(c, i);
+    }
+}
+// Mutex held. Drops cached data inside the sorted, merged TRIM ranges. With lookup, a
+// TRIM of at most a quarter of the slots visits only its blocks through the index:
+// scanning every slot under Mutex cost milliseconds per small TRIM (plan 159).
+static void TrimCached(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG merged, bool lookup)
+{
+    ULONGLONG blocks = 0;
+    for (ULONG j = 0; j < merged && blocks <= c->Capacity / 4; ++j)
+    {
+        const auto first = ranges[j].StartingOffset / Chunk * Chunk;
+        const auto end = ranges[j].StartingOffset + static_cast<LONGLONG>(ranges[j].LengthInBytes);
+        blocks += static_cast<ULONGLONG>((end - first + Chunk - 1) / Chunk);
+    }
+    if (lookup && blocks <= c->Capacity / 4)
+    {
+        InterlockedIncrement64(&c->TrimLookups);
+        // Visiting a block once per covering range equals one visit with their combined mask.
+        for (ULONG j = 0; j < merged; ++j)
+        {
+            const auto start = ranges[j].StartingOffset;
+            const auto length = ranges[j].LengthInBytes;
+            for (auto block = start / Chunk * Chunk; block < start + static_cast<LONGLONG>(length); block += Chunk)
+            {
+                const auto mask = QcTrimMask(block, start, length);
+                if (!mask)
+                    continue;
+                for (auto i = c->Buckets[Bucket(c, block)]; i != NoSlot;)
+                {
+                    const auto next = c->Slots[i].HashNext;
+                    if (c->Slots[i].Offset.QuadPart == block)
+                        TrimSlot(c, i, mask);
+                    i = next;
+                }
+            }
+        }
+        return;
+    }
+    for (ULONG i = 0; i < c->Capacity; ++i)
+    {
+        auto slot = &c->Slots[i];
+        if (!slot->Length)
+            continue;
+        const auto block = slot->Offset.QuadPart;
+        // First range starting at or beyond this block's end; earlier ones may cover it.
+        ULONG low = 0, high = merged;
+        while (low < high)
+        {
+            auto mid = low + (high - low) / 2;
+            if (ranges[mid].StartingOffset < block + Chunk)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+        unsigned mask = 0;
+        for (auto j = low; j-- > 0;)
+        {
+            if (ranges[j].StartingOffset + static_cast<LONGLONG>(ranges[j].LengthInBytes) <= block)
+                break;
+            mask |= QcTrimMask(block, ranges[j].StartingOffset, ranges[j].LengthInBytes);
+        }
+        if (mask)
+            TrimSlot(c, i, mask);
+    }
+}
+// Hands an asynchronous lower TRIM to an offload thread. The caller (inside this
+// TRIM's own ordered processing, with offloads blocked) holds no lock.
+static bool OffloadTrim(QC_CACHE* c, PIRP irp, ULONG fence, LONGLONG low, LONGLONG high)
+{
+    if (!c->ReadThreads[0].Thread || !c->CompleteRequest)
+        return false;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->PagingLock, &irql);
+    QC_PAGING_READ* entry = nullptr;
+    if (!c->PagingStop)
+        for (auto& read : c->PagingReads)
+            if (!read.Irp)
+            {
+                entry = &read;
+                break;
+            }
+    if (entry)
+    {
+        entry->Irp = irp;
+        entry->Start = low;
+        entry->End = high;
+        entry->Sequence = ++c->PagingSequence;
+        entry->Started = FALSE;
+        entry->Write = entry->WriteThrough = FALSE;
+        entry->Trim = TRUE;
+        entry->Fence = fence;
+        entry->Source = nullptr;
+        // Not counted in PagingQueued: the caller path must not back off while a slow lower TRIM
+        // is outstanding (plan 164). Its cache side is applied and its ranges are fenced.
+    }
+    KeReleaseSpinLock(&c->PagingLock, irql);
+    if (!entry)
+        return false;
+    KeSetEvent(&c->PagingWork, IO_NO_INCREMENT, FALSE);
+    return true;
+}
+// The lower TRIM of TrimFences[fence] returned: count it and lift its fence.
+static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status)
+{
+    AcquireCache(c);
+    if (NT_SUCCESS(status))
+        ++c->TrimRequests;
+    auto& entry = c->TrimFences[fence];
+    auto ranges = entry.Ranges;
+    entry.Ranges = nullptr;
+    entry.Count = 0;
+    --c->TrimFenceCount;
+    Publish(c);
+    KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+    WakeDrainers(c);
+    ReleaseCache(c);
+    ExFreePoolWithTag(ranges, Tag);
+}
+// Offload thread. QcTrimLabHold holds the lower TRIM first, so trim-cache can act
+// while it is outstanding; drain batches are unaffected.
+static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry)
+{
+    const auto delay = (InterlockedCompareExchange(&c->TrimMode, 0, 0) & QcTrimLabHold) ? QcTrimLabHoldMs : 0UL;
+    if (delay)
+    {
+        LARGE_INTEGER interval;
+        interval.QuadPart = -10000LL * delay;
+        KeDelayExecutionThread(KernelMode, FALSE, &interval);
+    }
+    const auto status = OriginalIo(c, entry->Irp, false);
+    FinishAsyncTrim(c, entry->Fence, status);
+    return status;
+}
+// True while an asynchronous lower TRIM overlapping [first, end) is outstanding.
+static bool TrimsOverlap(QC_CACHE* c, LONGLONG first, LONGLONG end)
+{
+    bool overlap = false;
+    KIRQL irql;
+    KeAcquireSpinLock(&c->PagingLock, &irql);
+    for (const auto& read : c->PagingReads)
+        if (read.Irp && read.Trim && read.Start < end && read.End > first)
+        {
+            overlap = true;
+            break;
+        }
+    KeReleaseSpinLock(&c->PagingLock, irql);
+    return overlap;
+}
+// Mutex held. True while a drainer's outstanding lower write overlaps one of these
+// sorted, merged TRIM ranges: the TRIM must not reach the disk first, or that write
+// would land afterwards on sectors the file system has just freed.
+static bool TrimOverlapsInFlight(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG count)
+{
+    for (const auto& worker : c->Workers)
+    {
+        if (worker.InFlightStart == worker.InFlightEnd)
+            continue;
+        for (ULONG i = 0; i < count && ranges[i].StartingOffset < worker.InFlightEnd; ++i)
+            if (ranges[i].StartingOffset + static_cast<LONGLONG>(ranges[i].LengthInBytes) > worker.InFlightStart)
+                return true;
+    }
+    return false;
+}
 // TRIM: the file system declares these sectors free. Cached writes for them are
 // dropped instead of written (they would overwrite what the disk now treats as
-// unallocated), clean copies are dropped, and only already-issued writes are awaited.
-// Any number of sector-aligned ranges is handled; only unknown flags or malformed
-// input take the conservative ordered path.
+// unallocated), clean copies are dropped, and only already-issued writes that
+// overlap a trimmed range are awaited. Any number of sector-aligned ranges is
+// handled; only unknown flags or malformed input take the conservative ordered path.
 static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* result)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -2952,8 +3301,10 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     AcquireCache(c);
     c->TrimPaused = TRUE;
     // The serialized request worker admits no subsequent writes while this request
-    // runs. Wait only for the already-issued lower write, NOT all queued payload.
-    while (c->State.InFlightBytes && !c->Gone)
+    // runs, and TrimPaused starts no new drain batch. Wait only for already-issued
+    // lower writes that overlap a trimmed range, NOT all queued payload: waiting for
+    // every in-flight batch stalled Eager writes behind each TRIM (plan 158).
+    while (TrimOverlapsInFlight(c, ranges, merged) && !c->Gone)
     {
         KeClearEvent(&c->Changed);
         ReleaseCache(c);
@@ -2961,6 +3312,56 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         AcquireCache(c);
     }
     auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
+    const auto mode = static_cast<ULONG>(InterlockedCompareExchange(&c->TrimMode, 0, 0));
+    if (NT_SUCCESS(status) && (mode & QcTrimAsync))
+    {
+        // Asynchronous lower TRIM: drop the cached data now, fence the ranges so no
+        // newer version drains before the lower TRIM completes, and let an offload
+        // thread send it while this worker continues with later requests.
+        ULONG fence = QcTrimFenceSlots;
+        for (ULONG i = 0; i < QcTrimFenceSlots && fence == QcTrimFenceSlots; ++i)
+            if (!c->TrimFences[i].Ranges)
+                fence = i;
+        auto owned = ranges != local ? ranges : nullptr;
+        if (fence != QcTrimFenceSlots && !owned)
+        {
+            owned = static_cast<DEVICE_DATA_SET_RANGE*>(
+                ExAllocatePool2(POOL_FLAG_NON_PAGED, static_cast<SIZE_T>(merged) * sizeof(DEVICE_DATA_SET_RANGE), Tag));
+            if (owned)
+                RtlCopyMemory(owned, ranges, static_cast<SIZE_T>(merged) * sizeof(DEVICE_DATA_SET_RANGE));
+        }
+        if (fence != QcTrimFenceSlots && owned)
+        {
+            TrimCached(c, owned, merged, (mode & QcTrimLookup) != 0);
+            auto& entry = c->TrimFences[fence];
+            entry.Ranges = owned;
+            entry.Count = merged;
+            entry.Low = owned[0].StartingOffset;
+            entry.High = owned[merged - 1].StartingOffset + static_cast<LONGLONG>(owned[merged - 1].LengthInBytes);
+            ++c->TrimFenceCount;
+            const auto low = entry.Low, high = entry.High;
+            c->TrimPaused = FALSE;
+            Publish(c);
+            KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+            WakeDrainers(c);
+            ReleaseCache(c);
+            // The fence owns the ranges now, on every path below.
+            if (OffloadTrim(c, irp, fence, low, high))
+            {
+                InterlockedIncrement64(&c->TrimAsync);
+                *result = STATUS_PENDING; // the offload thread completes irp
+                return true;
+            }
+            InterlockedIncrement64(&c->TrimAsyncFallbacks); // table full: send it here
+            status = OriginalIo(c, irp);
+            FinishAsyncTrim(c, fence, status);
+            *result = status;
+            return true;
+        }
+        if (owned && owned != ranges)
+            ExFreePoolWithTag(owned, Tag);
+        InterlockedIncrement64(&c->TrimAsyncFallbacks); // no fence slot: ordered path
+    }
     ReleaseCache(c);
     if (NT_SUCCESS(status))
         status = OriginalIo(c, irp);
@@ -2968,48 +3369,7 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     if (NT_SUCCESS(status))
     {
         ++c->TrimRequests;
-        for (ULONG i = 0; i < c->Capacity; ++i)
-        {
-            auto slot = &c->Slots[i];
-            if (!slot->Length)
-                continue;
-            const auto block = slot->Offset.QuadPart;
-            // First range starting at or beyond this block's end; earlier ones may cover it.
-            ULONG low = 0, high = merged;
-            while (low < high)
-            {
-                auto mid = low + (high - low) / 2;
-                if (ranges[mid].StartingOffset < block + Chunk)
-                    low = mid + 1;
-                else
-                    high = mid;
-            }
-            unsigned mask = 0;
-            for (auto j = low; j-- > 0;)
-            {
-                if (ranges[j].StartingOffset + static_cast<LONGLONG>(ranges[j].LengthInBytes) <= block)
-                    break;
-                mask |= QcTrimMask(block, ranges[j].StartingOffset, ranges[j].LengthInBytes);
-            }
-            if (!mask)
-                continue;
-            if (!slot->Dirty)
-            {
-                RetireSlot(c, i);
-                continue;
-            }
-            const auto trimmed = slot->ValidSectors & mask;
-            if (!trimmed)
-                continue;
-            c->DiscardedBytes += QcValidBytes(trimmed);
-            c->State.DirtyBytes -= QcValidBytes(trimmed);
-            slot->ValidSectors &= ~mask;
-            if (!slot->ValidSectors)
-            {
-                --c->DirtySlots;
-                RetireSlot(c, i);
-            }
-        }
+        TrimCached(c, ranges, merged, (mode & QcTrimLookup) != 0);
     }
     c->TrimPaused = FALSE;
     Publish(c);
@@ -3366,7 +3726,13 @@ NTSTATUS QcCacheProcess(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, bool* trans
     AcquireCache(c);
     c->OffloadBlocked = TRUE;
     ReleaseCache(c);
-    QcCacheWaitPagingReads(c);
+    // TRIMs commute, so an asynchronous TRIM waits for other offloads (their pins and
+    // copies) but not for earlier outstanding lower TRIMs.
+    if (control && stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES &&
+        (InterlockedCompareExchange(&c->TrimMode, 0, 0) & QcTrimAsync))
+        WaitForPagingReads(c, MINLONGLONG, MAXLONGLONG, nullptr, &c->PagingOffloadIdleWaits);
+    else
+        QcCacheWaitPagingReads(c);
     auto status = Process(c, irp, deviceBytes);
     AcquireCache(c);
     c->OffloadBlocked = FALSE;

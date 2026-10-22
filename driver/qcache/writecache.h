@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <ntifs.h>
+#include <ntddstor.h> // DEVICE_DATA_SET_RANGE (asynchronous TRIM fences)
 #include "cachepolicy.h"
 
 #define IOCTL_QCACHE_STATE_V1 CTL_CODE(0x8844UL, 0xD10UL, METHOD_BUFFERED, FILE_ANY_ACCESS)
@@ -39,7 +40,9 @@ static_assert(sizeof(QC_SPECIAL_RANGE) == 16 && sizeof(QC_SPECIAL_RANGES_HEADER)
 static constexpr ULONG QcSpecialRangeMax = 256;
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
-// The first 192 bytes remain V1 and the first 408 bytes remain V2.
+// V4 appends batch termination reasons and size buckets (one reason/bucket per batch).
+// V5 appends runtime gather policy, gap contents and backward-stop attribution.
+// The first 192/408/432/512 bytes remain V1/V2/V3/V4.
 struct QC_PERFORMANCE
 {
     ULONG Version, Size;
@@ -57,10 +60,20 @@ struct QC_PERFORMANCE
     ULONGLONG LastSelectionMajor, LastSelectionCode, LastSelectionOffset, LastSelectionLength;
     ULONGLONG LastSelectionSequence, LastAfterSequence, LastSelectionScanned;
     ULONGLONG DrainSelectionTicks, DrainCopyTicks, DrainRetirementTicks;
+    ULONGLONG DrainEndLimit, DrainEndGap, DrainEndInFlight, DrainEndFilling, DrainEndPartial, DrainEndFence;
+    ULONGLONG DrainPartialAnchor, DrainSizeSmall, DrainSizeMedium, DrainSizeLarge;
+    // V5: runtime-only lab policy, gap contents and one backward stop per batch.
+    ULONGLONG DrainGatherPolicy, DrainGapCleanFull, DrainGapCleanPartial, DrainGapAbsent;
+    ULONGLONG DrainBackLimit, DrainBackGap, DrainBackInFlight, DrainBackFilling;
+    ULONGLONG DrainBackPartial, DrainBackFence, DrainBackBoundary, DrainBackAligned;
+    ULONGLONG DrainGapFilling;
 };
 static constexpr ULONG QcPerformanceV1Size = 192;
 static constexpr ULONG QcPerformanceV2Size = 408;
-static_assert(sizeof(QC_PERFORMANCE) == 432);
+static constexpr ULONG QcPerformanceV3Size = 432;
+static constexpr ULONG QcPerformanceV4Size = 512;
+static_assert(sizeof(QC_PERFORMANCE) == 616);
+static_assert(FIELD_OFFSET(QC_PERFORMANCE, DrainGatherPolicy) == QcPerformanceV4Size);
 enum : ULONGLONG
 {
     QcIdlePhase,
@@ -144,6 +157,10 @@ struct QC_DIAGNOSTICS
     // V23: caller-routing candidates and mutually exclusive first-decline reasons.
     ULONGLONG CallerBackoff, CallerCandidates, CallerControls, CallerQueued;
     ULONGLONG CallerWorkerActive, CallerOwnerActive, CallerOffloaded, CallerBackoffRequests, CallerProbes;
+    // V24: QcLabReadAware limit and drainer waits it caused; QcLabTrimMode, TRIMs that
+    // dropped cached data by range lookup, lower TRIMs sent asynchronously, and
+    // asynchronous TRIMs that fell back to the ordered path (fence or table full).
+    ULONGLONG ReadAware, ReadAwareWaits, TrimMode, TrimLookups, TrimAsync, TrimAsyncFallbacks;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -167,7 +184,9 @@ static constexpr ULONG QcDiagnosticsV19Size = 952;
 static constexpr ULONG QcDiagnosticsV20Size = 976;
 static constexpr ULONG QcDiagnosticsV21Size = 1008;
 static constexpr ULONG QcDiagnosticsV22Size = 1064;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1136);
+static constexpr ULONG QcDiagnosticsV23Size = 1136;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1184);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadAware) == QcDiagnosticsV23Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StagedReadRequests) == QcDiagnosticsV20Size);
@@ -285,7 +304,40 @@ enum : ULONG
     QcLabRamReadQueue,
     // Lab: post-overlap caller backoff, 0..256 (default 256). Busy/queued/active
     // ownership checks still apply to every request. Runtime only.
-    QcLabCallerBackoff
+    QcLabCallerBackoff,
+    // Reserved rejected gather experiment: 0 harmless reset; 1 unsupported.
+    QcLabDrainGather,
+    // Lab: Value 0 = off; 1..8 (default QcDefaultReadAware) = while foreground lower reads are in flight
+    // or completed within QcReadAwareHoldMs, start a drain batch only while fewer than
+    // Value batches are outstanding. Barriers and paging-write fences are never held.
+    QcLabReadAware,
+    // Lab: Value = QcTrimLookup | QcTrimAsync | QcTrimLabHold (default QcDefaultTrimMode;
+    // 0: full slot scan, ordered lower TRIM).
+    QcLabTrimMode
+};
+enum : ULONG
+{
+    // Drop cached data of small TRIMs by index lookup per trimmed block instead of a full slot scan.
+    QcTrimLookup = 1,
+    // Apply the TRIM to cached data, fence its ranges from draining, and send the lower
+    // TRIM from an offload thread, so the ordered request path continues meanwhile.
+    QcTrimAsync = 2,
+    // Lab (trim-cache): hold each asynchronous lower TRIM for QcTrimLabHoldMs first.
+    QcTrimLabHold = 4
+};
+// Defaults since plan 164 (issue #15, plans 162/163): with Eager 2048 KiB x 8 drains, a
+// concurrent disk reader keeps the 1024 KiB x 4 default's IOPS, and mass-delete TRIMs no longer
+// stall the ordered request path. The lab switches still set any value for A/B.
+static constexpr LONG QcDefaultReadAware = 2;
+static constexpr LONG QcDefaultTrimMode = QcTrimLookup | QcTrimAsync;
+static constexpr ULONG QcTrimLabHoldMs = 2000;
+static constexpr ULONG QcReadAwareHoldMs = 10;
+static constexpr ULONG QcTrimFenceSlots = 16;
+struct QC_TRIM_FENCE
+{
+    DEVICE_DATA_SET_RANGE* Ranges; // Sorted, merged, owned (pool); null when the slot is free.
+    ULONG Count;
+    LONGLONG Low, High;
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -334,6 +386,8 @@ struct QC_PAGING_READ
     ULONGLONG Sequence;
     BOOLEAN Started;
     BOOLEAN Write, WriteThrough;
+    BOOLEAN Trim; // Asynchronous lower TRIM of TrimFences[Fence]; ignored by range waits.
+    ULONG Fence;
     PUCHAR Source; // Write: the mapped caller buffer.
 };
 struct QC_DRAIN_WORKER
@@ -341,6 +395,8 @@ struct QC_DRAIN_WORKER
     QC_CACHE* Cache;
     ULONG Number;
     HANDLE Thread;
+    // Mutex: disk range of this drainer's one outstanding lower write; empty when equal.
+    LONGLONG InFlightStart, InFlightEnd;
 };
 // Offloaded-request executors: reads that need the disk (paging reads, and ordinary
 // misses with QcCopyOffloadMisses), large reads served entirely from RAM and large
@@ -393,7 +449,7 @@ struct QC_CACHE
     PKEVENT RequestAvailable;
     KEVENT Wake, Changed;
     KEVENT Stopping; // Set once by QcCacheDestroy; drainers above Parallelism wait on it, never on Wake.
-    QC_DRAIN_WORKER Workers[4];
+    QC_DRAIN_WORKER Workers[8]; // Ceiling; eight active drainers by default since plan 164.
     QC_SLOT* Slots;
     // One MDL per 256 KiB payload slab: physical pages from the memory manager
     // (MmAllocatePagesForMdlEx), mapped once, never nonpaged pool. Indexed by
@@ -442,6 +498,17 @@ struct QC_CACHE
     volatile LONG64 RecalledFills, RecallDenied;
     volatile LONG CallerPath; // QcCallerPath mode, read by dispatch.
     volatile LONG CopyFlags;  // QcLabCopyFlags, read by RAM-hit copies.
+    volatile LONG ReadAware;  // QcLabReadAware limit (0 off, QcDefaultReadAware), read by drainers.
+    // Foreground lower reads in flight and the last completion (NowMs), from every
+    // read the filter sends down for a request (worker, offload threads, direct path).
+    volatile LONG ForegroundReads;
+    volatile LONG64 LastForegroundReadMs, ReadAwareWaits;
+    volatile LONG TrimMode; // QcLabTrimMode (QcDefaultTrimMode).
+    // Mutex: ranges of asynchronous lower TRIMs not yet completed. Drainers never
+    // select a version inside one, and forwarded writes wait for an overlapping one.
+    QC_TRIM_FENCE TrimFences[QcTrimFenceSlots];
+    ULONG TrimFenceCount;
+    volatile LONG64 TrimLookups, TrimAsync, TrimAsyncFallbacks;
     volatile LONG64 CallerPathReads, CallerPathWrites, CallerPathDeclined, CopyOffloadReads, CopyOffloadWrites;
     volatile LONG64 PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     volatile LONG64 StagedReadRequests, StagedReadBytes, MixedStagedReads, StagedReadCachedBytes;
@@ -449,7 +516,8 @@ struct QC_CACHE
     // Mutex (written by QcLabMeasureLayout; copied without the lock, values may be one measurement apart).
     ULONGLONG LayoutMeasurements, LayoutBlocks, LayoutNeighbors, LayoutContiguous, LayoutReversed, LayoutFreeChunks;
     // Offloaded paging reads. PagingLock protects the table, PagingQueued and
-    // PagingStop. Only the request worker inserts; only ReadThreads execute.
+    // PagingStop. PagingQueued counts read and write-copy entries, not asynchronous
+    // TRIMs. Only the request worker inserts; only ReadThreads execute.
     // The worker never waits for the paging thread while holding Mutex, and the
     // paging thread waits only for Mutex and lower completion, never the worker.
     KSPIN_LOCK PagingLock;
@@ -505,6 +573,8 @@ void QcCacheSnapshotV2(QC_CACHE* cache, QC_STATE_V2* output);
 void QcCacheSnapshotV3(QC_CACHE* cache, QC_STATE_V3* output);
 void QcCacheDiagnostics(QC_CACHE* cache, QC_DIAGNOSTICS* output);
 void QcCacheRecordLowerAttempt(QC_CACHE* cache, ULONG major, PIRP original = nullptr);
+// A foreground lower read completed: pairs with an increment of ForegroundReads.
+void QcCacheForegroundReadDone(QC_CACHE* cache);
 void QcCacheRecordUsage(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath);
 void QcCacheRecordUsageRequest(QC_CACHE* cache, DEVICE_USAGE_NOTIFICATION_TYPE type, BOOLEAN inPath,
                                ULONGLONG processId);

@@ -221,7 +221,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         progressSink = progress;
         // An open lock prevents a second coordinator/recovery process from owning this run concurrently.
         using var runLock = new FileStream(storage.PathFor("run.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
+        var performance = options.Suite is "performance" or "full" or "flush-interference" or "write-performance" or "sequential-resident" or "cache-read-reference" or "cache-read-bookkeeping" or "cache-read-misses" or "drain-lock-diagnostic" || VerificationPlan.IsLayoutSuite(options.Suite) ? VerificationPlan.Performance(options) : [];
         var exercises = CacheExercisePlan.Cases(options);
         var drainDecision = VerificationPlan.DrainDecision(options);
         var drainFlush = DrainFlushDecision.Cases(options);
@@ -306,7 +306,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
                 comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
                     ?? throw new InvalidDataException("Missing comparison target.");
-                storage.Write("restoration.json", new { Required = options.Suite == "compare-drain", Reason = options.Suite == "compare-drain"
+                storage.Write("restoration.json", new { Required = ComparisonDrain.IsSuite(options.Suite), Reason = ComparisonDrain.IsSuite(options.Suite)
                     ? "Provider pause/resume journal; independent restoration after an owned worker failure."
                     : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
@@ -569,8 +569,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
                         test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 :
                         test.Operation == "stress-races" ? (options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds) + 1800 : 900);
-                    if (test.Operation is "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "stress-races" or "app-write-profile" or
-                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache")
+                    if (test.Operation is "cache-allocation" or "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "stress-races" or "app-write-profile" or
+                        "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "trim-cache" or
+                        "parallel-copies-2048" or "parallel-copies-1024")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))
                             ?? throw new InvalidDataException("Missing file-only check results.");
                     if (test.Operation == "ram-read-reference")
@@ -604,7 +605,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 foreach (var scenario in performance)
                 {
                     deadline.Token.ThrowIfCancellationRequested();
-                    await Case(scenario.Id, () => Measure(scenario, deadline.Token));
+                    await Case(scenario.Id, () => options.Suite == "drain-lock-diagnostic"
+                        ? MeasureDrainLock(scenario, deadline.Token) : Measure(scenario, deadline.Token));
                 }
                 if (options.Suite == "cache-read-reference" && options.CaseFilter is null)
                     foreach (var row in CacheReadReference.Report(storage, performance))
@@ -645,7 +647,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         {
             if (preflightSeconds == 0) preflightSeconds = elapsed.Elapsed.TotalSeconds;
             var restoring = Stopwatch.StartNew();
-            if (options.Suite == "compare-drain" && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
+            if (ComparisonDrain.IsSuite(options.Suite) && File.Exists(storage.PathFor(ComparisonDrainScenarios.RecoveryFile)))
             {
                 try
                 {
@@ -730,6 +732,21 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             }
         }
         // A completed run no longer needs its multi-GiB workload files; a failed one keeps them for inspection.
+        if (complete && options.Suite == DrainLockDiagnostic.Suite)
+        {
+            try
+            {
+                var windows = performance.Select(c =>
+                {
+                    using var json = JsonDocument.Parse(File.ReadAllText(storage.PathFor(c.Id + "-evidence.json")));
+                    return json.RootElement.GetProperty("Window").Deserialize<DrainLockWindow>()
+                        ?? throw new InvalidDataException("Missing lock diagnostic window.");
+                }).ToArray();
+                DrainLockDiagnostic.RequireComplete(performance, windows);
+                storage.Write("drain-lock-windows.json", windows);
+            }
+            catch (Exception ex) { complete = false; failure = "Lock diagnostic final evidence validation failed: " + ex; Log("ERROR: " + failure); }
+        }
         if (complete && RemovesWorkloads(options) && workDirectory.Length > 0 &&
             Path.GetFileName(workDirectory) == Path.GetFileName(storage.DirectoryPath))
         {
@@ -752,7 +769,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 var sorted = values.Order().ToArray();
                 return (sorted[(sorted.Length - 1) / 2] + sorted[sorted.Length / 2]) / 2;
             }
-            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush, c.Resident, c.Timing, c.Threads, c.CopyFlags })
+            storage.Write("aggregates.json", performance.GroupBy(c => new { c.Workload, c.Allocation, c.Drain, c.DelayMs, c.QueueDepth, c.Writer, c.ApplicationFlush, c.Resident, c.Timing, c.Threads, c.CopyFlags, c.BatchKiB, c.Parallelism })
                 .Select(g => new
                 {
                     Configuration = g.Key,

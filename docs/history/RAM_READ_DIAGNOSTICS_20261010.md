@@ -2,7 +2,7 @@
 
 Moved from the performance findings. These diagnostics measured where single-reader
 RAM-disk reads spent their time; their outcome is the accepted asynchronous split
-reads change described in [performance findings](../PERFORMANCE_FINDINGS.md). Not
+reads change described in [performance findings](../PERFORMANCE.md). Not
 maintained.
 
 ## Plan 115 attribution hypothesis

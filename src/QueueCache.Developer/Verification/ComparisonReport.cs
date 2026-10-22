@@ -20,7 +20,11 @@ public static class ComparisonReport
     {
         var shapes = Shapes(directory, plan);
         var steps = Steps(directory, plan);
-        var drains = suite == "compare-drain" ? Drains(directory, plan, provider ?? throw new InvalidDataException("Missing comparison provider.")) : [];
+        var reads = suite == ComparisonDrainRead.Suite ? Reads(directory, plan,
+            provider ?? throw new InvalidDataException("Missing comparison provider.")) : [];
+        var drains = ComparisonDrain.IsSuite(suite) && suite != ComparisonDrainRead.Suite ? Drains(directory, plan,
+            provider ?? throw new InvalidDataException("Missing comparison provider."), suite == DrainBatching.Suite,
+            suite == ComparisonDrain.SustainedSuite) : [];
         var memory = plan.Where(c => c.Kind == "memory")
             .Select(c => (c.Id, Snapshot: Read<MemorySnapshot>(directory, c.Id, "memory"))).ToArray();
         // A verify run writes result.json for the generations test and churn.json for the churn test.
@@ -31,7 +35,7 @@ public static class ComparisonReport
         RunStorage.AtomicJson(Path.Combine(directory, "comparison.json"), new
         {
             SchemaVersion = 1, Suite = suite, Product = product, PlanVersion = VerificationPlan.Version,
-            Provider = provider, Shapes = shapes, Steps = steps, Drains = drains, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
+            Provider = provider, Shapes = shapes, Steps = steps, Drains = drains, Reads = reads, Memory = memory.Select(m => new { m.Id, m.Snapshot }), Durability = durability, Churn = churn
         });
         var md = new StringBuilder($"# Comparison: {product}\n\nSuite `{suite}`, plan {VerificationPlan.Version}. Medians of the repetitions " +
             "(range in brackets). MB/s are decimal (1,000,000 bytes/s). Raw evidence: `compare.<step>.*`. Not a verdict.\n");
@@ -42,6 +46,13 @@ public static class ComparisonReport
             foreach (var r in drains)
                 md.AppendLine($"| {r.Shape} | {r.Provider} | {r.Samples} | {N(r.MBPerSecond)} ({N(r.MinMBPerSecond)}–{N(r.MaxMBPerSecond)}) | {N(r.ApplicationSeconds, "F3")} | {N(r.DrainSeconds, "F3")} | {N(r.TotalSeconds, "F3")} | {N(r.DiskBytesWritten, "F0")} | {N(r.DiskWriteOperations, "F0")} | {N(r.AverageWriteBytes, "F0")} |");
             md.AppendLine("\nApplication time includes new file/directory creation and close. Drain time includes FlushVolume metadata, explicit product drain, zero pending and disk queue confirmation. Verification and preparation are outside timing. Disk counters describe the observed virtual disk stack, not physical-media/power-loss durability. Shuffled small-file names do not establish random LBA placement.");
+        }
+        if (reads.Count > 0)
+        {
+            md.AppendLine("\n| Random 4 KiB Q1 reader | Provider | n | IOPS (range) | p50 / p99 / p99.9 ms | Disk write MB/s in the reader window | Writer MB/s |\n|---|---|---:|---:|---|---:|---:|");
+            foreach (var r in reads)
+                md.AppendLine($"| {r.Shape} | {r.Provider} | {r.Samples} | {N(r.Iops, "F0")} ({N(r.MinIops, "F0")}–{N(r.MaxIops, "F0")}) | {N(r.ReadP50Ms, "F3")} / {N(r.ReadP99Ms, "F3")} / {N(r.ReadP999Ms, "F3")} | {N(r.WindowDiskMBPerSecond)} | {N(r.WriterMBPerSecond)} |");
+            md.AppendLine("\nLoaded windows start 12 s after a sequential 1 MiB Q8 writer began filling the product's 2 GiB cache, so the product drains at its own rate throughout; both reader boundaries confirmed pending data. Alone windows start from a drained, cleared cache. The reader file is 8 GiB and cleared from the product cache before every window. Writer MB/s covers the writer's whole run.");
         }
         if (shapes.Count > 0)
         {
@@ -78,12 +89,44 @@ public static class ComparisonReport
         File.WriteAllText(Path.Combine(directory, "COMPARISON.md"), md.ToString());
     }
 
+    public sealed record ReadRow(ComparisonProvider Provider, string Shape, int Samples, double Iops, double MinIops, double MaxIops,
+        double? ReadP50Ms, double? ReadP99Ms, double? ReadP999Ms, double WindowDiskMBPerSecond, double? WriterMBPerSecond);
+
+    public static IReadOnlyList<ReadRow> Reads(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider)
+    {
+        if (!plan.SequenceEqual(ComparisonDrainRead.Cases(3)))
+            throw new InvalidDataException("Cannot publish an incomplete or mixed compare-drain-read plan.");
+        var scores = plan.Select(test =>
+        {
+            var score = Read<ComparisonReadScore>(directory, test.Id, "score");
+            ComparisonDrainRead.ValidateScore(test, score, provider);
+            return score;
+        }).ToArray();
+        static double? Median(IEnumerable<double?> values)
+        {
+            var list = values.Select(v => v ?? throw new InvalidDataException("Missing reader latency.")).ToArray();
+            return ComparisonPlan.Spread(list).Median;
+        }
+        return scores.GroupBy(s => ComparisonPlan.Shape(s.Id)).Select(group =>
+        {
+            var iops = ComparisonPlan.Spread(group.Select(s => s.Reader.Iops).ToArray());
+            var writers = group.Where(s => s.Writer is not null).Select(s => s.Writer!.MBPerSecond).ToArray();
+            return new ReadRow(provider, group.Key, group.Count(), iops.Median, iops.Min, iops.Max,
+                Median(group.Select(s => s.Reader.ReadP50Ms)), Median(group.Select(s => s.Reader.ReadP99Ms)), Median(group.Select(s => s.Reader.ReadP999Ms)),
+                ComparisonPlan.Spread(group.Select(s => s.ReaderWindowDiskBytesWritten / 1_000_000.0 / s.Reader.Seconds).ToArray()).Median,
+                writers.Length == 0 ? null : ComparisonPlan.Spread(writers).Median);
+        }).ToArray();
+    }
+
     private static string Share(SectorCounts c) => string.Create(CultureInfo.InvariantCulture,
         $"{c.New * 100.0 / c.Expected:F1}% new, {c.Old * 100.0 / c.Expected:F1}% old, {(c.Other + c.Missing) * 100.0 / c.Expected:F1}% other or missing");
 
-    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider)
+    public static IReadOnlyList<DrainRow> Drains(string directory, IReadOnlyList<ComparisonCase> plan, ComparisonProvider provider,
+        bool batching = false, bool sustained = false)
     {
-        if (!plan.SequenceEqual(ComparisonDrain.Cases(3))) throw new InvalidDataException("Cannot publish an incomplete compare-drain plan.");
+        var complete = batching ? DrainBatching.Cases(3) : sustained ? ComparisonDrain.SustainedCases(3) : ComparisonDrain.Cases(3);
+        if (batching && sustained || !plan.SequenceEqual(complete) || batching && provider != ComparisonProvider.QueueCache)
+            throw new InvalidDataException("Cannot publish an incomplete or mixed compare-drain plan.");
         using var oracle = JsonDocument.Parse(File.ReadAllText(Path.Combine(directory, "compare-drain-oracle.json")));
         var root = oracle.RootElement;
         if (root.GetProperty("PayloadBytes").GetInt64() != ComparisonDrain.PayloadBytes ||
@@ -91,6 +134,12 @@ public static class ComparisonReport
             root.GetProperty("SmallBytes").GetInt64() != ComparisonDrain.SmallBytes ||
             root.GetProperty("SmallFileCount").GetInt32() != ComparisonDrain.SmallFiles || root.GetProperty("Seed").GetInt32() != ComparisonDrain.Seed)
             throw new InvalidDataException("Wrong compare-drain oracle contract.");
+        string? sustainedHash = null;
+        if (sustained && (!root.TryGetProperty("SustainedBytes", out var sustainedBytes) || sustainedBytes.ValueKind != JsonValueKind.Number ||
+            sustainedBytes.GetInt64() != ComparisonDrain.SustainedBytes || !root.TryGetProperty("SustainedSha256", out var hashValue) ||
+            hashValue.ValueKind != JsonValueKind.String || (sustainedHash = hashValue.GetString()) is not { Length: 64 } ||
+            !sustainedHash.All(char.IsAsciiHexDigit)))
+            throw new InvalidDataException("Missing or wrong compare-drain-sustained oracle.");
         var small = root.GetProperty("SmallFiles").Deserialize<ComparisonFileHash[]>() ?? throw new InvalidDataException("Missing small-file hashes.");
         if (small.Length != ComparisonDrain.SmallFiles || !small.Select(f => f.File).SequenceEqual(Enumerable.Range(0, small.Length).Select(ComparisonDrainFiles.SmallName)))
             throw new InvalidDataException("Incomplete compare-drain small-file oracle.");
@@ -98,10 +147,38 @@ public static class ComparisonReport
         {
             var score = Read<ComparisonDrainScore>(directory, test.Id, "score");
             ComparisonDrain.ValidateScore(test, score, provider);
+            if (ComparisonDrain.Product(provider) == ComparisonProvider.QueueCache)
+                ComparisonDrain.ValidateBypass(Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-before.cache"),
+                    Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "bypass-after.cache"));
+            else if (ComparisonDrain.Product(provider) == ComparisonProvider.PrimoCache)
+            {
+                var recovery = JsonSerializer.Deserialize<ComparisonDrainRecovery>(File.ReadAllText(Path.Combine(directory, "compare-drain-recovery.json")))!;
+                if (ComparisonDrain.PrimoTaskId(Read<ComparisonPrimoObservation>(directory, test.Id, "bypass-primo"), recovery.Volume, paused: true) != recovery.OriginalPrimoTaskId)
+                    throw new InvalidDataException("Primo oracle bypass ownership changed.");
+            }
+            if (batching)
+            {
+                var before = Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "before.cache");
+                var after = Read<QueueCache.Management.WriteCacheState>(directory, test.Id, "after.cache");
+                DrainBatching.ValidateProfile(before, test.GatherPolicy!.Value);
+                DrainBatching.ValidateProfile(after, test.GatherPolicy.Value);
+                if (before.Instance != after.Instance || before.Generation != after.Generation || before.Errors != after.Errors || before.Options != after.Options ||
+                    before.DirtyBytes != score.Before.DirtyBytes || before.InFlightBytes != score.Before.InFlightBytes ||
+                    after.DirtyBytes != score.After.DirtyBytes || after.InFlightBytes != score.After.InFlightBytes)
+                    throw new InvalidDataException("Batching cache identity/profile changed.");
+                var evidence = DrainBatching.Measure(test, before.Performance!, after.Performance!);
+                if (JsonSerializer.Serialize(evidence) != JsonSerializer.Serialize(Read<DrainBatching.Evidence>(directory, test.Id, "batching")))
+                    throw new InvalidDataException("Batching summary contradicts raw counters.");
+            }
             var verify = Read<ComparisonDrainVerification>(directory, test.Id, "verify");
-            ComparisonFileHash[] expected = test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)];
+            ComparisonFileHash[] expected = test.Kind switch
+            {
+                "drain-small" => small,
+                "drain-sustained" => [new(ComparisonDrainFiles.FileName(test.Kind), ComparisonDrain.SustainedBytes, sustainedHash!)],
+                _ => [new(ComparisonDrainFiles.FileName(test.Kind), ComparisonDrain.LargeBytes, root.GetProperty("LargeSha256").GetString()!)]
+            };
             if (verify.Id != test.Id || !verify.Bypassed || !verify.Restored || !verify.Verified || !verify.Files.SequenceEqual(expected) ||
-                expected.Any(f => f.Bytes != (test.Kind == "drain-small" ? ComparisonDrain.SmallFileBytes : ComparisonDrain.LargeBytes) ||
+                expected.Any(f => f.Bytes != (test.Kind == "drain-small" ? ComparisonDrain.SmallFileBytes : ComparisonDrain.ExpectedBytes(test.Kind)) ||
                     f.Sha256 is null || f.Sha256.Length != 64 || !f.Sha256.All(char.IsAsciiHexDigit)))
                 throw new InvalidDataException("Missing, failed or unrestored cache-bypassed file verification: " + test.Id);
             return score;
@@ -118,9 +195,30 @@ public static class ComparisonReport
         }).ToArray();
     }
 
-    private static T Read<T>(string directory, string id, string suffix) =>
-        JsonSerializer.Deserialize<T>(File.ReadAllText(Path.Combine(directory, $"compare.{id}.{suffix}.json")))
-        ?? throw new InvalidDataException($"Missing comparison evidence compare.{id}.{suffix}.json.");
+    private static T Read<T>(string directory, string id, string suffix)
+    {
+        var json = File.ReadAllText(Path.Combine(directory, $"compare.{id}.{suffix}.json"));
+        if (typeof(T) == typeof(QueueCache.Management.WriteCacheState))
+        {
+            // Snapshot DTO defaults preserve old recovery journals. They cannot turn
+            // missing observed counters into zero in new measurement/oracle evidence.
+            using var document = JsonDocument.Parse(json);
+            foreach (var field in new[] { "Flags", "LastError", "Instance", "BudgetBytes", "DirtyBytes", "InFlightBytes",
+                "Errors", "ReadHitBytes", "ReadMissBytes", "AcceptedBytes" })
+                if (!document.RootElement.TryGetProperty(field, out var value) || value.ValueKind != JsonValueKind.Number)
+                    throw new InvalidDataException("Missing observed cache field: " + field);
+            foreach (var (group, fields) in new[] {
+                ("Options", new[] { "Allocation", "WritePercent", "RetainWrites", "PromoteOnRead", "Drain", "LowPercent", "HighPercent", "MaxDirtyAgeMs", "IdleMs", "BatchKiB", "Parallelism" }),
+                ("Performance", new[] { "Frequency", "TimingEnabled", "DrainGatherPolicy" }) })
+            {
+                if (!document.RootElement.TryGetProperty(group, out var value) || value.ValueKind != JsonValueKind.Object ||
+                    fields.Any(field => !value.TryGetProperty(field, out _)))
+                    throw new InvalidDataException("Missing observed cache evidence: " + group);
+            }
+        }
+        return JsonSerializer.Deserialize<T>(json)
+            ?? throw new InvalidDataException($"Missing comparison evidence compare.{id}.{suffix}.json.");
+    }
 
     public static IReadOnlyList<ShapeRow> Shapes(string directory, IReadOnlyList<ComparisonCase> plan)
     {

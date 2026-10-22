@@ -7,7 +7,7 @@ public sealed record RamAsyncWindow(RamReadReferenceCase Case, Guid ResourceId, 
     ulong CreationGeneration, RamAsyncReads Before, RamAsyncReads After, double AsyncShare, DiskSpdScore Score);
 
 /// <summary>Same-build original/candidate comparison with the frozen plan-118 gates
-/// (docs/PERFORMANCE_FINDINGS.md). The verdict is a screen; raw evidence remains authoritative.</summary>
+/// (docs/PERFORMANCE.md). The verdict is a screen; raw evidence remains authoritative.</summary>
 public static class RamReadAsync
 {
     public const double TargetGainPercent = 5, ControlLossPercent = -3, MinimumTargetShare = 0.5;

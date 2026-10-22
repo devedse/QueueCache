@@ -78,14 +78,15 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             { (CampaignTargetRole.Performance, selected.Verification.Volume), (CampaignTargetRole.NtfsLab, selected.LabNtfs) };
         if (selected.LabRefs is not null) selectedTargets.Add((CampaignTargetRole.RefsLab, selected.LabRefs));
         foreach (var (role, volume) in selectedTargets)
-            baselines.Add(role, await Inspect(role, volume, directory, progress, token));
+            baselines.Add(role, await WhenCleanAsync(() => Inspect(role, volume, directory, progress, token), role, volume, progress, token));
         VerificationCampaignEvidence.ValidateTargets(selected, baselines.Values.ToArray());
         foreach (var disk in baselines.Values.Select(t => t.Recovery.Target.Number).Order())
             leases.Add(new FileStream(Path.Combine(leaseRoot, $"PhysicalDrive{disk}.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None));
         // Revalidate after owning every target: the first inventory was read-only, before taking disk leases.
         foreach (var target in baselines.Values.ToArray())
         {
-            var observed = await Inspect(target.Role, target.Recovery.Target.Device, directory, progress, token, target.Recovery.Target);
+            var observed = await WhenCleanAsync(() => Inspect(target.Role, target.Recovery.Target.Device, directory, progress, token, target.Recovery.Target),
+                target.Role, target.Recovery.Target.Device, progress, token);
             VerificationCampaignEvidence.ValidateConfiguration(target.Recovery, observed.Recovery);
             if (VerificationCampaignEvidence.DriversKey(target.Drivers) != VerificationCampaignEvidence.DriversKey(observed.Drivers))
                 throw new IOException("Loaded driver identity changed while acquiring campaign leases.");
@@ -123,8 +124,15 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
                 await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                     main.Recovery, Path.Combine(directory, "maintenance"), false, progress, token);
             if (target.Role == CampaignTargetRole.Performance)
+            {
+                // A lab filesystem whose image lives on this volume can still write back metadata after its
+                // phase ended; flush it first so those writes reach this cache before its own preparation drains.
+                foreach (var lab in LabTargetsBackedBy(baselines.Values, target.Recovery.Target.Device))
+                    await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
+                        lab.Recovery, Path.Combine(directory, "maintenance"), false, progress, token, prepare: true);
                 await new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                     target.Recovery, Path.Combine(directory, "maintenance"), false, progress, token, prepare: true);
+            }
             var exit = await runner.RunAsync(phase.Options with { Output = Path.Combine(directory, "phases", phase.Id) }, progress, token);
             var child = runner.DirectoryPath ?? throw new InvalidDataException("Phase did not allocate its evidence directory.");
             result = VerificationCampaignEvidence.ReadPhase(phase, child, exit, timer.Elapsed.TotalSeconds, target, diskSpdHash);
@@ -158,6 +166,11 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
         return result! with { Seconds = timer.Elapsed.TotalSeconds };
     }
 
+    /// <summary>Lab targets whose image file is stored on <paramref name="volume"/>.</summary>
+    public static IReadOnlyList<CampaignTargetEvidence> LabTargetsBackedBy(IEnumerable<CampaignTargetEvidence> targets, string volume) =>
+        targets.Where(t => t.Role != CampaignTargetRole.Performance && t.BackingVolume is { } backing &&
+            string.Equals(backing.TrimEnd('\\'), volume.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)).ToArray();
+
     private static void EnsureAllStopped(string directory)
     {
         foreach (var parent in Directory.EnumerateFiles(directory, "*.process.json", SearchOption.AllDirectories)
@@ -183,6 +196,27 @@ public sealed class VerificationCampaignHost(string executable, IReadOnlyList<st
             target => new VerificationRunner(executable, prefix, leaseDirectory).CampaignMaintenanceAsync(options.Verification,
                 target.Recovery, Path.Combine(directory, "maintenance"), false, progress, CancellationToken.None, prepare: true),
             target => Inspect(target.Role, target.Recovery.Target.Device, directory, progress, CancellationToken.None, target.Recovery.Target));
+    }
+
+    public const int PreflightCleanAttempts = 15;
+    public static TimeSpan PreflightCleanDelay { get; set; } = TimeSpan.FromSeconds(2);
+
+    /// <summary>A lab image attached just before the campaign keeps writing to its backing volume for a few seconds
+    /// after mounting. Preflight waits, bounded, for those writes to drain on their own: it never drains, and it
+    /// retries nothing but the clean-cache refusal. Each attempt is a recorded worker run; the capture stays strict.</summary>
+    public static async Task<CampaignTargetEvidence> WhenCleanAsync(Func<Task<CampaignTargetEvidence>> inspect,
+        CampaignTargetRole role, string volume, IProgress<string> progress, CancellationToken token)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await inspect(); }
+            catch (IOException exception) when (attempt < PreflightCleanAttempts && exception.Message.Contains(VerificationWorker.NotCleanMessage))
+            {
+                progress.Report($"{role} {volume} still has pending writes; waiting {PreflightCleanDelay.TotalSeconds:0} s for them to drain " +
+                    $"(attempt {attempt} of {PreflightCleanAttempts}).");
+                await Task.Delay(PreflightCleanDelay, token);
+            }
+        }
     }
 
     public const int FinalCleanAttempts = 5;

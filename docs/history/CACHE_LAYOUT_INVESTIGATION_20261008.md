@@ -211,7 +211,7 @@ Q1 +19% after steady and full-cache churn (16.42 and 17.01 GB/s). `quick`,
 **3. Memory views (kept).** A read-only layout map per 256 KiB chunk drives the
 app's memory map (in-disk-order share, free chunks), and the RAM provider's
 physical map shows where a RAM disk's locked pages sit. See
-[desktop UI](../DESKTOP_UI.md#memory-views).
+[desktop UI](../DEVELOPMENT.md#memory-views).
 
 **Not built, with reasons:**
 

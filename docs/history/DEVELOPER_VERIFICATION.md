@@ -64,7 +64,7 @@ readiness and restoration contracts remain enforced. There is no automatic
 disk creation, formatting or reboot.
 
 Plan 118 adds `ram-read-async`, the same-build comparison for the asynchronous
-split reads ([findings](../PERFORMANCE_FINDINGS.md#ram-disk-asynchronous-split-reads-accepted-pr-9)):
+split reads ([findings](../PERFORMANCE.md#ram-disk-asynchronous-split-reads-accepted-pr-9)):
 
 ```powershell
 qcache developer verify Q: --campaign experiment --focus-suite ram-read-async --lab-ntfs W: --budget-mib 2048 --repeats 3 --duration-seconds 10 --diskspd C:\Tools\DiskSpd\DiskSpd64.exe --pause-backing-cache --output C:\QueueCache-Results

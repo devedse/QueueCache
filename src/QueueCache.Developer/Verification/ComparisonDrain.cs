@@ -5,11 +5,12 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using QueueCache.Management;
 using QueueCache.Operations;
+using QueueCache.Operations.ManagedDisks;
 
 namespace QueueCache.Developer.Verification;
 
 [JsonConverter(typeof(JsonStringEnumConverter<ComparisonProvider>))]
-public enum ComparisonProvider { Direct, QueueCache, PrimoCache }
+public enum ComparisonProvider { Direct, QueueCache, PrimoCache, QueueCachePaused, PrimoCachePaused }
 
 public sealed record ComparisonDiskCounters(
     [property: JsonRequired] DateTimeOffset Utc, [property: JsonRequired] long BytesWritten,
@@ -42,21 +43,41 @@ public sealed record ComparisonDrainVerification(
     [property: JsonRequired] bool Restored, [property: JsonRequired] bool Verified,
     [property: JsonRequired] ComparisonFileHash[] Files);
 
-/// <summary>Plan 148 fixed-work write-through-drain comparison: 1 GiB large file, 256 MiB small files.
-/// Each provider uses the same workload and shared payload prefix. No scored overwrites.</summary>
+/// <summary>Plan 149 fixed-work write-through-drain comparison: 1 GiB large file, 256 MiB small files.
+/// Each provider uses the same workload and shared payload prefix. No scored overwrites. Plan 158 adds
+/// compare-drain-sustained (one new 8 GiB file, larger than the 2 GiB cache) and paused providers: the
+/// product stays loaded with its cache paused for the whole run, an in-session raw-disk anchor.</summary>
 public static class ComparisonDrain
 {
     public const int PayloadBytes = 1 << 30, LargeBytes = PayloadBytes, SmallFiles = 4096, SmallFileBytes = 64 << 10,
         SmallBytes = SmallFiles * SmallFileBytes,
-        LargeBlockBytes = 1 << 20, SmallBlockBytes = 4096, Workers = 4, Seed = 147_16384;
+        LargeBlockBytes = 1 << 20, SmallBlockBytes = 4096, Workers = 4, Seed = 147_16384,
+        SustainedPasses = 8, SustainedWorkers = 8;
+    public const long SustainedBytes = (long)SustainedPasses * PayloadBytes;
+    public const string SustainedSuite = "compare-drain-sustained";
     public static string DefaultPrimoCli => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PrimoCache", "rxpcc.exe");
 
-    public static int ExpectedBytes(string kind) => kind switch
+    public static long ExpectedBytes(string kind) => kind switch
     {
         "drain-large" => LargeBytes,
         "drain-small" => SmallBytes,
+        "drain-sustained" => SustainedBytes,
         _ => throw new InvalidDataException("Unknown compare-drain workload: " + kind)
     };
+
+    public static int Files(string kind) => kind == "drain-small" ? SmallFiles : 1;
+
+    /// <summary>The product whose driver must be loaded and whose counters are read.</summary>
+    public static ComparisonProvider Product(ComparisonProvider provider) => provider switch
+    {
+        ComparisonProvider.QueueCachePaused => ComparisonProvider.QueueCache,
+        ComparisonProvider.PrimoCachePaused => ComparisonProvider.PrimoCache,
+        _ => provider
+    };
+
+    /// <summary>Paused for the whole run: no explicit drain, writes pass through to the disk.</summary>
+    public static bool IsPaused(ComparisonProvider provider) =>
+        provider is ComparisonProvider.QueueCachePaused or ComparisonProvider.PrimoCachePaused;
 
     public static IReadOnlyList<ComparisonCase> Cases(int repeats)
     {
@@ -71,29 +92,103 @@ public static class ComparisonDrain
         return result;
     }
 
+    /// <summary>Three new 8 GiB files: the payload eight times, 1 MiB writes with eight outstanding.</summary>
+    public static IReadOnlyList<ComparisonCase> SustainedCases(int repeats)
+    {
+        if (repeats != 3) throw new ArgumentException("compare-drain-sustained requires exactly three repeats.");
+        return Enumerable.Range(1, repeats).Select(r => new ComparisonCase($"drain-sustained-r{r}", "drain-sustained", r,
+            $"sustained-r{r}", 'W', 1024, SustainedWorkers, 1, Bytes: SustainedBytes)).ToArray();
+    }
+
+    public static bool IsSuite(string suite) => suite is "compare-drain" or SustainedSuite or DrainBatching.Suite or ComparisonDrainRead.Suite;
+
+    public static void ValidateBrokerStartup(ManagedBrokerObservation? broker)
+    {
+        if (broker is not null && !broker.IsRunning)
+            throw new InvalidDataException("Wait for the installed QueueCache startup coordinator to finish before applying the test profile.");
+    }
+
+    public static void ValidateBypass(WriteCacheState before, WriteCacheState after)
+    {
+        ValidateQueueCache(before, active: false); ValidateQueueCache(after, active: false);
+        if (!before.SupportsReadWrite || !after.SupportsReadWrite || before.Instance != after.Instance ||
+            before.Options != after.Options || before.BudgetBytes != after.BudgetBytes || before.Errors != after.Errors ||
+            before.DirtyBytes != 0 || before.InFlightBytes != 0 || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
+            before.ReadHitBytes != after.ReadHitBytes || before.ReadMissBytes != after.ReadMissBytes ||
+            before.AcceptedBytes != after.AcceptedBytes || before.Performance!.DrainGatherPolicy != after.Performance!.DrainGatherPolicy)
+            throw new InvalidDataException("Cache bypass changed during file verification; cached/admitted I/O invalidates the oracle.");
+    }
+
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite != "compare-drain")
+        if (!IsSuite(options.Suite))
         {
             if (options.Provider is not null || options.PrimoCli is not null)
                 throw new ArgumentException("--provider and --primo-cli apply only to compare-drain.");
             return;
         }
         if (options.Provider is not { } provider || !Enum.IsDefined(provider) || options.Repeats != 3 || options.BudgetMiB != 2048)
-            throw new ArgumentException("compare-drain requires --provider Direct|QueueCache|PrimoCache, --budget-mib 2048 and --repeats 3.");
-        if (provider != ComparisonProvider.PrimoCache && options.PrimoCli is not null)
-            throw new ArgumentException("--primo-cli requires --provider PrimoCache.");
-        if (provider == ComparisonProvider.PrimoCache && !File.Exists(options.PrimoCli ?? DefaultPrimoCli))
+            throw new ArgumentException("compare-drain requires --provider Direct|QueueCache|PrimoCache|QueueCachePaused|PrimoCachePaused, --budget-mib 2048 and --repeats 3.");
+        if (options.Suite == DrainBatching.Suite && provider != ComparisonProvider.QueueCache)
+            throw new ArgumentException("compare-drain-batching requires --provider QueueCache.");
+        if (Product(provider) != ComparisonProvider.PrimoCache && options.PrimoCli is not null)
+            throw new ArgumentException("--primo-cli requires --provider PrimoCache or PrimoCachePaused.");
+        if (Product(provider) == ComparisonProvider.PrimoCache && !File.Exists(options.PrimoCli ?? DefaultPrimoCli))
             throw new FileNotFoundException("PrimoCache CLI is required (close its GUI); use --primo-cli if installed elsewhere.", options.PrimoCli ?? DefaultPrimoCli);
     }
 
     public static void ValidatePending(ComparisonPending value, ComparisonProvider provider, bool clean)
     {
         if (value.Provider != provider || value.Utc == default ||
-            provider == ComparisonProvider.QueueCache && (value.DirtyBytes is null || value.InFlightBytes is null || value.InFlightBytes > value.DirtyBytes) ||
-            provider == ComparisonProvider.PrimoCache && value.DeferredBlocks is null ||
+            Product(provider) == ComparisonProvider.QueueCache && (value.DirtyBytes is null || value.InFlightBytes is null || value.InFlightBytes > value.DirtyBytes) ||
+            Product(provider) == ComparisonProvider.PrimoCache && value.DeferredBlocks is null ||
             clean && (value.DirtyBytes is > 0 || value.InFlightBytes is > 0 || value.DeferredBlocks is > 0))
             throw new InvalidDataException("Missing, inconsistent or nonzero product pending counters.");
+    }
+
+    // Unscored preparation can receive delayed filesystem writes after the previous
+    // case's cleanup. Drain observed work before starting; never retry invalid evidence
+    // or a driver fault as though it were merely pending data. Every attempt is saved.
+    public static async Task<(ComparisonPending Pending, int Attempt)> PrepareCleanAsync(
+        ComparisonProvider provider, Func<int, Task<ComparisonPending>> prepare, TimeSpan? deadline = null)
+    {
+        var limit = deadline ?? TimeSpan.FromSeconds(30);
+        if (limit < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(deadline));
+        var timer = Stopwatch.StartNew();
+        for (var attempt = 1; ; attempt++)
+        {
+            var pending = await prepare(attempt);
+            ValidatePending(pending, provider, clean: false);
+            if (pending.DirtyBytes is not > 0 && pending.InFlightBytes is not > 0 && pending.DeferredBlocks is not > 0)
+            {
+                ValidatePending(pending, provider, clean: true);
+                return (pending, attempt);
+            }
+            if (timer.Elapsed >= limit) throw new TimeoutException("compare-drain preparation did not become clean; inspect recorded attempts.");
+            await Task.Delay(25);
+        }
+    }
+
+    public static async Task<ComparisonDiskCounters> WaitForDirectDiskIdleAsync(ComparisonDiskCounters initial,
+        Func<ComparisonDiskCounters> observe, Action<int, ComparisonDiskCounters> record, TimeSpan? deadline = null)
+    {
+        var limit = deadline ?? TimeSpan.FromSeconds(30);
+        if (limit < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(deadline));
+        var timer = Stopwatch.StartNew();
+        var current = initial;
+        for (var attempt = 1; ; attempt++)
+        {
+            ValidateDiskDelta(current, current, allowIdle: true);
+            if (current.Utc == default) throw new InvalidDataException("Missing disk preparation timestamp.");
+            record(attempt, current);
+            if (current.QueueDepth == 0) return current;
+            if (timer.Elapsed >= limit) throw new TimeoutException("Direct-disk preparation remained busy; inspect recorded observations.");
+            await Task.Delay(25);
+            var next = observe();
+            ValidateDiskDelta(current, next, allowIdle: true);
+            if (next.Utc < current.Utc) throw new InvalidDataException("Regressing disk preparation timestamp.");
+            current = next;
+        }
     }
 
     public static void ValidateScore(ComparisonCase test, ComparisonDrainScore score, ComparisonProvider provider)
@@ -101,7 +196,7 @@ public static class ComparisonDrain
         ValidatePending(score.Before, provider, true); ValidatePending(score.After, provider, true);
         var expectedBytes = ExpectedBytes(test.Kind);
         if (score.Id != test.Id || score.Provider != provider || score.Bytes != expectedBytes || score.Bytes != test.Bytes ||
-            score.Files != (test.Kind == "drain-large" ? 1 : SmallFiles) ||
+            score.Files != Files(test.Kind) ||
             score.ReadyUtc > score.StartedUtc || score.Before.Utc > score.StartedUtc ||
             score.StartedUtc >= score.ApplicationEndedUtc || score.ApplicationEndedUtc > score.DrainRequestedUtc ||
             score.DrainRequestedUtc > score.DrainReturnedUtc || score.DrainReturnedUtc > score.After.Utc ||
@@ -130,9 +225,9 @@ public static class ComparisonDrain
         // Check every nontransient predicate before classifying a barrier as Draining.
         if (state.Faulted || state.LastError != 0 || state.Enabled != active || state.Suspended || state.Removed ||
             !state.UnsafeDefer || state.BudgetBytes != 2UL << 30 ||
-            state.Options is not { BatchKiB: 1024, Parallelism: 4 } || state.Performance is not { TimingEnabled: 0 } ||
+            state.Options is not { BatchKiB: 1024 or 2048, Parallelism: 4 or 8 } || state.Performance is not { TimingEnabled: 0 } ||
             active && (state.ReservedBytes == 0 || state.PayloadCapacity == 0 || state.SupportsReadWrite && !state.RoutingConfirmed))
-            throw new InvalidDataException($"compare-drain requires a healthy {(active ? "active" : "paused")} 2 GiB QueueCache Fast profile, 1024 KiB x 4, timing diagnostics OFF. State: {JsonSerializer.Serialize(state)}");
+            throw new InvalidDataException($"compare-drain requires a healthy {(active ? "active" : "paused")} 2 GiB QueueCache Fast profile, 1024/2048 KiB x 4/8, timing diagnostics OFF. State: {JsonSerializer.Serialize(state)}");
         if (state.Draining) throw new CacheDrainingException();
     }
 
@@ -222,7 +317,7 @@ public static class ComparisonDrain
     public static void ValidateRecoveryTarget(ComparisonDrainRecovery recovery, ComparisonTarget current)
     {
         var original = recovery.Target;
-        if (!Enum.IsDefined(recovery.Provider) || recovery.Provider == ComparisonProvider.QueueCache && recovery.OriginalState is null ||
+        if (!Enum.IsDefined(recovery.Provider) || Product(recovery.Provider) == ComparisonProvider.QueueCache && recovery.OriginalState is null ||
             original.VolumeName is null || current.VolumeName is null || original.DiskNumber is null ||
             !string.Equals(current.VolumeName, original.VolumeName, StringComparison.OrdinalIgnoreCase) ||
             current.Letter != original.Letter || !string.Equals(recovery.Volume, $"{current.Letter}:", StringComparison.OrdinalIgnoreCase) ||
@@ -239,14 +334,17 @@ public static class ComparisonDrain
     }
 
     public static async Task<ComparisonFileHash[]> VerifyBypassedAsync(string id, Func<Task> pause,
-        Func<ComparisonFileHash[]> verify, Func<Task> restore, Action<ComparisonDrainVerification> persist)
+        Func<ComparisonFileHash[]> verify, Func<Task> restore, Action<ComparisonDrainVerification> persist,
+        Func<Task>? confirmBypass = null)
     {
         ComparisonFileHash[] hashes = [];
         var bypassed = false; var verified = false; var restored = false;
         try
         {
-            await pause(); bypassed = true;
-            hashes = verify(); verified = true;
+            await pause(); bypassed = confirmBypass is null;
+            hashes = verify();
+            if (confirmBypass is not null) { await confirmBypass(); bypassed = true; }
+            verified = true;
             return hashes;
         }
         finally

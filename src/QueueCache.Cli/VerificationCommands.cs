@@ -76,6 +76,8 @@ internal static class VerificationCommands
               read-tail-decision Same seeded 100,000 operations per case, flags 7/15: cold/resident reads and fitting writes.
                                  p50/p99/p99.9/max, exact latency threshold counts and durable write-byte oracle; 24 cases.
                                  Normal priority, --budget-mib 2048, --repeats 3; no DiskSpd or case filters. Collection only.
+              parallel-copies    The policies parallel-copies case alone on a lab volume for --duration-seconds per case,
+                                 alternating 2048 and 1024 KiB drain batches; failures name the pass of every 4 KiB.
               trim-diagnostic    File-integrity/TRIM probes with cache enabled, then disabled.
                                  Unsupported TRIM stays SKIP; filter remains attached. No DiskSpd needed.
               trim-file          Driver-independent TRIM on a new 3 MiB file; guards and reuse checks.
@@ -141,6 +143,8 @@ internal static class VerificationCommands
                                  Unique precomputed data; score through metadata flush, explicit product drain and zero pending.
                                  Cache-bypassed whole-file hashes afterwards; restores active state even on verification failure.
                                  No DiskSpd; Primo CLI defaults to ProgramFiles\PrimoCache\rxpcc.exe (--primo-cli overrides).
+              compare-drain-read Same provider options plus --diskspd: a 4 KiB random Q1 reader on an uncached 8 GiB file, alone and
+                                 while a 1 MiB Q8 writer keeps the product's 2 GiB cache full (its own drain rate); six windows.
               compare-snapshot   Memory, loaded third-party drivers and storage filters only (e.g. before creating a disk).
               compare-ram        A 4 GiB RAM disk: 1M Q1/Q8/Q8T4 and 4K Q1/Q32/Q32T4 reads and writes with latency and CPU,
                                  memory before/after a 2 GiB fill, a 40,000-file tree (create, copy, read, delete), byte check.
@@ -212,8 +216,8 @@ internal static class VerificationCommands
         var managedTransition = new Option<ManagedLifecycleTransition?>("--managed-transition") { Description = "managed-lifecycle-verify only: externally observed Restart, ColdStart, FastStartup, Sleep, Hibernate, BrokerRestart or BrokerCrash. Never inferred from uptime." };
         var traceSymbols = new Option<string?>("--trace-symbols") { Description = "Attribution only: local directory containing matching native PDBs; recorded in the manifest." };
         var product = new Option<string?>("--product") { Description = "Comparison suites only: the measured product, version and mode, e.g. \"SoftPerfect RAM Disk 26.10 static\"." };
-        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain only, required: Direct, QueueCache or PrimoCache. Controls explicit drain and verification bypass; never inferred from --product." };
-        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
+        var provider = new Option<ComparisonProvider?>("--provider") { Description = "compare-drain/compare-drain-sustained/compare-drain-read only, required: Direct, QueueCache, PrimoCache, QueueCachePaused or PrimoCachePaused (product loaded, cache paused for the whole run: an in-session disk anchor). Controls explicit drain and verification bypass; never inferred from --product." };
+        var primoCli = new Option<string?>("--primo-cli") { Description = @"compare-drain PrimoCache/PrimoCachePaused only: rxpcc.exe path (default %ProgramFiles%\PrimoCache\rxpcc.exe)." };
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,

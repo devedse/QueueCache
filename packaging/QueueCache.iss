@@ -28,12 +28,20 @@ Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Source: "Install-Driver.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "Recover-Registration.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
 Source: "Update-QueueCache.ps1"; DestDir: "{app}\setup"; Flags: ignoreversion
-Source: "Update-QueueCache.ps1"; DestDir: "{commondesktop}"; Flags: ignoreversion
-Source: "Update QueueCache.cmd"; DestDir: "{commondesktop}"; Flags: ignoreversion
+Source: "Update QueueCache.cmd"; DestDir: "{app}\setup"; Flags: ignoreversion
+; Desktop copies only when missing or changed: replacing an identical file moves its icon.
+Source: "Update-QueueCache.ps1"; DestDir: "{commondesktop}"; Flags: ignoreversion; Check: DesktopFileStale('Update-QueueCache.ps1')
+Source: "Update QueueCache.cmd"; DestDir: "{commondesktop}"; Flags: ignoreversion; Check: DesktopFileStale('Update QueueCache.cmd')
 
 [Icons]
 Name: "{group}\QueueCache"; Filename: "{app}\desktop\QueueCache.Desktop.exe"
-Name: "{commondesktop}\QueueCache"; Filename: "{app}\desktop\QueueCache.Desktop.exe"
+Name: "{commondesktop}\QueueCache"; Filename: "{app}\desktop\QueueCache.Desktop.exe"; Check: DesktopShortcutMissing
+
+[UninstallDelete]
+; A later install that skipped an unchanged desktop file did not log it.
+Type: files; Name: "{commondesktop}\Update-QueueCache.ps1"
+Type: files; Name: "{commondesktop}\Update QueueCache.cmd"
+Type: files; Name: "{commondesktop}\QueueCache.lnk"
 
 [InstallDelete]
 Type: files; Name: "{app}\tests\*.exe"
@@ -84,20 +92,45 @@ begin
     CloseDesktopApp();
 end;
 
-function RunDriverSetup(Uninstall: Boolean): Boolean;
+// The bundled copy in {app}\setup is installed by an earlier [Files] entry of this run.
+function DesktopFileStale(Name: String): Boolean;
+var Desktop, Bundled: String;
+begin
+  Desktop := ExpandConstant('{commondesktop}\' + Name);
+  Bundled := ExpandConstant('{app}\setup\' + Name);
+  Result := (not FileExists(Desktop)) or (not FileExists(Bundled)) or
+    (GetSHA256OfFile(Desktop) <> GetSHA256OfFile(Bundled));
+end;
+
+// The shortcut's target never moves, so an existing shortcut stays where the user put it.
+function DesktopShortcutMissing(): Boolean;
+begin
+  Result := not FileExists(ExpandConstant('{commondesktop}\QueueCache.lnk'));
+end;
+
+// Install-Driver.ps1 exit codes: 0/3010 done; 1 failed with the driver registration unchanged or
+// restored; 5 failed and could not restore it.
+function RunDriverSetup(Uninstall: Boolean): Integer;
 var Code: Integer; Parameters: String;
 begin
   Parameters := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\setup\Install-Driver.ps1') + '"';
   if Uninstall then Parameters := Parameters + ' -Uninstall';
-  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Result := Result and ((Code = 0) or (Code = 3010));
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Code := -1;
+  Result := Code;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var Code: Integer;
 begin
   if CurStep = ssPostInstall then
-    if not RunDriverSetup(False) then
-      MsgBox('Driver setup did not complete. See C:\ProgramData\QueueCache\Logs for the error. Applications are installed, but do not enable caching until setup succeeds.', mbError, MB_OK);
+  begin
+    Code := RunDriverSetup(False);
+    if Code = 5 then
+      MsgBox('Driver setup failed and could not restore the previous driver registration. Do not restart yet: see C:\ProgramData\QueueCache\Logs, then rerun setup or run Recover-Registration.ps1 with the backup the log names.', mbCriticalError, MB_OK)
+    else if (Code <> 0) and (Code <> 3010) then
+      MsgBox('Driver setup did not complete, so the next restart loads the same storage filter as before. See C:\ProgramData\QueueCache\Logs for the error, fix it and run setup again. Applications are installed, but do not enable caching until setup succeeds.', mbError, MB_OK);
+  end;
 end;
 
 function NeedRestart(): Boolean;
@@ -106,8 +139,10 @@ begin
 end;
 
 function InitializeUninstall(): Boolean;
+var Code: Integer;
 begin
   CloseDesktopApp();
-  Result := RunDriverSetup(True);
+  Code := RunDriverSetup(True);
+  Result := (Code = 0) or (Code = 3010);
   if not Result then MsgBox('Driver detach/drain failed. Application removal has been stopped to preserve recovery tools.', mbError, MB_OK);
 end;

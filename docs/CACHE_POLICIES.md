@@ -1,4 +1,7 @@
-# RAM cache policies
+# How the cache works
+
+Where QueueCache sits in Windows' storage stack, how it serves requests, and what
+Fast and Strict promise.
 
 Fast mode is the optimized, recommended mode; Strict mode is supported for
 correctness but is not tuned for speed (owner decision, 2026-09-27).
@@ -21,9 +24,108 @@ and health queries, SCSI/ATA pass-through, firmware polls) go to the disk's own
 stack and never reach the cache, so they cannot drain it, empty it or be refused by
 it. Raw reads and writes sent to the physical disk also bypass it; see
 [known issues](KNOWN_ISSUES.md) for what that means for disk-imaging tools.
-Background: [volume filtering](VOLUME_FILTER.md).
+Background: [why a volume filter](#why-a-volume-filter).
 
 QueueCache uses one block index: dirty writes, retained clean writes and clean reads never need separate copies of the same current block. An older in-flight write can temporarily coexist with its newer replacement. Reads select the newest version; the older version must finish before its replacement can be written to disk.
+
+### Why a volume filter
+
+Status: implemented (PR #2, merged 2026-09-28). The VM results from that time are in
+the [verification record](KNOWN_ISSUES.md#volume-filter-verification-2026-09-28); current gaps are in [known issues](KNOWN_ISSUES.md). QueueCache caches volumes: the filter is the topmost
+volume filter and every volume has its own cache.
+
+The driver filtered whole disks (a disk-class upper filter below `partmgr`). Every
+request to the disk passed through it, including raw commands that health and disk
+tools send straight to the disk (SCSI/ATA pass-through, SMART). While a disk was
+cached, those commands were refused, and each SMART read drained all pending writes
+and emptied the clean cache (KNOWN_ISSUES). Caching each volume instead removes that
+class of problem: raw disk commands go to the disk's own device stack, which the
+cache is no longer part of. Comparable caching products work per volume.
+
+### What changed from the disk filter
+
+| Area | Disk filter (before) | Volume filter (now) |
+|---|---|---|
+| Registration | Disk class `{4d36e967-...}` UpperFilters, directly below `partmgr` | Volume class `{71a27cdd-...}` UpperFilters, last entry (topmost, directly below the file system); the disk-class entry is removed |
+| What it sees | Disk offsets, every request to the disk | Volume offsets, requests to one volume (from the file system, or a volume handle such as `\\.\Q:`) |
+| Below it | `partmgr`, the disk class driver, the storage port | `volsnap` (snapshot copy-on-write), `volume.sys`, BitLocker (`fvevol`), `iorate`, ReadyBoost (`rdyboost`), `volmgr`, then the disk stack |
+| Raw disk commands | Pass through it; refused while caching | Never reach it |
+| Management requests | Sent to `\\.\PhysicalDriveN` | Sent to `\\.\X:` (the file system passes device controls to the top of the volume stack, which is this filter) |
+| Target identity in the tools | `Device` = `PhysicalDriveN`, `Bytes` = disk size | `Device` = `X:`, `Bytes` = volume size (what the driver reports); `Number`, `Instance` and new `DiskBytes` still identify the physical disk |
+| Page-file / gate ranges | Disk offsets (partition start + cluster) | Volume offsets (cluster only), page files of the target volume only |
+| Saved profiles | Disk identity and size | Volume GUID and volume size (one format; no conversion of disk-filter profiles) |
+
+Driver changes are small: the filter mirrors `DO_POWER_PAGABLE` (volume stacks are
+power-pageable, so a filter above them must be too), and the ordered worker refuses
+neither-I/O and controller controls only from applications, not from kernel
+components (snapshots and encryption send kernel pointers). Everything else in the
+cache (ordering, caller-thread service, offloaded copies, TRIM ranges) works on
+device offsets and is unchanged.
+
+Installer: Volume-class registration only, a registration backup (version 3: the
+Volume class list and service values), uninstall that drains lettered volumes and
+removes the Volume class entry, and `Recover-Registration.ps1` that restores that
+backup. There is no migration from the disk filter (owner decision, 2026-09-28: no
+other users); the lab VM was converted by hand.
+
+### How the volume filter behaves
+
+| Situation | Behaviour |
+|---|---|
+| Install | The installer registers `qcachelab` as the last Volume-class upper filter. Every volume gets the filter after a restart; volumes that appear later (a new partition, an attached VHDX) get it immediately. No cache is enabled. `qcache developer driver registration` / `qcache volume list` report the registration. |
+| Several volumes on one disk | Each has its own cache, budget, counters, worker and drainers; flushing or removing one never touches another. The shared RAM limit covers all of them. Verification leases are per physical disk. |
+| Saved profiles | One per volume, named by the volume GUID and recording the volume size and the disk's PnP identity; a profile follows the volume if its letter changes. Restore refuses a different volume, disk or size. |
+| Commands to the physical disk | SMART/health queries, SCSI/ATA pass-through and firmware polls go to the disk's own stack: never refused, never a drain or cache wipe (`volumes/volume-raw-disk-commands`). |
+| Raw reads/writes to the physical disk | Also bypass the cache. A tool that reads `\\.\PhysicalDriveN` directly while a Fast cache holds pending writes sees the disk without them; one that writes there leaves the cache with stale copies. Imaging and backup tools normally read a shadow copy, which is consistent (next row); otherwise run `qcache policy flush X:` (or pause the task) first, and never write to a disk under a cached volume. |
+| Shadow copies (System Restore, backup, imaging) | `volsnap` is below the cache; Windows' flush-and-hold request passes through the cache first and drains it, so a snapshot contains data that was pending in RAM (`volumes/volume-snapshot`). |
+| Resizing a volume | The resize's volume-manager control (seen: `0x56C05C`) drains and invalidates the cache first; the driver re-reads the volume length for every QueueCache request and before judging a read or write beyond the known end, so extending past the original size works (`volumes/volume-resize`; before that fix it failed with Invalid Parameter). |
+| TRIM | NTFS sends the data-set TRIM to the volume; pending writes in the range are dropped, clean copies released, issued writes awaited (`trim-cache`, on a VHDX because the VM's VirtIO disks cannot TRIM, KNOWN_ISSUES). |
+| BitLocker | The cache is above `fvevol`, so it holds plaintext, as the Windows file cache does; the disk still receives encrypted data. |
+| Volume-handle I/O (`\\.\X:`), chkdsk, format | Goes through the cache like file-system I/O, so it is coherent. |
+| Crash dumps, hibernation | Written through the dump stack below every filter, as before. Pending Fast data is lost on a crash, as before. |
+| File systems | Any file system Windows mounts: NTFS, ReFS (Dev Drives), FAT32, exFAT. FAT32/exFAT have no journal: the CLI and desktop warn that a crash with Fast-mode data in RAM can damage the file system itself. Unformatted volumes pass through; a cache left on one by raw developer tests can be flushed and removed. |
+| Volumes without a letter, spanned/striped volumes | The filter passes through; the tools cannot select them (a letter and one disk extent are required). |
+| Orderly disk eject | `qcache disk eject W: --preview` checks the whole disk and all its lettered partitions. `qcache disk eject W:` disables and drains every affected cache, flushes each file system, then asks Windows to eject the physical disk. A Windows veto reports its reason and attempts to restore each still-present cache's enabled state. The desktop offers the same disk-level action. The command refuses boot/system/paging, offline/read-only and ambiguous or unlettered layouts. Hardware must report removable/ejectable capability. The result distinguishes Windows accepting a request from observed device disappearance. |
+| Unexpected disconnect | Already acknowledged volatile Fast writes may be lost and the file system may be damaged. The driver marks the volume gone and frees its cache on final removal; it records a one-shot Windows error-log entry with a snapshot of pending bytes. No data is replayed on reconnect. The pending-byte count is potential loss, not proven lost data. |
+| Uninstall | Drains and disables each lettered volume with a cache (volumes without the filter loaded are skipped), removes the Volume class entry, keeps the service and binary until the restart. `Recover-Registration.ps1` restores the backed-up Volume class list and service values (verified on copies of the SYSTEM hive). |
+
+### Advantages and disadvantages compared with the disk filter
+
+| Advantages | |
+|---|---|
+| Disk tools work normally | SMART/health monitors, SCSI/ATA pass-through and firmware polls no longer get "not supported", and no longer drain the cache or empty its read data. |
+| Cache exactly what you choose | A cache belongs to one volume (for example a games volume), not to everything on the disk. Volumes on one disk can have different sizes and policies, and flushing or removing one does not stall the others. |
+| Profiles follow the volume | Named by the volume GUID, so a drive-letter change does not lose or misapply a profile. |
+| Automatic coverage | Volumes created later, attached VHDX files and removable fixed volumes get the filter without a restart. |
+| Same speed | CrystalDiskMark rows match or beat the disk filter ([verification record](KNOWN_ISSUES.md#volume-filter-verification-2026-09-28)). |
+
+| Disadvantages | What it means / mitigation |
+|---|---|
+| Raw disk I/O bypasses the cache | A program reading `\\.\PhysicalDriveN` directly misses data still pending in a Fast cache; one writing there leaves stale cached copies. Backup/imaging via shadow copies is consistent; otherwise flush or pause first, and never write raw to a disk under a cached volume. |
+| More lifecycle to handle | Volumes are resized, taken offline, dismounted, snapshotted and created at runtime; the boot volume's stack (snapshots, BitLocker, volume manager) is sensitive: querying it at start-up reset the machine. Each case is now handled and has a check, but it is a larger surface than a disk. |
+| Plaintext above BitLocker | The cache holds unencrypted data in RAM, like the Windows file cache; dump/hibernation files stay encrypted on a BitLocker C:. |
+| RAM is per volume | Two cached volumes on one disk each need their own budget; there is no pool shared per disk, and each drains independently, so the disk sees two write-back streams. |
+| One more stack layer everywhere | A filter instance on every volume (including EFI/recovery), passing through when no task exists; no measurable cost found. |
+| Scope | Only lettered volumes on one disk can be cached (no mount-point-only or spanned/striped volumes). FAT32/exFAT carry the no-journal risk above. |
+| No upgrade path from the disk filter | By decision there is no migration code: disk-filter profiles and registrations are not converted (re-create tasks after installing). |
+
+### Volume filter lab switches
+
+`DiagnosticMode` (service DWORD, read at driver load) exists for bisecting boot
+problems and support only; it must be absent or 0 in normal use, and every
+cache-changing verification suite refuses to run otherwise: 1 = pure pass-through,
+2 = do not mirror `DO_POWER_PAGABLE`, 4 = skip paging classification at dispatch,
+8 = never query the length or sector size. `ClassCoverage` 0 with
+`LabAllowedDriverKey` restricts the filter to one volume's driver key (first-boot
+bring-up); the installer always sets `ClassCoverage` 1.
+
+### Volume filter limitations
+
+- Surprise hot-unplug containment, external Windows-eject routing, and reconnect
+  are not yet VM-qualified. Sleep/hibernate and offline recovery
+  remain separate work.
+- Raw reads and writes sent to the physical disk bypass the cache (above).
+- Crash durability of Fast data is unchanged: pending data is lost on a crash.
 
 ## How requests are served (since 0.4.153.1-0.4.162.1)
 
@@ -81,9 +183,9 @@ For example, an 8 GiB budget with a fixed 50% write share can retain a 3 GiB ins
 
 | Algorithm | Behaviour |
 |---|---|
-| Eager | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. |
+| Eager (default) | Each pending write starts draining to disk as soon as it is accepted. Smallest window of volatile data and the most disk traffic; repeated overwrites of the same block are still coalesced in RAM. Default since plan 164, with 2048 KiB batches and parallelism 8. |
 | Balanced | Pending writes stay in RAM until dirty usage reaches the high watermark or the oldest dirty block reaches its maximum age; draining then continues down to the low watermark. Absorbs bursts and repeated overwrites, leaving more data in volatile RAM. |
-| Idle (default) | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle, 40/80 watermarks, 1024 KiB batches and parallelism 4 (256 KiB and 2 before plan 125; parallelism 1 before plan 56). |
+| Idle | The Balanced triggers, plus draining whenever no new cached write has arrived for the configured write-idle interval. The baseline is 5,000 ms age, 250 ms idle and 40/80 watermarks. Idle with 1024 KiB batches and parallelism 4 was the default from plan 125 to plan 163 (256 KiB and 2 before; parallelism 1 before plan 56). |
 | Deferred | Age-only background scheduling. It ignores idle and watermarks, but explicit flush, capacity and lifecycle boundaries still apply. Optional one-hour deferral is not the default. |
 
 Draining applies to pending **writes** only. The watermark percentages measure dirty bytes against the write pool: the whole payload pool under Automatic allocation, or the fixed `--write-percent` share otherwise. Cached read data is not counted and is never drained; it is evicted when space is needed.
@@ -101,18 +203,28 @@ All algorithms yield to explicit flushes, shutdown barriers and writers waiting 
 
 Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); that goal is not yet implemented and qualified, so the current warning still applies.
 
-Adjacent 4 KiB blocks are gathered into configurable 4..1024 KiB lower writes
-(default 1024 since plan 125, 256 before). `--drain-parallelism 1..4` (default 4
-since plan 125; 2 from plan 56, 1 before) bounds concurrent writes; each drain
-thread waits for its write before gathering the next. Overlapping versions remain
-ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB. Saved
-profiles keep their configured settings. The complete plan-132 comparison
+Adjacent 4 KiB blocks are gathered into configurable 4..2048 KiB lower writes
+(default 2048 since plan 164; 1024 from plan 125, 256 before). `--drain-parallelism 1..8`
+(default 8 since plan 164; 4 from plan 125, 2 from plan 56, 1 before) bounds concurrent
+writes; each drain thread waits for its write before gathering the next. Overlapping
+versions remain ordered. Small budgets below 16 MiB cap each staging buffer at 64 KiB.
+Saved profiles keep their configured settings.
+
+While a foreground read is waiting on the disk, or one finished in the last 10 ms,
+drainers start a new write only while fewer than two are outstanding. A concurrent
+disk reader then keeps the responsiveness it had under the earlier 1024 KiB × 4
+default, and draining runs at full concurrency again once reads stop. Explicit flushes,
+shutdown and paging-write fences are never held back. TRIMs drop cached data for their
+ranges at once and reach the disk from a background thread; newer writes to those
+ranges are not drained before that TRIM. Both are driver defaults since plan 164; the
+`lab-read-aware` and `lab-trim-mode` switches still change them for A/B tests
+([findings](PERFORMANCE.md#prio-162)). The complete plan-132 comparison
 (three alternated repetitions) reduced median drain time during cold reads from
 6.52 to 3.86 seconds at 1024 KiB × 4 versus 256 KiB × 2. A separate write-only
 repeat reduced median flush time from 127.61 to 92.16 seconds, with every pair
 improving and separated ranges. Fixed-window write IOPS varied with the interval
 before the administrative flush began; this is not a general write-IOPS gain.
-See [findings](PERFORMANCE_FINDINGS.md)
+See [findings](PERFORMANCE.md)
 for the exact workloads and qualification limits.
 
 ## CLI examples

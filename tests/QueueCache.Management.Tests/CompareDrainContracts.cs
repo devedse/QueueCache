@@ -18,20 +18,102 @@ internal static class CompareDrainContracts
             ComparisonDrain.PayloadBytes == 1 << 30 && ComparisonDrain.Seed == 147_16384 &&
             !ComparisonPlan.UsesDiskSpd("compare-drain") && VerificationPlan.Suites.Contains("compare-drain"),
             "plan 148 compare-drain: 1 GiB large and 256 MiB small-file workloads, unchanged payload seed, three alternating repetitions");
+        var sustained = ComparisonPlan.CasesFor(ComparisonDrain.SustainedSuite, 3);
+        check(sustained.Count == 3 && sustained.Select(c => c.Id).SequenceEqual(["drain-sustained-r1", "drain-sustained-r2", "drain-sustained-r3"]) &&
+            sustained.All(c => c.Kind == "drain-sustained" && c.Bytes == 8L << 30 && c.BlockKiB == 1024 && c.Queue == 8 && c.Threads == 1 &&
+                c.Bytes == ComparisonDrain.ExpectedBytes(c.Kind) && ComparisonDrain.Files(c.Kind) == 1) &&
+            ComparisonPlan.IsComparison(ComparisonDrain.SustainedSuite) && ComparisonDrain.IsSuite(ComparisonDrain.SustainedSuite) &&
+            !ComparisonPlan.UsesDiskSpd(ComparisonDrain.SustainedSuite) && VerificationPlan.Suites.Contains(ComparisonDrain.SustainedSuite) &&
+            ComparisonPlan.WorkDirectory(ComparisonDrain.SustainedSuite, "root", "run-a") == Path.Combine("root", "run-a"),
+            "plan 158 compare-drain-sustained: three new 8 GiB files through a 2 GiB cache, 1 MiB writes with eight outstanding, fresh root");
+        try { ComparisonDrain.SustainedCases(2); throw new Exception("Accepted an incomplete sustained matrix."); }
+        catch (ArgumentException) { }
+        check(ComparisonDrain.Product(ComparisonProvider.QueueCachePaused) == ComparisonProvider.QueueCache &&
+            ComparisonDrain.Product(ComparisonProvider.PrimoCachePaused) == ComparisonProvider.PrimoCache &&
+            ComparisonDrain.Product(ComparisonProvider.Direct) == ComparisonProvider.Direct &&
+            ComparisonDrain.IsPaused(ComparisonProvider.QueueCachePaused) && ComparisonDrain.IsPaused(ComparisonProvider.PrimoCachePaused) &&
+            !ComparisonDrain.IsPaused(ComparisonProvider.QueueCache) && !ComparisonDrain.IsPaused(ComparisonProvider.PrimoCache) &&
+            !ComparisonDrain.IsPaused(ComparisonProvider.Direct),
+            "paused providers keep their product's driver and counters but never drain");
         check(ComparisonPlan.WorkDirectory("compare-drain", "root", "run-a") == Path.Combine("root", "run-a") &&
             ComparisonPlan.WorkDirectory("compare-drain", "root", "run-b") != ComparisonPlan.WorkDirectory("compare-drain", "root", "run-a"),
             "compare-drain owns a fresh root per run, including after another provider");
+        ComparisonDrain.ValidateBrokerStartup(null);
+        ComparisonDrain.ValidateBrokerStartup(new QueueCache.Operations.ManagedDisks.ManagedBrokerObservation(4, 42, DateTime.UtcNow));
+        foreach (var state in new uint[] { 0, 1, 2, 3 })
+            reject(() => ComparisonDrain.ValidateBrokerStartup(new QueueCache.Operations.ManagedDisks.ManagedBrokerObservation(state, 42, DateTime.UtcNow)));
+        var paired = DrainBatching.Cases(3);
+        check(paired.Count == 12 && paired.Select(c => c.Id).Distinct().Count() == 12 &&
+            paired.All(c => c.GatherPolicy is not null && c.Bytes == ComparisonDrain.ExpectedBytes(c.Kind)) &&
+            paired.GroupBy(c => (c.Kind, c.Repeat)).All(g => g.Count() == 2 && g.Select(c => c.GatherPolicy).Distinct().Count() == 2) &&
+            paired.Take(2).Select(c => c.GatherPolicy).SequenceEqual(paired.Skip(4).Take(2).Reverse().Select(c => c.GatherPolicy)) &&
+            !ComparisonPlan.UsesDiskSpd(DrainBatching.Suite) && !ComparisonPlan.IsComparison(DrainBatching.Suite) && !VerificationPlan.Suites.Contains(DrainBatching.Suite),
+            "retired batching plan preserves its twelve unique cases but is not selectable");
+        var batchingOptions = new VerificationOptions("Q:", DrainBatching.Suite, BudgetMiB: 2048, Product: "QueueCache batching", Provider: ComparisonProvider.QueueCache);
+        try { VerificationPlan.Validate(batchingOptions); throw new Exception("Retired batching suite remained selectable."); }
+        catch (ArgumentException) { }
+        foreach (var bad in new[] { batchingOptions with { Provider = ComparisonProvider.Direct }, batchingOptions with { Repeats = 2 }, batchingOptions with { CaseFilter = "small" } })
+        {
+            try { VerificationPlan.Validate(bad); throw new Exception("Accepted incomplete or wrong-provider batching matrix."); }
+            catch (ArgumentException) { }
+        }
         var options = new VerificationOptions("Q:", "compare-drain", BudgetMiB: 2048, Product: "arbitrary display label", Provider: ComparisonProvider.Direct);
         VerificationPlan.Validate(options);
         VerificationPlan.Validate(options with { Provider = ComparisonProvider.QueueCache });
         VerificationPlan.Validate(options with { Provider = ComparisonProvider.PrimoCache, PrimoCli = Environment.ProcessPath });
+        VerificationPlan.Validate(options with { Provider = ComparisonProvider.QueueCachePaused });
+        VerificationPlan.Validate(options with { Provider = ComparisonProvider.PrimoCachePaused, PrimoCli = Environment.ProcessPath });
+        VerificationPlan.Validate(options with { Suite = ComparisonDrain.SustainedSuite, Provider = ComparisonProvider.QueueCache });
+        VerificationPlan.Validate(options with { Suite = ComparisonDrain.SustainedSuite, Provider = ComparisonProvider.PrimoCachePaused, PrimoCli = Environment.ProcessPath });
         foreach (var invalid in new[] { options with { Provider = null }, options with { Provider = (ComparisonProvider)99 }, options with { Repeats = 2 },
             options with { BudgetMiB = 1024 }, options with { PrimoCli = "unexpected" }, options with { Suite = "compare-snapshot" },
-            options with { DiskSpd = Environment.ProcessPath }, options with { CaseFilter = "large" }, options with { KeepWorkloads = true } })
+            options with { DiskSpd = Environment.ProcessPath }, options with { CaseFilter = "large" }, options with { KeepWorkloads = true },
+            options with { Provider = ComparisonProvider.QueueCachePaused, PrimoCli = Environment.ProcessPath },
+            options with { Suite = ComparisonDrain.SustainedSuite, Provider = null },
+            options with { Suite = ComparisonDrain.SustainedSuite, Provider = ComparisonProvider.Direct, Repeats = 2 } })
         {
             try { VerificationPlan.Validate(invalid); throw new Exception("Accepted invalid compare-drain options."); }
             catch (ArgumentException) { }
         }
+        var preparations = 0;
+        var settled = ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+        {
+            preparations++;
+            return Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache,
+                attempt == 1 ? 4096UL : 0UL, 0, null));
+        }).GetAwaiter().GetResult();
+        check(settled.Attempt == 2 && preparations == 2 && settled.Pending.DirtyBytes == 0,
+            "preparation drains new filesystem writes before the scored ready handshake");
+        var invalidAttempts = 0;
+        reject(() => ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+        {
+            invalidAttempts++;
+            return Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache, null, null, null));
+        }).GetAwaiter().GetResult());
+        check(invalidAttempts == 1, "missing pending evidence is never retried as drainage");
+        try
+        {
+            ComparisonDrain.PrepareCleanAsync(ComparisonProvider.QueueCache, attempt =>
+                Task.FromResult(new ComparisonPending(DateTimeOffset.UtcNow, ComparisonProvider.QueueCache, 4096, 0, null)),
+                TimeSpan.Zero).GetAwaiter().GetResult();
+            throw new Exception("Accepted permanently dirty preparation.");
+        }
+        catch (TimeoutException) { }
+        var busyDisk = new ComparisonDiskCounters(DateTimeOffset.UtcNow, 4096, 1, 1);
+        var diskObservations = new List<ComparisonDiskCounters>();
+        var idleDisk = ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk,
+            () => busyDisk with { Utc = DateTimeOffset.UtcNow, QueueDepth = 0 },
+            (_, value) => diskObservations.Add(value)).GetAwaiter().GetResult();
+        check(idleDisk.QueueDepth == 0 && diskObservations.Count == 2 && diskObservations[0].QueueDepth == 1,
+            "Direct preparation records the busy observation and waits unscored for the same zero-queue precondition");
+        reject(() => ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk,
+            () => busyDisk with { BytesWritten = 0 }, (_, _) => { }).GetAwaiter().GetResult());
+        try
+        {
+            ComparisonDrain.WaitForDirectDiskIdleAsync(busyDisk, () => busyDisk, (_, _) => { }, TimeSpan.Zero).GetAwaiter().GetResult();
+            throw new Exception("Accepted permanently busy Direct preparation.");
+        }
+        catch (TimeoutException) { }
         RunDeferredBlocksContracts(check, reject);
         var config = "Status: Active\r\nLevel-1 Cache: 2048,00MB\r\nLevel-2 Cache: 0,00MB\r\nR/W Ratio: Shared\r\nBlock Size: 4KB\r\nDefer-Write: Enabled\r\nLatency: 10s\r\nMode: Native\r\nPrefetch: Disabled\r\n";
         ComparisonDrain.ValidatePrimoConfiguration(config);
@@ -150,23 +232,40 @@ internal static class CompareDrainContracts
         var directory = Directory.CreateTempSubdirectory("qc-drain-contract-").FullName;
         try
         {
-            foreach (var small in new[] { false, true })
+            foreach (var kind in new[] { "drain-large", "drain-small", "drain-sustained" })
             {
-                var path = Path.Combine(directory, small ? "small" : "large");
+                var path = Path.Combine(directory, kind[6..]);
                 var clockStarted = false;
-                var pass = files.Write(path, small, _ => clockStarted = true);
-                check(clockStarted && pass.Seconds > 0 && pass.Ended >= pass.Started && files.Verify(path, small).Length == (small ? 64 : 1),
-                    "portable file helper uses fresh CreateNew files, Q4 or four shuffled workers, and verifies every hash");
-                try { files.Write(path, small, _ => { }); throw new Exception("Scored overwrite accepted."); } catch (IOException) { }
+                var pass = files.Write(path, kind, _ => clockStarted = true);
+                check(clockStarted && pass.Seconds > 0 && pass.Ended >= pass.Started && files.Verify(path, kind).Length == (kind == "drain-small" ? 64 : 1),
+                    "portable file helper uses fresh CreateNew files, Q4, Q8 or four shuffled workers, and verifies every hash");
+                try { files.Write(path, kind, _ => { }); throw new Exception("Scored overwrite accepted."); } catch (IOException) { }
             }
+            reject(() => files.Write(Path.Combine(directory, "unknown"), "drain-unknown", _ => { }));
+            check(!Directory.Exists(Path.Combine(directory, "unknown")), "an unknown workload is refused before creating its directory");
+            var sustainedContent = File.ReadAllBytes(Path.Combine(directory, "sustained", "sustained.bin"));
+            var largePayload = File.ReadAllBytes(Path.Combine(directory, "large", "large.bin"));
+            check(sustainedContent.Length == 8 * largePayload.Length && files.SustainedBytes == sustainedContent.Length &&
+                Enumerable.Range(0, 8).All(pass => sustainedContent.AsSpan(pass * largePayload.Length, largePayload.Length).SequenceEqual(largePayload)) &&
+                files.SustainedHash == Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(sustainedContent)) &&
+                files.SustainedHash == same.SustainedHash,
+                "the sustained file repeats the unique payload eight times and its oracle hashes exactly those bytes");
+            using (var damaged = new FileStream(Path.Combine(directory, "sustained", "sustained.bin"), FileMode.Open, FileAccess.Write))
+            {
+                damaged.Position = 7L * largePayload.Length + 5; damaged.WriteByte((byte)~sustainedContent[7 * largePayload.Length + 5]);
+            }
+            reject(() => files.Verify(Path.Combine(directory, "sustained"), "drain-sustained"));
             var largeContent = File.ReadAllBytes(Path.Combine(directory, "large", "large.bin"));
             foreach (var index in new[] { 0, 17, 63 })
                 check(largeContent.AsSpan(index * ComparisonDrain.SmallFileBytes, ComparisonDrain.SmallFileBytes)
                     .SequenceEqual(File.ReadAllBytes(Path.Combine(directory, "small", ComparisonDrainFiles.SmallName(index)))),
                     "small files use unique slices of the shared large payload prefix");
             using (var damaged = File.OpenWrite(Path.Combine(directory, "small", ComparisonDrainFiles.SmallName(17)))) damaged.WriteByte(0);
-            reject(() => files.Verify(Path.Combine(directory, "small"), true));
+            reject(() => files.Verify(Path.Combine(directory, "small"), "drain-small"));
             RunReportContracts(directory, plan, check, reject);
+            RunReportContracts(directory, paired, check, reject, batching: true);
+            RunReportContracts(directory, sustained, check, reject, sustained: true);
+            RunReportContracts(directory, plan, check, reject, provider: ComparisonProvider.QueueCachePaused);
         }
         finally { Directory.Delete(directory, recursive: true); }
 
@@ -181,12 +280,27 @@ internal static class CompareDrainContracts
         reject(() => ComparisonDrain.VerifyBypassedAsync("failed-resume", () => Task.CompletedTask,
             () => [], () => throw new InvalidDataException("resume failed"), value => result = value).GetAwaiter().GetResult());
         check(result is { Verified: true, Restored: false }, "restoration failure is persisted and cannot pass verification");
+        reject(() => ComparisonDrain.VerifyBypassedAsync("resumed-during-oracle", () => Task.CompletedTask,
+            () => [], () => Task.CompletedTask, value => result = value,
+            () => throw new InvalidDataException("cache resumed during oracle")).GetAwaiter().GetResult());
+        check(result is { Verified: false, Bypassed: false, Restored: true },
+            "a successful hash cannot pass if post-oracle bypass proof fails; restoration still runs");
+
     }
 
     private static void RunQueueCachePauseContracts(WriteCacheState original, Action<bool, string> check, Action<Action> reject)
     {
         var performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
         var active = original with { Performance = performance };
+        var oraclePaused = active with { Flags = active.Flags & ~1u };
+        ComparisonDrain.ValidateBypass(oraclePaused, oraclePaused);
+        foreach (var changed in new[] { active, oraclePaused with { ReadHitBytes = 1 }, oraclePaused with { ReadMissBytes = 4096 },
+            oraclePaused with { AcceptedBytes = 512 }, oraclePaused with { Instance = oraclePaused.Instance + 1 },
+            oraclePaused with { DirtyBytes = 512 }, oraclePaused with { Options = oraclePaused.Options! with { BatchKiB = 1024 } } })
+            reject(() => ComparisonDrain.ValidateBypass(oraclePaused, changed));
+
+        foreach (var (batch, parallelism) in new[] { (1024, 4), (1024, 8), (2048, 4), (2048, 8) })
+            ComparisonDrain.ValidateQueueCache(active with { Options = active.Options! with { BatchKiB = batch, Parallelism = parallelism } }, active: true);
         var paused = active with { Flags = active.Flags & ~1u, Generation = active.Generation + 1 };
         var samples = new Queue<WriteCacheState>([active with { Flags = active.Flags | 8u }, active,
             paused with { Flags = paused.Flags | 8u, DirtyBytes = 4096, InFlightBytes = 4096 }, paused]);
@@ -207,6 +321,7 @@ internal static class CompareDrainContracts
             active with { Instance = original.Instance + 1 }, active with { DeviceBytes = original.DeviceBytes + 4096 },
             active with { Options = null }, active with { Options = original.Options! with { RetainWrites = false } },
             active with { Options = original.Options! with { BatchKiB = 256 } }, active with { Options = original.Options! with { Parallelism = 2 } },
+            active with { Options = original.Options! with { BatchKiB = 1024 } }, active with { Options = original.Options! with { Parallelism = 4 } },
             active with { BudgetBytes = 1UL << 30 }, active with { ReservedBytes = 0 }, active with { PayloadCapacity = 0 },
             active with { Flags = active.Flags & ~32u }, active with { Errors = original.Errors + 1 }, active with { LastError = 5 },
             active with { Flags = active.Flags | 2u }, active with { Flags = active.Flags | 4u }, active with { Flags = active.Flags | 16u },
@@ -315,15 +430,18 @@ internal static class CompareDrainContracts
         }
     }
 
-    private static void RunReportContracts(string directory, IReadOnlyList<ComparisonCase> plan, Action<bool, string> check, Action<Action> reject)
+    private static void RunReportContracts(string directory, IReadOnlyList<ComparisonCase> plan, Action<bool, string> check, Action<Action> reject,
+        bool batching = false, bool sustained = false, ComparisonProvider provider = ComparisonProvider.QueueCache)
     {
+        IReadOnlyList<ComparisonReport.DrainRow> Rows(IReadOnlyList<ComparisonCase> cases, ComparisonProvider product)
+            => ComparisonReport.Drains(directory, cases, product, batching, sustained);
         var hash = new string('A', 64);
         var small = Enumerable.Range(0, ComparisonDrain.SmallFiles).Select(i => new ComparisonFileHash(ComparisonDrainFiles.SmallName(i), ComparisonDrain.SmallFileBytes, hash)).ToArray();
         var oraclePath = Path.Combine(directory, "compare-drain-oracle.json");
         RunStorage.AtomicJson(oraclePath, new { ComparisonDrain.PayloadBytes, ComparisonDrain.LargeBytes, ComparisonDrain.SmallBytes,
-            SmallFileCount = ComparisonDrain.SmallFiles, ComparisonDrain.Seed, LargeSha256 = hash, SmallFiles = small });
+            SmallFileCount = ComparisonDrain.SmallFiles, ComparisonDrain.Seed, LargeSha256 = hash, SmallFiles = small,
+            SustainedBytes = sustained ? ComparisonDrain.SustainedBytes : (long?)null, SustainedSha256 = sustained ? hash : null });
         var utc = DateTimeOffset.UtcNow;
-        var provider = ComparisonProvider.QueueCache;
         ComparisonDrainScore Score(ComparisonCase test)
         {
             var seconds = 8.0 + test.Repeat * 2;
@@ -335,7 +453,7 @@ internal static class CompareDrainContracts
             var diskAfter = new ComparisonDiskCounters(utc.AddSeconds(seconds - 0.1), expectedBytes, operations, 0);
             var samples = Enumerable.Range(0, (int)seconds + 3).Select(i => new ComparisonDiskCounters(utc.AddSeconds(i - 1),
                 Math.Min(i, (int)seconds) * (long)expectedBytes / (int)seconds, (uint)(Math.Min(i, (int)seconds) * operations / (int)seconds), 0)).ToArray();
-            return new(test.Id, provider, expectedBytes, test.Kind == "drain-small" ? ComparisonDrain.SmallFiles : 1,
+            return new(test.Id, provider, expectedBytes, ComparisonDrain.Files(test.Kind),
                 utc.AddSeconds(-1), utc, utc.AddSeconds(1), utc.AddSeconds(1.1), utc.AddSeconds(seconds - 0.5), utc.AddSeconds(seconds),
                 1, seconds - 1, seconds - 1.6, 0.5, seconds, expectedBytes / seconds / 1_000_000.0,
                 before, after, diskBefore, diskAfter, samples);
@@ -344,28 +462,87 @@ internal static class CompareDrainContracts
         {
             var score = Score(test);
             ComparisonDrain.ValidateScore(test, score, provider);
+            if (batching)
+            {
+                var counters = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                {
+                    DrainGatherPolicy = (ulong)test.GatherPolicy!.Value,
+                    DrainEndLimit = 0, DrainEndGap = 0, DrainEndInFlight = 0, DrainEndFilling = 0, DrainEndPartial = 0, DrainEndFence = 0,
+                    DrainPartialAnchor = 0, DrainSizeSmall = 0, DrainSizeMedium = 0, DrainSizeLarge = 0,
+                    DrainGapCleanFull = 0, DrainGapCleanPartial = 0, DrainGapAbsent = 0, DrainGapFilling = 0,
+                    DrainBackLimit = 0, DrainBackGap = 0, DrainBackInFlight = 0, DrainBackFilling = 0,
+                    DrainBackPartial = 0, DrainBackFence = 0, DrainBackBoundary = 0, DrainBackAligned = 0
+                };
+                var state = new WriteCacheState(1 | 32 | 256 | 512, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30,
+                    0, 0, 0, 0, 0, 0, 0, 0) { Instance = 42, Options = new CacheOptions { BatchKiB = 2048, Parallelism = 4 }, Performance = counters };
+                var finished = counters with { DrainBatches = 2, DrainBytes = (ulong)test.Bytes, DrainEndGap = 2,
+                    DrainSizeSmall = 2, DrainGapAbsent = 2, DrainBackGap = 2 };
+                var evidence = DrainBatching.Measure(test, counters, finished);
+                check(evidence.Gaps["absent"] == 2, "missing-neighbor attribution reconciles with forward and backward batch counts");
+                reject(() => DrainBatching.Measure(test, counters, finished with { DrainGapAbsent = null }));
+                reject(() => DrainBatching.Measure(test, counters, finished with { DrainGapAbsent = 3 }));
+                reject(() => DrainBatching.Measure(test, counters, finished with { DrainBackGap = 1 }));
+                reject(() => DrainBatching.Measure(test, counters, finished with { DrainGatherPolicy = null }));
+                reject(() => DrainBatching.Measure(test, counters, finished with { TimingEnabled = 1 }));
+                RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.before.cache.json"), state);
+                RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.after.cache.json"), state with { Performance = finished });
+                RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.batching.json"), evidence);
+            }
+            var bypass = new WriteCacheState(32 | 256 | 512, 0, 50UL << 30, 2UL << 30, 2UL << 30, 0, 0, 2UL << 30,
+                0, 0, 0, 0, 0, 0, 0, 0) { Instance = 42,
+                Options = new CacheOptions { BatchKiB = batching ? 2048 : 1024, Parallelism = 4 },
+                Performance = new CachePerformance(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                    { DrainGatherPolicy = test.GatherPolicy is { } mode ? (ulong)mode : null } };
+            RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.bypass-before.cache.json"), bypass);
+            RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.bypass-after.cache.json"), bypass);
             RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.score.json"), score);
             RunStorage.AtomicJson(Path.Combine(directory, $"compare.{test.Id}.verify.json"), new ComparisonDrainVerification(test.Id, true, true, true,
-                test.Kind == "drain-small" ? small : [new("large.bin", ComparisonDrain.LargeBytes, hash)]));
+                test.Kind == "drain-small" ? small : [new(ComparisonDrainFiles.FileName(test.Kind), ComparisonDrain.ExpectedBytes(test.Kind), hash)]));
         }
-        var rows = ComparisonReport.Drains(directory, plan, provider);
-        check(rows.Count == 2 && rows.All(r => r.Samples == 3 && r.MBPerSecond == ComparisonDrain.ExpectedBytes(r.Shape) / 12.0 / 1_000_000 &&
+        var rows = Rows(plan, provider);
+        static long ShapeBytes(string shape) => shape.EndsWith("small", StringComparison.Ordinal) ? ComparisonDrain.SmallBytes
+            : shape.EndsWith("sustained", StringComparison.Ordinal) ? ComparisonDrain.SustainedBytes : ComparisonDrain.LargeBytes;
+        check(rows.Count == (batching ? 4 : sustained ? 1 : 2) && rows.All(r => r.Provider == provider && r.Samples == 3 && r.MBPerSecond == ShapeBytes(r.Shape) / 12.0 / 1_000_000 &&
             r.MinMBPerSecond < r.MBPerSecond && r.MaxMBPerSecond > r.MBPerSecond && r.AverageWriteBytes == 1 << 20),
-            "two headline medians use each workload's own byte count, complete three-sample ranges and backing write sizes");
-        reject(() => ComparisonReport.Drains(directory, plan.Take(5).ToArray(), provider));
-        reject(() => ComparisonReport.Drains(directory, plan, ComparisonProvider.PrimoCache));
-        reject(() => ComparisonReport.Drains(directory, plan.Select(c => c.Kind == "drain-small" ? c with { Bytes = 1L << 30 } : c).ToArray(), provider));
+            "headline medians use each workload's own byte count, complete three-sample ranges and backing write sizes");
+        reject(() => Rows(plan.Take(plan.Count - 1).ToArray(), provider));
+        reject(() => Rows(plan, ComparisonProvider.PrimoCache));
+        reject(() => Rows(plan.Select((c, i) => i == 0 ? c with { Bytes = c.Bytes / 2 } : c).ToArray(), provider));
+        reject(() => ComparisonReport.Drains(directory, plan, provider, batching, !sustained));
+        if (sustained)
+        {
+            var withoutHash = File.ReadAllText(oraclePath);
+            foreach (var (field, value) in new (string, JsonNode?)[] { ("SustainedSha256", null), ("SustainedSha256", "short"), ("SustainedBytes", 1L << 30) })
+            {
+                var oracle = JsonNode.Parse(withoutHash)!.AsObject(); oracle[field] = value;
+                File.WriteAllText(oraclePath, oracle.ToJsonString());
+                reject(() => Rows(plan, provider));
+            }
+            File.WriteAllText(oraclePath, withoutHash);
+        }
+        var bypassPath = Path.Combine(directory, $"compare.{plan[0].Id}.bypass-after.cache.json");
+        var completeBypass = File.ReadAllText(bypassPath);
+        foreach (var field in new[] { "ReadHitBytes", "ReadMissBytes", "AcceptedBytes", "DirtyBytes", "Instance" })
+        {
+            var missing = JsonNode.Parse(completeBypass)!.AsObject(); missing.Remove(field);
+            File.WriteAllText(bypassPath, missing.ToJsonString());
+            reject(() => Rows(plan, provider));
+        }
+        File.WriteAllText(bypassPath, completeBypass);
+        if (batching) reject(() => ComparisonReport.Drains(directory, ComparisonDrain.Cases(3), provider, batching: true));
         var originalOracle = File.ReadAllText(oraclePath);
         var oldOracle = JsonNode.Parse(originalOracle)!.AsObject(); oldOracle["SmallBytes"] = 1L << 30; oldOracle["SmallFileCount"] = 16_384;
         File.WriteAllText(oraclePath, oldOracle.ToJsonString());
-        reject(() => ComparisonReport.Drains(directory, plan, provider));
+        reject(() => Rows(plan, provider));
         File.WriteAllText(oraclePath, originalOracle);
-        var smallCase = plan.First(c => c.Kind == "drain-small");
-        var smallScore = Score(smallCase);
-        reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { Bytes = ComparisonDrain.LargeBytes,
-            MBPerSecond = ComparisonDrain.LargeBytes / smallScore.TotalSeconds / 1_000_000.0 }, provider));
-        reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { Files = 16_384 }, provider));
-        reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { DiskAfter = smallScore.DiskAfter with { BytesWritten = ComparisonDrain.SmallBytes - 4096 } }, provider));
+        if (plan.FirstOrDefault(c => c.Kind == "drain-small") is { } smallCase)
+        {
+            var smallScore = Score(smallCase);
+            reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { Bytes = ComparisonDrain.LargeBytes,
+                MBPerSecond = ComparisonDrain.LargeBytes / smallScore.TotalSeconds / 1_000_000.0 }, provider));
+            reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { Files = 16_384 }, provider));
+            reject(() => ComparisonDrain.ValidateScore(smallCase, smallScore with { DiskAfter = smallScore.DiskAfter with { BytesWritten = ComparisonDrain.SmallBytes - 4096 } }, provider));
+        }
         var first = plan[0]; var good = Score(first);
         var contradictory = new[]
         {
@@ -393,18 +570,18 @@ internal static class CompareDrainContracts
         foreach (var bad in contradictory.Append(badBaseline))
         {
             RunStorage.AtomicJson(scorePath, bad);
-            reject(() => ComparisonReport.Drains(directory, plan, provider));
+            reject(() => Rows(plan, provider));
         }
         RunStorage.AtomicJson(scorePath, good);
         var json = JsonNode.Parse(File.ReadAllText(scorePath))!.AsObject(); json.Remove("TotalSeconds");
         File.WriteAllText(scorePath, json.ToJsonString());
-        try { ComparisonReport.Drains(directory, plan, provider); throw new Exception("A missing score field became zero."); } catch (JsonException) { }
+        try { Rows(plan, provider); throw new Exception("A missing score field became zero."); } catch (JsonException) { }
         RunStorage.AtomicJson(scorePath, good);
         var verifyPath = Path.Combine(directory, $"compare.{first.Id}.verify.json");
         RunStorage.AtomicJson(verifyPath, new ComparisonDrainVerification(first.Id, true, false, true, [new("large.bin", ComparisonDrain.LargeBytes, hash)]));
-        reject(() => ComparisonReport.Drains(directory, plan, provider));
+        reject(() => Rows(plan, provider));
         File.Delete(verifyPath);
-        try { ComparisonReport.Drains(directory, plan, provider); throw new Exception("A missing verification was published."); } catch (IOException) { }
+        try { Rows(plan, provider); throw new Exception("A missing verification was published."); } catch (IOException) { }
         check(File.Exists(scorePath), "completed measurement is preserved independently of missing or failed byte verification");
     }
 }

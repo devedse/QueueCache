@@ -93,6 +93,53 @@ function Assert-RegistryMultiString([string]$Path, [string[]]$Expected)
         }
     }
 }
+# Restores the registration recorded before this setup changed it, for the next boot, with the
+# semantics of Recover-Registration.ps1. A driver that is loaded now keeps running until then; the
+# registry only takes effect at the next boot. Never point the boot filter at a missing file.
+function Restore-PreviousRegistration([string[]]$Filters, $Service, [string]$BackupPath)
+{
+    $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
+    if ($null -ne $Service)
+    {
+        $previousDriver = Join-Path $env:windir (([string]$Service.ImagePath) -replace '^\\SystemRoot\\', '')
+        if (-not (Test-Path -LiteralPath $previousDriver))
+        {
+            throw "the previous driver $($Service.ImagePath) no longer exists, so the new registration was kept. Rerun setup, or restore it with Recover-Registration.ps1 -BackupFile $BackupPath."
+        }
+    }
+    [string[]]$previous = @($Filters | Where-Object { $_ })
+    if ($previous.Count)
+    {
+        New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value $previous -Force | Out-Null
+        Assert-RegistryMultiString -Path $volumeClassPath -Expected $previous
+    }
+    else
+    {
+        Remove-ItemProperty $volumeClassPath -Name UpperFilters -ErrorAction SilentlyContinue
+    }
+    if ($null -eq $Service)
+    {
+        if (Test-Path $servicePath) { Native sc.exe @('delete', 'qcachelab') }
+    }
+    else
+    {
+        foreach ($name in @('ImagePath', 'Group', 'LabAllowedDriverKey'))
+        {
+            $value = $Service.$name
+            if ($null -eq $value) { Remove-ItemProperty -LiteralPath $servicePath -Name $name -ErrorAction SilentlyContinue }
+            else { New-ItemProperty -LiteralPath $servicePath -Name $name -PropertyType $(if ($name -eq 'ImagePath') { 'ExpandString' } else { 'String' }) -Value ([string]$value) -Force | Out-Null }
+        }
+        foreach ($name in @('Start', 'Type', 'ErrorControl', 'ClassCoverage'))
+        {
+            $value = $Service.$name
+            if ($null -eq $value) { Remove-ItemProperty -LiteralPath $servicePath -Name $name -ErrorAction SilentlyContinue }
+            else { New-ItemProperty -LiteralPath $servicePath -Name $name -PropertyType DWord -Value ([int]$value) -Force | Out-Null }
+        }
+    }
+    $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
+    try { $systemHive.Flush() } finally { $systemHive.Dispose() }
+}
+$activating = $false
 try
 {
     if (-not [Environment]::Is64BitProcess)
@@ -111,9 +158,11 @@ try
             # Only lettered volumes can have caching enabled; drain and disable each one
             # with a cache. Exit code 4 means no filter answers there (not loaded yet), so
             # that volume has no cache; any other failure stops uninstall.
-            foreach ($volume in Get-Volume | Where-Object { $_.DriveLetter -and $_.DriveType -eq 'Fixed' })
+            # DriveInfo, not Get-Volume: the Storage WMI provider does not list every
+            # system's volumes (some machines report no MSFT_Volume for C:).
+            foreach ($drive in [IO.DriveInfo]::GetDrives() | Where-Object { $_.DriveType -eq 'Fixed' })
             {
-                $letter = "$($volume.DriveLetter):"
+                $letter = $drive.Name.Substring(0, 2)
                 $json = & $controller cache-status $letter --json
                 if ($LASTEXITCODE -eq 4)
                 {
@@ -153,18 +202,30 @@ try
     # alter Secure Boot/test mode automatically as part of application setup.
     Add-Type -TypeDefinition @'
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
-public static class QueueCacheCodeIntegrity {
+public static class QueueCacheSetupNative {
     [StructLayout(LayoutKind.Sequential)] public struct Info { public uint Length; public uint Options; }
     [DllImport("ntdll.dll")] static extern int NtQuerySystemInformation(int cls, ref Info info, uint size, out uint required);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool FlushFileBuffers(IntPtr handle);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     public static bool TestSigningActive() { var i = new Info { Length = 8 }; uint n;
         int s = NtQuerySystemInformation(103, ref i, 8, out n);
         if (s < 0) throw new InvalidOperationException("Cannot query active Code Integrity: " + s);
         return (i.Options & 2) != 0;
     }
+    // What Write-VolumeCache does, without the Storage WMI provider (which may list no volume for C:).
+    public static void FlushVolume(string letter) {
+        IntPtr h = CreateFileW(@"\\.\" + letter + ":", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+        if (h == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open volume " + letter + ": to flush it");
+        try { if (!FlushFileBuffers(h)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot flush volume " + letter + ":"); }
+        finally { CloseHandle(h); }
+    }
 }
 '@
-    if (-not [QueueCacheCodeIntegrity]::TestSigningActive())
+    if (-not [QueueCacheSetupNative]::TestSigningActive())
     {
         throw 'This driver is test-signed. Enable Windows test-signing with Secure Boot disabled, reboot, then rerun setup. No security settings were changed.'
     }
@@ -232,7 +293,32 @@ public static class QueueCacheCodeIntegrity {
     {
         throw 'Staged driver verification failed.'
     }
+    # Everything the next boot does not load comes first, so a failure (or a crash) here leaves
+    # Windows booting exactly as before. Installing the RAM provider starts its root adapter
+    # immediately; with no new boot filter registered yet, a crash there cannot leave a boot-start
+    # driver behind that points at an unflushed file.
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+    UpdatePath $false
+    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
+    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
+    # One startup coordinator owns managed resources before regular saved profiles.
+    # Start at the required reboot, after the intended native modules are loaded.
+    Native $controller @('--managed-service-install')
+    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
+    Register-SignInTask
     $servicePath = 'HKLM:\SYSTEM\CurrentControlSet\Services\qcachelab'
+    if (Test-Path $servicePath)
+    {
+        $service = Get-ItemProperty $servicePath
+        if ($service.Type -ne 1 -or $service.ImagePath -notmatch '^(\\SystemRoot\\)?System32\\drivers\\(qcachelab|QueueCache-[\w.-]+)\.sys$')
+        {
+            throw 'Unexpected existing service; refusing to replace it.'
+        }
+    }
+    # Activation, last: the boot-start filter service points at the staged driver and the Volume
+    # class lists it. From here a failure restores the saved registration (see catch).
+    $activating = $true
     if (-not (Test-Path $servicePath))
     {
         Native sc.exe @('create', 'qcachelab', 'type=', 'kernel', 'start=', 'demand', 'error=', 'normal', 'binPath=', $relative, 'DisplayName=', 'QueueCache')
@@ -240,15 +326,9 @@ public static class QueueCacheCodeIntegrity {
     }
     else
     {
-        $service = Get-ItemProperty $servicePath
-        if ($service.Type -ne 1 -or $service.ImagePath -notmatch '^(\\SystemRoot\\)?System32\\drivers\\(qcachelab|QueueCache-[\w.-]+)\.sys$')
-        {
-            throw 'Unexpected existing service; refusing to replace it.'
-        }
         # Preserve existing target and start type, including an explicitly selected boot target.
         Native sc.exe @('config', 'qcachelab', 'binPath=', $relative, 'DisplayName=', 'QueueCache')
     }
-    UpdatePath $false
     # Volume-class registration covers volumes created in future as well as existing
     # volumes after restart. Preserve every unrelated filter and its ordering.
     New-ItemProperty $servicePath -Name ClassCoverage -PropertyType DWord -Value 1 -Force | Out-Null
@@ -257,29 +337,34 @@ public static class QueueCacheCodeIntegrity {
     [string[]]$filters = Get-QueueCacheClassFilters $filters
     New-ItemProperty $volumeClassPath -Name UpperFilters -PropertyType MultiString -Value ([string[]]$filters) -Force | Out-Null
     Assert-RegistryMultiString -Path $volumeClassPath -Expected $filters
-    # Use the same signed distribution and root-device SetupAPI entrypoint.
-    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
-    Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
-    # Installing the provider starts its root adapter immediately. Persist the staged
-    # boot filter, its registration and the installed files first, so a crash there
-    # cannot leave a zero-filled boot-start driver behind.
+    # Persist the registration and the staged driver before reporting success.
     $systemHive = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM')
     try { $systemHive.Flush() } finally { $systemHive.Dispose() }
-    Write-VolumeCache -DriveLetter $env:SystemDrive.Substring(0, 1)
-    & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
-    if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }
-    Native $controller @('--managed-service-install')
-    # One startup coordinator owns managed resources before regular saved profiles.
-    # Start at the required reboot, after the intended native modules are loaded.
-    Unregister-ScheduledTask -TaskName 'QueueCache-Restore' -Confirm:$false -ErrorAction SilentlyContinue
-    Register-SignInTask
+    [QueueCacheSetupNative]::FlushVolume($env:SystemDrive.Substring(0, 1))
     Write-Output "Driver staged at $destination. Reboot to load automatic volume coverage. No cache task was enabled. Test-signing prerequisites still apply."
     exit 3010
 }
 catch
 {
     Write-Output "SETUP FAILED: $_"
-    exit 1
+    if ($Uninstall) { exit 1 }
+    if (-not $activating)
+    {
+        Write-Output 'The driver registration was not changed; the next restart loads what it loaded before.'
+        exit 1
+    }
+    try
+    {
+        Restore-PreviousRegistration $volumeFilters $previousService $backup
+        Write-Output "The previous driver registration was restored from $backup; the next restart loads what it loaded before."
+        exit 1
+    }
+    catch
+    {
+        # Exit 5: setup tells the user not to restart before recovering.
+        Write-Output "ROLLBACK FAILED: $_"
+        exit 5
+    }
 }
 finally
 {
