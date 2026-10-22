@@ -1,6 +1,8 @@
 #include <winver.h>
 #include "qcache-version.h"
+#ifdef QCACHE_MESSAGE_TABLE // The RAM disk shares this file but has no event log messages.
 #include "qcachemsg.rc" // Event log message table (qcachemsg.mc).
+#endif
 #ifndef QCACHE_VERSION_STRING
 #define QCACHE_VERSION_STRING "0.1.0.0"
 #endif
