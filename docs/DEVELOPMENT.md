@@ -100,7 +100,10 @@ qcache policy remove Q:
 
 `qcache volume list` shows each lettered volume with its disk, whether the filter is
 loaded, and its cache task; it exits 1 if the filter registration is not the
-supported one. `--save` writes an administrator-only machine profile for that volume
+supported one. The app, the CLI and cache targets read disks and volumes natively (mount
+manager, SetupAPI disk interfaces, storage IOCTLs, the SystemPartition setup value and the
+kernel page file list), not through the Storage Management provider behind `Get-Disk` and
+`Get-Volume`, which reports no disks on some machines, for example an iSCSI-booted Windows. `--save` writes an administrator-only machine profile for that volume
 (named by the volume GUID, so it follows the volume, not the letter). Applying without `--save`
 removes the saved profile unless `--runtime-only` is used. Pause drains while
 preserving the task; Remove drains, releases RAM and removes its saved profile.

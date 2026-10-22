@@ -1,10 +1,8 @@
 using System.Buffers.Binary;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations;
@@ -44,39 +42,19 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
         if (volume.Length != 2 || !char.IsAsciiLetter(volume[0]) || volume[1] != ':')
             throw new ArgumentException("Select an explicit volume such as Q:, not a directory or raw disk.");
         var letter = char.ToUpperInvariant(volume[0]);
-        var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "WindowsPowerShell", "v1.0", "powershell.exe"))
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-        info.ArgumentList.Add("-NoProfile");
-        info.ArgumentList.Add("-Command");
-        // Only an already validated ASCII letter enters this script. Native volume extents are checked as well.
-        info.ArgumentList.Add($"$ErrorActionPreference='Stop'; $p=@(Get-Partition -DriveLetter {letter}); if($p.Count -ne 1){{throw 'Ambiguous volume'}}; $d=Get-Disk -Number $p[0].DiskNumber; $c=Get-CimInstance Win32_DiskDrive -Filter ('Index='+$d.Number); $paging=@(Get-CimInstance Win32_PageFileUsage | ForEach-Object {{ (Get-Partition -DriveLetter $_.Name.Substring(0,1)).DiskNumber }}); [pscustomobject]@{{Letter='{letter}';Number=[int]$d.Number;Bytes=[long]$d.Size;Instance=$c.PNPDeviceID;IsBoot=[bool]$d.IsBoot;IsSystem=[bool]$d.IsSystem;IsPaging=[bool]($paging -contains $d.Number)}} | ConvertTo-Json -Compress");
-        using var process = Process.Start(info) ?? throw new IOException("Cannot inspect disk.");
-        var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        StorageInventory inventory;
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            inventory = await Task.Run(() => StorageInventory.Read(cancellationToken), cancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
         }
-        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        catch (TimeoutException ex)
         {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
-            throw new TimeoutException($"Disk inventory for {volume} exceeded 30 seconds (Get-Partition/Get-Disk/CIM).", ex);
+            throw new TimeoutException($"Disk inventory for {volume} exceeded 30 seconds.", ex);
         }
-        catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-        if (process.ExitCode != 0)
-            throw new IOException(await stderr);
+        var (found, isBoot, isSystem, isPaging) = inventory.DiskOf(letter);
         // The inventory reports the disk size as Bytes; the target's Bytes is the volume.
-        var disk = JsonSerializer.Deserialize<DiskTarget>(await stdout) ?? throw new IOException("Missing disk identity.");
+        var disk = new DiskTarget(letter, found.Number, found.Bytes, found.Instance, isBoot, isSystem, isPaging);
         if (disk.Number < 0 || disk.Bytes <= 0 || string.IsNullOrWhiteSpace(disk.Instance) || disk.Letter != letter)
             throw new IOException("Invalid disk identity.");
         var extent = ReadExtent(letter);
@@ -173,6 +151,16 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
 
     private static string? FindInterfacePath(Guid diskInterface, string expectedInstance, CancellationToken cancellationToken)
     {
+        // SetupAPI metadata identifies the candidate before any disk handle or IOCTL is used.
+        foreach (var (instance, path) in InterfacePaths(diskInterface, cancellationToken))
+            if (MatchesInstance(expectedInstance, instance))
+                return path;
+        return null;
+    }
+
+    /// <summary>Every present interface of a device interface class, with its device instance ID.</summary>
+    internal static IEnumerable<(string Instance, string Path)> InterfacePaths(Guid diskInterface, CancellationToken cancellationToken)
+    {
         var devices = SetupDiGetClassDevsW(ref diskInterface, null, IntPtr.Zero, 0x12);
         if (devices == new IntPtr(-1))
             throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -198,6 +186,7 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
                 if (required < (IntPtr.Size == 8 ? 8 : 6))
                     throw new IOException("Invalid disk interface detail size.");
                 var detail = Marshal.AllocHGlobal(required);
+                string path, id;
                 try
                 {
                     Marshal.WriteInt32(detail, IntPtr.Size == 8 ? 8 : 6);
@@ -206,17 +195,14 @@ public sealed record DiskTarget(char Letter, int Number, long Bytes, string Inst
                     var instance = new StringBuilder(1024);
                     if (!SetupDiGetDeviceInstanceIdW(devices, ref info, instance, instance.Capacity, out _))
                         throw new Win32Exception(Marshal.GetLastWin32Error());
-                    // SetupAPI metadata identifies the candidate before any disk handle or IOCTL is used.
-                    if (!MatchesInstance(expectedInstance, instance.ToString()))
-                        continue;
-                    var path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4)) ?? throw new IOException("Missing disk interface path.");
-                    return path;
+                    path = Marshal.PtrToStringUni(IntPtr.Add(detail, 4)) ?? throw new IOException("Missing disk interface path.");
+                    id = instance.ToString();
                 }
                 finally { Marshal.FreeHGlobal(detail); }
+                yield return (id, path);
             }
         }
         finally { SetupDiDestroyDeviceInfoList(devices); }
-        return null;
     }
 
     internal static void ValidateExtent(DiskTarget target, (int Number, long Start, long Length) extent)
