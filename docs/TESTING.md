@@ -136,7 +136,7 @@ ones in use:
 | `system-*` | Guarded checks on the OS disk | Explicit acknowledgement and off-disk output |
 | `write-performance` | 72 fitting-file write cases: random 4K Q1/Q32, sequential 1M Q1/Q8, Off/Eager/Idle, timing off/on | `--budget-mib 2048`; ~35-55 min |
 | `cache-recall`, `cache-sustained`, `cache-map-cost`, `cache-concurrency` | Read recall, long mixed use with byte oracles, map polling cost, concurrent streams. Plan 129 primes the write profile before RAM-only write counters start; the scored window still requires zero lower I/O | `cache-sustained` defaults to a 30-minute soak |
-| `ram-read-reference` | RAM-disk Direct and Standard reads, 1M and 4K, one and four threads | Product default |
+| `ram-read-reference` | RAM-disk Direct and Standard reads, 1M and 4K, one and four threads. Since plan 168 each owned 2 GiB disk waits up to 60 s for RAM headroom first, because the previous disk's memory can still be returning to Windows after its stop | Product default |
 | `ram-read-async` | Same-build off/adaptive comparison of asynchronous split reads, 18 windows | Prints a screen verdict |
 | `ram-read-async-lifecycle` | Verified overlapped reads, the in-flight cap, ending Direct access under load | Correctness only |
 | `ram-write-reference` | RAM-disk 1M writes from one and four programs, plus copies into and out of cold memory without the driver | Tells the machine's copy limit from the driver's |
