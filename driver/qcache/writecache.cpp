@@ -1073,6 +1073,21 @@ static void WaitForCacheProgress(QC_CACHE* c, PIRP blockedRequest)
     else
         KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
 }
+// The disk's drain rate while it is writing, for Strict's dirty limit (#16): bytes of completed drain
+// writes per second of time with drain writes in flight (idle gaps excluded), averaged over windows of
+// at least half a second. Mutex held.
+static void MeasureDrainRate(QC_CACHE* c, ULONGLONG bytes)
+{
+    const auto now = KeQueryInterruptTime();
+    c->DrainRateBytes += bytes;
+    c->DrainRateTime += now - c->DrainBusySince;
+    c->DrainBusySince = now;
+    if (c->DrainRateTime < 5000000) // 100 ns units
+        return;
+    const auto rate = c->DrainRateBytes * 10000000 / c->DrainRateTime;
+    c->DrainBytesPerSecond = c->DrainBytesPerSecond ? (c->DrainBytesPerSecond * 3 + rate) / 4 : rate;
+    c->DrainRateBytes = c->DrainRateTime = 0;
+}
 static void Drainer(PVOID context)
 {
     auto worker = static_cast<QC_DRAIN_WORKER*>(context);
@@ -1223,6 +1238,8 @@ static void Drainer(PVOID context)
         if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
         else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
         else ++c->Performance.DrainSizeLarge;
+        if (!c->State.InFlightBytes)
+            c->DrainBusySince = KeQueryInterruptTime(); // The disk starts writing (MeasureDrainRate).
         c->State.InFlightBytes += transferBytes;
         worker->InFlightStart = io.Offset.QuadPart;
         worker->InFlightEnd = io.Offset.QuadPart + io.Length;
@@ -1324,6 +1341,7 @@ static void Drainer(PVOID context)
             c->State.DirtyBytes -= transferBytes;
             c->DirtySlots -= merged;
             c->State.DrainedBytes += transferBytes;
+            MeasureDrainRate(c, transferBytes);
             for (ULONG i = 0; i < merged; ++i)
             {
                 auto completedIndex = selected[i];
@@ -1991,7 +2009,9 @@ static PUCHAR Map(PIRP irp)
 // Ordered direct path for paging-marked writes that are not admitted to RAM
 // (special-file ranges, no current special map, or an unmappable buffer).
 // Caller holds Mutex; it is released on return.
-static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
+// Writes one request straight to the disk: a paging write that is not cached, or a Strict
+// write-through write (#16).
+static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
 {
     const auto end = first + length;
     // A paging-marked write can also be ordinary mapped-file data. Drain
@@ -2007,7 +2027,8 @@ static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG l
     const bool gateRecord = LabGateOverlaps(c, first, end);
     if (PendingRange(c, first, end))
     {
-        InterlockedIncrement64(&c->PagingOverlapWaits);
+        if (irp->Flags & IRP_PAGING_IO)
+            InterlockedIncrement64(&c->PagingOverlapWaits);
         if (gateRecord)
             RecordLabSequence(c, &c->LabGateDirectWaitSeq);
     }
@@ -2098,7 +2119,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     if (!QcShouldCacheDataIo(pagingIo, pagingIo && ApplicationPaging(c, irp, offset.QuadPart, offset.QuadPart + length)))
     {
         InterlockedIncrement64(&c->PagingDirectWrites);
-        return DirectPagingWrite(c, irp, offset.QuadPart, length);
+        return DirectWrite(c, irp, offset.QuadPart, length);
     }
     if (!NT_SUCCESS(c->State.LastError))
     {
@@ -2129,6 +2150,12 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return OriginalIo(c, irp);
     }
+    // Strict write-through (NTFS's journal writes it this way): it must be on the disk when it completes,
+    // nothing more. It goes straight to the disk after only the older versions of its own blocks, not
+    // after all dirty data (#16: that barrier stopped writes for minutes after a burst). A flush still
+    // writes out everything before it. NTFS writes its log record before the metadata it covers.
+    if (c->Enabled && writeThrough && !c->UnsafeDefer && needed <= WriteLimit(c))
+        return DirectWrite(c, irp, offset.QuadPart, length);
     // Sector-valid partial writes use the same RAM admission path as full blocks.
     // Only explicit durability/disabled/over-budget fallbacks remain here.
     if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
@@ -2160,7 +2187,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             // Under memory pressure an application paging write must still make
             // progress: use the ordered direct path, which needs no mapping.
             InterlockedIncrement64(&c->PagingMapFailures);
-            return DirectPagingWrite(c, irp, offset.QuadPart, length);
+            return DirectWrite(c, irp, offset.QuadPart, length);
         }
         ReleaseCache(c);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -2187,12 +2214,17 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         auto writeUsed = c->DirtySlots + c->CleanCount[0];
         const auto admissionLimit = QcAdmissionWriteLimit(
             WriteLimit(c), QcCachePagingPathCount(c) > 0, pagingIo);
+        // Strict (#16): at most about two seconds of the disk's drain rate is dirty, so a flush finishes
+        // in seconds; beyond it this writer waits (and so forces draining). A request may always start
+        // an empty cache.
+        const auto dirtyLimit = c->UnsafeDefer ? admissionLimit : QcStrictDirtyLimit(admissionLimit, c->DrainBytesPerSecond, Chunk);
+        const bool dirtyFits = c->DirtySlots + newDirty <= dirtyLimit || (!c->DirtySlots && newDirty <= admissionLimit);
         if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictForWrite(c, blocks))
             continue;
         if (c->Options.Allocation == QcFixed &&
             (needed > c->Capacity - c->Count || writeUsed + newWriteOccupancy > admissionLimit) && Evict(c, 0))
             continue;
-        if ((needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= admissionLimit) ||
+        if ((needed <= c->Capacity - c->Count && dirtyFits) ||
             !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
             break;
         if (callerPath)

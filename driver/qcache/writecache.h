@@ -434,6 +434,9 @@ struct QC_CACHE
     ULONG DirtySlots;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
+    // MeasureDrainRate (Mutex): drain bytes completed per second while drain writes are in flight,
+    // for Strict's dirty limit (#16). DrainBusySince is interrupt time; 0 rate: not measured yet.
+    ULONGLONG DrainBusySince, DrainRateBytes, DrainRateTime, DrainBytesPerSecond;
     BOOLEAN Pressure, WriterWaiting;
     ULONGLONG DiscardedBytes, LowerWrites, BatchedWrites, TrimRequests;
     QC_DIAGNOSTICS Diagnostics, DiagnosticsSnapshot;
