@@ -137,16 +137,56 @@ Defender/Search disabled. Experimental QueueCache rows do not qualify new defaul
 
 ## Power cut while the cache is writing
 
-Historical churn results: QueueCache 0.4.604.1 and PrimoCache 4.4.1; not repeated
-on the final build. Damage includes zero, partial or foreign contents. A dash
-means unavailable, not zero. A clean filesystem scan does not imply intact files.
-[Method and interpretation](COMPARISON.md#power-cut-while-the-cache-is-writing);
-[desired safety behavior and acceptance checks (#13)](https://github.com/devedse/QueueCache/issues/13).
+Two tests reset the virtual machine while a cache still holds unwritten work, then check
+every file and run `chkdsk /scan`. QueueCache 0.4.810.1 (October 23) left NTFS clean in all
+six cuts and lost only files written in the last seconds without a flush. On 0.4.604.1 the
+burst test left NTFS needing offline repair. Clean cuts do not establish a crash-safety
+guarantee: QueueCache does not yet order its writes around the file system's flushes, which
+[#13](https://github.com/devedse/QueueCache/issues/13) keeps open. Damage includes zero,
+partial or foreign contents. A dash means unavailable, not zero.
+
+**Burst** (`compare-durability-write`): an application-style durable save (buffered writes,
+then a flush), raw writes without a flush and 10,000 new small files, then a reset the
+moment the run ends (about 0.03 s later).
+
+| Product | Durable save / raw writes: new | Small files: intact / damaged / missing | `chkdsk /scan` |
+|---|---:|---:|---|
+| Q: without any cache | 100% / 100% | 8236 / 1066 / 698 | clean |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default), cut 1 | 100% / 100% | 3426 / 3595 / 2979 | clean |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default), cut 2 | 100% / 100% | 2749 / 4526 / 2725 | clean |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default), cut 3 | 100% / 100% | 6 / 8265 / 1729 | clean |
+| QueueCache 0.4.604.1 Fast 2 GiB | 100% / 100% | 4332 / 0 / 5668 | ⚠ needs offline repair (exit 13) |
+| QueueCache 0.4.604.1 Strict 2 GiB | 100% / 100% | 8572 / 950 / 478 | clean |
+| PrimoCache 4.4.1 Defer-Write 2 GiB | 100% / 100% | 0 / 0 / 10000 | clean |
+| PrimoCache 4.4.1 without Defer-Write | 100% / 100% | 9895 / 105 / 0 | clean |
+
+The small files are never flushed, so Fast mode may lose all of them. The bare disk lost
+fewer: a write Windows sends to it is on the disk, while in Fast mode it may still be
+waiting in RAM. Damaged files exist with wrong contents; this test does not classify them
+further, and on 0.4.810.1 their number varied from cut to cut. A Fast cache answers flushes
+from RAM, so the durable save surviving says nothing about application flushes in general.
+
+**Churn** (`compare-durability-churn`): power is cut while some newer work is on disk and
+some is still volatile.
+
+1. 2,000 files are written and given time to reach the disk.
+2. For 40 seconds, 200 new files per second are created without a flush. Every eighth step one of the first 1,000 old
+   files is deleted and, from step 1,000 on, the new file created 1,000 steps earlier, so freed disk space is reused.
+3. The virtual machine is reset about 2 seconds after the last file, or later while the disk below is still being
+   written (the cache writing out the churn). Each cut starts from the same restored snapshot.
+4. After the restart every file is checked, grouped by its age when the churn ended, and `chkdsk /scan` runs.
+
+**Damaged** means the file exists but holds the wrong contents: zeros, part of its data, or **another file's data**
+(old contents of reused disk space). A deleted file that comes back means its deletion was lost. The disk without a
+cache is the yardstick: Windows itself only loses the newest seconds, and those come back as zeros or missing.
 
 | Product | Cut | Power cut | `chkdsk /scan` | Files 20-30 s old: missing / damaged | 10-20 s old: missing / damaged | Newest 10 s: intact / damaged / missing | Damaged files holding another file's data | Deleted files back (intact / damaged) |
 |---|---|---|---|---:|---:|---:|---:|---:|
 | Q: without a cache task (PrimoCache driver idle) | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1833 / 41 / 0 | 0 | 0 / 0 |
 | Q: without any cache | 2 | during the write-out, 20 s after the churn | clean | 0 / 0 | 0 / 0 | 1830 / 0 / 0 | not classified | 0 / 0 |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default) | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1565 / 271 / 39 | 0 (all 271 zero-filled) | 10 / 0 |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default) | 2 | during the write-out, about 3 s after the churn | clean | 0 / 0 | 0 / 0 | 1841 / 34 / 0 | 0 (all 34 zero-filled) | 0 / 0 |
+| QueueCache 0.4.810.1 Fast 2 GiB, Eager 2048 KiB × 8 (default) | 3 | during the write-out, about 8 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | 0 | 0 / 0 |
 | QueueCache 0.4.604.1 Fast 2 GiB | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1568 / 265 / 42 | 0 | 11 / 0 |
 | QueueCache 0.4.604.1 Fast 2 GiB | 2 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1567 / 266 / 41 | 0 | 11 / 0 |
 | QueueCache 0.4.604.1 Fast 2 GiB | 3 | during the write-out, 5 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
@@ -159,11 +199,10 @@ means unavailable, not zero. A clean filesystem scan does not imply intact files
 | PrimoCache 4.4.1 Defer-Write 2 GiB | 6 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 92 | 530 / 232 / 1113 | 88 | 235 / 31 |
 | PrimoCache 4.4.1 Defer-Write 2 GiB | 7 | during the write-out, 11 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
 
-These are historical results on QueueCache **0.4.604.1**, not a power-cut repeat
-on 0.4.687.1. The initial burst left NTFS needing offline repair in Fast mode.
-PrimoCache's initial clean result came before its newest work had started to drain;
-later cuts during partial write-out also damaged NTFS. A clean check in one cut
-does not establish a crash-safety guarantee.
+The 0.4.810.1 cuts used the default for new caches; the 0.4.604.1 cuts used that build's
+default. PrimoCache's initial clean result came before its newest work had started to drain;
+later cuts during partial write-out also damaged NTFS. A clean check in one cut does not
+establish a crash-safety guarantee.
 
 The requested QueueCache goal is to permit loss of unpersisted writes while
 keeping NTFS healthy, without damage to untouched, durably checkpointed files.
@@ -175,36 +214,6 @@ remaining design work and acceptance checks. PrimoCache is a useful performance
 reference, but its vendor also documents that deferred writes can damage a
 filesystem after power loss
 ([Romex: Defer-Write](https://www.romexsoftware.com/en-us/primo-cache/term-defer-write.html)).
-
-The churn test cuts power while some newer work is on disk and some is still
-volatile (`compare-durability-churn`):
-
-1. 2,000 files are written and given time to reach the disk.
-2. For 40 seconds, 200 new files per second are created without a flush. Every eighth step one of the first 1,000 old
-   files is deleted and, from step 1,000 on, the new file created 1,000 steps earlier, so freed disk space is reused.
-3. The virtual machine is reset about 2 seconds after the last file (or, in the first cuts, the moment the disk below
-   was written afterwards). Each cut starts from the same restored snapshot.
-4. After the restart every file is checked, grouped by its age when the churn ended, and `chkdsk /scan` runs.
-
-**Damaged** means the file exists but holds the wrong contents: zeros, part of its data, or **another file's data**
-(old contents of reused disk space). A deleted file that comes back means its deletion was lost. The disk without a
-cache is the yardstick: Windows itself only loses the newest seconds, and those come back as zeros or missing.
-
-| Product | Cut | Power cut | `chkdsk /scan` | Files 20-30 s old: missing / damaged | 10-20 s old: missing / damaged | Newest 10 s: intact / damaged / missing | Damaged files holding another file's data | Deleted files back (intact / damaged) |
-|---|---|---|---|---:|---:|---:|---:|---:|
-| Q: without a cache task (PrimoCache driver idle) | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1833 / 41 / 0 | 0 | 0 / 0 |
-| Q: without any cache | 2 | during the write-out, 20 s after the churn | clean | 0 / 0 | 0 / 0 | 1830 / 0 / 0 | not classified | 0 / 0 |
-| QueueCache 0.4.604.1 Fast 2 GiB | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1568 / 265 / 42 | 0 | 11 / 0 |
-| QueueCache 0.4.604.1 Fast 2 GiB | 2 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 0 | 1567 / 266 / 41 | 0 | 11 / 0 |
-| QueueCache 0.4.604.1 Fast 2 GiB | 3 | during the write-out, 5 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
-| QueueCache 0.4.604.1 Fast 2 GiB | 4 | during the write-out, 10 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 1 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 316 | 0 / 44 / 1831 | not classified | 304 / 65 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 2 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 49 | 286 / 232 / 1356 | not classified | 265 / 36 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 3 | about 2 s after the churn ended | ⚠ not run: the check stopped, NTFS reported a file "corrupted and unreadable" | - | - | - | - | - |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 4 | about 2 s after the churn ended | ⚠ needs offline repair (exit 13), 26 files unreadable | 369 / 50 | 1751 / 0 | 0 / 0 / 1875 | 152 | 275 / 320 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 5 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 189 | 446 / 309 / 1120 | 144 | 221 / 47 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 6 | about 2 s after the churn ended | clean | 0 / 0 | 0 / 92 | 530 / 232 / 1113 | 88 | 235 / 31 |
-| PrimoCache 4.4.1 Defer-Write 2 GiB | 7 | during the write-out, 11 s after the churn | clean | 0 / 0 | 0 / 0 | 1875 / 0 / 0 | not classified | 0 / 0 |
 
 ## Results per tool
 

@@ -2138,8 +2138,10 @@ Fast 5,668 missing and `chkdsk` exit 13. Later partial-drain churn also damaged
 NTFS with PrimoCache. The current safety goal in
 [#13](https://github.com/devedse/QueueCache/issues/13) allows loss of pending
 writes while requiring a healthy filesystem and intact untouched durable data.
-That supersedes the earlier acceptance of filesystem damage; no new-build
-power-cut qualification or safety fix is claimed.
+That supersedes the earlier acceptance of filesystem damage; no safety fix is
+claimed. On 0.4.810.1 (October 23, default drain) the same burst left NTFS clean in
+three cuts (1,729–2,979 of the 10,000 small files missing, 3,595–8,265 damaged), and
+three churn cuts were clean too.
 [Full evidence](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
 ## RAM disks, cached reads and scheduling
