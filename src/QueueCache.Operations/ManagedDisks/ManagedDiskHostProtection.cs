@@ -83,10 +83,17 @@ public static class ManagedDiskHostProtection
         foreach (FileSystemAccessRule rule in acl.GetAccessRules(true, true, typeof(SecurityIdentifier)))
             if (rule.AccessControlType == AccessControlType.Allow && (rule.PropagationFlags & PropagationFlags.InheritOnly) == 0 &&
                 !Trusted((SecurityIdentifier)rule.IdentityReference) && (rule.FileSystemRights & unsafeRights) != 0)
-                throw new IOException("An unprivileged account can modify or replace the managed image directory: " + directory.FullName +
-                    ". Remove its delete/permission/ownership rights there or choose another directory.");
+                throw new IOException(UnprotectedMessage(directory.FullName, directory.Parent is null));
     }
     private static bool Trusted(SecurityIdentifier sid) => sid == SystemSid || sid == AdminSid || sid == InstallerSid;
+    /// <summary>Why a directory was refused and how to fix it. A folder created in Explorer directly under a
+    /// drive inherits "Authenticated Users: Modify"; a drive root itself is never re-permissioned.</summary>
+    internal static string UnprotectedMessage(string directory, bool volumeRoot) =>
+        "An account other than Administrators and SYSTEM can modify or replace " + directory +
+        ", which QueueCache's service would trust for disk images or their evidence. " + (volumeRoot
+            ? "Choose a folder that only administrators can change."
+            : "Choose a folder that only administrators can change, or restrict this one, for example: icacls \"" + directory +
+              "\" /inheritance:r /grant:r \"*S-1-5-32-544:(OI)(CI)F\" \"*S-1-5-18:(OI)(CI)F\"");
     public static string HostVolume(string path)
     {
         var mount = new StringBuilder(32768); var volume = new StringBuilder(1024);

@@ -120,7 +120,7 @@ public sealed partial class WindowsManagedDiskEngine
         public ValueTask DisposeAsync()
         { disk.Dispose(); try { if (!detached) image.Detach(); } finally { image.Dispose(); pins.Dispose(); } return ValueTask.CompletedTask; }
     }
-    public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token)
+    public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token, IProgress<ImageTransferProgress>? progress = null)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew(); var phases = new List<string>();
         void Mark(string phase) { phases.Add($"{phase}={timer.ElapsedMilliseconds}ms"); timer.Restart(); }
@@ -128,7 +128,7 @@ public sealed partial class WindowsManagedDiskEngine
         {
             var expected = await InspectAsync(path, token); Mark("inspect");
             var view = await OpenImportAsync(expected, token); Mark("open");
-            try { await LogicalImageTransfer.VerifyAsync(view.LogicalStorage, digest, token); Mark("read"); }
+            try { await LogicalImageTransfer.VerifyAsync(view.LogicalStorage, digest, token, progress); Mark("read"); }
             finally { await view.DisposeAsync(); Mark("close"); }
             return expected;
         }

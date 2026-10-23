@@ -8,6 +8,9 @@ public enum ManagedDiskJournalStage { Creating, Loading, Ready, Exporting, Candi
 /// <summary>The last committed save: how long it took, how much it copied, and the disk's
 /// <see cref="ManagedDiskRecord.WrittenBytes"/> when it was frozen (for "written since").</summary>
 public sealed record ManagedSaveStatistics(TimeSpan Duration, ulong Bytes, ulong? WrittenBytes, Guid BootEpoch, ulong CreationGeneration);
+/// <summary>The last save attempted while Windows shut down (#22): when, whether it committed, how long it
+/// took and, if not, why. Kept across restarts so the app can say what happened.</summary>
+public sealed record ManagedShutdownSave(DateTimeOffset At, bool Committed, TimeSpan Duration, ulong Bytes, string? Detail);
 public sealed record ManagedImageReference(ImageInspection Identity, LogicalImageDigest? Digest, ulong? Generation);
 public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, ManagedDiskRuntime? Runtime = null,
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
@@ -15,7 +18,7 @@ public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, Managed
     string? VolumePath = null, DateTimeOffset? SavedAt = null, string? LastError = null, bool Removed = false,
     Guid? GptDiskId = null, Guid? StartupSession = null, ulong ImageTransferAttempts = 0, ulong ImageTransferredBytes = 0,
     ManagedImageIoSnapshot? ImageIo = null, RamDirectState? Direct = null, RamDiskStatistics? Statistics = null,
-    ManagedSaveStatistics? LastSave = null, RamPhysicalMap? Physical = null)
+    ManagedSaveStatistics? LastSave = null, RamPhysicalMap? Physical = null, ManagedShutdownSave? LastShutdownSave = null)
 {
     /// <summary>Everything written to the RAM disk since it started, through either access path.</summary>
     [System.Text.Json.Serialization.JsonIgnore]

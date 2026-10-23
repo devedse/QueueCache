@@ -12,6 +12,8 @@ public interface ICacheTaskService
     // One cache per volume; several volumes can share a disk.
     Task<IReadOnlyList<VolumeDescription>> ListAsync();
     Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>([]);
+    /// <summary>What this startup's restore did with each saved profile (waiting for RAM, not restored).</summary>
+    Task<IReadOnlyList<ProfileRestoreStatus>> ListRestoreStatusAsync() => Task.FromResult<IReadOnlyList<ProfileRestoreStatus>>([]);
     Task<WriteCacheState> ReadAsync(VolumeDescription volume);
     /// <summary>How the cache's RAM is used, per 256 KiB chunk; null when the driver cannot report it.</summary>
     Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.FromResult<CacheLayoutMap?>(null);
@@ -37,6 +39,7 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
 {
     public async Task<IReadOnlyList<VolumeDescription>> ListAsync() => await VolumeCatalog.ListAsync();
     public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.Run<IReadOnlyList<SavedConfiguration>>(SavedConfigurations.List);
+    public Task<IReadOnlyList<ProfileRestoreStatus>> ListRestoreStatusAsync() => Task.Run<IReadOnlyList<ProfileRestoreStatus>>(SavedConfigurations.ReadRestoreStatus);
     public Task<WriteCacheState> ReadAsync(VolumeDescription volume) => Task.Run(() =>
     {
         ValidateVolume(volume);

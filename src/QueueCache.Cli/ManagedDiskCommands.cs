@@ -49,7 +49,7 @@ internal static class ManagedDiskCommands
         var readOnly = new Option<bool>("--read-only") { Description = "Publish the loaded RAM device read-only; the input image is always preserved." };
         var startup = new Option<bool>("--startup") { Description = "Remember automatic Windows startup using this mode's recipe." };
         var discardOnStop = new Option<bool>("--discard-on-stop") { Description = "Image-in-RAM: disable default save-before-stop. Each actual discard still requires --discard." };
-        var shutdownSave = new Option<bool>("--save-on-shutdown") { Description = "Image-in-RAM: attempt a bounded checkpoint during orderly shutdown; completion is not guaranteed." };
+        var shutdownSave = new Option<bool>("--save-on-shutdown") { Description = "Image-in-RAM: save it while Windows shuts down if it has unsaved changes. Windows waits for the save; a forced shutdown or power cut can still prevent it." };
         var access = AccessOption();
         foreach (Option option in new Option[] { mode, size, letter, label, newImage, load, initializeBlank, checkpoints, fixedImage, sector, readOnly, startup, discardOnStop, shutdownSave, access }) create.Options.Add(option);
         var createCache = new CacheBinding(create);
@@ -211,6 +211,10 @@ internal static class ManagedDiskCommands
                         ? $"; timing reads avg {stats.AverageReadMicroseconds:0.0} us max {stats.MaxReadMicroseconds:0.0} us ({stats.TimedReads}), writes avg {stats.AverageWriteMicroseconds:0.0} us max {stats.MaxWriteMicroseconds:0.0} us ({stats.TimedWrites})"
                         : "; timing off"));
             if (record.CommittedImage is not null) Console.WriteLine($"  startup image: {record.CommittedImage.Identity.Path}; saved at {record.SavedAt?.ToString("O") ?? "not yet checkpointed"}");
+            if (record.LastShutdownSave is { } shutdown)
+                Console.WriteLine($"  last shutdown save ({shutdown.At:O}): " + (shutdown.Committed
+                    ? $"committed {shutdown.Bytes / ManagedDiskDefinition.MiB} MiB in {shutdown.Duration.TotalSeconds:0} s"
+                    : $"not committed after {shutdown.Duration.TotalSeconds:0} s: {shutdown.Detail}"));
             if (record.LastError is not null) Console.WriteLine("  " + record.LastError);
         }
     }

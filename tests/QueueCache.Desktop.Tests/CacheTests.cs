@@ -1,5 +1,6 @@
 using QueueCache.Desktop.Services;
 using QueueCache.Desktop.ViewModels;
+using QueueCache.Operations;
 using static Test;
 
 /// <summary>Volume caches as the monitor and the Caches page see them. No real volume is opened.</summary>
@@ -52,8 +53,33 @@ internal static class CacheTests
         Check(!q.HasLayoutMap, "removing a cache clears the memory map");
     }
 
+    /// <summary>#12: a saved cache that startup could not restore because RAM was short says so.</summary>
+    private static void StartupRestoreStatus()
+    {
+        var volumes = new VolumeFixture();
+        var system = volumes.Volumes.Single(v => v.Volume == "C:");
+        var until = DateTime.UtcNow.AddMinutes(10);
+        volumes.Restores.Add(new("C:", system.VolumeId, ProfileRestoreState.WaitingForMemory, MemoryBudget.InsufficientMessage, DateTime.UtcNow, until));
+        volumes.Restores.Add(new("Q:", volumes.Volumes.Single(v => v.Volume == "Q:").VolumeId, ProfileRestoreState.NotRestored, "Not restored.", DateTime.UtcNow));
+        var monitor = new DashboardMonitor(volumes, new DiskFixture(), new FakeDialogs(), availableRam: () => 8UL << 30, usedLetters: () => new HashSet<char>());
+        Settle(monitor.RefreshAsync());
+        var c = monitor.Volumes.Single(v => v.Volume.Volume == "C:");
+        Check(c.StatusText == "Waiting for RAM" && c.ShowStatus && c.Description.Contains($"until {until.ToLocalTime():HH:mm}"),
+            "a saved cache that waits for free RAM at startup says until when it retries");
+        volumes.Restores[0] = volumes.Restores[0] with { State = ProfileRestoreState.NotRestored, Detail = "RAM stayed short for 10 minutes after startup.", RetryUntilUtc = null };
+        Settle(monitor.RefreshAsync());
+        Check(c.StatusText == "Not restored" && c.Description.EndsWith("RAM stayed short for 10 minutes after startup."),
+            "a saved cache that startup gave up on says why");
+        var q = monitor.Volumes.Single(v => v.Volume.Volume == "Q:");
+        Check(q.StatusText != "Not restored" && q.HasCache, "a volume whose cache is running shows its cache, not an old restore result");
+        volumes.Restores.Clear();
+        Settle(monitor.RefreshAsync());
+        Check(c.StatusText != "Not restored" && c.StatusText != "Waiting for RAM", "without a restore result the volume is an ordinary uncached volume");
+    }
+
     public static void Run()
     {
+        StartupRestoreStatus();
         MapLifecycle();
         MapVisibility();
         var volumes = new VolumeFixture();

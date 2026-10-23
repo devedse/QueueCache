@@ -603,6 +603,7 @@ static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_GEOMETRY_EX));
 static_assert(!QcMayChangeMedia(IOCTL_DISK_GET_DRIVE_LAYOUT_EX));
 // These lock/unlock the eject mechanism; they do not eject or modify media.
 // Keep ordered forwarding, but do not invalidate clean cache during discovery.
+// Unlocking first writes pending data out (QcReleasesMedia).
 static_assert(!QcMayChangeMedia(IOCTL_DISK_MEDIA_REMOVAL));
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_MEDIA_REMOVAL));
 static_assert(!QcMayChangeMedia(IOCTL_STORAGE_EJECTION_CONTROL));
@@ -617,6 +618,22 @@ static_assert(QcMayChangeMedia(IOCTL_DISK_FORMAT_TRACKS));
 static_assert(QcMayChangeMedia(IOCTL_SCSI_PASS_THROUGH));
 static_assert(QcMayChangeMedia(IOCTL_STORAGE_EJECT_MEDIA));
 static_assert(QcMayChangeMedia(IOCTL_STORAGE_FIRMWARE_DOWNLOAD));
+// A file system letting go of the volume: NTFS allows media removal when it dismounts. Detaching a
+// virtual disk dismounts and then removes the volume without a query-remove (traced on the VM, #21:
+// IOCTL_DISK_MEDIA_REMOVAL, a storage query, device relations, then surprise removal), so this is the
+// last request before the disk below is gone. Preventing removal (at mount) is not a release.
+static bool QcReleasesMedia(PIRP irp, PIO_STACK_LOCATION stack)
+{
+    if (stack->MajorFunction != IRP_MJ_DEVICE_CONTROL && stack->MajorFunction != IRP_MJ_INTERNAL_DEVICE_CONTROL)
+        return false;
+    const auto code = stack->Parameters.DeviceIoControl.IoControlCode;
+    if (code != IOCTL_DISK_MEDIA_REMOVAL && code != IOCTL_STORAGE_MEDIA_REMOVAL)
+        return false;
+    const auto request = static_cast<PPREVENT_MEDIA_REMOVAL>(irp->AssociatedIrp.SystemBuffer);
+    return request && stack->Parameters.DeviceIoControl.InputBufferLength >= sizeof(PREVENT_MEDIA_REMOVAL) &&
+           !request->PreventMediaRemoval;
+}
+static_assert(IOCTL_DISK_MEDIA_REMOVAL == 0x74804); // As recorded in the removal event's dump data on the VM.
 static NTSTATUS RetainCompletion(PDEVICE_OBJECT, PIRP, PVOID event)
 {
     KeSetEvent(static_cast<PKEVENT>(event), IO_NO_INCREMENT, FALSE);
@@ -3600,6 +3617,27 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         if (defer)
             return error;
         return QcCacheBarrier(c, FALSE, QcApplicationBarrier, irp);
+    }
+    // Before the file system lets go of the volume, put its pending writes on the disk (#21): a detach
+    // that follows removes the volume without asking. Clean data stays cached; nothing changed on disk.
+    if (QcReleasesMedia(irp, stack))
+    {
+        AcquireCache(c);
+        const bool pending = c->State.DirtyBytes != 0;
+        if (pending)
+        {
+            ++c->Diagnostics.OtherBarriers;
+            c->Diagnostics.LastBarrierCode = stack->Parameters.DeviceIoControl.IoControlCode;
+            Publish(c);
+        }
+        ReleaseCache(c);
+        if (pending)
+        {
+            auto status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
+            if (!NT_SUCCESS(status))
+                return status;
+        }
+        return OriginalIo(c, irp);
     }
     // A query cannot modify media, so it must neither drain nor invalidate cached data.
     // Windows' storage service, NTFS and monitoring tools poll read-only controls (disk

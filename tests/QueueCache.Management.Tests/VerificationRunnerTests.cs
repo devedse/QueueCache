@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 171, "plan 171 clean-cache captures wait, bounded, for background writes to drain on their own");
+        Check(VerificationPlan.Version == 172, "plan 172 volumes detaches a virtual disk with pending Fast writes");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -195,7 +195,7 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(new VerificationOptions("Q:", "volumes"));
         VerificationPlan.Validate(new VerificationOptions("V:", "trim-cache"));
         Check(VerificationPlan.Integrity(options with { Suite = "volumes" }).Select(test => test.Id).SequenceEqual(
-            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk", "volume-resize", "volume-snapshot"]), "volumes runs registration, raw disk commands, a shared disk, a resize and a snapshot as separate cases");
+            ["volume-registration", "volume-raw-disk-commands", "volume-shared-disk", "volume-resize", "volume-snapshot", "volume-detach"]), "volumes runs registration, raw disk commands, a shared disk, a resize, a snapshot and a detach as separate cases");
         Check(VerificationPlan.Integrity(options with { Suite = "trim-cache" }).Single() == new IntegrityCase("trim-cache", "trim-cache"), "trim-cache is one case");
         Check(VerificationPlan.Integrity(options with { Suite = VerificationPlan.ParallelCopiesSuite, Repeats = 2 }).Select(c => c.Id + "=" + c.Operation)
                 .SequenceEqual(["parallel-copies-b2048-r1=parallel-copies-2048", "parallel-copies-b1024-r1=parallel-copies-1024",

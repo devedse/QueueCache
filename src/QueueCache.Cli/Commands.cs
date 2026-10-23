@@ -21,8 +21,9 @@ internal static class Commands
             var problems = DriverRegistration.Inspect().Problems();
             Console.WriteLine(problems.Count == 0 ? "Filter registration: every volume (topmost volume filter)." : "Filter registration: " + string.Join(" ", problems));
             var saved = SavedConfigurations.List();
+            var restores = SavedConfigurations.ReadRestoreStatus();
             foreach (var item in await VolumeCatalog.ListAsync(token))
-                Console.WriteLine($"{item.Display} | {VolumeStatus(item, saved)}");
+                Console.WriteLine($"{item.Display} | {VolumeStatus(item, saved, restores)}");
             return problems.Count == 0 ? 0 : 1;
         });
         volumes.Subcommands.Add(volumeList);
@@ -215,9 +216,11 @@ internal static class Commands
             (parent ?? root).Subcommands.Add(command);
         }
     }
-    private static string VolumeStatus(VolumeDescription volume, IReadOnlyList<SavedConfiguration> saved)
+    private static string VolumeStatus(VolumeDescription volume, IReadOnlyList<SavedConfiguration> saved, IReadOnlyList<ProfileRestoreStatus> restores)
     {
-        var profile = saved.Any(p => p.Matches(volume.VolumeId)) ? " | saved for startup" : "";
+        // This startup's restore result, while it is waiting or did not restore the profile (#12).
+        var restore = restores.FirstOrDefault(r => r.VolumeId.Equals(volume.VolumeId, StringComparison.OrdinalIgnoreCase))?.Describe();
+        var profile = saved.Any(p => p.Matches(volume.VolumeId)) ? " | saved for startup" + (restore is null ? "" : $" ({restore})") : "";
         try
         {
             using var device = new CacheDevice(volume.Volume);

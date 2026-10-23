@@ -289,6 +289,12 @@ public static class QueueCacheSetupNative {
     {
         Copy-Item -LiteralPath $source -Destination $destination
     }
+    # The driver's System log events take their text from its message table (qcachemsg.mc). Point
+    # the qcachelab event source at the staged file; older events keep their IDs, so stay readable.
+    $eventSource = 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\System\qcachelab'
+    New-Item -Path $eventSource -Force | Out-Null
+    New-ItemProperty -LiteralPath $eventSource -Name EventMessageFile -PropertyType ExpandString -Value "%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\$relative" -Force | Out-Null
+    New-ItemProperty -LiteralPath $eventSource -Name TypesSupported -PropertyType DWord -Value 7 -Force | Out-Null
     if ((Get-FileHash -LiteralPath $destination).Hash -ne $hash)
     {
         throw 'Staged driver verification failed.'

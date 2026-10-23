@@ -16,7 +16,7 @@ public interface IManagedCheckpointBackend
 {
     Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token);
     Task<ICheckpointImage> CreateCandidateAsync(ManagedDiskDefinition definition, string path, CancellationToken token);
-    Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token);
+    Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token, IProgress<ImageTransferProgress>? progress = null);
     Task StopFrozenAsync(ManagedDiskRecord record, IStableManagedImage stable, CancellationToken token) => throw new NotSupportedException("Atomic save and stop is unavailable.");
 }
 public sealed record ManagedCheckpointResult(ManagedDiskRecord Record, ManagedImageReference Image, bool ChangedStartupSource);
@@ -58,7 +58,7 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
                 await destination.CompleteAndDetachAsync(token);
             }
             progress?.Report(new(ManagedDiskState.Saving, "Verifying every saved logical sector before committing the image."));
-            var identity = await backend.VerifyCandidateAsync(path, digest, token);
+            var identity = await backend.VerifyCandidateAsync(path, digest, token, progress is null ? null : new VerifyProgress(progress));
             progress?.Report(new(ManagedDiskState.Saving, "Saved image verified; committing it."));
             if (identity.VirtualBytes != record.Definition.CapacityBytes || identity.SectorBytes != record.Definition.SectorBytes || identity.Differencing)
                 throw new InvalidDataException("The verified checkpoint image geometry changed.");
@@ -127,4 +127,6 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
     }
     private sealed class TransferProgress(IProgress<ManagedDiskProgress> progress) : IProgress<ImageTransferProgress>
     { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving, "Copying the complete frozen RAM disk.", value.CompletedBytes, value.TotalBytes)); }
+    private sealed class VerifyProgress(IProgress<ManagedDiskProgress> progress) : IProgress<ImageTransferProgress>
+    { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving, "Verifying every saved logical sector before committing the image.", value.CompletedBytes, value.TotalBytes)); }
 }

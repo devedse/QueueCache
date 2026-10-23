@@ -130,6 +130,10 @@ public sealed partial class DashboardMonitor : ObservableObject
             var cached = listed.Where(v => Managed(v) && VirtualDisks.Any(d => d.IsCachedImage &&
                 d.Record.VolumePath!.Equals(v.VolumePath, StringComparison.OrdinalIgnoreCase))).ToArray();
             var saved = await Caches.ListSavedAsync();
+            var restored = new Dictionary<string, ProfileRestoreStatus>(StringComparer.OrdinalIgnoreCase);
+            foreach (var result in await Caches.ListRestoreStatusAsync())
+                restored[result.VolumeId] = result;
+            restores = restored;
             if (closed)
                 return;
             if (!Volumes.Any(v => v.IsBusy) && Signature(volumes) != Signature(Volumes.Select(v => v.Volume)))
@@ -160,6 +164,10 @@ public sealed partial class DashboardMonitor : ObservableObject
 
     /// <summary>Reads every volume's cache state at once; each volume at most once at a time.</summary>
     public Task SampleAsync() => Task.WhenAll(Volumes.Concat(diskVolumes).ToArray().Select(SampleVolumeAsync));
+
+    private Dictionary<string, ProfileRestoreStatus> restores = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>This startup's restore result for a saved profile, read with the volume inventory.</summary>
+    internal ProfileRestoreStatus? RestoreStatus(string volumeId) => restores.GetValueOrDefault(volumeId);
 
     /// <summary>Still shown somewhere: a late sample for a replaced volume is dropped.</summary>
     internal bool Owns(VolumeViewModel volume) => Volumes.Contains(volume) || diskVolumes.Contains(volume);

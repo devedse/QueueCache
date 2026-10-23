@@ -207,6 +207,13 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         };
         if (definition.Mode == ManagedDiskMode.ImageInRam)
             list.Add(new("Last saved", record.SavedAt is { } savedAt ? Formatting.Format.When(savedAt, now) : "Not saved yet (started from the imported image)"));
+        if (definition.Mode == ManagedDiskMode.ImageInRam && !definition.ReadOnly)
+            list.Add(new("At Windows shutdown", ShutdownSaveText(record)));
+        if (record.LastShutdownSave is { } shutdown)
+            list.Add(new("Last shutdown", shutdown.Committed
+                ? $"Saved in {Formatting.Format.Duration(shutdown.Duration)} ({Formatting.Format.When(shutdown.At, now)})"
+                : $"Not saved ({Formatting.Format.When(shutdown.At, now)}): {shutdown.Detail}"));
+        NotifyShutdownSave(record, now);
         if (definition.Cache is { } cache)
             list.Add(new("Cache", $"{Formatting.Format.Bytes((ulong)cache.BudgetMiB << 20)} · {cache.Preset}"));
         if (record.Native is { } native)
@@ -242,6 +249,35 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
             (runtime is null ? "" : $"\nBoot epoch {runtime.BootEpoch} · creation {runtime.CreationGeneration} · RAM generation {runtime.WriteGeneration} · saved generation {runtime.SavedGeneration?.ToString() ?? "none"}") +
             (record.PhysicalDiskNumber is { } disk ? $"\nPhysical disk {disk}" : "") + (record.VolumePath is { } volume ? $"\nVolume {volume}" : "");
         UpdateActions();
+    }
+
+    /// <summary>A save copies the whole image and reads it back, so the last save's time is the estimate (#22).</summary>
+    internal static readonly TimeSpan LongShutdownSave = TimeSpan.FromMinutes(5);
+    private static string ShutdownSaveText(ManagedDiskRecord record)
+    {
+        if (!record.Definition.SaveDuringShutdown)
+            return "Not saved: changes since the last save are lost";
+        if (record.LastSave is not { } last)
+            return "Saved before Windows shuts down; how long it takes depends on the image size and the disk";
+        var text = $"Saved before Windows shuts down, about {Formatting.Format.Duration(last.Duration)} (as long as the last save)";
+        return last.Duration > LongShutdownSave ? text + ". Shutting down waits that long; save before shutting down to make it quicker" : text;
+    }
+    private DateTimeOffset? notifiedShutdown;
+    /// <summary>After a restart, says once whether the save at the last shutdown finished.</summary>
+    private void NotifyShutdownSave(ManagedDiskRecord record, DateTimeOffset now)
+    {
+        if (record.LastShutdownSave is not { } shutdown || notifiedShutdown == shutdown.At)
+            return;
+        notifiedShutdown = shutdown.At;
+        // Only a save from just before this Windows session started is news.
+        var booted = now - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        if (shutdown.At > booted || shutdown.At < booted - TimeSpan.FromHours(1))
+            return;
+        if (shutdown.Committed)
+            Notify($"Saved at the last shutdown: {Formatting.Format.Bytes(shutdown.Bytes)} in {Formatting.Format.Duration(shutdown.Duration)}.", NoticeSeverity.Success);
+        else
+            Notify($"The save at the last shutdown did not finish, so this disk started from its save of " +
+                $"{(record.SavedAt is { } saved ? Formatting.Format.When(saved, now) : "its imported image")}. Changes after that are gone. {shutdown.Detail}", NoticeSeverity.Warning);
     }
 
     /// <summary>A running disk image's overview line is its cache's state.</summary>
