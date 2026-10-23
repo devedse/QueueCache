@@ -73,9 +73,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int RamReadQueueWireSize = 1064;
     public const int CallerRoutingWireSize = 1136;
     public const int DrainPriorityWireSize = 1184;
-    public const int StrictBacklogWireSize = 1208;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = StrictBacklogWireSize;
+    public const int CurrentWireSize = DrainPriorityWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -119,9 +118,6 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheCallerRouting? CallerRouting { get; init; }
     /// <summary>V24: lab read-aware drain limit and TRIM mode with their counters; null on older drivers.</summary>
     public CacheDrainPriority? DrainPriority { get; init; }
-    /// <summary>V25: Strict's backlog of separate pieces of unwritten data, its limit and the writes that waited (#16);
-    /// null on older drivers.</summary>
-    public CacheStrictBacklog? StrictBacklog { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -150,7 +146,6 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             RamReadQueueWireSize => 22u,
             CallerRoutingWireSize => 23u,
             DrainPriorityWireSize => 24u,
-            StrictBacklogWireSize => 25u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -333,12 +328,6 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(CallerRoutingWireSize + 40)..]))
             : null;
         if (drainPriority is { ReadAware: > 8 } or { TrimMode: > 7 }) throw new InvalidDataException("Invalid read-aware limit or TRIM mode.");
-        var strictBacklog = bytes.Length >= StrictBacklogWireSize
-            ? new CacheStrictBacklog(BinaryPrimitives.ReadUInt64LittleEndian(bytes[DrainPriorityWireSize..]),
-                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(DrainPriorityWireSize + 8)..]),
-                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(DrainPriorityWireSize + 16)..]))
-            : null;
-        if (strictBacklog is { Limit: > 0 and < 256 }) throw new InvalidDataException("Invalid Strict backlog limit.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -366,8 +355,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             StagedReads = stagedReads,
             RamReadQueue = ramReadQueue,
             CallerRouting = callerRouting,
-            DrainPriority = drainPriority,
-            StrictBacklog = strictBacklog
+            DrainPriority = drainPriority
         };
     }
 }
@@ -393,10 +381,6 @@ public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed
 /// <summary>V24: ReadAware 0 = off, else the most drain batches outstanding while foreground reads wait;
 /// ReadAwareWaits counts the drainers' 1 ms holds. TrimMode 1 = index lookup, 2 = asynchronous lower TRIM, 4 = lab hold of that TRIM for 2 s;
 /// TrimLookups/TrimAsync count TRIMs that used them, TrimAsyncFallbacks the ordered sends instead.</summary>
-/// <summary>V25 (#16): separate pieces of unwritten data Strict holds now, the most it holds before a write that adds
-/// dirty data waits (about two seconds of the drain's measured rate, at least 256; 0 in Fast mode, which has no
-/// limit), and the writes that waited for it. Pieces may exceed the limit by the writes admitted before it.</summary>
-public sealed record CacheStrictBacklog(ulong Pieces, ulong Limit, ulong Waits);
 public sealed record CacheDrainPriority(ulong ReadAware, ulong ReadAwareWaits, ulong TrimMode, ulong TrimLookups,
     ulong TrimAsync, ulong TrimAsyncFallbacks);
 public sealed record CacheCallerRouting(ulong Backoff, ulong Candidates, ulong Controls, ulong Queued,
