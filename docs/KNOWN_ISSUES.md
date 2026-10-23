@@ -21,12 +21,11 @@ still to do. Open items link to their details.
 | [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13) |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
-| [Strict mode can stall writes while an unrelated backlog drains](#strict-mode-can-stall-writes-while-an-unrelated-backlog-drains-performance) | ❌ | Open, [#16](https://github.com/devedse/QueueCache/issues/16) |
+| [Strict mode can stall writes after a burst of random writes](#strict-mode-can-stall-writes-after-a-burst-of-random-writes-performance) | ❌ | Open, [#16](https://github.com/devedse/QueueCache/issues/16): since 0.4.810.1 a write-through write no longer drains the cache; a flush after a random burst still does |
 | [Low-priority programs read cached data up to 30% slower](#low-priority-programs-read-cached-data-slower-performance) | ❌ | Not planned (Windows scheduling) |
 | [ReFS: fewer requests take the fast caller-thread path](#refs-fewer-requests-take-the-fast-caller-thread-path-performance) | ❌ | Not planned (measured trade-off) |
 | [A re-read file briefly takes space from a random workload](#a-re-read-file-briefly-takes-space-from-a-random-workload-performance) | ❌ | By design (most recent read wins) |
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
-| [Files read through Windows' file cache (Explorer copies, most programs) never enter the read cache](#buffered-reads-enter-the-cache-only-through-writes-or-unbuffered-reads) | ❌ | By design for now (page-in safety); change proposed in [#19](https://github.com/devedse/QueueCache/issues/19) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
 | [Power loss not re-tested on recent builds](#not-yet-proven) | ❌ | Last tested on 0.4.604.1 |
@@ -38,6 +37,7 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
+| Files read through Windows' file cache (Explorer copies, most programs) and mapped files never entered the read cache ([#19](https://github.com/devedse/QueueCache/issues/19)) | ✅ | 0.4.810.1 (page-ins of file data are kept from a driver-owned copy of the disk data; a 1 GiB re-read after Windows' standby memory is purged: 275 → 2,254 MiB/s) |
 | Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
 | A saved cache, or a RAM disk that starts with Windows, stayed off after a restart when RAM was briefly short ([#12](https://github.com/devedse/QueueCache/issues/12)) | ✅ | 0.4.803.1 (retried every 15 s for 10 minutes; the app and `qcache volume list` show a cache waiting for RAM or not restored) |
 | A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart) |
@@ -101,15 +101,19 @@ copies. Health and SMART tools are unaffected, and backups through shadow copies
 are consistent. Flush or pause the cache before a tool reads the raw disk, and
 never write raw to a disk under a cached volume.
 
-### Strict mode can stall writes while an unrelated backlog drains (performance)
+### Strict mode can stall writes after a burst of random writes (performance)
 
-Strict honors each write-through write and application flush by draining the
-whole dirty cache and flushing the lower disk. The ordered request worker keeps
-later writes waiting meanwhile. After a burst of random writes, the comparison
-on 0.4.604.1 measured stops of more than 100 seconds and file operations several
-times slower than the bare disk. The read-miss and drain-default fixes do not
-change this durability boundary. Bounded Strict admission and overlapping-version
-ordering remain open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
+Strict honors each application flush by writing out the whole dirty cache and
+flushing the lower disk; later writes wait meanwhile. After a burst of random 4K
+writes the disk writes that backlog at a few MB/s, so a flush (NTFS sends them on
+its own) can stop writing for a long time: in `compare-cache` one 10 s random-write
+window completed nothing on 0.4.803.1 and on 0.4.810.1. Since 0.4.810.1 a write-through write (NTFS's
+journal) goes straight to the disk after only older versions of its own blocks. The
+drain defaults of 0.4.776.1 made most file work fast again (40,000 files: create
+34 s, delete 23 s, against 213/264 s on 0.4.604.1). A dirty cap sized from the
+measured drain rate was tried and removed: it throttled sequential writes and did
+not bound the random case ([results](PERFORMANCE.md#strict-16)). Bounding the backlog
+by estimated drain time remains open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
 
 ### Low-priority programs read cached data slower (performance)
 
@@ -142,14 +146,6 @@ If any 4 KiB block of a request is missing, the whole request is read from disk
 and the cached blocks are copied over it. In measured churn this re-read less than
 1% of the disk traffic, so reading only the missing parts is not worth its
 complexity yet.
-
-### Buffered reads enter the cache only through writes or unbuffered reads
-
-Page-in misses are never kept (a clustered page-in can repeat the memory manager's
-shared dummy page). Data that programs read through Windows' own file cache
-therefore enters QueueCache's read cache only when it was written or read
-unbuffered; Windows' file cache holds it otherwise. NTFS metadata write-back is
-admitted like any other write.
 
 ### An older build cannot be installed over a newer one
 
