@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 172, "plan 172 volumes detaches a virtual disk with pending Fast writes");
+        Check(VerificationPlan.Version == 173, "plan 173 paging-coherence expects page-ins of file data to be kept (#19)");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

@@ -54,7 +54,7 @@ with lower-I/O-attempt counters.
   workloads, a clean non-OS disk, the lab VHDX for `volumes`/`trim-cache`/
   `write-tests`, no armed delay/fault hooks, strict registration check.
 - Scope: compare a concrete change with the smallest suite or
-  `--campaign experiment` on the same build; `focused` adds 93 retained correctness
+  `--campaign experiment` on the same build; `focused` adds 94 retained correctness
   checks; run `release-performance` once on the final build. Do not run a broad
   matrix when only a focused regression was asked for. Keep the same DiskSpd
   binary when comparing; never assemble a result from unrelated run folders.

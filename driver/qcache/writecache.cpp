@@ -2496,12 +2496,18 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         return STATUS_SUCCESS;
     }
     const bool resident = !pagingIo || ResidentRange(c, start, end);
-    if (pagingIo && !resident)
+    // A page-in of ordinary file data (Windows' file cache or a mapped file) is kept like
+    // any other miss (#19), always from a driver-owned copy of the disk data (StagedRead):
+    // a clustered page-in's own buffer can repeat the memory manager's shared dummy page
+    // (DistinctPages), so it is never the source. Paging-file reads, forced-direct ranges
+    // and requests of unknown origin are not kept (ApplicationPaging).
+    const bool keepPaging = pagingIo && !hitOnly && length <= QcStagedReadMaxBytes && c->Enabled &&
+        ApplicationPaging(c, irp, start, end);
+    if (pagingIo && !resident && !keepPaging)
     {
-        // No cached version exists to overlay. Paging read misses are never kept:
-        // a clustered page-in's buffer can repeat the shared dummy page (see
-        // DistinctPages). The request worker may service independent reads during
-        // this wait; offloaded-read threads and nested service never do.
+        // No cached version exists to overlay, and this page-in is not kept. The request
+        // worker may service independent reads during this wait; offloaded-read threads
+        // and nested service never do.
         ReleaseCache(c);
         if (hitOnly)
             return STATUS_NOT_FOUND;
@@ -2604,10 +2610,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     NTSTATUS status = STATUS_SUCCESS;
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
-    // Both worker and offloaded ordinary reads retain staged misses. Pin scratch
-    // controls version ownership, not admission. Paging misses are never retained.
+    // Both worker and offloaded reads retain staged misses, including page-ins of
+    // ordinary file data (keepPaging). Pin scratch controls version ownership, not admission.
     PUCHAR staging = nullptr;
-    const bool keepMiss = !full && !pagingIo && !hitOnly && c->Enabled && ReadLimit(c) &&
+    const bool keepMiss = !full && (!pagingIo || keepPaging) && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
     ULONGLONG stagedCachedBytes = 0;
     if (keepMiss && length <= QcStagedReadMaxBytes)
@@ -2773,6 +2779,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 IndexSlot(c, index);
                 PlaceReadFill(c, index, recalled);
                 InterlockedIncrement64(&c->ReadFills);
+                if (pagingIo)
+                    InterlockedIncrement64(&c->PagingReadFills);
             }
         }
         if (runFirst != NoSlot)

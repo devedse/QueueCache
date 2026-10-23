@@ -25,7 +25,7 @@ public static class LoadedDriverInspection
         {
             try
             {
-                using var privilege = new DebugPrivilege();
+                using var privilege = new ProcessPrivilege("SeDebugPrivilege", "to observe loaded drivers");
                 var modules = new List<LoadedDriverFile>();
                 foreach (var address in Addresses())
                 {
@@ -61,7 +61,7 @@ public static class LoadedDriverInspection
     {
         lock (gate)
         {
-            using var privilege = new DebugPrivilege();
+            using var privilege = new ProcessPrivilege("SeDebugPrivilege", "to observe loaded drivers");
             var drivers = new List<ThirdPartyDriver>();
             foreach (var address in Addresses())
             {
@@ -111,49 +111,8 @@ public static class LoadedDriverInspection
         }
         throw new IOException("Loaded modules changed repeatedly during enumeration; refresh the observation.");
     }
-    private sealed class DebugPrivilege : IDisposable
-    {
-        private readonly SafeAccessTokenHandle token;
-        private readonly Privileges previous;
-        public DebugPrivilege()
-        {
-            if (!OpenProcessToken(GetCurrentProcess(), 0x28, out token)) throw new Win32Exception(Marshal.GetLastWin32Error());
-            try
-            {
-                if (!LookupPrivilegeValueW(null, "SeDebugPrivilege", out var luid)) throw new Win32Exception(Marshal.GetLastWin32Error());
-                var desired = new Privileges { Count = 1, Luid = luid, Attributes = 2 };
-                if (!AdjustTokenPrivileges(token, false, ref desired, (uint)Marshal.SizeOf<Privileges>(), out previous, out _))
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
-                var error = Marshal.GetLastWin32Error();
-                if (error != 0) throw new Win32Exception(error, "SeDebugPrivilege is required to observe loaded drivers.");
-            }
-            catch { token.Dispose(); throw; }
-        }
-        public void Dispose()
-        {
-            try
-            {
-                if (previous.Count == 0) return; // Already enabled; no token change to undo.
-                var restore = previous;
-                if (!AdjustTokenPrivileges(token, false, ref restore, 0, IntPtr.Zero, IntPtr.Zero) || Marshal.GetLastWin32Error() != 0)
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not restore the process debug privilege.");
-            }
-            finally { token.Dispose(); }
-        }
-    }
-    [StructLayout(LayoutKind.Sequential)] private struct Luid { public uint Low; public int High; }
-    [StructLayout(LayoutKind.Sequential)] private struct Privileges { public uint Count; public Luid Luid; public uint Attributes; }
     [DllImport("psapi.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool EnumDeviceDrivers([Out] IntPtr[] addresses, uint size, out uint needed);
     [DllImport("psapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetDeviceDriverFileNameW(IntPtr address, StringBuilder path, uint size);
-    [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
-    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool OpenProcessToken(IntPtr process, uint access, out SafeAccessTokenHandle token);
-    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool LookupPrivilegeValueW(string? system, string name, out Luid luid);
-    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token, [MarshalAs(UnmanagedType.Bool)] bool disableAll, ref Privileges state, uint length, out Privileges previous, out uint needed);
-    [DllImport("advapi32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AdjustTokenPrivileges(SafeAccessTokenHandle token, [MarshalAs(UnmanagedType.Bool)] bool disableAll, ref Privileges state, uint length, IntPtr previous, IntPtr needed);
 }
