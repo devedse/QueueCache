@@ -86,7 +86,8 @@ progress, or when they have run for 58 minutes, and records that; its log record
 each tenth of the progress. A save that takes longer than that will not finish at
 shutdown: save before shutting down (the app's disk details warn when the last save
 took an hour or more). Meanwhile Windows shows its own shutdown
-screen. The app does not hold the shutdown to show progress: Windows cancels a
+screen ("Restarting"; with Windows' "Display highly detailed status messages" setting
+on it says "Shutting down service: QueueCache managed disks."). The app does not hold the shutdown to show progress: Windows cancels a
 held shutdown after about a minute unless you click "Shut down anyway". A power
 cut, holding the power button or a forced shutdown can still stop a save. An
 unfinished save is never used: the image starts from its previous save. After the
