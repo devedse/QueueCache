@@ -149,6 +149,7 @@ public static class PagingCoherenceScenarios
         var gatedChecks = RunGatedSubmittedOverlap(target, device, workDirectory);
         var blockedPageIn = RunCapacityBlockedPageIn(target, device, workDirectory);
         var readRetention = RunMappedReadRetention(target, device, workDirectory);
+        var bufferedReread = RunBufferedReread(target, device, workDirectory);
         return
         [
             new("paging-coherence/mapped-after-cache", "PASS", "Mapped read matched the accepted unbuffered write."),
@@ -161,27 +162,100 @@ public static class PagingCoherenceScenarios
             overlapCheck,
             .. gatedChecks,
             blockedPageIn,
-            readRetention
+            readRetention,
+            bufferedReread
         ];
     }
 
-    /// <summary>Paging read misses are never kept (since plan 60): a clustered page-in's buffer can repeat the
-    /// memory manager's shared dummy page, whose contents belong to another block. A mapped read and a later
-    /// unbuffered read must both return the file's bytes, and no paging read fill may be recorded.</summary>
+    /// <summary>Page-ins of ordinary file data are kept (#19, plan 173), from a driver-owned copy of the disk
+    /// data: a clustered page-in's own buffer can repeat the memory manager's shared dummy page, whose contents
+    /// belong to another block, so it is never the source. A mapped read of a file in neither Windows' cache nor
+    /// QueueCache keeps at least 90% of its blocks, and an unbuffered re-read takes at least 90% from RAM with the
+    /// file's bytes.</summary>
     internal static CheckResult VerifyMappedReadRetention(ulong? fillsBefore, ulong? fillsAfter, ulong hitBytes,
         long fileBytes, bool bytesMatch, ulong? repeatedPageReads = null)
     {
-        const string label = "paging-coherence/mapped-read-not-kept";
+        const string label = "paging-coherence/mapped-read-kept";
         if (!bytesMatch)
             throw new IOException("Bytes read after the mapped read did not match the file.");
         if (fillsBefore is null || fillsAfter is null)
-            return new(label, "PASS", "Mapped and unbuffered reads matched; paging read fill counters unavailable (driver older than Diagnostics V13).");
+            throw new IOException("Paging read fill counters are unavailable (driver older than Diagnostics V13).");
         var filled = fillsAfter.Value - fillsBefore.Value;
-        if (filled != 0)
-            throw new IOException($"{filled} blocks read through a mapping were kept in RAM; paging read misses must not be kept.");
-        return new(label, "PASS", $"A mapped read of a {fileBytes >> 20} MiB file kept no blocks; an unbuffered re-read " +
-            $"matched ({hitBytes} bytes from RAM)" + (repeatedPageReads is { } repeated
+        var blocks = (ulong)fileBytes / 4096;
+        if (filled < blocks * 9 / 10)
+            throw new IOException($"Only {filled} of the {blocks} blocks read through a mapping were kept in RAM.");
+        if (hitBytes < (ulong)fileBytes * 9 / 10)
+            throw new IOException($"The unbuffered re-read took only {hitBytes} of {fileBytes} bytes from RAM.");
+        return new(label, "PASS", $"A mapped read of a {fileBytes >> 20} MiB file kept {filled} blocks; an unbuffered re-read " +
+            $"matched with {hitBytes} bytes from RAM" + (repeatedPageReads is { } repeated
                 ? $"; paging reads with a repeated page during the check: {repeated}." : "."));
+    }
+
+    /// <summary>#19: a file read through Windows' file cache (as Explorer copies and most programs read it) is
+    /// kept, so after Windows' own copy is gone the next read comes from QueueCache's RAM. Both reads must return
+    /// the file's bytes; at least 90% of its blocks must be kept and 90% of the second read come from RAM.</summary>
+    internal static CheckResult VerifyBufferedReread(bool bytesMatch, ulong filled, ulong hitBytes, long fileBytes,
+        double firstSeconds, double secondSeconds)
+    {
+        if (!bytesMatch)
+            throw new IOException("A buffered read did not return the file's bytes.");
+        var blocks = (ulong)fileBytes / 4096;
+        if (filled < blocks * 9 / 10)
+            throw new IOException($"Only {filled} of the {blocks} blocks read through Windows' file cache were kept in RAM.");
+        if (hitBytes < (ulong)fileBytes * 9 / 10)
+            throw new IOException($"After Windows' standby memory was purged, the second buffered read took only {hitBytes} of {fileBytes} bytes from RAM.");
+        static string Rate(long bytes, double seconds) => seconds > 0 ? $"{bytes / seconds / MiB:0} MiB/s" : "unmeasured";
+        return new("paging-coherence/buffered-reread-from-ram", "PASS",
+            $"A {fileBytes >> 20} MiB file read through Windows' file cache kept {filled} blocks ({Rate(fileBytes, firstSeconds)} from the disk); " +
+            $"after Windows' standby memory was purged, the second buffered read took {hitBytes} bytes from RAM ({Rate(fileBytes, secondSeconds)}). Both matched the file.");
+    }
+
+    private static CheckResult RunBufferedReread(DiskTarget target, CacheDevice device, string workDirectory)
+    {
+        const long fileBytes = 32 * MiB;
+        // Written unbuffered while caching is released: nothing is in RAM, not even Windows' cache.
+        device.Control(WriteCacheAction.Flush);
+        device.Control(WriteCacheAction.Disable);
+        device.Control(WriteCacheAction.Release);
+        var path = Path.Combine(workDirectory, "buffered-reread.bin");
+        var expected = new byte[fileBytes];
+        new Random(105097).NextBytes(expected);
+        using (var file = new AlignedFile(path, (int)MiB, create: true))
+            for (long offset = 0; offset < fileBytes; offset += MiB)
+                file.Write(offset, expected.AsSpan((int)offset, (int)MiB).ToArray());
+        ConfigurationManager.Apply(target, new CacheConfiguration(128, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Idle, MaxDirtyAgeMs: 3600000)
+        }, true);
+        try
+        {
+            var before = device.GetDiagnostics();
+            var first = BufferedRead(path, fileBytes, out var firstSeconds);
+            var filled = (device.GetDiagnostics().PagingReadFills ?? 0) - (before.PagingReadFills ?? 0);
+            StandbyMemory.Purge();
+            var hitsBefore = device.GetWriteCacheState().ReadHitBytes;
+            var second = BufferedRead(path, fileBytes, out var secondSeconds);
+            var hitBytes = device.GetWriteCacheState().ReadHitBytes - hitsBefore;
+            return VerifyBufferedReread(first.AsSpan().SequenceEqual(expected) && second.AsSpan().SequenceEqual(expected),
+                filled, hitBytes, fileBytes, firstSeconds, secondSeconds);
+        }
+        finally
+        {
+            device.Control(WriteCacheAction.Flush);
+            device.Control(WriteCacheAction.Disable);
+            device.Control(WriteCacheAction.Release);
+        }
+    }
+
+    /// <summary>Reads a whole file through Windows' file cache, as Explorer and most programs do.</summary>
+    private static byte[] BufferedRead(string path, long bytes, out double seconds)
+    {
+        var data = new byte[bytes];
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20, FileOptions.SequentialScan))
+            stream.ReadExactly(data);
+        seconds = timer.Elapsed.TotalSeconds;
+        return data;
     }
 
     private static CheckResult RunMappedReadRetention(DiskTarget target, CacheDevice device, string workDirectory)

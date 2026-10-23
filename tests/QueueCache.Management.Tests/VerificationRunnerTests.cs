@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 172, "plan 172 volumes detaches a virtual disk with pending Fast writes");
+        Check(VerificationPlan.Version == 173, "plan 173 paging-coherence expects page-ins of file data to be kept (#19)");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -251,6 +251,8 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
+        Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5, 640).Detail.Contains("page-in blocks kept: 640"),
+            "the program-file check reports the page-in blocks kept (#19)");
         Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5).Detail.Contains("repeated a page: 5"),
             "program-file check accepts matching files and clean exits");
         foreach (var bad in new Action[]
@@ -536,16 +538,27 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
-        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, 10, 0, 8 << 20, true, 3).Result == "PASS",
-            "a mapped read miss is not kept and a re-read matches");
-        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(null, null, 0, 8 << 20, true).Detail.Contains("unavailable"),
-            "older drivers report the fill counters as unavailable");
-        foreach (var (after, match) in new (ulong?, bool)[] { (11, true), (2058, true), (10, false) })
+        // #19 (plan 173): page-ins of ordinary file data are kept, so a re-read comes from RAM.
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, 10 + 2048, 8 << 20, 8 << 20, true, 3).Result == "PASS",
+            "a mapped read miss is kept and an unbuffered re-read comes from RAM with the same bytes");
+        foreach (var (before, after, hits, match) in new (ulong?, ulong?, ulong, bool)[]
+            { (null, null, 8 << 20, true), (10, 11, 8 << 20, true), (10, 2058, 0, true), (10, 2058, 8 << 20, false) })
         {
             try
             {
-                QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(10, after, 0, 8 << 20, match);
-                throw new Exception("A kept paging read miss or mismatched bytes were accepted.");
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyMappedReadRetention(before, after, hits, 8 << 20, match);
+                throw new Exception("Unavailable counters, a page-in that was not kept, a re-read from disk or mismatched bytes were accepted.");
+            }
+            catch (IOException) { }
+        }
+        Check(QueueCache.Operations.PagingCoherenceScenarios.VerifyBufferedReread(true, 8192, 32 << 20, 32 << 20, 0.5, 0.05).Detail
+            .Contains("took 33554432 bytes from RAM"), "a buffered re-read after Windows' standby memory is purged comes from RAM");
+        foreach (var (match, filled, hits) in new (bool, ulong, ulong)[] { (false, 8192, 32 << 20), (true, 100, 32 << 20), (true, 8192, 1 << 20) })
+        {
+            try
+            {
+                QueueCache.Operations.PagingCoherenceScenarios.VerifyBufferedReread(match, filled, hits, 32 << 20, 0.5, 0.05);
+                throw new Exception("A buffered re-read with wrong bytes, few kept blocks or few RAM hits was accepted.");
             }
             catch (IOException) { }
         }

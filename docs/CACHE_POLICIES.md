@@ -145,7 +145,7 @@ run in parallel.
 | Paging read that needs the disk | Offloaded-request thread, as before. |
 | Ordinary read that needs the disk, up to 256 cache blocks (since plan 125) | Found by the worker, then read and kept on an offloaded-read thread, allowing concurrent disk reads. Writes overlapping it wait for it. Before plan 125 the worker waited for each one, so misses reached the disk one at a time. Copy flag 8 (`qcache developer driver copy-flags`, default 15) switches this for comparisons; when the 64-entry offload table is full the worker reads it as before. An unaligned request of 1 MiB or less can span more than 256 blocks and uses the ordered worker. |
 | Paging-file I/O | Forwarded from dispatch, as before. |
-| Larger misses, capacity waits, Strict write-through, controls, flushes | The ordered worker, as before. |
+| Larger misses, capacity waits, Strict write-through (written directly after older versions of its blocks), controls, flushes | The ordered worker, as before. |
 
 While the worker waits for the disk, it completes queued reads that are already in RAM and hands queued misses
 to the offloaded-request threads. A read it cannot do either keeps its place in the queue (before plan 125 it went
@@ -202,7 +202,7 @@ Each algorithm reads only some tuning settings; the desktop editor shows the rel
 
 All algorithms yield to explicit flushes, shutdown barriers and writers waiting for capacity. Maximum age is a scheduling trigger, not a promise that slow/failing storage will finish by a deadline. No mandatory 30-second delay is imposed.
 
-Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours those barriers. `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); that goal is not yet implemented and qualified, so the current warning still applies.
+Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours them. In Strict, a flush writes out every dirty block before it completes; a write-through write (NTFS writes its journal this way) goes straight to the disk after only the older versions of its own blocks. A flush after a burst of small random writes can still take long while that backlog drains (#16). `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); that goal is not yet implemented and qualified, so the current warning still applies.
 
 Adjacent 4 KiB blocks are gathered into configurable 4..2048 KiB lower writes
 (default 2048 since plan 164; 1024 from plan 125, 256 before). `--drain-parallelism 1..8`

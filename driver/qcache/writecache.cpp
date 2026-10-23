@@ -1991,7 +1991,9 @@ static PUCHAR Map(PIRP irp)
 // Ordered direct path for paging-marked writes that are not admitted to RAM
 // (special-file ranges, no current special map, or an unmappable buffer).
 // Caller holds Mutex; it is released on return.
-static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
+// Writes one request straight to the disk: a paging write that is not cached, or a Strict
+// write-through write (#16).
+static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
 {
     const auto end = first + length;
     // A paging-marked write can also be ordinary mapped-file data. Drain
@@ -2007,7 +2009,8 @@ static NTSTATUS DirectPagingWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG l
     const bool gateRecord = LabGateOverlaps(c, first, end);
     if (PendingRange(c, first, end))
     {
-        InterlockedIncrement64(&c->PagingOverlapWaits);
+        if (irp->Flags & IRP_PAGING_IO)
+            InterlockedIncrement64(&c->PagingOverlapWaits);
         if (gateRecord)
             RecordLabSequence(c, &c->LabGateDirectWaitSeq);
     }
@@ -2098,7 +2101,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     if (!QcShouldCacheDataIo(pagingIo, pagingIo && ApplicationPaging(c, irp, offset.QuadPart, offset.QuadPart + length)))
     {
         InterlockedIncrement64(&c->PagingDirectWrites);
-        return DirectPagingWrite(c, irp, offset.QuadPart, length);
+        return DirectWrite(c, irp, offset.QuadPart, length);
     }
     if (!NT_SUCCESS(c->State.LastError))
     {
@@ -2129,6 +2132,12 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return OriginalIo(c, irp);
     }
+    // Strict write-through (NTFS's journal writes it this way): it must be on the disk when it completes,
+    // nothing more. It goes straight to the disk after only the older versions of its own blocks, not
+    // after all dirty data (#16: that barrier stopped writes for minutes after a burst). A flush still
+    // writes out everything before it. NTFS writes its log record before the metadata it covers.
+    if (c->Enabled && writeThrough && !c->UnsafeDefer && needed <= WriteLimit(c))
+        return DirectWrite(c, irp, offset.QuadPart, length);
     // Sector-valid partial writes use the same RAM admission path as full blocks.
     // Only explicit durability/disabled/over-budget fallbacks remain here.
     if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
@@ -2160,7 +2169,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             // Under memory pressure an application paging write must still make
             // progress: use the ordered direct path, which needs no mapping.
             InterlockedIncrement64(&c->PagingMapFailures);
-            return DirectPagingWrite(c, irp, offset.QuadPart, length);
+            return DirectWrite(c, irp, offset.QuadPart, length);
         }
         ReleaseCache(c);
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -2496,12 +2505,18 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
         return STATUS_SUCCESS;
     }
     const bool resident = !pagingIo || ResidentRange(c, start, end);
-    if (pagingIo && !resident)
+    // A page-in of ordinary file data (Windows' file cache or a mapped file) is kept like
+    // any other miss (#19), always from a driver-owned copy of the disk data (StagedRead):
+    // a clustered page-in's own buffer can repeat the memory manager's shared dummy page
+    // (DistinctPages), so it is never the source. Paging-file reads, forced-direct ranges
+    // and requests of unknown origin are not kept (ApplicationPaging).
+    const bool keepPaging = pagingIo && !hitOnly && length <= QcStagedReadMaxBytes && c->Enabled &&
+        ApplicationPaging(c, irp, start, end);
+    if (pagingIo && !resident && !keepPaging)
     {
-        // No cached version exists to overlay. Paging read misses are never kept:
-        // a clustered page-in's buffer can repeat the shared dummy page (see
-        // DistinctPages). The request worker may service independent reads during
-        // this wait; offloaded-read threads and nested service never do.
+        // No cached version exists to overlay, and this page-in is not kept. The request
+        // worker may service independent reads during this wait; offloaded-read threads
+        // and nested service never do.
         ReleaseCache(c);
         if (hitOnly)
             return STATUS_NOT_FOUND;
@@ -2604,10 +2619,10 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
     }
     NTSTATUS status = STATUS_SUCCESS;
     // A miss is kept only from a driver-owned copy of the disk data (StagedRead).
-    // Both worker and offloaded ordinary reads retain staged misses. Pin scratch
-    // controls version ownership, not admission. Paging misses are never retained.
+    // Both worker and offloaded reads retain staged misses, including page-ins of
+    // ordinary file data (keepPaging). Pin scratch controls version ownership, not admission.
     PUCHAR staging = nullptr;
-    const bool keepMiss = !full && !pagingIo && !hitOnly && c->Enabled && ReadLimit(c) &&
+    const bool keepMiss = !full && (!pagingIo || keepPaging) && !hitOnly && c->Enabled && ReadLimit(c) &&
         !InterlockedCompareExchange(&c->ControlsInFlight, 0, 0);
     ULONGLONG stagedCachedBytes = 0;
     if (keepMiss && length <= QcStagedReadMaxBytes)
@@ -2773,6 +2788,8 @@ static NTSTATUS Read(QC_CACHE* c, PIRP irp, bool hitOnly = false, bool allowRead
                 IndexSlot(c, index);
                 PlaceReadFill(c, index, recalled);
                 InterlockedIncrement64(&c->ReadFills);
+                if (pagingIo)
+                    InterlockedIncrement64(&c->PagingReadFills);
             }
         }
         if (runFirst != NoSlot)

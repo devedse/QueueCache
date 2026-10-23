@@ -124,8 +124,9 @@ struct QC_DIAGNOSTICS
     ULONGLONG LowerAllocationRetries;
     // V12: recognised paging-file requests forwarded from dispatch, bypassing the worker.
     ULONGLONG PagingFileBypasses;
-    // V13: read misses kept as clean cache blocks (all reads / application paging reads;
-    // the second stays zero since paging read misses are no longer kept, see V17).
+    // V13: read misses kept as clean cache blocks (all reads / application paging reads).
+    // Paging read misses were not kept from plan 60 until #19, which keeps them from a
+    // driver-owned copy (StagedRead).
     ULONGLONG ReadFills, PagingReadFills;
     // V14: requests served on the caller's thread without the request worker, and
     // caller-thread attempts that handed the request to the worker unchanged.
@@ -135,8 +136,9 @@ struct QC_DIAGNOSTICS
     // V16: large fitting writes whose payload copy was handed to those threads.
     ULONGLONG CopyOffloadWrites;
     // V17: paging read misses whose buffer repeats a physical page (the memory
-    // manager's dummy page; never kept), and ordinary misses not kept because no
-    // staging copy could be made (before plan 62: because their buffer repeated a page).
+    // manager's dummy page; such a buffer is never the source of kept data), and
+    // misses not kept because no staging copy could be made (before plan 62: because
+    // their buffer repeated a page).
     ULONGLONG PagingReadsRepeatedPages, ReadFillsSkippedRepeatedPages;
     // V18: last QcLabMeasureLayout result (Measurements = 0: never measured). Of the
     // indexed blocks, Neighbors also have the next disk block cached; Contiguous/Reversed

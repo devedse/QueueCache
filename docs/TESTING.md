@@ -114,9 +114,12 @@ it finish. Results go to a new folder under `--output`.
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
-From plan 126, the retained correctness suites contain 93 subchecks: 22 partial
-reads, 8 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
-`stress-races` campaign adds its five checks, for 98 in total.
+Since plan 173, the retained correctness suites contain 94 subchecks: 22 partial
+reads, 9 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
+`stress-races` campaign adds its five checks, for 99 in total. Plan 173 (#19) turned
+`paging-coherence/mapped-read-not-kept` into `mapped-read-kept` and added
+`buffered-reread-from-ram`: a file read through Windows' file cache is kept, and after
+Windows' standby memory is purged the next read comes from RAM.
 
 **Long runs from an agent.** Start the foreground campaign command with the
 harness's built-in background-task mechanism. Wait for completion, then read that
