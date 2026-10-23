@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13) |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): NTFS stayed clean in six power cuts on 0.4.810.1; write ordering is not yet guaranteed |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict mode can stall writes after a burst of random writes](#strict-mode-can-stall-writes-after-a-burst-of-random-writes-performance) | ❌ | Open, [#16](https://github.com/devedse/QueueCache/issues/16): since 0.4.810.1 a write-through write no longer drains the cache; a flush after a random burst still does |
@@ -28,9 +28,8 @@ still to do. Open items link to their details.
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
-| [Power loss not re-tested on recent builds](#not-yet-proven) | ❌ | Last tested on 0.4.604.1 |
-| [Hibernate, Fast Startup, crash dumps and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC |
-| [Cached system disk (C:): full boot, paging, hibernation and dump acceptance](#not-yet-proven) | ❌ | Restart soaks on the VM; restart, sleep and start-with-Windows checks on one real PC |
+| [Hibernate, Fast Startup and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC; the test VM's firmware offers no hibernation |
+| [Cached system disk (C:): full boot, paging and hibernation acceptance](#not-yet-proven) | ❌ | Restart soaks and a crash dump on the VM (0.4.810.1); restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
 | [Asynchronous TRIM: the fence's holding path is unexercised](#trim-no-longer-waits-for-unrelated-drain-writes) | ❌ | NTFS never reaches it |
 | [Faults during the busy window, every fault point at every parallelism, Windows memory pressure](#not-yet-proven) | ❌ | Open |
@@ -75,10 +74,13 @@ can lose those writes and damage the filesystem. The requested goal in
 [#13](https://github.com/devedse/QueueCache/issues/13) is to allow loss of pending
 writes while keeping NTFS healthy and untouched, durably checkpointed files
 intact. Filesystem damage is an unresolved safety issue, not the desired
-volatile-cache contract. The power-cut evidence is historical (0.4.604.1), not a
-qualification of the latest build. Another write-back cache tested the
-same way also damaged NTFS when cut during its write-out; one clean early cut does
-not establish a general guarantee.
+volatile-cache contract. On 0.4.810.1, with the default drain, six power cuts (three
+right after 10,000 new unflushed files, three during a churn's write-out) left NTFS
+clean and every file older than about 10 seconds intact; up to 9,994 of the newest
+unflushed files were lost or damaged. On 0.4.604.1 the same burst left NTFS needing
+offline repair. Fast mode still does not order its writes around the file system's
+flushes, so clean cuts are evidence, not a guarantee. Another write-back cache tested
+the same way also damaged NTFS when cut during its write-out.
 [Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
@@ -177,22 +179,28 @@ cache or a disk.
   settings and switching afterwards is not supported. This leaves the known
   whole-cache Strict barrier cost (#16) open, rather than proving a regression of
   the new defaults. Failed runs and counters remain in [findings](PERFORMANCE.md).
-- **Power-loss evidence:** no power-cut test has run since 0.4.604.1. Those and the
-  competitor results remain historical and do not establish a newer build's crash
-  behavior.
+- **Power-loss evidence:** six cuts on 0.4.810.1 (three bursts, three churn cuts at
+  and during the write-out) on one Ceph-backed VM, with the default drain only. Other
+  drain settings, Strict, other file systems, a cached C: during writes and real
+  hardware were not cut ([results](COMPARISON.md#power-cut-while-the-cache-is-writing)).
 - **Removal and power:** Windows eject with pending writes passes, and so does
   detaching a virtual disk since 0.4.803.1 (`volumes/volume-detach`); live reconnect
   failed in Proxmox hotplug and stays unqualified. Surprise removal under load,
-  FAT32/ReFS removal, sleep, hibernate, Fast Startup and crash-dump handling have
-  not passed the maintained matrix. Sleep (S3) passed on one real PC (Windows 11
+  FAT32/ReFS removal, sleep, hibernate and Fast Startup have not passed the maintained
+  matrix. The test VM cannot hibernate: its firmware hides S4 (Proxmox's default), and
+  only the host's root account can change that. Sleep (S3) passed on one real PC (Windows 11
   booted from iSCSI, 0.4.784.1, 2026-10-22). Five `managed-lifecycle` fixtures kept
   their creations, states and bytes. A Fast cache holding 512 MiB of unwritten data
   kept it through 3 minutes of sleep, wrote it out on flush and read back correctly
   from the disk. Hibernate and Fast Startup could not run on that PC: its iSCSI boot
   has no crash-dump driver (`volmgr` 45/46), and hibernation writes through that driver.
 - **System disk:** a saved C: profile with a fixed pagefile passed restart soaks
-  (paging I/O bypasses the RAM cache), but full boot, paging, hibernation and dump
-  acceptance is open. A pre-alpha large-image crash on the old engine left no dump
+  (paging I/O bypasses the RAM cache). A bug check with a saved Fast 1 GiB C: profile
+  (0.4.810.1, raised from user mode) wrote its kernel dump (3.9 GiB, through a
+  dedicated dump file), restarted on its own with the profile restored, and kept 2,000
+  files flushed beforehand; `chkdsk /scan C:` found no problems. Nothing unwritten was
+  in C:'s cache at that moment. Full boot, paging, hibernation and a crash during
+  writes on C: remain open. A pre-alpha large-image crash on the old engine left no dump
   and was never reproduced. On the iSCSI-booted PC above, a 2 GiB Fast cache on C:
   passed normal use (7.4 GB written and drained), a restart, a sleep and a saved
   profile across restarts that included Windows updates, with 2,000 hashed files
@@ -222,8 +230,9 @@ cache or a disk.
 - **Managed disks:** sleep passed once on a real PC (above); hibernate, Fast
   Startup and a crash during a checkpoint commit are not covered. Shutdown saves of
   136–151 s (a 2 GiB image on a deliberately slowed host volume) committed on the VM
-  (0.4.803.1); longer saves, Windows' 3-hour limit and what a real PC's shutdown screen
-  shows meanwhile are not covered.
+  (0.4.803.1 and 0.4.810.1). Throughout a 139 s save the VM's screen showed Windows' own
+  "Restarting"; QueueCache adds no message there. Longer saves, Windows' 3-hour limit and
+  a real PC's shutdown are not covered.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is
   verified by attaching the new image read-only while the RAM disk it was copied
