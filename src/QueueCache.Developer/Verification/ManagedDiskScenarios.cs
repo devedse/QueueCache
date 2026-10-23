@@ -140,23 +140,6 @@ internal static class ManagedDiskScenarios
                     if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("Restarted image did not load the committed checkpoint, excluding discarded RAM changes.");
                     if (direct) RamDirectChecks.RequireActive(await RecordAsync()); // Re-enabled after save, stop and reload.
                     Pass("whole-image-save-export-runtime" + tag, "Full verified save, unchanged-source export, RAM-only runtime with unavailable source and unchanged image-I/O attempts, dirty generation and committed reload match bytes.");
-                    // #22 (plan 174): once the retained older image is a checkpoint with a chunk map, a save writes
-                    // into it only the changed 1 MiB parts. The first save above retired the created image (not a
-                    // checkpoint), so the next one is complete and the one after that is in place.
-                    var older = (await RecordAsync()).CommittedImage!;
-                    bytes[1] ^= 0xFF; Write(file, bytes); await ActAsync(ManagedDiskAction.Flush);
-                    var complete = await ActAsync(ManagedDiskAction.Save);
-                    bytes[2] ^= 0xFF; Write(file, bytes); await ActAsync(ManagedDiskAction.Flush);
-                    var inPlace = (await ActAsync(ManagedDiskAction.Save)).Record;
-                    if (complete.Record.LastSave?.Bytes != definition.CapacityBytes || inPlace.CommittedImage?.Identity.Path != older.Identity.Path ||
-                        inPlace.PreviousImage != complete.Record.CommittedImage || inPlace.LastSave is not { Bytes: > 0 } changedSave ||
-                        changedSave.Bytes >= definition.CapacityBytes / 4)
-                        throw new IOException("A save did not write only the changed parts into the older retained image.");
-                    await ActAsync(ManagedDiskAction.Stop, discard: true);
-                    await ActAsync(ManagedDiskAction.Start);
-                    if (!File.ReadAllBytes(file).SequenceEqual(bytes)) throw new IOException("The image saved in place did not load the saved bytes.");
-                    trace.Add(new { Stage = "ChangedPartsSave", Complete = complete.Record.LastSave, InPlace = inPlace.LastSave, Image = older.Identity.Path });
-                    Pass("changed-parts-save" + tag, $"After a complete save, the next save wrote {changedSave.Bytes >> 20} MiB of {definition.CapacityBytes >> 20} MiB into the older image; it loaded the saved bytes.");
                 }
                 else if (mode == ManagedDiskMode.CachedVhdx)
                 {

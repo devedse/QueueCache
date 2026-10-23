@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 
@@ -105,78 +104,8 @@ public sealed partial class WindowsManagedDiskEngine
         }
         catch { disk?.Dispose(); image?.Dispose(); pins.Dispose(); throw; }
     }
-    public Task<IReusedCheckpoint?> OpenReusedAsync(ManagedDiskRecord record, CancellationToken token) => Task.Run<IReusedCheckpoint?>(() =>
+    private sealed class CandidateImage(IDisposable pins, WindowsVirtualDisk image, WindowsDiskStorage disk, ILogicalDisk measured, ManagedImageIo counters, string path) : ICheckpointImage
     {
-        token.ThrowIfCancellationRequested();
-        var definition = record.Definition;
-        if (ManagedCheckpointReuse.Candidate(record) is not { } path || record.PreviousImage is not { Digest: { } digest } previous)
-            return null;
-        var mapPath = ImageChunkMap.PathFor(path);
-        IDisposable? pins = null; WindowsVirtualDisk? image = null; WindowsDiskStorage? disk = null;
-        try
-        {
-            pins = ManagedDiskHostProtection.Pin(Path.GetDirectoryName(path)!, true);
-            var map = File.Exists(mapPath) ? ImageChunkMap.Parse(File.ReadAllBytes(mapPath)) : null;
-            var file = new FileInfo(path);
-            if (map is null || map.CapacityBytes != definition.CapacityBytes || map.Sha256 != digest.Sha256 ||
-                !file.Exists || file.Length != map.FileBytes || file.LastWriteTimeUtc.Ticks != map.FileWriteTicks)
-            { WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: no intact chunk map for {path}; saving a complete new image."); pins.Dispose(); return null; }
-            var actual = WindowsVirtualDisk.Inspect(path);
-            var drive = new DriveInfo(Path.GetPathRoot(path)!);
-            var growth = definition.CapacityBytes > actual.AllocatedBytes ? definition.CapacityBytes - actual.AllocatedBytes : 0;
-            if (!actual.SameImage(previous.Identity) || (ulong)drive.AvailableFreeSpace < checked(growth + definition.CapacityBytes / 64 + (64UL << 20)))
-            { pins.Dispose(); return null; }
-            image = WindowsVirtualDisk.Open(path, false, false);
-            disk = WindowsDiskStorage.Open(image.Attach(false), true);
-            // Windows keeps a copy of the live RAM disk offline (same GPT disk ID), so no volume mounted and
-            // wrote to it. Had it come online, its chunks would no longer be known.
-            if (!disk.Offline() || disk.CapacityBytes != definition.CapacityBytes || disk.SectorBytes != definition.SectorBytes)
-                throw new IOException("The older saved image came online or changed geometry when attached.");
-            disk.SetOffline(true);
-            File.Delete(mapPath);
-            var counters = entries[definition.ResourceId].ImageIo;
-            WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: writing only the changed parts into {path}.");
-            return new CandidateImage(pins, image, disk, counters.Measure(disk), counters, path, map.Hashes);
-        }
-        catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException or InvalidDataException)
-        {
-            disk?.Dispose();
-            try { image?.Detach(); } catch (Exception) { }
-            image?.Dispose(); pins?.Dispose();
-            WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: the older saved image cannot be written in place ({ex.Message}); saving a complete new image.");
-            return null;
-        }
-    }, token);
-    public async Task<ImageInspection> VerifyChunksAsync(string path, ChunkedCopy copy, CancellationToken token, IProgress<ImageTransferProgress>? progress = null)
-    {
-        var timer = System.Diagnostics.Stopwatch.StartNew();
-        var expected = await InspectAsync(path, token);
-        var view = await OpenImportAsync(expected, token);
-        try { await LogicalImageTransfer.VerifyChunksAsync(view.LogicalStorage, copy.Hashes, copy.Written, token, progress); }
-        finally { await view.DisposeAsync(); }
-        WindowsManagedBrokerService.Log($"Checkpoint verification of {copy.Written.Count} rewritten MiB in {timer.ElapsedMilliseconds} ms");
-        return expected;
-    }
-    public void SaveChunkMap(ManagedDiskRecord record, string path, ChunkedCopy copy)
-    {
-        if (!ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, path)) return;
-        try
-        {
-            var file = new FileInfo(path);
-            var bytes = new ImageChunkMap(copy.Digest.Bytes, copy.Digest.Sha256, copy.Hashes, file.Length, file.LastWriteTimeUtc.Ticks).Serialize();
-            var mapPath = ImageChunkMap.PathFor(path); var staged = mapPath + ".tmp";
-            using (var stream = new FileStream(staged, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
-            { stream.Write(bytes); stream.Flush(flushToDisk: true); }
-            File.Move(staged, mapPath, overwrite: true);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: chunk map for {path} not kept ({ex.Message}); its next reuse saves a complete image."); }
-    }
-    private sealed class CandidateImage(IDisposable pins, WindowsVirtualDisk image, WindowsDiskStorage disk, ILogicalDisk measured, ManagedImageIo counters, string path,
-        byte[]? hashes = null) : IReusedCheckpoint
-    {
-        public string Path => path;
-        public ReadOnlyMemory<byte> Hashes => hashes;
         private bool detached;
         public ILogicalDisk Storage => measured;
         public async Task CompleteAndDetachAsync(CancellationToken token)

@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using QueueCache.Operations.ManagedDisks;
 
 internal static class ManagedCheckpointTests
@@ -56,72 +55,7 @@ internal static class ManagedCheckpointTests
         var late = new Fixture("cancel-after"); var saved = await late.Save();
         Check(saved.ChangedStartupSource && late.Cancel.IsCancellationRequested && saved.Record.Runtime!.SavedGeneration == 10 && !late.Frozen,
             "late cancellation cannot claim rollback after pointer commit starts");
-        await InPlaceSaves();
         Console.WriteLine("Managed checkpoint failure/commit/stop contracts passed.");
-    }
-    /// <summary>#22: a save writes into the older retained image only the 1 MiB chunks that changed.</summary>
-    private static async Task InPlaceSaves()
-    {
-        const int capacity = (16 << 20) + 4096; // 17 chunks; the last one is partial.
-        var ram = new ManagedDiskTests.MemoryDisk(capacity) { MaxRead = 3 << 20 };
-        new Random(22).NextBytes(ram.Bytes);
-        var image = new ManagedDiskTests.MemoryDisk(capacity);
-        var full = await LogicalImageTransfer.CopyChangedAsync(ram, image, null);
-        Check(image.Bytes.SequenceEqual(ram.Bytes) && image.Flushed && full.Written.Count == 17 && full.WrittenBytes == capacity &&
-            full.Digest == await LogicalImageTransfer.HashAsync(ram) && full.Hashes.Length == 17 * 32 &&
-            full.Hashes.AsSpan(16 * 32, 32).SequenceEqual(SHA256.HashData(ram.Bytes.AsSpan(16 << 20))),
-            "a full save writes every chunk and records the logical digest and each chunk's hash");
-        ram.Bytes[3 << 20] ^= 1; ram.Bytes[(4 << 20) + 7] ^= 1; ram.Bytes[^1] ^= 1;
-        var changed = await LogicalImageTransfer.CopyChangedAsync(ram, image, full.Hashes);
-        Check(changed.Written.SequenceEqual([3, 4, 16]) && changed.WrittenBytes == (2UL << 20) + 4096 && image.Bytes.SequenceEqual(ram.Bytes) &&
-            changed.Digest == await LogicalImageTransfer.HashAsync(ram), "a save into a known image writes only the changed chunks, joined, and the result equals RAM");
-        await LogicalImageTransfer.VerifyChunksAsync(image, changed.Hashes, changed.Written);
-        image.Bytes[(4 << 20) + 9] ^= 1;
-        await RejectAsync<InvalidDataException>(() => LogicalImageTransfer.VerifyChunksAsync(image, changed.Hashes, changed.Written), "a rewritten chunk that reads back wrong fails verification");
-        await RejectAsync<InvalidDataException>(() => LogicalImageTransfer.CopyChangedAsync(ram, image, full.Hashes.AsMemory(32)), "a chunk map for another capacity is refused");
-        var map = new ImageChunkMap(capacity, changed.Digest.Sha256, changed.Hashes, 123456, 638000000000000000);
-        var bytes = map.Serialize();
-        var parsed = ImageChunkMap.Parse(bytes);
-        Check(parsed is not null && parsed.Sha256 == map.Sha256 && parsed.Hashes.SequenceEqual(map.Hashes) && parsed.FileBytes == 123456 &&
-            parsed.FileWriteTicks == map.FileWriteTicks && parsed.CapacityBytes == capacity, "a chunk map round-trips");
-        bytes[100] ^= 1;
-        Check(ImageChunkMap.Parse(bytes) is null && ImageChunkMap.Parse(bytes.AsSpan(0, 90)) is null, "a damaged or short chunk map is not used");
-
-        // Which older image may be written in place: only a save this disk made in its checkpoint folder, also when
-        // the disk was last started from it (it is then also the record's OriginalSource); never an imported image.
-        var id = Guid.NewGuid();
-        var definition = ManagedDiskDefinition.New(ManagedDiskMode.ImageInRam) with
-            { ResourceId = id, CapacityBytes = 16UL << 20, ImagePath = @"C:\Images\source.vhdx", CheckpointDirectory = @"C:\Images\Saves" };
-        ManagedImageReference Image(string path) => new(new(path, path + "|" + path.Length, Guid.NewGuid(), 16UL << 20, 1UL << 20, 512, false), new(16UL << 20, new string('C', 64)), 3);
-        var own = Image($@"C:\Images\Saves\{id:N}-20261023-210000-1.vhdx");
-        var record = new ManagedDiskRecord(definition, CommittedImage: Image($@"C:\Images\Saves\{id:N}-20261023-220000-2.vhdx"), PreviousImage: own, OriginalSource: own.Identity);
-        Check(ManagedCheckpointReuse.Candidate(record) == own.Identity.Path, "the older save is reused, also when the disk was last started from it");
-        Check(ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image(@"C:\Images\source.vhdx") }) is null &&
-            ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image($@"C:\Images\{id:N}-20261023-210000-1.vhdx") }) is null &&
-            ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image($@"C:\Images\Saves\{Guid.NewGuid():N}-20261023-210000-1.vhdx") }) is null &&
-            ManagedCheckpointReuse.Candidate(record with { PreviousImage = own with { Digest = null } }) is null &&
-            ManagedCheckpointReuse.Candidate(record with { CommittedImage = own }) is null && ManagedCheckpointReuse.Candidate(record with { PreviousImage = null }) is null,
-            "an imported image, another folder, another disk's save, an unverified image or the startup image is never written in place");
-        var reuse = new Fixture(null, reuse: true); var saved = await reuse.Save();
-        Check(reuse.Older.Bytes.SequenceEqual(reuse.Source.Bytes) && reuse.PreviousReleasedBeforeWrite && reuse.Map?.Path == Fixture.OlderPath &&
-            saved.Record.CommittedImage!.Identity.Path == Fixture.OlderPath && saved.Record.PreviousImage == reuse.Original &&
-            saved.Record.LastSave!.Bytes == 2UL << 20 && reuse.Store.Journal!.CandidatePath == Fixture.OlderPath,
-            "a save rewrites the two changed chunks of the older image, which becomes the startup image; the previous one is retained");
-        var failed = new Fixture("copy", reuse: true);
-        try { await failed.Save(); throw new Exception("A failed in-place save reported success."); }
-        catch (IOException) { }
-        Check(failed.Store.Record.CommittedImage == failed.Original && failed.Store.Record.PreviousImage is null &&
-            failed.Store.Record.Runtime!.State == ManagedDiskState.Ready && !failed.Frozen,
-            "a failed in-place save keeps the startup image, and the partly rewritten older image is no longer retained");
-        var export = new Fixture(null, reuse: true); await export.Save(commit: false);
-        Check(export.Store.Record.PreviousImage is not null && export.Older.Bytes.All(b => b == 0) && export.Map is null,
-            "Save As never writes into the older image");
-    }
-    private static async Task RejectAsync<T>(Func<Task> action, string message) where T : Exception
-    {
-        try { await action(); }
-        catch (T) { return; }
-        throw new Exception("FAIL: " + message);
     }
     private static void Check(bool value, string message) { if (!value) throw new Exception("FAIL: " + message); }
     private sealed class Fixture : IManagedCheckpointBackend
@@ -133,50 +67,14 @@ internal static class ManagedCheckpointTests
         public readonly ManagedImageReference Original;
         public bool Frozen, Removed;
         private readonly string? fault;
-        // #22: the older retained image (an earlier generation, all zero) and its chunk map.
-        public const string OlderPath = @"C:\Images\older.vhdx";
-        public readonly ManagedDiskTests.MemoryDisk Older = new(16 << 20);
-        private readonly byte[] olderHashes = new byte[16 * 32];
-        private readonly Guid olderDisk = Guid.NewGuid();
-        private readonly bool reuse;
-        public (string Path, ChunkedCopy Copy)? Map;
-        public bool PreviousReleasedBeforeWrite = true;
-        public Fixture(string? fault, bool reuse = false)
+        public Fixture(string? fault)
         {
-            this.fault = fault; this.reuse = reuse; Source.Bytes[0] = 0xA5; Source.Bytes[^1] = 0x5A;
+            this.fault = fault; Source.Bytes[0] = 0xA5; Source.Bytes[^1] = 0x5A;
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.ImageInRam) with
             { CapacityBytes = 16UL << 20, ImagePath = @"C:\Images\source.vhdx", CheckpointDirectory = @"C:\Images" };
             Original = new(new(definition.ImagePath!, "source-id", Guid.NewGuid(), definition.CapacityBytes, 1UL << 20, 512, false), new(definition.CapacityBytes, new string('A', 64)), 8);
-            var older = reuse ? new ManagedImageReference(new(OlderPath, "older-id", olderDisk, definition.CapacityBytes, 1UL << 20, 512, false), new(definition.CapacityBytes, new string('B', 64)), 6) : null;
-            Store = new(new(definition, new(definition.ResourceId, Guid.NewGuid(), 1, definition.Mode, ManagedDiskState.Ready, 10, 8), Original, older), Original, fault, Cancel);
+            Store = new(new(definition, new(definition.ResourceId, Guid.NewGuid(), 1, definition.Mode, ManagedDiskState.Ready, 10, 8), Original), Original, fault, Cancel);
             if (fault == "copy") Source.ReadFailureAt = 8UL << 20;
-            for (var i = 0; i < 16; i++) SHA256.HashData(Older.Bytes.AsSpan(i << 20, 1 << 20), olderHashes.AsSpan(i * 32, 32));
-        }
-        public Task<IReusedCheckpoint?> OpenReusedAsync(ManagedDiskRecord record, CancellationToken token) =>
-            Task.FromResult<IReusedCheckpoint?>(reuse && record.PreviousImage is not null ? new Reused(this) : null);
-        public async Task<ImageInspection> VerifyChunksAsync(string path, ChunkedCopy copy, CancellationToken token, IProgress<ImageTransferProgress>? progress = null)
-        {
-            Check(Older.Flushed && path == OlderPath, "in-place verification reads the older image after its flush/detach");
-            await LogicalImageTransfer.VerifyChunksAsync(Older, copy.Hashes, copy.Written, token);
-            return new(path, "older-id", olderDisk, copy.Digest.Bytes, copy.Digest.Bytes, 512, false);
-        }
-        public void SaveChunkMap(ManagedDiskRecord record, string path, ChunkedCopy copy) => Map = (path, copy);
-        private sealed class Reused(Fixture owner) : IReusedCheckpoint, ILogicalDisk
-        {
-            public string Path => OlderPath;
-            public ReadOnlyMemory<byte> Hashes => owner.olderHashes;
-            public ILogicalDisk Storage => this;
-            public ulong CapacityBytes => owner.Older.CapacityBytes;
-            public uint SectorBytes => owner.Older.SectorBytes;
-            public ValueTask<int> ReadAsync(ulong offset, Memory<byte> buffer, CancellationToken token) => owner.Older.ReadAsync(offset, buffer, token);
-            public ValueTask WriteAsync(ulong offset, ReadOnlyMemory<byte> buffer, CancellationToken token)
-            {
-                if (owner.Store.Record.PreviousImage is not null) owner.PreviousReleasedBeforeWrite = false;
-                return owner.Older.WriteAsync(offset, buffer, token);
-            }
-            public ValueTask FlushAsync(CancellationToken token) => owner.Older.FlushAsync(token);
-            public Task CompleteAndDetachAsync(CancellationToken token) => Task.CompletedTask;
-            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
         public Task<ManagedCheckpointResult> Save(bool commit = true, bool stop = false) => new ManagedImageCheckpoint(Store, this)
             .SaveAsync(Store.Record, @"C:\Images\candidate.vhdx", commit,
