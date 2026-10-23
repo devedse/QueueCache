@@ -211,6 +211,10 @@ internal static class ManagedDiskCommands
                         ? $"; timing reads avg {stats.AverageReadMicroseconds:0.0} us max {stats.MaxReadMicroseconds:0.0} us ({stats.TimedReads}), writes avg {stats.AverageWriteMicroseconds:0.0} us max {stats.MaxWriteMicroseconds:0.0} us ({stats.TimedWrites})"
                         : "; timing off"));
             if (record.CommittedImage is not null) Console.WriteLine($"  startup image: {record.CommittedImage.Identity.Path}; saved at {record.SavedAt?.ToString("O") ?? "not yet checkpointed"}");
+            if (record.LastShutdownSave is { } shutdown)
+                Console.WriteLine($"  last shutdown save ({shutdown.At:O}): " + (shutdown.Committed
+                    ? $"committed {shutdown.Bytes / ManagedDiskDefinition.MiB} MiB in {shutdown.Duration.TotalSeconds:0} s"
+                    : $"not committed after {shutdown.Duration.TotalSeconds:0} s: {shutdown.Detail}"));
             if (record.LastError is not null) Console.WriteLine("  " + record.LastError);
         }
     }

@@ -16,7 +16,8 @@ public sealed record ManagedDiskRequest(Guid ResourceId, ManagedDiskAction Actio
     ManagedDiskStopIntent? StopIntent = null, string? Path = null, bool CommitExport = false,
     bool AcceptDiscard = false, bool AcceptErase = false, CacheConfiguration? Cache = null,
     bool AcceptVolatileWrites = false, bool? StartAtBoot = null, bool? SaveBeforeStopping = null, bool? SaveDuringShutdown = null, string? Label = null,
-    char? PreferredLetter = null, ulong? CapacityBytes = null, RamAccess? Access = null, bool? Timing = null);
+    char? PreferredLetter = null, ulong? CapacityBytes = null, RamAccess? Access = null, bool? Timing = null,
+    bool AtShutdown = false); // Save: the app saves while Windows shuts down; kept as LastShutdownSave (#22).
 public sealed record ManagedDiskOperationResult(ManagedDiskRecord Record, string Message, string? ImagePath = null);
 
 public static class ManagedDiskConfiguration

@@ -112,11 +112,11 @@ public sealed class App : Application
         holdingShutdown = true;
         ShowWindow();
         ShutdownSaves.Hold(handle, ShutdownSaves.Reason(pending[0]));
-        _ = SaveThenExitAsync(desktop, pending, handle);
+        _ = SaveThenExitAsync(desktop, shell.Monitor, pending, handle);
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static async Task SaveThenExitAsync(IClassicDesktopStyleApplicationLifetime desktop, IReadOnlyList<VirtualDiskViewModel> pending, IntPtr handle)
+    private static async Task SaveThenExitAsync(IClassicDesktopStyleApplicationLifetime desktop, DashboardMonitor monitor, IReadOnlyList<VirtualDiskViewModel> pending, IntPtr handle)
     {
         try
         {
@@ -125,7 +125,7 @@ public sealed class App : Application
                 var reason = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
                 reason.Tick += (_, _) => ShutdownSaves.Hold(handle, ShutdownSaves.Reason(disk));
                 reason.Start();
-                try { await disk.SaveCommand.ExecuteAsync(null); }
+                try { await monitor.RunDiskAsync(disk, "Saving", ManagedDiskAction.Save, atShutdown: true); }
                 finally { reason.Stop(); }
             }
         }

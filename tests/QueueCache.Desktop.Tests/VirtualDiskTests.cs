@@ -27,6 +27,8 @@ internal static class VirtualDiskTests
         image.OperationText = "Verifying every saved logical sector before committing the image. 80%";
         Check(ShutdownSaves.Reason(image).EndsWith("(checking, 80%)"), "the check after copying is shown as checking");
         image.OperationText = "";
+        Settle(monitor.RunDiskAsync(image, "Saving", ManagedDiskAction.Save, atShutdown: true));
+        Check(disks.Requests[^1] is { Action: ManagedDiskAction.Save, AtShutdown: true }, "the app's save at shutdown is marked so the broker keeps it as the last shutdown save");
         disks.Records[0] = record with { LastShutdownSave = new(booted - TimeSpan.FromMinutes(2), false, TimeSpan.FromMinutes(4), 0, "The save stopped making progress.") };
         Settle(monitor.RefreshAsync());
         Check(image.HasNotice && image.NoticeSeverity == NoticeSeverity.Warning && image.NoticeText!.Contains("did not finish") &&
