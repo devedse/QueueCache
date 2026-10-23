@@ -37,6 +37,25 @@ public interface IManagedCheckpointBackend
 }
 public sealed record ManagedCheckpointResult(ManagedDiskRecord Record, ManagedImageReference Image, bool ChangedStartupSource);
 
+/// <summary>Which image a save may write into in place (#22).</summary>
+public static class ManagedCheckpointReuse
+{
+    /// <summary>A save this disk created in its checkpoint folder, named after the disk. An imported or user-chosen
+    /// image is never there under this name, so it is never written, also when the disk was last started from it.</summary>
+    public static bool OwnedCheckpoint(ManagedDiskDefinition definition, string path)
+    {
+        // Windows paths, split by hand so the host tests give the same answer on Linux.
+        var split = path.LastIndexOf('\\');
+        return definition.CheckpointDirectory is { } directory && split > 0 &&
+            path[..split].Equals(directory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) &&
+            path[(split + 1)..].StartsWith(definition.ResourceId.ToString("N") + "-", StringComparison.OrdinalIgnoreCase);
+    }
+    /// <summary>The retained previous save, when it is such a checkpoint and not the startup image; otherwise null.</summary>
+    public static string? Candidate(ManagedDiskRecord record) =>
+        record.PreviousImage is { Digest: not null } previous && OwnedCheckpoint(record.Definition, previous.Identity.Path) &&
+        record.CommittedImage?.Identity.SameImage(previous.Identity) != true ? previous.Identity.Path : null;
+}
+
 /// <summary>One save/export transaction; pointer commits begin only after detached read-back verification. A save
 /// writes into the retained older checkpoint only the chunks that changed, when its chunk map allows (#22);
 /// otherwise it writes a complete new image.</summary>

@@ -87,6 +87,21 @@ internal static class ManagedCheckpointTests
         bytes[100] ^= 1;
         Check(ImageChunkMap.Parse(bytes) is null && ImageChunkMap.Parse(bytes.AsSpan(0, 90)) is null, "a damaged or short chunk map is not used");
 
+        // Which older image may be written in place: only a save this disk made in its checkpoint folder, also when
+        // the disk was last started from it (it is then also the record's OriginalSource); never an imported image.
+        var id = Guid.NewGuid();
+        var definition = ManagedDiskDefinition.New(ManagedDiskMode.ImageInRam) with
+            { ResourceId = id, CapacityBytes = 16UL << 20, ImagePath = @"C:\Images\source.vhdx", CheckpointDirectory = @"C:\Images\Saves" };
+        ManagedImageReference Image(string path) => new(new(path, path + "|" + path.Length, Guid.NewGuid(), 16UL << 20, 1UL << 20, 512, false), new(16UL << 20, new string('C', 64)), 3);
+        var own = Image($@"C:\Images\Saves\{id:N}-20261023-210000-1.vhdx");
+        var record = new ManagedDiskRecord(definition, CommittedImage: Image($@"C:\Images\Saves\{id:N}-20261023-220000-2.vhdx"), PreviousImage: own, OriginalSource: own.Identity);
+        Check(ManagedCheckpointReuse.Candidate(record) == own.Identity.Path, "the older save is reused, also when the disk was last started from it");
+        Check(ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image(@"C:\Images\source.vhdx") }) is null &&
+            ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image($@"C:\Images\{id:N}-20261023-210000-1.vhdx") }) is null &&
+            ManagedCheckpointReuse.Candidate(record with { PreviousImage = Image($@"C:\Images\Saves\{Guid.NewGuid():N}-20261023-210000-1.vhdx") }) is null &&
+            ManagedCheckpointReuse.Candidate(record with { PreviousImage = own with { Digest = null } }) is null &&
+            ManagedCheckpointReuse.Candidate(record with { CommittedImage = own }) is null && ManagedCheckpointReuse.Candidate(record with { PreviousImage = null }) is null,
+            "an imported image, another folder, another disk's save, an unverified image or the startup image is never written in place");
         var reuse = new Fixture(null, reuse: true); var saved = await reuse.Save();
         Check(reuse.Older.Bytes.SequenceEqual(reuse.Source.Bytes) && reuse.PreviousReleasedBeforeWrite && reuse.Map?.Path == Fixture.OlderPath &&
             saved.Record.CommittedImage!.Identity.Path == Fixture.OlderPath && saved.Record.PreviousImage == reuse.Original &&

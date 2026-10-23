@@ -105,27 +105,20 @@ public sealed partial class WindowsManagedDiskEngine
         }
         catch { disk?.Dispose(); image?.Dispose(); pins.Dispose(); throw; }
     }
-    /// <summary>A checkpoint this disk created in its checkpoint folder (never an imported or user-chosen image),
-    /// so a save may write into it in place (#22).</summary>
-    private static bool OwnedCheckpoint(ManagedDiskDefinition definition, string path) =>
-        definition.CheckpointDirectory is not null &&
-        Path.GetDirectoryName(path)!.Equals(definition.CheckpointDirectory, StringComparison.OrdinalIgnoreCase) &&
-        Path.GetFileName(path).StartsWith(definition.ResourceId.ToString("N") + "-", StringComparison.OrdinalIgnoreCase);
     public Task<IReusedCheckpoint?> OpenReusedAsync(ManagedDiskRecord record, CancellationToken token) => Task.Run<IReusedCheckpoint?>(() =>
     {
         token.ThrowIfCancellationRequested();
-        var previous = record.PreviousImage; var definition = record.Definition;
-        if (previous?.Digest is null || !OwnedCheckpoint(definition, previous.Identity.Path) ||
-            record.CommittedImage?.Identity.SameImage(previous.Identity) == true || record.OriginalSource?.SameImage(previous.Identity) == true)
+        var definition = record.Definition;
+        if (ManagedCheckpointReuse.Candidate(record) is not { } path || record.PreviousImage is not { Digest: { } digest } previous)
             return null;
-        var path = previous.Identity.Path; var mapPath = ImageChunkMap.PathFor(path);
+        var mapPath = ImageChunkMap.PathFor(path);
         IDisposable? pins = null; WindowsVirtualDisk? image = null; WindowsDiskStorage? disk = null;
         try
         {
             pins = ManagedDiskHostProtection.Pin(Path.GetDirectoryName(path)!, true);
             var map = File.Exists(mapPath) ? ImageChunkMap.Parse(File.ReadAllBytes(mapPath)) : null;
             var file = new FileInfo(path);
-            if (map is null || map.CapacityBytes != definition.CapacityBytes || map.Sha256 != previous.Digest.Sha256 ||
+            if (map is null || map.CapacityBytes != definition.CapacityBytes || map.Sha256 != digest.Sha256 ||
                 !file.Exists || file.Length != map.FileBytes || file.LastWriteTimeUtc.Ticks != map.FileWriteTicks)
             { WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: no intact chunk map for {path}; saving a complete new image."); pins.Dispose(); return null; }
             var actual = WindowsVirtualDisk.Inspect(path);
@@ -166,7 +159,7 @@ public sealed partial class WindowsManagedDiskEngine
     }
     public void SaveChunkMap(ManagedDiskRecord record, string path, ChunkedCopy copy)
     {
-        if (!OwnedCheckpoint(record.Definition, path)) return;
+        if (!ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, path)) return;
         try
         {
             var file = new FileInfo(path);
