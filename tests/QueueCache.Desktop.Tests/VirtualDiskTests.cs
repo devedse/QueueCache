@@ -6,6 +6,43 @@ using static Test;
 /// <summary>Virtual disks: which actions apply, and what each destructive action asks first.</summary>
 internal static class VirtualDiskTests
 {
+    /// <summary>#22: what the app says about saving at shutdown, and about the last shutdown after a restart.</summary>
+    private static void ShutdownSave(ManagedDiskRecord sample)
+    {
+        var now = DateTimeOffset.Now;
+        var booted = now - TimeSpan.FromMilliseconds(Environment.TickCount64);
+        var disks = new DiskFixture();
+        var record = sample with { Definition = sample.Definition with { SaveDuringShutdown = true },
+            LastSave = new(TimeSpan.FromMinutes(7), 16UL << 30, null, Guid.NewGuid(), 1) };
+        disks.Records.Add(record);
+        var monitor = new DashboardMonitor(new VolumeFixture(), disks, new FakeDialogs(), availableRam: () => 8UL << 30, usedLetters: () => new HashSet<char>());
+        Settle(monitor.RefreshAsync());
+        var image = monitor.VirtualDisks.Single();
+        var fact = image.Facts.Single(f => f.Label == "At Windows shutdown").Value;
+        Check(fact.Contains("about 7 min") && fact.Contains("Shutting down waits that long"), "a long shutdown save says how long, from the last save, and that shutdown waits for it");
+        Check(!image.HasNotice, "no notice without a save at the last shutdown");
+        Check(ShutdownSaves.Pending(monitor.VirtualDisks).Single() == image, "an image with unsaved changes that saves at shutdown is saved before Windows shuts down");
+        image.OperationText = "Copying the complete frozen RAM disk. 37%";
+        Check(ShutdownSaves.Reason(image) == $"Saving {image.Letter}: to its image (copying, 37%)", "the reason Windows shows names the disk, the step and the progress");
+        image.OperationText = "Verifying every saved logical sector before committing the image. 80%";
+        Check(ShutdownSaves.Reason(image).EndsWith("(checking, 80%)"), "the check after copying is shown as checking");
+        image.OperationText = "";
+        disks.Records[0] = record with { LastShutdownSave = new(booted - TimeSpan.FromMinutes(2), false, TimeSpan.FromMinutes(4), 0, "The save stopped making progress.") };
+        Settle(monitor.RefreshAsync());
+        Check(image.HasNotice && image.NoticeSeverity == NoticeSeverity.Warning && image.NoticeText!.Contains("did not finish") &&
+              image.Facts.Any(f => f.Label == "Last shutdown" && f.Value.StartsWith("Not saved")), "after a restart, an unfinished shutdown save is reported once, with what was lost");
+        image.DismissNoticeCommand.Execute(null);
+        Settle(monitor.RefreshAsync());
+        Check(!image.HasNotice, "a dismissed shutdown notice does not come back");
+        disks.Records[0] = record with { LastShutdownSave = new(booted - TimeSpan.FromMinutes(1), true, TimeSpan.FromSeconds(160), 16UL << 30, null) };
+        Settle(monitor.RefreshAsync());
+        Check(image.NoticeSeverity == NoticeSeverity.Success && image.NoticeText == "Saved at the last shutdown: 16 GiB in 3 min.", "a finished shutdown save is reported with its size and time");
+        disks.Records[0] = record with { Definition = record.Definition with { SaveDuringShutdown = false } };
+        Settle(monitor.RefreshAsync());
+        Check(image.Facts.Single(f => f.Label == "At Windows shutdown").Value.StartsWith("Not saved"), "without saving at shutdown, the details say changes are lost");
+        Check(ShutdownSaves.Pending(monitor.VirtualDisks).Count == 0, "an image that does not save at shutdown does not hold Windows' shutdown");
+    }
+
     public static void Run()
     {
         var disks = DiskFixture.Sample();
@@ -25,6 +62,7 @@ internal static class VirtualDiskTests
         Check(monitor.OverallHealth == Health.Attention && monitor.HealthDetail.Contains("1 disk has unsaved changes"), "the summary names unsaved changes");
         Check(image.Facts.Any(f => f.Label == "When stopped" && f.Value == "Saves first, then stops") &&
               image.Facts.Any(f => f.Label == "Access path"), "details say what happens when the disk stops");
+        ShutdownSave(disks.Records[0]);
 
         // Stopping an image: save is the first choice; discard is explicit and carries the generation that was shown.
         dialogs.WhileAsking = _ =>

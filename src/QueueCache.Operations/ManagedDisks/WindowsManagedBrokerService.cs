@@ -74,8 +74,9 @@ public static class WindowsManagedBrokerService
             await retry;
             if (SavesBeforeStopping(control))
             {
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(110));
-                await engine.AttemptShutdownSavesAsync(deadline.Token);
+                // No time limit (#22): a save is given up only when it makes no progress for StallLimit.
+                using var watchdog = new ShutdownSaveWatchdog(StallLimit);
+                await engine.AttemptShutdownSavesAsync(watchdog, watchdog.Token);
             }
         }
         finally { heartbeatDone.Cancel(); await heartbeat; }
@@ -186,10 +187,63 @@ public static class WindowsManagedBrokerService
             Configure(service);
         }
     }
+    /// <summary>How long Windows waits for the broker at shutdown. Saving a large image to a slow disk can
+    /// take many minutes (#22), so this is a backstop, not a time limit: the broker finishes as soon as its
+    /// saves do, and gives a save up when it makes no progress for <see cref="StallLimit"/>.</summary>
+    internal const uint PreshutdownTimeoutMs = 3 * 60 * 60 * 1000;
+    internal static readonly TimeSpan StallLimit = TimeSpan.FromMinutes(3);
     private static void Configure(ServiceHandle service)
     {
         var delayed = 1U; Check(ChangeServiceConfig2W(service, 3, ref delayed));
-        var preshutdown = 120000U; Check(ChangeServiceConfig2W(service, 7, ref preshutdown));
+        var preshutdown = PreshutdownTimeoutMs; Check(ChangeServiceConfig2W(service, 7, ref preshutdown));
+    }
+    /// <summary>Cancels the shutdown saves when no progress was reported for the stall limit, and logs each
+    /// phase and every tenth of its progress.</summary>
+    internal sealed class ShutdownSaveWatchdog : IProgress<ManagedDiskProgress>, IDisposable
+    {
+        private readonly CancellationTokenSource stalled = new();
+        private readonly System.Diagnostics.Stopwatch quiet = System.Diagnostics.Stopwatch.StartNew();
+        private readonly Timer timer;
+        private readonly TimeSpan limit;
+        private readonly Action<string> log;
+        private string? phase;
+        private int tenth = -1;
+        public ShutdownSaveWatchdog(TimeSpan limit, TimeSpan? checkEvery = null, Action<string>? log = null)
+        {
+            this.limit = limit;
+            this.log = log ?? Log;
+            var period = checkEvery ?? TimeSpan.FromSeconds(10);
+            timer = new Timer(_ => Check(), null, period, period);
+        }
+        public CancellationToken Token => stalled.Token;
+        public void Report(ManagedDiskProgress value)
+        {
+            lock (quiet)
+            {
+                quiet.Restart();
+                var current = value is { TotalBytes: > 0 and var total, CompletedBytes: { } done } ? (int)Math.Min(10UL, 10 * done / total) : -1;
+                if (value.Message == phase && current == tenth)
+                    return;
+                if (value.Message != phase)
+                    tenth = -1;
+                phase = value.Message;
+                if (current == tenth)
+                    return;
+                tenth = current;
+            }
+            log(value.TotalBytes is > 0 ? $"Shutdown save: {value.Message} {10 * Math.Max(tenth, 0)}%" : "Shutdown save: " + value.Message);
+        }
+        private void Check()
+        {
+            bool expired;
+            lock (quiet) expired = quiet.Elapsed > limit;
+            if (expired && !stalled.IsCancellationRequested)
+            {
+                log($"Shutdown save: no progress for {limit.TotalMinutes:0} minutes; giving it up so Windows can shut down.");
+                stalled.Cancel();
+            }
+        }
+        public void Dispose() { timer.Dispose(); stalled.Dispose(); }
     }
     public static void Start()
     {

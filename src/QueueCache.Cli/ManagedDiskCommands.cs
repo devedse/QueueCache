@@ -49,7 +49,7 @@ internal static class ManagedDiskCommands
         var readOnly = new Option<bool>("--read-only") { Description = "Publish the loaded RAM device read-only; the input image is always preserved." };
         var startup = new Option<bool>("--startup") { Description = "Remember automatic Windows startup using this mode's recipe." };
         var discardOnStop = new Option<bool>("--discard-on-stop") { Description = "Image-in-RAM: disable default save-before-stop. Each actual discard still requires --discard." };
-        var shutdownSave = new Option<bool>("--save-on-shutdown") { Description = "Image-in-RAM: attempt a bounded checkpoint during orderly shutdown; completion is not guaranteed." };
+        var shutdownSave = new Option<bool>("--save-on-shutdown") { Description = "Image-in-RAM: save it while Windows shuts down if it has unsaved changes. Windows waits for the save; a forced shutdown or power cut can still prevent it." };
         var access = AccessOption();
         foreach (Option option in new Option[] { mode, size, letter, label, newImage, load, initializeBlank, checkpoints, fixedImage, sector, readOnly, startup, discardOnStop, shutdownSave, access }) create.Options.Add(option);
         var createCache = new CacheBinding(create);

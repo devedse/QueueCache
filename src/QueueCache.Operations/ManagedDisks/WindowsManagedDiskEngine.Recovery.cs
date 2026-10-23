@@ -317,18 +317,50 @@ public sealed partial class WindowsManagedDiskEngine
         finally { mutation.Release(); }
     }
 
-    public async Task AttemptShutdownSavesAsync(CancellationToken token)
+    /// <summary>Windows is shutting down: save each image in RAM that saves at shutdown and has changes since
+    /// its last save. There is no time limit (#22): <paramref name="token"/> is cancelled only when a save stops
+    /// making progress (the broker's watchdog reads <paramref name="progress"/>). An unfinished save is never
+    /// used; the image then starts from its previous save. Each outcome is kept as LastShutdownSave.</summary>
+    public async Task AttemptShutdownSavesAsync(IProgress<ManagedDiskProgress>? progress, CancellationToken token)
     {
         await mutation.WaitAsync(token);
         try
         {
             foreach (var entry in entries.Values.Where(e => e.Record.Definition.Mode == ManagedDiskMode.ImageInRam && e.Record.Definition.SaveDuringShutdown && e.Record.Runtime?.State == ManagedDiskState.Ready))
             {
-                try { await SaveCoreAsync(entry, null, true, null, token); }
-                catch (Exception ex) { Update(entry, entry.Record with { LastError = "Shutdown save attempt failed; last committed image retained: " + ex.Message }); }
+                var id = entry.Record.ResourceId;
+                if (!ChangedSinceSave(entry))
+                {
+                    WindowsManagedBrokerService.Log($"Managed disk {id}: no changes since its last save; nothing to save at shutdown.");
+                    continue;
+                }
+                var started = System.Diagnostics.Stopwatch.StartNew();
+                WindowsManagedBrokerService.Log($"Managed disk {id}: saving {entry.Record.Definition.CapacityBytes >> 20} MiB at shutdown.");
+                try
+                {
+                    await SaveCoreAsync(entry, null, true, progress, token);
+                    Update(entry, entry.Record with { LastShutdownSave = new(DateTimeOffset.UtcNow, true, started.Elapsed, entry.Record.LastSave?.Bytes ?? 0, null) });
+                    WindowsManagedBrokerService.Log($"Managed disk {id}: saved at shutdown in {started.Elapsed.TotalSeconds:0} s.");
+                }
+                catch (Exception ex)
+                {
+                    var detail = (token.IsCancellationRequested ? "The save stopped making progress, so Windows shut down without it. " : "") + ex.Message;
+                    Update(entry, entry.Record with { LastError = "Shutdown save attempt failed; last committed image retained: " + detail,
+                        LastShutdownSave = new(DateTimeOffset.UtcNow, false, started.Elapsed, 0, detail) });
+                    WindowsManagedBrokerService.Log($"Managed disk {id}: shutdown save failed after {started.Elapsed.TotalSeconds:0} s: {detail}");
+                }
                 if (token.IsCancellationRequested) break;
             }
         }
         finally { mutation.Release(); }
+    }
+    /// <summary>False only when the RAM disk's live write generation equals the one its last save froze.</summary>
+    private static bool ChangedSinceSave(Entry entry)
+    {
+        var saved = entry.Record.Runtime?.SavedGeneration;
+        if (saved is null || entry.Provider is null || entry.Record.Native is null)
+            return true;
+        try { return entry.Provider.Query(entry.Record.Native).WriteGeneration != saved; }
+        catch (Exception) { return true; } // Unknown: save.
     }
 }

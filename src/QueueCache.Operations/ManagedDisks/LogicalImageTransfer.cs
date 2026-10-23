@@ -33,17 +33,18 @@ public static class LogicalImageTransfer
     }
 
     public static Task<LogicalImageDigest> HashAsync(ILogicalDisk source, CancellationToken token = default,
-        int chunkBytes = DefaultChunkBytes)
+        int chunkBytes = DefaultChunkBytes, IProgress<ImageTransferProgress>? progress = null)
     {
         Validate(source, chunkBytes);
-        return Walk(source, null, null, token, chunkBytes);
+        return Walk(source, null, progress, token, chunkBytes);
     }
 
-    public static async Task VerifyAsync(ILogicalDisk candidate, LogicalImageDigest expected, CancellationToken token = default)
+    public static async Task VerifyAsync(ILogicalDisk candidate, LogicalImageDigest expected, CancellationToken token = default,
+        IProgress<ImageTransferProgress>? progress = null)
     {
         if (candidate.CapacityBytes != expected.Bytes)
             throw new InvalidDataException("Saved image virtual capacity changed.");
-        var actual = await HashAsync(candidate, token);
+        var actual = await HashAsync(candidate, token, progress: progress);
         if (actual != expected)
             throw new InvalidDataException("Saved image logical sectors do not match the frozen RAM generation.");
     }

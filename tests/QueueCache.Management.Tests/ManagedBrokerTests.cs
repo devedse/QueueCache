@@ -25,6 +25,25 @@ internal static class ManagedBrokerTests
             (waiting with { State = ProfileRestoreState.NotRestored, Detail = "RAM stayed short.", RetryUntilUtc = null }).Describe() == "not restored at startup: RAM stayed short." &&
             (waiting with { State = ProfileRestoreState.Restored }).Describe() is null,
             "the volume list names a waiting or failed startup restore and says nothing once it is restored");
+        // #22: no time limit at shutdown. Windows waits up to 3 hours; a save is given up only when it stops progressing.
+        Check(WindowsManagedBrokerService.PreshutdownTimeoutMs == 3U * 60 * 60 * 1000 && WindowsManagedBrokerService.StallLimit == TimeSpan.FromMinutes(3),
+            "Windows waits hours for shutdown saves, and a save is given up after 3 minutes without progress");
+        var watchdogLog = new List<string>();
+        using (var watchdog = new WindowsManagedBrokerService.ShutdownSaveWatchdog(TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(50), line => { lock (watchdogLog) watchdogLog.Add(line); }))
+        {
+            for (ulong done = 0; done <= 10; done++)
+            {
+                watchdog.Report(new(ManagedDiskState.Saving, "Copying the complete frozen RAM disk.", done << 20, 10UL << 20));
+                await Task.Delay(100);
+            }
+            Check(!watchdog.Token.IsCancellationRequested, "a save that keeps reporting progress is never given up, however long it takes");
+            await Task.Delay(1500);
+            Check(watchdog.Token.IsCancellationRequested, "a save that stops reporting progress is given up");
+        }
+        lock (watchdogLog)
+            Check(watchdogLog.Count(l => l.StartsWith("Shutdown save: Copying", StringComparison.Ordinal)) == 11 &&
+                watchdogLog.Any(l => l.Contains("no progress", StringComparison.Ordinal)),
+                "the shutdown save log names each tenth of the progress and the give-up");
         Check(WindowsManagedDiskEngine.StartupMemoryRetry == TimeSpan.FromMinutes(10) && WindowsManagedDiskEngine.StartupMemoryRetryInterval == TimeSpan.FromSeconds(15),
             "startup retries a RAM refusal every 15 s for 10 minutes");
         var request = new ManagedBrokerRequest(1, Guid.NewGuid(), "create", ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam));

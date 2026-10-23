@@ -83,7 +83,7 @@ internal static class ManagedCheckpointTests
         public Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token)
         { if (fault == "acquire") throw new IOException("Open-file veto."); Frozen = true; return Task.FromResult<IStableManagedImage>(new Stable(this)); }
         public Task<ICheckpointImage> CreateCandidateAsync(ManagedDiskDefinition definition, string path, CancellationToken token) => Task.FromResult<ICheckpointImage>(new Candidate(this));
-        public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token)
+        public async Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token, IProgress<ImageTransferProgress>? progress = null)
         {
             Check(destination.Flushed, "verification happens only after destination flush/detach");
             if (fault == "verify" || fault?.StartsWith("reporting-", StringComparison.Ordinal) == true)
