@@ -164,7 +164,8 @@ struct QC_DIAGNOSTICS
     // asynchronous TRIMs that fell back to the ordered path (fence or table full).
     ULONGLONG ReadAware, ReadAwareWaits, TrimMode, TrimLookups, TrimAsync, TrimAsyncFallbacks;
     // V25: Strict's backlog (#16): separate pieces of unwritten data now held, the limit in effect
-    // (QcStrictPieceLimit; 0 in Fast mode) and writes that waited because the backlog was at it.
+    // (QcStrictPieceLimit; 0 in Fast mode) and the waits of writes held because the backlog was at it
+    // (counted per wait, like CapacityWaits).
     ULONGLONG StrictPieces, StrictPieceLimit, StrictPieceWaits;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;

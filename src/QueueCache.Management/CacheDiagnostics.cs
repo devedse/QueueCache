@@ -395,7 +395,8 @@ public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed
 /// TrimLookups/TrimAsync count TRIMs that used them, TrimAsyncFallbacks the ordered sends instead.</summary>
 /// <summary>V25 (#16): separate pieces of unwritten data Strict holds now, the most it holds before a write that adds
 /// dirty data waits (about two seconds of the drain's measured rate, at least 256; 0 in Fast mode, which has no
-/// limit), and the writes that waited for it. Pieces may exceed the limit by the writes admitted before it.</summary>
+/// limit), and how often a write waited for it (each wait counts, like capacity waits). Pieces may exceed the limit by
+/// the writes admitted before it was reached.</summary>
 public sealed record CacheStrictBacklog(ulong Pieces, ulong Limit, ulong Waits);
 public sealed record CacheDrainPriority(ulong ReadAware, ulong ReadAwareWaits, ulong TrimMode, ulong TrimLookups,
     ulong TrimAsync, ulong TrimAsyncFallbacks);
