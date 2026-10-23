@@ -16,6 +16,7 @@
 #include "ramdirect.h"
 #endif
 
+constexpr ULONG RecentKept = 16; // QC_EXTENSION::RecentRequests
 struct QC_EXTENSION
 {
     PDEVICE_OBJECT Self;
@@ -30,6 +31,8 @@ struct QC_EXTENSION
     QC_RAM_BINDING RamDirect; // Direct access when the volume is on a QueueCache RAM disk.
     GUID RamResource;         // From the RAM disk's serial (EnsureDeviceGeometry).
     BOOLEAN RamSerial;
+    ULONG RecentRequests[RecentKept]; // RecordRecent: the last non-data requests, for the removal event.
+    volatile LONG RecentCount;
 #endif
 #if QCACHE_SERIALIZED_IO
     IO_CSQ Csq;
@@ -172,10 +175,25 @@ static NTSTATUS Forward(QC_EXTENSION* ext, PIRP irp)
 }
 
 #if QCACHE_CACHE_DRIVER
+// Keeps the last non-data requests, overwriting the oldest, so the removal event shows what
+// reached the volume before it disappeared (#21: a virtual-disk detach sends no query-remove).
+// A device control records its code; any other request 0xFF00MMmm (major, minor).
+static void RecordRecent(QC_EXTENSION* ext, PIO_STACK_LOCATION stack)
+{
+    const auto major = stack->MajorFunction;
+    if (major == IRP_MJ_READ || major == IRP_MJ_WRITE)
+        return;
+    const ULONG value = major == IRP_MJ_DEVICE_CONTROL || major == IRP_MJ_INTERNAL_DEVICE_CONTROL
+                            ? stack->Parameters.DeviceIoControl.IoControlCode
+                            : (0xFF000000UL | (static_cast<ULONG>(major) << 8) | stack->MinorFunction);
+    const auto slot = static_cast<ULONG>(InterlockedIncrement(&ext->RecentCount) - 1);
+    ext->RecentRequests[slot % RecentKept] = value;
+}
 // Records a cached volume's removal in the System log (qcachemsg.mc): %2 is the volume device
-// (\Device\HarddiskVolumeN, the bottom of this stack) and %3 the pending Fast-mode bytes, which
-// are also kept as dump data. Pending bytes are a snapshot of possible volatile loss, not a claim
-// that this many bytes were lost on the physical disk. PASSIVE_LEVEL (surprise removal).
+// (\Device\HarddiskVolumeN, the bottom of this stack) and %3 the pending Fast-mode bytes. Dump
+// data: the pending bytes (two ULONGs, low first), then the recent requests, oldest first.
+// Pending bytes are a snapshot of possible volatile loss, not a claim that this many bytes were
+// lost on the physical disk. PASSIVE_LEVEL (surprise removal).
 static void LogRemoval(PDEVICE_OBJECT device, ULONGLONG pending)
 {
     WCHAR volume[80] = L"(unknown)";
@@ -195,12 +213,20 @@ static void LogRemoval(PDEVICE_OBJECT device, ULONGLONG pending)
     if (!NT_SUCCESS(RtlStringCchLengthW(volume, RTL_NUMBER_OF(volume), &volumeChars)) ||
         !NT_SUCCESS(RtlStringCchLengthW(bytes, RTL_NUMBER_OF(bytes), &byteChars)))
         return;
-    const ULONG dumpBytes = 2 * sizeof(ULONG);
-    const ULONG stringOffset = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + dumpBytes;
+    const auto ext = static_cast<QC_EXTENSION*>(device->DeviceExtension);
+    constexpr ULONG Slot = sizeof(ULONG);
+    const auto recorded = static_cast<ULONG>(InterlockedCompareExchange(&ext->RecentCount, 0, 0));
+    ULONG recent = recorded < RecentKept ? recorded : RecentKept;
     const ULONG volumeBytes = static_cast<ULONG>((volumeChars + 1) * sizeof(WCHAR));
-    const ULONG size = stringOffset + volumeBytes + static_cast<ULONG>((byteChars + 1) * sizeof(WCHAR));
-    if (size > ERROR_LOG_MAXIMUM_SIZE)
+    const ULONG fixed = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + 2 * Slot + volumeBytes +
+                        static_cast<ULONG>((byteChars + 1) * sizeof(WCHAR));
+    if (fixed > ERROR_LOG_MAXIMUM_SIZE)
         return;
+    while (recent && fixed + recent * Slot > ERROR_LOG_MAXIMUM_SIZE)
+        --recent; // Keep the newest requests that fit.
+    const ULONG dumpBytes = (2 + recent) * Slot;
+    const ULONG stringOffset = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + dumpBytes;
+    const ULONG size = fixed + recent * Slot;
     auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(device, static_cast<UCHAR>(size)));
     if (!entry)
         return;
@@ -210,6 +236,8 @@ static void LogRemoval(PDEVICE_OBJECT device, ULONGLONG pending)
     entry->DumpDataSize = static_cast<USHORT>(dumpBytes);
     entry->DumpData[0] = static_cast<ULONG>(pending);
     entry->DumpData[1] = static_cast<ULONG>(pending >> 32);
+    for (ULONG i = 0; i < recent; ++i)
+        entry->DumpData[2 + i] = ext->RecentRequests[(recorded - recent + i) % RecentKept];
     entry->NumberOfStrings = 2;
     entry->StringOffset = static_cast<USHORT>(stringOffset);
     auto strings = reinterpret_cast<PUCHAR>(entry) + stringOffset;
@@ -920,6 +948,9 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
     auto stack = IoGetCurrentIrpStackLocation(irp);
     if (stack->MajorFunction == IRP_MJ_POWER && stack->MinorFunction == IRP_MN_SET_POWER && stack->Parameters.Power.Type == SystemPowerState)
         QcBudgetObserveSystemPower(stack->Parameters.Power.State.SystemState, stack->Parameters.Power.SystemPowerStateContext);
+#if QCACHE_CACHE_DRIVER
+    RecordRecent(ext, stack);
+#endif
     if (DiagnosticMode & 1)
     {
         IoSkipCurrentIrpStackLocation(irp);
