@@ -103,6 +103,8 @@ public sealed class WindowsDiskStorage : ILogicalDisk, IDisposable
         var actual = BitConverter.ToUInt64(Io(0x700F0, [], 16), 8);
         if ((actual & 1) != (offline ? 1UL : 0UL)) throw new IOException("Windows did not apply the requested disk isolation state.");
     }
+    /// <summary>IOCTL_DISK_GET_DISK_ATTRIBUTES: whether Windows holds the disk offline (no volume can mount).</summary>
+    public bool Offline() => (BitConverter.ToUInt64(Io(0x700F0, [], 16), 8) & 1) != 0;
     /// <summary>IOCTL_DISK_IS_WRITABLE: the class driver's view of the media write-protect bit.</summary>
     public bool MediaWritable()
     {

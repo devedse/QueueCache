@@ -119,7 +119,9 @@ reads, 9 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
 `stress-races` campaign adds its five checks, for 99 in total. Plan 173 (#19) turned
 `paging-coherence/mapped-read-not-kept` into `mapped-read-kept` and added
 `buffered-reread-from-ram`: a file read through Windows' file cache is kept, and after
-Windows' standby memory is purged the next read comes from RAM.
+Windows' standby memory is purged the next read comes from RAM. Plan 174 (#22) adds
+`image-in-ram/changed-parts-save`: after a complete save, the next save writes only the
+changed 1 MiB parts into the older retained image, and the disk loads the saved bytes.
 
 **Long runs from an agent.** Start the foreground campaign command with the
 harness's built-in background-task mechanism. Wait for completion, then read that

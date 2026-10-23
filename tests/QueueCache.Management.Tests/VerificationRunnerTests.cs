@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 173, "plan 173 paging-coherence expects page-ins of file data to be kept (#19)");
+        Check(VerificationPlan.Version == 174, "plan 174: image-in-ram checks changed-parts saves (#22); since plan 173 paging-coherence expects page-ins of file data to be kept (#19)");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&

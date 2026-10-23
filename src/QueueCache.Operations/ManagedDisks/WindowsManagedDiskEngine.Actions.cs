@@ -243,5 +243,6 @@ public sealed partial class WindowsManagedDiskEngine
         }
         // Windows denies opening an attached or writable image for exclusive deletion.
         WindowsVirtualDisk.DeleteDetachedOwnedImage(candidate);
+        File.Delete(ImageChunkMap.PathFor(path)); // Its chunk map for in-place saves (#22), if any.
     }
 }

@@ -69,19 +69,35 @@ image file when detached.
 |---|---|---|
 | `ram` | Full disk plus metadata/workspace in RAM | Temporary contents; new Windows startup recreates and formats an empty disk if startup is enabled |
 | `cached-vhdx` | VHDX capacity; independent cache RAM size | Existing Strict/Fast cache semantics; drain/flush before detach; startup reopens the image |
-| `image-in-ram` | Every decoded logical sector in RAM | Flush stays in RAM; Save commits a verified full checkpoint; startup loads the committed image |
+| `image-in-ram` | Every decoded logical sector in RAM | Flush stays in RAM; Save commits a verified checkpoint (only the changed parts when it can, below); startup loads the committed image |
 
 A RAM disk or image in RAM that starts with Windows, refused only because RAM is
 briefly short at that moment, is retried every 15 s for 10 minutes; its last error
 says so meanwhile (#12).
 
+### How a save works
+
+A save pauses writes to the disk, writes the disk's contents to an image file,
+reads that back to verify it, and only then makes it the image the disk starts
+from; the image before it stays as the previous save. Since #22 a save writes into
+that older save only the 1 MiB parts that differ from RAM, reads back only those
+parts, and then switches to it. It keeps a SHA-256 of every part beside each save
+(`<image>.vhdx.chunks`). That needs the older image to be a save this disk made in
+its checkpoint folder, with an intact list that matches the file and Windows
+keeping the attached copy offline (it does, because the copy has the live disk's
+GPT identity). Otherwise, for example the first save after creating or loading an
+image, a save writes a complete new image as before. An imported or user-chosen
+image is never written. A save that changes little therefore takes one read of the
+RAM disk plus the changed parts, instead of writing and reading the whole image.
+If a save fails or the power goes off during it, the disk starts from the last
+completed save, and the partly rewritten older image is no longer kept as the
+previous save. Loading an image still checks its full SHA-256.
+
 ### Saving at shutdown
 
 With save-on-shutdown on, an image in RAM that has changes since its last save is
-saved while Windows shuts down. A save copies the whole image and reads it back,
-so it takes about twice its size divided by the disk's speed; the disk's details
-in the app give the last save's time as the estimate. Windows waits for it for at
-most 1 hour: the service gives the shutdown saves up after 3 minutes without
+saved while Windows shuts down. The disk's details in the app give the last save's
+time as the estimate. Windows waits for it for at most 1 hour: the service gives the shutdown saves up after 3 minutes without
 progress, or when they have run for 58 minutes, and records that; its log records
 each tenth of the progress. A save that takes longer than that will not finish at
 shutdown: save before shutting down (the app's disk details warn when the last save
@@ -139,7 +155,7 @@ one-shot; startup and later Start operations never repeat it.
 | `disk stop <id> --save` | Verify/commit the frozen image before stopping |
 | `disk stop <id> --discard` | Explicit loss of this RAM creation; retain source/checkpoint files |
 | `disk flush <id>` | Device/RAM flush; whole-image RAM stays unsaved |
-| `disk save <id>` | Unique full verified checkpoint; retain source and previous image |
+| `disk save <id>` | Verified checkpoint (the changed parts written into the older retained save when it can, otherwise a new complete image); retain source and previous image |
 | `disk export <id> --path <new.vhdx>` | Verified standalone export; startup pointer unchanged |
 | `disk export <id> --path <new.vhdx> --commit` | Use verified export as the committed startup image |
 | `disk format <id> --accept-erase [--label Name]` | Erase the exact owned NTFS volume; for image-in-RAM this changes only RAM until Save |
