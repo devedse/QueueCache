@@ -21,7 +21,7 @@ still to do. Open items link to their details.
 | [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): NTFS stayed clean in six power cuts on 0.4.810.1; write ordering is not yet guaranteed |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
-| [Strict mode can stall writes after a burst of random writes](#strict-mode-can-stall-writes-after-a-burst-of-random-writes-performance) | ❌ | Open, [#16](https://github.com/devedse/QueueCache/issues/16): since 0.4.810.1 a write-through write no longer drains the cache; a flush after a random burst still does |
+| [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
 | [Low-priority programs read cached data up to 30% slower](#low-priority-programs-read-cached-data-slower-performance) | ❌ | Not planned (Windows scheduling) |
 | [ReFS: fewer requests take the fast caller-thread path](#refs-fewer-requests-take-the-fast-caller-thread-path-performance) | ❌ | Not planned (measured trade-off) |
 | [A re-read file briefly takes space from a random workload](#a-re-read-file-briefly-takes-space-from-a-random-workload-performance) | ❌ | By design (most recent read wins) |
@@ -36,10 +36,11 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
+| Strict stopped all writing for 100 s or more after a burst of random writes: every flush (NTFS sends them on its own) waited for the whole backlog ([#16](https://github.com/devedse/QueueCache/issues/16)) | ✅ | 0.4.825.1 (backlog limited to about 2 s of write-out; 0.4.810.1 sent write-through writes direct) |
 | Files read through Windows' file cache (Explorer copies, most programs) and mapped files never entered the read cache ([#19](https://github.com/devedse/QueueCache/issues/19)) | ✅ | 0.4.810.1 (page-ins of file data are kept from a driver-owned copy of the disk data; a 1 GiB re-read after Windows' standby memory is purged: 275 → 2,254 MiB/s) |
 | Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
 | A saved cache, or a RAM disk that starts with Windows, stayed off after a restart when RAM was briefly short ([#12](https://github.com/devedse/QueueCache/issues/12)) | ✅ | 0.4.803.1 (retried every 15 s for 10 minutes; the app and `qcache volume list` show a cache waiting for RAM or not restored) |
-| A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart) |
+| A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart); 0.4.825.1: Windows waits at most 1 hour |
 | Every Windows shutdown waited for the virtual-disk service (Service Control Manager event 7043), and image-in-RAM saves at shutdown ran only in the short final phase: the service answered the wrong control code for Windows' early shutdown notice | ✅ | 0.4.796.1 ([#23](https://github.com/devedse/QueueCache/issues/23)) |
 | QueueCache's System log entry for a removed volume (`qcachelab` event 157) had no text, and was written for every removed volume, cached or not | ✅ | 0.4.796.1: only cached volumes; event 1 (writes were pending, with the byte count) or 2 (nothing pending), with text |
 | A refused image or evidence folder's error did not say how to fix it | ✅ | 0.4.796.1 (names the `icacls` command; never for a drive root) |
@@ -103,19 +104,23 @@ copies. Health and SMART tools are unaffected, and backups through shadow copies
 are consistent. Flush or pause the cache before a tool reads the raw disk, and
 never write raw to a disk under a cached volume.
 
-### Strict mode can stall writes after a burst of random writes (performance)
+### Strict: scattered writes run at the disk's speed (by design)
 
-Strict honors each application flush by writing out the whole dirty cache and
-flushing the lower disk; later writes wait meanwhile. After a burst of random 4K
-writes the disk writes that backlog at a few MB/s, so a flush (NTFS sends them on
-its own) can stop writing for a long time: in `compare-cache` one 10 s random-write
-window completed nothing on 0.4.803.1 and on 0.4.810.1. Since 0.4.810.1 a write-through write (NTFS's
-journal) goes straight to the disk after only older versions of its own blocks. The
-drain defaults of 0.4.776.1 made most file work fast again (40,000 files: create
-34 s, delete 23 s, against 213/264 s on 0.4.604.1). A dirty cap sized from the
-measured drain rate was tried and removed: it throttled sequential writes and did
-not bound the random case ([results](PERFORMANCE.md#strict-16)). Bounding the backlog
-by estimated drain time remains open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
+Strict answers a flush only once every write before it is on the disk, as a disk
+with its own write cache does. A flush covers the whole volume, so it waits for all
+unwritten data, and NTFS sends flushes on its own. Scattered small writes reach the
+disk at a few MB/s, so until 0.4.825.1 a burst of them in RAM made the next flush stop
+all writing for 100 s or more (#16). Since 0.4.825.1 Strict holds at most about two
+seconds of that work: it counts separate pieces of unwritten data (a contiguous run
+is one piece) against what the drain completes per second, and a write that would
+add more waits. A flush now finds at most about two seconds of work. The cost, measured in
+`compare-cache` (Strict, 2 GiB, same evening): random writes run at the disk's
+speed (4K Q32 304 → 7 MB/s, where the old build then stopped completely), sequential
+writes lost 20% (Q8) and 57% (Q1) and the mixed test 69%, while creating and
+copying 40,000 files got faster (15.4/14.3 → 6.6/8.0 s). One run started 17 minutes
+after a restart held writes, sequential ones included, for whole 10 s windows; it
+was not explained. Use Fast for write speed. `policy diagnostics` shows the pieces,
+the limit and the waits as `StrictBacklog` ([results](PERFORMANCE.md#strict-16)).
 
 ### Low-priority programs read cached data slower (performance)
 
@@ -231,8 +236,13 @@ cache or a disk.
   Startup and a crash during a checkpoint commit are not covered. Shutdown saves of
   136–151 s (a 2 GiB image on a deliberately slowed host volume) committed on the VM
   (0.4.803.1 and 0.4.810.1). Throughout a 139 s save the VM's screen showed Windows' own
-  "Restarting"; QueueCache adds no message there. Longer saves, Windows' 3-hour limit and
-  a real PC's shutdown are not covered.
+  "Restarting"; QueueCache adds no message there. With Windows' "Display highly detailed
+  status messages" setting on (VerboseStatus 1), the screen said "Shutting down service:
+  QueueCache managed disks." throughout a save. A save still copies the whole image:
+  writing only the changed parts needs direct writes to the VHDX file, because Windows
+  brings a saved copy online and mounts it when it is attached read-write, even while its
+  RAM disk with the same disk ID is online (#22). Longer saves, the 1-hour shutdown limit
+  and a real PC's shutdown are not covered.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is
   verified by attaching the new image read-only while the RAM disk it was copied

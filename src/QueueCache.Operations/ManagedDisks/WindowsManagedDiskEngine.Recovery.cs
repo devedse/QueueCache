@@ -318,10 +318,11 @@ public sealed partial class WindowsManagedDiskEngine
     }
 
     /// <summary>Windows is shutting down: save each image in RAM that saves at shutdown and has changes since
-    /// its last save. There is no time limit (#22): <paramref name="token"/> is cancelled only when a save stops
-    /// making progress (the broker's watchdog reads <paramref name="progress"/>). An unfinished save is never
-    /// used; the image then starts from its previous save. Each outcome is kept as LastShutdownSave.</summary>
-    public async Task AttemptShutdownSavesAsync(IProgress<ManagedDiskProgress>? progress, CancellationToken token)
+    /// its last save, for at most an hour (#22): <paramref name="token"/> is cancelled when a save stops making
+    /// progress or the hour is up (the broker's watchdog reads <paramref name="progress"/>; <paramref name="stopReason"/>
+    /// says which). An unfinished save is never used; the image then starts from its previous save. Each
+    /// outcome is kept as LastShutdownSave.</summary>
+    public async Task AttemptShutdownSavesAsync(IProgress<ManagedDiskProgress>? progress, CancellationToken token, Func<string?>? stopReason = null)
     {
         await mutation.WaitAsync(token);
         try
@@ -344,7 +345,7 @@ public sealed partial class WindowsManagedDiskEngine
                 }
                 catch (Exception ex)
                 {
-                    var detail = (token.IsCancellationRequested ? "The save stopped making progress, so Windows shut down without it. " : "") + ex.Message;
+                    var detail = (token.IsCancellationRequested ? (stopReason?.Invoke() ?? "The save stopped making progress") + ", so Windows shut down without it. " : "") + ex.Message;
                     Update(entry, entry.Record with { LastError = "Shutdown save attempt failed; last committed image retained: " + detail,
                         LastShutdownSave = new(DateTimeOffset.UtcNow, false, started.Elapsed, 0, detail) });
                     WindowsManagedBrokerService.Log($"Managed disk {id}: shutdown save failed after {started.Elapsed.TotalSeconds:0} s: {detail}");

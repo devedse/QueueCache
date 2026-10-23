@@ -670,6 +670,18 @@ foreach (var (offset, value) in new[] { (0, 2UL), (8, 41UL), (16, 3UL), (24, 200
 Check(CacheDiagnostics.Decode(drainPriorityBytes).DrainPriority == new CacheDrainPriority(2, 41, 3, 200, 198, 2) &&
     CacheDiagnostics.Decode(callerRoutingBytes).DrainPriority is null,
     "V24 diagnostics report the read-aware limit, TRIM mode and their counters; V23 reports none");
+var strictBytes = new byte[CacheDiagnostics.StrictBacklogWireSize];
+BinaryPrimitives.WriteUInt32LittleEndian(strictBytes, 25);
+BinaryPrimitives.WriteUInt32LittleEndian(strictBytes.AsSpan(4), CacheDiagnostics.StrictBacklogWireSize);
+foreach (var (offset, value) in new[] { (0, 300UL), (8, 4000UL), (16, 17UL) })
+    BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + offset), value);
+Check(CacheDiagnostics.Decode(strictBytes).StrictBacklog == new CacheStrictBacklog(300, 4000, 17) &&
+    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1208,
+    "V25 diagnostics report Strict's backlog pieces, limit and waits (#16); V24 reports none");
+BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + 8), 100);
+Reject(() => CacheDiagnostics.Decode(strictBytes), "Strict backlog limit below its 256-piece floor rejected");
+BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + 8), 0);
+Check(CacheDiagnostics.Decode(strictBytes).StrictBacklog?.Limit == 0, "Fast mode reports no Strict backlog limit");
 BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 9);
 Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "read-aware limit above eight drainers rejected");
 BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 2);

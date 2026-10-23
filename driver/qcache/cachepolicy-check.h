@@ -29,6 +29,10 @@ constexpr bool PolicyChecks()
     o.WritePercent = 100;
     if (QcWriteLimit(o, 1000) != 1000)
         return false;
+    // Strict backlog (#16): 1024 pieces before a measurement, two seconds of the measured rate, at least 256.
+    if (QcStrictPieceLimit(0) != 1024 || QcStrictPieceLimit(2000) != 4000 || QcStrictPieceLimit(50) != 256 ||
+        QcStrictPieceLimit(0x200000000ULL) != 0xFFFFFFFFUL)
+        return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||

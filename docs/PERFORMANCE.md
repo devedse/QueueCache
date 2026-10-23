@@ -36,7 +36,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 | Drain batch size and parallelism | **Eager 2048 KiB × 8 is the default since plan 164** (with read-aware limit 2 and TRIM mode 3; [results](#final-164)). Same-window A–B–A: 292.4 / 90.7 MB/s against PrimoCache 261.0 / 52.5 on the two #15 workloads at matched anchors, a concurrent disk reader 757 against 170 IOPS. Under it, Idle 1024 KiB × 4 was the default from plan 125 (plan 132 and 142 explicit-drain gains; [history](history/README.md)). Saved profiles keep their settings. Strict caches also inherit the new default; Strict boundaries under Eager were not measured separately (#16). | Storage with a different latency profile (hard disks and SATA SSDs were not measured), a repeated control loss under the release campaign, or Strict measurements. |
 | Next drain improvement | **Done for #15 (plans 159–167).** Eager 2 MiB × 8 with read-aware 2 and asynchronous TRIM is the default and beats a same-window PrimoCache on both workloads ([results](#final-164)). Rejected on the way: aligned gather (plans 155/156), Eager 2 MiB × 4 and read-aware limit 1 (plans 161/162). The uncached Q1 miss path, alone 20–35% slower than Primo's, is a separate improvement. | A workload where Primo leads at matched backend latency, or the Q1 miss-path issue. |
 | TRIM while draining | **Fixed; default since plan 164.** A TRIM waits only for overlapping in-flight drain writes (native 0.4.766.1, plans 159/160); TRIM mode 3 adds an index lookup and an asynchronous lower TRIM with a range fence (plans 162/163). Native 0.4.776.1 also keeps the caller path while a lower TRIM is outstanding (`87de299`). Under Verifier `trim-cache` passed 12/12. The fence's holding path is unexercised, because NTFS orders a file's writes after its own TRIM. 0.4.687.1 and earlier wait for every in-flight write. [Known issue](KNOWN_ISSUES.md#trim-no-longer-waits-for-unrelated-drain-writes). | A file system or tool that writes trimmed ranges before the TRIM completes. |
-| Strict durability barriers | **Write-through writes go direct; the stall after random bursts stays open** (#16, [results](#strict-16)). A Strict write-through write is written straight to the disk after only older versions of its blocks, instead of draining the whole cache and flushing the disk (+6% / +31% on write-through 1M Q8 / 4K Q1, one repetition; the random-burst stall moved to another window rather than going away). **Rejected:** capping Strict's dirty data at two seconds of the measured drain rate. The rate came from large sequential batches, so it cut sequential writes from 5,510 to 285 MB/s and the file tree's create/copy from 34/23 to 43/37 s, while random 4K Q32 writes still completed nothing in 10 s: NTFS's flushes still drain a random backlog that drains far slower than the cap assumed. | A bound on Strict's backlog by estimated drain time (number of separate dirty runs as well as bytes), measured with `compare-cache` in Strict against this before/after. |
+| Strict durability barriers | **Backlog limited to about two seconds of write-out since 0.4.825.1** (#16, [results](#strict-16)). Write-through writes go direct (0.4.810.1); a write that adds dirty data waits while Strict holds as many separate pieces of unwritten data as the drain completed in about 2 s (at least 256; 1,024 before a measurement). The stall after random bursts is gone (random 4K Q1 0 → 7.9 MB/s, flush 1.4 s) at a measured cost: random writes run at the disk's speed (Q32 304 → 7 MB/s), sequential −20% (Q8) / −57% (Q1), mixed −69%; 40,000 files create/copy 15.4/14.3 → 6.6/8.0 s. Accepted: Strict is not the focus. **Rejected earlier:** a byte cap of two seconds of the measured drain rate (sequential 5,510 → 285 MB/s; random still stalled). | A Strict workload that needs more, or the unexplained run 17 minutes after a restart that held writes for whole 10 s windows. |
 | RAM-path rates on the test VM | **Host-bound on 2026-10-22, not a branch regression.** The release run's cached reads, RAM-admitted writes and RAM-disk reference were 35–73% below the October 14 run, while disk-bound cases were faster. A same-window `cache-map-cost` pair measured 107k–156k IOPS on the final build and 114k–163k on 0.4.687.1 (host load 28–29 of 32 threads, VM ballooned to 8–12.6 GiB). ([Results](#final-164).) | Before comparing RAM-path rates across days: check host load and the VM's balloon, and run both builds in the same window. |
 | Page-ins of file data (#19) | **Kept since plan 173**, from a driver-owned copy of the disk data ([results](#reads-19)). A 1 GiB file read twice through Windows' file cache, with Windows' standby memory purged before each read: 275 then 2,254 MiB/s (871 MiB from RAM). | Changes to the staged read path, page-in routing or the read-fill admission. |
 | Coordination/attribution counters | Retained, default off; one flag read when off. | When the diagnosis is needed. |
@@ -156,6 +156,37 @@ random backlog that the disk writes at a few MB/s, whichever test is running the
 cap, sized from sequential drain batches, did not bound that and throttled sequential
 bursts. Runs: `C:\QCResults\Batch2-20261023\compare\before`, `after` and
 `after-direct` on the test VM.
+
+**Backlog limit (0.4.825.1, October 23).** Strict counts separate pieces of unwritten
+data (a version that becomes dirty starts one unless the block before it is dirty
+too) and holds at most what the drain completed in about two seconds (pieces per
+second of drain time, at least 256 pieces, 1,024 before a measurement); a write that
+adds dirty data waits beyond that. `compare-cache` in Strict, 2 GiB, one repetition
+each; before is 0.4.810.1 (19:54 UTC), after is 0.4.819.1 (same native change)
+rerun at 21:07 on a settled VM:
+
+| Test | Before | After |
+|---|---:|---:|
+| Random 4K Q32 / Q1 write, 10 s | 304.2 / 0.0 MB/s | 7.1 / 7.9 MB/s |
+| Sequential 1M Q8 / Q1 write | 9,017 / 4,860 MB/s | 7,172 / 2,080 MB/s |
+| Write-through 1M Q8 / 4K Q1 | 116.3 / 4.1 MB/s | 115.9 / 4.5 MB/s |
+| Absorb 1 GiB / flush after 512 MiB | 3,228 MB/s / 1.445 s | 2,626 MB/s / 1.363 s |
+| Sustained 8 GiB | 449.6 MB/s | 426.9 MB/s |
+| Mixed 70/30 random 4K Q8 | 54.7 MB/s | 17.2 MB/s |
+| 40,000 files create / copy | 15.40 / 14.26 s | 6.59 / 8.00 s |
+
+Sampled every 2 s, the backlog sat at its limit (1,200–4,800 pieces, 5–19 MiB) during
+the random and mixed tests and the drain wrote about 4.7 MB/s; the limit fell to its
+256 floor after sequential write-outs, which slows the next scattered writes until it
+is measured again. A first run 17 minutes after a restart (not sampled) completed
+nothing in the sequential 1M Q8 and Q1 windows and ran the file copy in 44.8 s; an
+isolated rerun of that sequential test wrote 7,940 MB/s with 33 pieces held. That run
+is unexplained. A short check on the final 0.4.825.1, 4 minutes after a restart (10 s
+of random 4K Q32 writes, one program flush, 10 s of sequential 1M Q8 writes): 31.7
+MB/s, 0.02 s and 9,568 MB/s, against 52.5 MB/s, 0.02 s and 8,635 MB/s on 0.4.821.1
+without the limit (both backlogs had drained within the random test). Runs:
+`C:\QCResults\Batch4-20261023\compare\before`, `after` and `after2` (with
+`strict-samples.txt`), and `strict\before`/`after` on the test VM.
 
 `release-performance` on 0.4.810.1 (Verifier off) completed 11/11 phases and
 106/106 cases with every correctness phase passing and all 2,310 owned process exits

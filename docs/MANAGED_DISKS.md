@@ -80,11 +80,14 @@ says so meanwhile (#12).
 With save-on-shutdown on, an image in RAM that has changes since its last save is
 saved while Windows shuts down. A save copies the whole image and reads it back,
 so it takes about twice its size divided by the disk's speed; the disk's details
-in the app give the last save's time as the estimate. Windows waits for it: the
-service sets no time limit while the save makes progress (Windows' own limit is 3
-hours) and gives a save up only after 3 minutes without progress; its log
-records each tenth of the progress. Meanwhile Windows shows its own shutdown
-screen. The app does not hold the shutdown to show progress: Windows cancels a
+in the app give the last save's time as the estimate. Windows waits for it for at
+most 1 hour: the service gives the shutdown saves up after 3 minutes without
+progress, or when they have run for 58 minutes, and records that; its log records
+each tenth of the progress. A save that takes longer than that will not finish at
+shutdown: save before shutting down (the app's disk details warn when the last save
+took an hour or more). Meanwhile Windows shows its own shutdown
+screen ("Restarting"; with Windows' "Display highly detailed status messages" setting
+on it says "Shutting down service: QueueCache managed disks."). The app does not hold the shutdown to show progress: Windows cancels a
 held shutdown after about a minute unless you click "Shut down anyway". A power
 cut, holding the power button or a forced shutdown can still stop a save. An
 unfinished save is never used: the image starts from its previous save. After the
