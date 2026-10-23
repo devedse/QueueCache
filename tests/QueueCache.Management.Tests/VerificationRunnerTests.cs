@@ -251,6 +251,8 @@ internal static class VerificationRunnerTests
             }
             catch (IOException) { }
         }
+        Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5, 640).Detail.Contains("page-in blocks kept: 640"),
+            "the program-file check reports the page-in blocks kept (#19)");
         Check(QueueCache.Operations.PagingRecognitionScenarios.VerifyImages(3, 1 << 20, [], [0, 0], 5).Detail.Contains("repeated a page: 5"),
             "program-file check accepts matching files and clean exits");
         foreach (var bad in new Action[]

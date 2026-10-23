@@ -69,14 +69,17 @@ public static class PagingRecognitionScenarios
         try
         {
             // Program-file oracle: with clean cached data dropped, unbuffered reads of these unmodified files come
-            // from the disk. After the pressure, and after new processes loaded them, every file must still hash
-            // the same through the normal (cached, paging) read path.
+            // from the disk. Clean data is dropped again, so the new processes' page-ins of them miss and are kept
+            // (#19). After the pressure, and with Windows' standby memory purged so its own copies are gone, every
+            // file must still hash the same through the normal (cached, paging) read path.
             var images = Directory.GetFiles(AppContext.BaseDirectory, "*.dll");
             device.Control(WriteCacheAction.DropClean);
             var reference = images.ToDictionary(path => path, UnbufferedHash);
+            device.Control(WriteCacheAction.DropClean);
             var diagnosticsBefore = device.GetDiagnostics();
             var pressure = ApplyBoundedPressure();
             var launches = LaunchSelf(10);
+            StandbyMemory.Purge();
             var diagnosticsAfter = device.GetDiagnostics();
             var mismatched = images.Where(path => !BufferedHash(path).AsSpan().SequenceEqual(reference[path]))
                 .Select(path => Path.GetFileName(path)).ToArray();
@@ -86,7 +89,9 @@ public static class PagingRecognitionScenarios
                 diagnosticsBefore.PagingFileBypasses, diagnosticsAfter.PagingFileBypasses);
             return [.. checks, VerifyImages(images.Length, images.Sum(path => new FileInfo(path).Length), mismatched, launches,
                 diagnosticsBefore.PagingReadsRepeatedPages is null || diagnosticsAfter.PagingReadsRepeatedPages is null
-                    ? null : diagnosticsAfter.PagingReadsRepeatedPages - diagnosticsBefore.PagingReadsRepeatedPages)];
+                    ? null : diagnosticsAfter.PagingReadsRepeatedPages - diagnosticsBefore.PagingReadsRepeatedPages,
+                diagnosticsBefore.PagingReadFills is null || diagnosticsAfter.PagingReadFills is null
+                    ? null : diagnosticsAfter.PagingReadFills - diagnosticsBefore.PagingReadFills)];
         }
         finally
         {
@@ -94,18 +99,20 @@ public static class PagingRecognitionScenarios
         }
     }
 
-    /// <summary>0.4.148.1-0.4.162.1 kept paging read misses; a clustered page-in's buffer can repeat Windows'
-    /// shared dummy page, so program pages were cached with another block's data and new processes crashed.
-    /// Every file must hash as it did on disk and every started process must exit normally.</summary>
+    /// <summary>0.4.148.1-0.4.162.1 kept paging read misses from the page-in's own buffer, which can repeat
+    /// Windows' shared dummy page, so program pages were cached with another block's data and new processes
+    /// crashed. Since #19 page-in misses are kept again, from a driver-owned copy of the disk data. Every file
+    /// must hash as it did on disk and every started process must exit normally.</summary>
     internal static CheckResult VerifyImages(int files, long bytes, IReadOnlyList<string> mismatched,
-        IReadOnlyList<int> exitCodes, ulong? repeatedPageReads)
+        IReadOnlyList<int> exitCodes, ulong? repeatedPageReads, ulong? pagingFills = null)
     {
         const string label = "system-paging/program-files-match-disk";
         var failedLaunches = exitCodes.Count(code => code != 0);
         var evidence = FormattableString.Invariant(
             $"{files} program files ({bytes / MiB} MiB) hashed from disk before the pressure; {exitCodes.Count} processes started afterwards") +
             (repeatedPageReads is { } repeated
-                ? FormattableString.Invariant($"; paging reads whose buffer repeated a page: {repeated}") : "");
+                ? FormattableString.Invariant($"; paging reads whose buffer repeated a page: {repeated}") : "") +
+            (pagingFills is { } fills ? FormattableString.Invariant($"; page-in blocks kept: {fills}") : "");
         if (mismatched.Count != 0 || failedLaunches != 0)
             throw new IOException(FormattableString.Invariant(
                 $"{label}: {mismatched.Count} program files read differently through the cache ({string.Join(", ", mismatched.Take(8))}) and {failedLaunches} processes failed. ") + evidence);
