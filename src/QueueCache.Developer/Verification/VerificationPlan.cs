@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 171;
+    public const int Version = 172;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -231,7 +231,9 @@ public static class VerificationPlan
             new("volume-raw-disk-commands", "volume-raw-disk-commands"),
             new("volume-shared-disk", "volume-shared-disk"),
             new("volume-resize", "volume-resize"),
-            new("volume-snapshot", "volume-snapshot")
+            new("volume-snapshot", "volume-snapshot"),
+            // Plan 172 (#21): a virtual disk detached with pending Fast writes keeps them.
+            new("volume-detach", "volume-detach")
         ],
         "trim-cache" => [new("trim-cache", "trim-cache")],
         // Plan 165: the policies parallel-copies scenario alone, alternating the 2048 KiB default and 1024 KiB batches.

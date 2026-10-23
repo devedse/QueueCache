@@ -1085,6 +1085,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, volumeChecks);
                 ReportFailures(volumeChecks, Console.Error);
                 return volumeChecks.Count > 0 && volumeChecks.All(c => c.Result is "PASS" or "SKIP") ? 0 : 1;
+            case "volume-detach":
+                var detachChecks = await VolumeDetachScenario.RunAsync(target, job.WorkDirectory!, CancellationToken.None);
+                RunStorage.AtomicJson(job.Reply, detachChecks);
+                ReportFailures(detachChecks, Console.Error);
+                return detachChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);

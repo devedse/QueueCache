@@ -123,6 +123,37 @@ public static class LabDisk
         return 0;
     }
 
+    /// <summary>A NEW single-volume NTFS VHDX for one check (the volumes suite's detach case): created,
+    /// attached and formatted with a free letter from Z: down. Returns the letter.</summary>
+    internal static async Task<char> CreateScratchAsync(string path, int sizeMiB, string label, CancellationToken token)
+    {
+        path = ValidatePath(path);
+        if (File.Exists(path))
+            throw new IOException($"{path} already exists.");
+        var used = DriveInfo.GetDrives().Select(drive => char.ToUpperInvariant(drive.Name[0])).ToHashSet();
+        var letter = Enumerable.Range('M', 'Z' - 'M' + 1).Select(c => (char)c).Reverse().FirstOrDefault(c => !used.Contains(c));
+        if (letter == default)
+            throw new IOException("No free drive letter from M: to Z:.");
+        await DiskPart($"create vdisk file=\"{path}\" maximum={sizeMiB} type=expandable\r\nattach vdisk\r\n", token);
+        await PowerShell($"$ErrorActionPreference='Stop'; $d=@(Get-Disk | Where-Object Location -eq '{path}'); if ($d.Count -ne 1) {{ throw 'The new VHDX is not attached.' }}; $d=$d[0]; " +
+            "if ($d.PartitionStyle -ne 'RAW' -or $d.NumberOfPartitions -ne 0 -or $d.IsBoot -or $d.IsSystem) { throw 'The attached VHDX is not an empty disk.' }; " +
+            $"Initialize-Disk -Number $d.Number -PartitionStyle GPT; New-Partition -DiskNumber $d.Number -UseMaximumSize -DriveLetter {letter} | {Format("NTFS", label)}", token);
+        return letter;
+    }
+    /// <summary>Attaches or detaches a scratch VHDX as Windows does, whatever its volume holds: the detach case's subject.</summary>
+    internal static Task AttachScratchAsync(string path, CancellationToken token) =>
+        DiskPart($"select vdisk file=\"{ValidatePath(path)}\"\r\nattach vdisk\r\n", token);
+    internal static Task DetachScratchAsync(string path, CancellationToken token) =>
+        DiskPart($"select vdisk file=\"{ValidatePath(path)}\"\r\ndetach vdisk\r\n", token);
+    internal static Task<string[]> ScratchVolumesAsync(string path, CancellationToken token) => VolumesAsync(ValidatePath(path), token);
+    /// <summary>The IDs of the QueueCache driver's System log entries since <paramref name="since"/>.</summary>
+    internal static async Task<int[]> DriverEventIdsAsync(DateTime since, CancellationToken token)
+    {
+        var output = await PowerShell("@(Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='qcachelab'; StartTime=[DateTime]::Parse('" +
+            since.ToString("o") + "')} -ErrorAction SilentlyContinue | ForEach-Object Id) -join ','", token);
+        return output.Trim().Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToArray();
+    }
+
     private static async Task<int> ShowAsync(string path, CancellationToken token)
     {
         var letters = await VolumesAsync(path, token);
