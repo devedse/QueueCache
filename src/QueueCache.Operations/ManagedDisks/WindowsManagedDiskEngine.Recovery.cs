@@ -7,9 +7,16 @@ namespace QueueCache.Operations.ManagedDisks;
 [SupportedOSPlatform("windows")]
 public sealed partial class WindowsManagedDiskEngine
 {
+    /// <summary>How long startup keeps retrying what was refused only because RAM was short (#12), and how often.</summary>
+    internal static readonly TimeSpan StartupMemoryRetry = TimeSpan.FromMinutes(10), StartupMemoryRetryInterval = TimeSpan.FromSeconds(15);
+    private readonly HashSet<string> waitingProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<Guid> waitingDisks = [];
+    private DateTime retryUntilUtc;
+
     public async Task InitializeAsync(IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default)
     {
         await mutation.WaitAsync(token);
+        retryUntilUtc = DateTime.UtcNow + StartupMemoryRetry;
         try
         {
             foreach (var entry in entries.Values)
@@ -20,6 +27,13 @@ public sealed partial class WindowsManagedDiskEngine
                     await ReconcileAsync(entry, token);
                     if (ManagedDiskStartup.ShouldStartAfterReconcile(entry.Record.Definition, newStartup, entry.Record.Runtime))
                         await StartCoreAsync(entry, progress, token);
+                }
+                catch (InsufficientMemoryForCacheException ex) when (WaitsForMemory(entry))
+                {
+                    // Refused before anything was allocated: it stays Stopped and RetryStartupAsync tries again.
+                    WindowsManagedBrokerService.Log($"Managed disk {entry.Record.ResourceId}: {ex.Message} {MemoryBudget.DescribeAvailable()}. Retrying until {retryUntilUtc:u}.");
+                    Update(entry, entry.Record with { LastError = WaitingForMemoryText(ex) });
+                    waitingDisks.Add(entry.Record.ResourceId);
                 }
                 catch (Exception ex)
                 {
@@ -37,8 +51,19 @@ public sealed partial class WindowsManagedDiskEngine
             // Managed resources own their image-volume profiles. Regular disks retain strict saved identities.
             if (store.ReadStartupSession() != startupSession)
             {
+                try { SavedConfigurations.ClearRestoreStatus(); }
+                catch (Exception ex) { WindowsManagedBrokerService.Log("Could not clear the previous startup restore results: " + ex.Message); }
                 var restored = await SavedConfigurations.RestoreAsync(token: token);
-                foreach (var failure in restored.Where(r => !r.Applied)) WindowsManagedBrokerService.Log($"Saved profile {failure.Volume}: {failure.Detail}");
+                foreach (var result in restored)
+                {
+                    if (result.MemoryShort)
+                        WindowsManagedBrokerService.Log($"Saved profile {result.Volume}: {result.Detail} {MemoryBudget.DescribeAvailable()}. Retrying until {retryUntilUtc:u}.");
+                    else if (!result.Applied)
+                        WindowsManagedBrokerService.Log($"Saved profile {result.Volume}: {result.Detail}");
+                    RecordRestore(result, result.MemoryShort ? retryUntilUtc : null);
+                    if (result.MemoryShort && result.VolumeId is not null)
+                        waitingProfiles.Add(result.VolumeId);
+                }
                 store.SaveStartupSession(startupSession);
             }
         }
@@ -178,6 +203,120 @@ public sealed partial class WindowsManagedDiskEngine
         store.SaveJournal(new(Guid.NewGuid(), record.ResourceId, current.State == ManagedDiskState.Stopped ? ManagedDiskJournalStage.Stopped : ManagedDiskJournalStage.Ready,
             current.BootEpoch, current.CreationGeneration));
     }
+    /// <summary>A RAM disk refused before allocating anything stays Stopped, so it can simply be started again.</summary>
+    private static bool WaitsForMemory(Entry entry) =>
+        entry.Provider is null && entry.Image is null && entry.Disk is null && entry.Record.Runtime?.State == ManagedDiskState.Stopped;
+    private string WaitingForMemoryText(Exception refusal) =>
+        $"Waiting for free RAM to start; QueueCache retries until {retryUntilUtc.ToLocalTime():HH:mm}. {refusal.Message}";
+    private static void RecordRestore(RestoreResult result, DateTime? retryUntil)
+    {
+        if (result.VolumeId is null)
+            return;
+        var state = result.Applied ? ProfileRestoreState.Restored
+            : retryUntil is null ? ProfileRestoreState.NotRestored : ProfileRestoreState.WaitingForMemory;
+        try { SavedConfigurations.RecordRestore(new(result.Volume, result.VolumeId, state, result.Detail, DateTime.UtcNow, retryUntil)); }
+        catch (Exception ex) { WindowsManagedBrokerService.Log($"Could not record the startup restore result of {result.Volume}: {ex.Message}"); }
+    }
+
+    /// <summary>Retries the saved profiles and RAM disks that startup refused only because RAM was short at
+    /// that moment (#12): every 15 s for 10 minutes. Anything else that changes them meanwhile (a new
+    /// setting, a manual start or stop) ends the retry for that one. Stops with <paramref name="token"/>.</summary>
+    public async Task RetryStartupAsync(CancellationToken token)
+    {
+        var lastDetail = "";
+        try
+        {
+            while (waitingProfiles.Count + waitingDisks.Count != 0 && DateTime.UtcNow < retryUntilUtc)
+            {
+                await Task.Delay(StartupMemoryRetryInterval, token);
+                await mutation.WaitAsync(token);
+                try { lastDetail = await RetryStartupOnceAsync(token) ?? lastDetail; }
+                finally { mutation.Release(); }
+            }
+            if (waitingProfiles.Count + waitingDisks.Count != 0)
+                await GiveUpAsync($"RAM stayed short for {StartupMemoryRetry.TotalMinutes:0} minutes after startup. {lastDetail}".TrimEnd());
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            if (waitingProfiles.Count + waitingDisks.Count != 0)
+                await GiveUpAsync("The QueueCache service stopped while it waited for free RAM.");
+        }
+        catch (Exception ex)
+        {
+            WindowsManagedBrokerService.Log("Retrying the startup restore failed: " + ex);
+            await GiveUpAsync("Retrying failed: " + ex.Message);
+        }
+    }
+    /// <summary>One retry pass under the mutation lock. Returns the latest RAM refusal, if any.</summary>
+    private async Task<string?> RetryStartupOnceAsync(CancellationToken token)
+    {
+        string? refusal = null;
+        if (waitingProfiles.Count != 0)
+        {
+            waitingProfiles.IntersectWith(SavedConfigurations.List().Select(p => p.VolumeId)); // Removed meanwhile.
+            foreach (var result in await SavedConfigurations.RestoreAsync(token: token, include: p => waitingProfiles.Contains(p.VolumeId), onlyIfNoCache: true))
+            {
+                if (result.MemoryShort) { refusal = $"{result.Detail} {MemoryBudget.DescribeAvailable()}."; continue; }
+                waitingProfiles.Remove(result.VolumeId!);
+                RecordRestore(result, null);
+                WindowsManagedBrokerService.Log($"Saved profile {result.Volume}: " + (result.Applied ? "restored after waiting for free RAM." : result.Detail));
+            }
+        }
+        foreach (var id in waitingDisks.ToArray())
+        {
+            if (!entries.TryGetValue(id, out var entry) || !WaitsForMemory(entry) || entry.Record.LastError?.StartsWith("Waiting for free RAM", StringComparison.Ordinal) != true)
+            {
+                waitingDisks.Remove(id); // Started, stopped or removed by its owner meanwhile.
+                continue;
+            }
+            try
+            {
+                await StartCoreAsync(entry, null, token);
+                waitingDisks.Remove(id);
+                WindowsManagedBrokerService.Log($"Managed disk {id}: started after waiting for free RAM.");
+            }
+            catch (InsufficientMemoryForCacheException ex) when (WaitsForMemory(entry))
+            {
+                refusal = $"{ex.Message} {MemoryBudget.DescribeAvailable()}.";
+                Update(entry, entry.Record with { LastError = WaitingForMemoryText(ex) });
+            }
+            catch (Exception ex)
+            {
+                // StartCoreAsync recorded the outcome (Stopped or RecoveryRequired) and its error.
+                waitingDisks.Remove(id);
+                WindowsManagedBrokerService.Log($"Managed disk {id}: starting after waiting for RAM failed: {ex.Message}");
+            }
+        }
+        return refusal;
+    }
+    private async Task GiveUpAsync(string detail)
+    {
+        foreach (var volumeId in waitingProfiles)
+        {
+            var profile = SavedConfigurations.List().FirstOrDefault(p => p.Matches(volumeId));
+            if (profile is not null)
+                RecordRestore(new(profile.Volume, false, detail, volumeId), null);
+            WindowsManagedBrokerService.Log($"Saved profile {profile?.Volume ?? volumeId}: not restored. {detail}");
+        }
+        waitingProfiles.Clear();
+        if (waitingDisks.Count == 0)
+            return;
+        // Shutdown may hold the lock for its saves; the record then keeps its waiting text until the next start.
+        if (!await mutation.WaitAsync(TimeSpan.FromSeconds(10)))
+            return;
+        try
+        {
+            foreach (var id in waitingDisks)
+                if (entries.TryGetValue(id, out var entry) && WaitsForMemory(entry))
+                {
+                    Update(entry, entry.Record with { LastError = "Not started: " + detail + " Start it once RAM is free." });
+                    WindowsManagedBrokerService.Log($"Managed disk {id}: not started. {detail}");
+                }
+            waitingDisks.Clear();
+        }
+        finally { mutation.Release(); }
+    }
+
     public async Task AttemptShutdownSavesAsync(CancellationToken token)
     {
         await mutation.WaitAsync(token);

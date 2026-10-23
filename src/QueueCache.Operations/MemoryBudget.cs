@@ -21,15 +21,33 @@ public static class MemoryBudget
     [SupportedOSPlatform("windows")]
     public static ulong AvailableForReservation()
     {
-        var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
-        if (!GlobalMemoryStatusEx(ref status))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+        var status = ReadStatus();
         // Available physical memory is a point-in-time estimate, not a reservation.
         // Keep meaningful application/OS headroom: a multi-GiB nonpaged cache plus
         // a large decoded image can otherwise leave a small VM with only 1 GiB.
         // Kernel allocation and the shared physical-RAM cap remain authoritative.
         var headroom = RequiredSystemHeadroom(status.TotalPhysical);
         return status.AvailablePhysical > headroom ? status.AvailablePhysical - headroom : 0;
+    }
+    /// <summary>The measured amounts behind a refusal, for logs: available and total RAM and the kept headroom.</summary>
+    [SupportedOSPlatform("windows")]
+    public static string DescribeAvailable()
+    {
+        static string GiB(ulong bytes) => $"{bytes / 1073741824.0:0.0} GiB";
+        try
+        {
+            var status = ReadStatus();
+            return $"{GiB(status.AvailablePhysical)} of {GiB(status.TotalPhysical)} RAM available; {GiB(RequiredSystemHeadroom(status.TotalPhysical))} is kept for Windows and applications";
+        }
+        catch (Win32Exception ex) { return "Available RAM is unknown: " + ex.Message; }
+    }
+    [SupportedOSPlatform("windows")]
+    private static MemoryStatus ReadStatus()
+    {
+        var status = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+        if (!GlobalMemoryStatusEx(ref status))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        return status;
     }
     public const string InsufficientMessage = "Not enough currently available RAM for this increase while preserving at least 2 GiB or 25% of physical RAM for Windows and applications. Choose a smaller budget.";
     [SupportedOSPlatform("windows")]

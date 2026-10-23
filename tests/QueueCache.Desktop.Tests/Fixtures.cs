@@ -120,6 +120,8 @@ internal sealed class VolumeFixture : ICacheTaskService
     }
     public Task<IReadOnlyList<SavedConfiguration>> ListSavedAsync() => Task.FromResult<IReadOnlyList<SavedConfiguration>>(
         [new SavedConfiguration(2, "T:", "fixture-removed", 8L << 30, new CacheConfiguration(256, CachePreset.Strict), false, "{00000000-0000-0000-0000-000000000005}")]);
+    public List<ProfileRestoreStatus> Restores = [];
+    public Task<IReadOnlyList<ProfileRestoreStatus>> ListRestoreStatusAsync() => Task.FromResult<IReadOnlyList<ProfileRestoreStatus>>(Restores.ToArray());
     public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume)
     {
         MapReads++;

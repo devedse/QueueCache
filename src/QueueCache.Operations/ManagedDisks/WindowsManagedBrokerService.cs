@@ -60,15 +60,18 @@ public static class WindowsManagedBrokerService
             await engine.InitializeAsync(new ServiceProgress());
             Report(Running);
             using var serving = new CancellationTokenSource();
+            // Startup restores refused only because RAM was short are retried meanwhile (#12).
+            var retry = engine.RetryStartupAsync(serving.Token);
             var endpoint = new WindowsManagedDiskBroker(engine).RunAsync(serving.Token);
             var completed = await Task.WhenAny(endpoint, stopping.Task);
-            if (completed == endpoint) { await endpoint; return; }
+            if (completed == endpoint) { serving.Cancel(); await retry; await endpoint; return; }
             var control = await stopping.Task;
             Report(StopPending);
             // Cancel precommit work and await its independent cleanup before disposing
             // broker handles. Committed saves and Windows formatting finish their actual outcome.
             serving.Cancel();
             await endpoint;
+            await retry;
             if (SavesBeforeStopping(control))
             {
                 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(110));

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using QueueCache.Operations;
 using QueueCache.Operations.ManagedDisks;
 
 internal static class ManagedBrokerTests
@@ -17,6 +18,15 @@ internal static class ManagedBrokerTests
         Check(unprotected.Contains(@"icacls ""C:\QCTests"" /inheritance:r /grant:r ""*S-1-5-32-544:(OI)(CI)F"" ""*S-1-5-18:(OI)(CI)F""") &&
             !ManagedDiskHostProtection.UnprotectedMessage(@"D:\", true).Contains("icacls"),
             "a refused folder's message gives the fix, but never suggests re-permissioning a drive root");
+        // #12: what the volume list says about this startup's restore of a saved profile.
+        var until = new DateTime(2026, 10, 23, 12, 30, 0, DateTimeKind.Utc);
+        var waiting = new ProfileRestoreStatus("Q:", "{00000000-0000-0000-0000-000000000002}", ProfileRestoreState.WaitingForMemory, MemoryBudget.InsufficientMessage, until.AddMinutes(-10), until);
+        Check(waiting.Describe() == $"waiting for free RAM, retrying until {until.ToLocalTime():HH:mm}" &&
+            (waiting with { State = ProfileRestoreState.NotRestored, Detail = "RAM stayed short.", RetryUntilUtc = null }).Describe() == "not restored at startup: RAM stayed short." &&
+            (waiting with { State = ProfileRestoreState.Restored }).Describe() is null,
+            "the volume list names a waiting or failed startup restore and says nothing once it is restored");
+        Check(WindowsManagedDiskEngine.StartupMemoryRetry == TimeSpan.FromMinutes(10) && WindowsManagedDiskEngine.StartupMemoryRetryInterval == TimeSpan.FromSeconds(15),
+            "startup retries a RAM refusal every 15 s for 10 minutes");
         var request = new ManagedBrokerRequest(1, Guid.NewGuid(), "create", ManagedDiskDefinition.New(ManagedDiskMode.EphemeralRam));
         using var wire = new MemoryStream(); await ManagedDiskBrokerProtocol.WriteAsync(wire, request);
         var bytes = wire.ToArray();

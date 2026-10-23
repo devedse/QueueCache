@@ -179,6 +179,15 @@ public sealed partial class VolumeViewModel : ObservableObject
         Description = exists ? "" : Volume.HasFileSystem ? "Ready for a cache. Choose how much RAM it may use." : "This volume is not formatted. Format it to add a cache.";
         if (exists && !Volume.HasFileSystem)
             Description = "This volume has no file system: only Flush, Clear read cache and Remove cache are available.";
+        // A saved cache that startup has not restored (yet): RAM was short at that moment (#12).
+        if (!exists && monitor.RestoreStatus(Volume.VolumeId) is { State: not ProfileRestoreState.Restored } restore)
+        {
+            var waiting = restore.State == ProfileRestoreState.WaitingForMemory;
+            (Health, StatusText) = (Health.Attention, waiting ? "Waiting for RAM" : "Not restored");
+            Description = waiting
+                ? $"Its saved cache is waiting for free RAM. QueueCache tries again until {restore.RetryUntilUtc?.ToLocalTime():HH:mm}."
+                : "Its saved cache was not restored at startup: " + restore.Detail;
+        }
         Warning = Volume.HasFileSystem && !Volume.Journaled ? $"{Volume.FileSystem} {FileSystems.NoJournalWarning}" : null;
 
         var options = state.Options;
