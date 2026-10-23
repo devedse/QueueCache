@@ -29,11 +29,6 @@ constexpr bool PolicyChecks()
     o.WritePercent = 100;
     if (QcWriteLimit(o, 1000) != 1000)
         return false;
-    // Strict dirty limit (#16): 64 MiB before a measurement, two seconds of the measured drain rate,
-    // at least 16 MiB, never above the write limit.
-    if (QcStrictDirtyLimit(1000000, 0, 4096) != 16384 || QcStrictDirtyLimit(1000000, 10ULL << 20, 4096) != 5120 ||
-        QcStrictDirtyLimit(1000000, 1ULL << 20, 4096) != 4096 || QcStrictDirtyLimit(1000, 500ULL << 20, 4096) != 1000)
-        return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||

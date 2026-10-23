@@ -1073,21 +1073,6 @@ static void WaitForCacheProgress(QC_CACHE* c, PIRP blockedRequest)
     else
         KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
 }
-// The disk's drain rate while it is writing, for Strict's dirty limit (#16): bytes of completed drain
-// writes per second of time with drain writes in flight (idle gaps excluded), averaged over windows of
-// at least half a second. Mutex held.
-static void MeasureDrainRate(QC_CACHE* c, ULONGLONG bytes)
-{
-    const auto now = KeQueryInterruptTime();
-    c->DrainRateBytes += bytes;
-    c->DrainRateTime += now - c->DrainBusySince;
-    c->DrainBusySince = now;
-    if (c->DrainRateTime < 5000000) // 100 ns units
-        return;
-    const auto rate = c->DrainRateBytes * 10000000 / c->DrainRateTime;
-    c->DrainBytesPerSecond = c->DrainBytesPerSecond ? (c->DrainBytesPerSecond * 3 + rate) / 4 : rate;
-    c->DrainRateBytes = c->DrainRateTime = 0;
-}
 static void Drainer(PVOID context)
 {
     auto worker = static_cast<QC_DRAIN_WORKER*>(context);
@@ -1238,8 +1223,6 @@ static void Drainer(PVOID context)
         if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
         else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
         else ++c->Performance.DrainSizeLarge;
-        if (!c->State.InFlightBytes)
-            c->DrainBusySince = KeQueryInterruptTime(); // The disk starts writing (MeasureDrainRate).
         c->State.InFlightBytes += transferBytes;
         worker->InFlightStart = io.Offset.QuadPart;
         worker->InFlightEnd = io.Offset.QuadPart + io.Length;
@@ -1341,7 +1324,6 @@ static void Drainer(PVOID context)
             c->State.DirtyBytes -= transferBytes;
             c->DirtySlots -= merged;
             c->State.DrainedBytes += transferBytes;
-            MeasureDrainRate(c, transferBytes);
             for (ULONG i = 0; i < merged; ++i)
             {
                 auto completedIndex = selected[i];
@@ -2214,17 +2196,12 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         auto writeUsed = c->DirtySlots + c->CleanCount[0];
         const auto admissionLimit = QcAdmissionWriteLimit(
             WriteLimit(c), QcCachePagingPathCount(c) > 0, pagingIo);
-        // Strict (#16): at most about two seconds of the disk's drain rate is dirty, so a flush finishes
-        // in seconds; beyond it this writer waits (and so forces draining). A request may always start
-        // an empty cache.
-        const auto dirtyLimit = c->UnsafeDefer ? admissionLimit : QcStrictDirtyLimit(admissionLimit, c->DrainBytesPerSecond, Chunk);
-        const bool dirtyFits = c->DirtySlots + newDirty <= dirtyLimit || (!c->DirtySlots && newDirty <= admissionLimit);
         if (needed > c->Capacity - c->Count && c->Options.Allocation == QcAutomatic && EvictForWrite(c, blocks))
             continue;
         if (c->Options.Allocation == QcFixed &&
             (needed > c->Capacity - c->Count || writeUsed + newWriteOccupancy > admissionLimit) && Evict(c, 0))
             continue;
-        if ((needed <= c->Capacity - c->Count && dirtyFits) ||
+        if ((needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= admissionLimit) ||
             !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
             break;
         if (callerPath)
