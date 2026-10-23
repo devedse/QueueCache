@@ -118,7 +118,7 @@
             <CheckBox Name="DiskReadOnly" IsVisible="{Binding ShowReadOnly}" IsChecked="{Binding ReadOnly}" Content="Read-only: never save changes to the image" />
             <CheckBox Name="DiskSaveBeforeStop" IsChecked="{Binding SaveBeforeStop}" IsEnabled="{Binding !ReadOnly}" Content="Save before stopping" />
             <CheckBox Name="DiskShutdownSave" IsChecked="{Binding SaveDuringShutdown}" IsEnabled="{Binding !ReadOnly}">
-              <TextBlock TextWrapping="Wrap" Text="Try to save during Windows shutdown (a forced shutdown or power cut can prevent it)" />
+              <TextBlock TextWrapping="Wrap" Text="Try to save during Windows shutdown, for at most 1 hour (a forced shutdown or power cut can prevent it)" />
             </CheckBox>
           </StackPanel>
 

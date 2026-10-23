@@ -25,9 +25,11 @@ internal static class ManagedBrokerTests
             (waiting with { State = ProfileRestoreState.NotRestored, Detail = "RAM stayed short.", RetryUntilUtc = null }).Describe() == "not restored at startup: RAM stayed short." &&
             (waiting with { State = ProfileRestoreState.Restored }).Describe() is null,
             "the volume list names a waiting or failed startup restore and says nothing once it is restored");
-        // #22: no time limit at shutdown. Windows waits up to 3 hours; a save is given up only when it stops progressing.
-        Check(WindowsManagedBrokerService.PreshutdownTimeoutMs == 3U * 60 * 60 * 1000 && WindowsManagedBrokerService.StallLimit == TimeSpan.FromMinutes(3),
-            "Windows waits hours for shutdown saves, and a save is given up after 3 minutes without progress");
+        // #22: Windows waits at most an hour; the broker stops the saves 2 minutes earlier to record the outcome,
+        // and gives a save up after 3 minutes without progress.
+        Check(WindowsManagedBrokerService.PreshutdownTimeoutMs == 60U * 60 * 1000 && WindowsManagedBrokerService.StallLimit == TimeSpan.FromMinutes(3) &&
+            WindowsManagedBrokerService.ShutdownSaveLimit == TimeSpan.FromMinutes(58),
+            "Windows waits at most an hour for shutdown saves; the broker stops them just before and after 3 minutes without progress");
         var watchdogLog = new List<string>();
         using (var watchdog = new WindowsManagedBrokerService.ShutdownSaveWatchdog(TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(50), line => { lock (watchdogLog) watchdogLog.Add(line); }))
         {
@@ -38,7 +40,18 @@ internal static class ManagedBrokerTests
             }
             Check(!watchdog.Token.IsCancellationRequested, "a save that keeps reporting progress is never given up, however long it takes");
             await Task.Delay(1500);
-            Check(watchdog.Token.IsCancellationRequested, "a save that stops reporting progress is given up");
+            Check(watchdog.Token.IsCancellationRequested && watchdog.Reason?.StartsWith("The save made no progress for", StringComparison.Ordinal) == true,
+                "a save that stops reporting progress is given up, and says why");
+        }
+        using (var limited = new WindowsManagedBrokerService.ShutdownSaveWatchdog(TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(50), _ => { }, TimeSpan.FromMilliseconds(500)))
+        {
+            for (ulong done = 0; done <= 10 && !limited.Token.IsCancellationRequested; done++)
+            {
+                limited.Report(new(ManagedDiskState.Saving, "Copying the complete frozen RAM disk.", done << 20, 10UL << 20));
+                await Task.Delay(100);
+            }
+            Check(limited.Token.IsCancellationRequested && limited.Reason == "The save did not finish within the 1-hour limit at shutdown",
+                "shutdown saves that keep progressing are still stopped at the overall limit");
         }
         lock (watchdogLog)
             Check(watchdogLog.Count(l => l.StartsWith("Shutdown save: Copying", StringComparison.Ordinal)) == 11 &&

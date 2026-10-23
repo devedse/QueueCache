@@ -231,7 +231,7 @@ cache or a disk.
   Startup and a crash during a checkpoint commit are not covered. Shutdown saves of
   136–151 s (a 2 GiB image on a deliberately slowed host volume) committed on the VM
   (0.4.803.1 and 0.4.810.1). Throughout a 139 s save the VM's screen showed Windows' own
-  "Restarting"; QueueCache adds no message there. Longer saves, Windows' 3-hour limit and
+  "Restarting"; QueueCache adds no message there. Longer saves, the 1-hour shutdown limit and
   a real PC's shutdown are not covered.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is

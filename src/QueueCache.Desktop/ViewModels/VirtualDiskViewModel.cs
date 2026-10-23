@@ -251,16 +251,18 @@ public sealed partial class VirtualDiskViewModel : ObservableObject
         UpdateActions();
     }
 
-    /// <summary>A save copies the whole image and reads it back, so the last save's time is the estimate (#22).</summary>
-    internal static readonly TimeSpan LongShutdownSave = TimeSpan.FromMinutes(5);
+    /// <summary>The last save's time is the estimate (#22); Windows waits for shutdown saves for at most an hour.</summary>
+    internal static readonly TimeSpan LongShutdownSave = TimeSpan.FromMinutes(5), ShutdownSaveLimit = TimeSpan.FromHours(1);
     private static string ShutdownSaveText(ManagedDiskRecord record)
     {
         if (!record.Definition.SaveDuringShutdown)
             return "Not saved: changes since the last save are lost";
         if (record.LastSave is not { } last)
             return "Saved before Windows shuts down; how long it takes depends on the image size and the disk";
+        if (last.Duration >= ShutdownSaveLimit)
+            return $"Probably not saved at shutdown: the last save took {Formatting.Format.Duration(last.Duration)}, and Windows waits at most 1 hour. Save before shutting down";
         var text = $"Saved before Windows shuts down, about {Formatting.Format.Duration(last.Duration)} (as long as the last save)";
-        return last.Duration > LongShutdownSave ? text + ". Shutting down waits that long; save before shutting down to make it quicker" : text;
+        return last.Duration > LongShutdownSave ? text + ". Shutting down waits that long (at most 1 hour); save before shutting down to make it quicker" : text;
     }
     private DateTimeOffset? notifiedShutdown;
     /// <summary>After a restart, says once whether the save at the last shutdown finished.</summary>

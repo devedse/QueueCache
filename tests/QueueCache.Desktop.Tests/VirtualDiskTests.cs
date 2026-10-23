@@ -19,7 +19,13 @@ internal static class VirtualDiskTests
         Settle(monitor.RefreshAsync());
         var image = monitor.VirtualDisks.Single();
         var fact = image.Facts.Single(f => f.Label == "At Windows shutdown").Value;
-        Check(fact.Contains("about 7 min") && fact.Contains("Shutting down waits that long"), "a long shutdown save says how long, from the last save, and that shutdown waits for it");
+        Check(fact.Contains("about 7 min") && fact.Contains("Shutting down waits that long (at most 1 hour)"), "a long shutdown save says how long, from the last save, and that shutdown waits for it");
+        disks.Records[0] = record with { LastSave = record.LastSave! with { Duration = TimeSpan.FromMinutes(75) } };
+        Settle(monitor.RefreshAsync());
+        Check(monitor.VirtualDisks.Single().Facts.Single(f => f.Label == "At Windows shutdown").Value.StartsWith("Probably not saved at shutdown", StringComparison.Ordinal),
+            "a save longer than Windows' 1-hour shutdown wait says it will probably not finish then");
+        disks.Records[0] = record;
+        Settle(monitor.RefreshAsync());
         Check(!image.HasNotice, "no notice without a save at the last shutdown");
         disks.Records[0] = record with { LastShutdownSave = new(booted - TimeSpan.FromMinutes(2), false, TimeSpan.FromMinutes(4), 0, "The save stopped making progress.") };
         Settle(monitor.RefreshAsync());
