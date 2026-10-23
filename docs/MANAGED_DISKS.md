@@ -71,6 +71,26 @@ image file when detached.
 | `cached-vhdx` | VHDX capacity; independent cache RAM size | Existing Strict/Fast cache semantics; drain/flush before detach; startup reopens the image |
 | `image-in-ram` | Every decoded logical sector in RAM | Flush stays in RAM; Save commits a verified full checkpoint; startup loads the committed image |
 
+A RAM disk or image in RAM that starts with Windows, refused only because RAM is
+briefly short at that moment, is retried every 15 s for 10 minutes; its last error
+says so meanwhile (#12).
+
+### Saving at shutdown
+
+With save-on-shutdown on, an image in RAM that has changes since its last save is
+saved while Windows shuts down. A save copies the whole image and reads it back,
+so it takes about twice its size divided by the disk's speed; the disk's details
+in the app give the last save's time as the estimate. Windows waits for it: the
+service sets no time limit while the save makes progress (Windows' own limit is 3
+hours) and gives a save up only after 3 minutes without progress; its log
+records each tenth of the progress. Meanwhile Windows shows its own shutdown
+screen. The app does not hold the shutdown to show progress: Windows cancels a
+held shutdown after about a minute unless you click "Shut down anyway". A power
+cut, holding the power button or a forced shutdown can still stop a save. An
+unfinished save is never used: the image starts from its previous save. After the
+restart the app says whether the shutdown save finished; `disk status` shows it
+as `LastShutdownSave` (#22).
+
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
 and local NTFS image/checkpoint hosts. Reparse, compressed/encrypted files,
@@ -124,7 +144,7 @@ one-shot; startup and later Start operations never repeat it.
 | `disk cache <id> --budget-mib N --preset Strict` | Apply/remember backed-image cache settings; all ordinary allocation/drain options are available |
 | `disk configure <id> --letter S --label Name [--size-mib N]` | Edit a stopped creation recipe; capacity changes apply only to a fresh pure RAM creation, never an existing image |
 | `disk startup <id> --enabled true` | Remember automatic startup without starting/formatting immediately |
-| `disk startup <id> --save-before-stop true --save-on-shutdown false` | Image-in-RAM stop policy and optional best-effort preshutdown save |
+| `disk startup <id> --save-before-stop true --save-on-shutdown false` | Image-in-RAM stop policy and optional save at shutdown ([below](#saving-at-shutdown)) |
 | `disk remove <id>` | Forget a stopped definition; preserve images and recovery evidence |
 | `disk delete-image <id> --path <owned.vhdx> --accept-erase` | Delete an unreferenced owned image by exact file handle identity; refuse imported/referenced/mounted/in-flight files |
 | `disk recover <id>` | Reconcile journal and exact surviving native generation; no automatic live reload, format or discard |

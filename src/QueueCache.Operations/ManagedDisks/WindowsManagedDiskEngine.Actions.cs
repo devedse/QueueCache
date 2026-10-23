@@ -42,8 +42,6 @@ public sealed partial class WindowsManagedDiskEngine
                     var saved = await SaveCoreAsync(entry, request.Action == ManagedDiskAction.Export ? request.Path : null,
                         request.Action == ManagedDiskAction.Save || request.CommitExport, progress, token);
                     imagePath = saved.Image.Identity.Path;
-                    if (request.AtShutdown && request.Action == ManagedDiskAction.Save && entry.Record.LastSave is { } last)
-                        Update(entry, entry.Record with { LastShutdownSave = new(DateTimeOffset.UtcNow, true, last.Duration, last.Bytes, null) });
                     message = saved.ChangedStartupSource ? "Verified checkpoint committed. Subsequent writes mark RAM changed again." : "Verified standalone export completed; startup source is unchanged."; break;
                 case ManagedDiskAction.Format:
                     if (!request.AcceptErase) throw new IOException("Formatting requires explicit acknowledgement that existing volume contents will be erased.");

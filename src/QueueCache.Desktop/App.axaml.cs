@@ -19,7 +19,6 @@ public sealed class App : Application
     private MainWindow? window;
     private TrayIcon? tray;
     private NativeMenuItem? trayStatus;
-    private bool holdingShutdown;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -40,7 +39,6 @@ public sealed class App : Application
             if (!Program.InTray)
                 desktop.MainWindow = window;
             CreateTrayIcon(desktop);
-            desktop.ShutdownRequested += (_, e) => SaveBeforeShutdown(desktop, e);
             _ = shell.StartAsync();
             if (Program.Instance is { } instance)
                 instance.ShowRequested += () => Dispatcher.UIThread.Post(ShowWindow);
@@ -91,47 +89,6 @@ public sealed class App : Application
             tray.ToolTipText = text.Length > 127 ? text[..127] : text;
         };
         desktop.Exit += (_, _) => tray.IsVisible = false;
-    }
-
-    /// <summary>Windows is shutting down (or signing out): save the images that save at shutdown now, while
-    /// Windows can still show why it waits (#22). The app then exits, and Windows goes on by itself.</summary>
-    private void SaveBeforeShutdown(IClassicDesktopStyleApplicationLifetime desktop, ShutdownRequestedEventArgs e)
-    {
-        // On Windows only the end of the session raises this; Exit shuts the app down without asking.
-        if (shell is null || window is null || !OperatingSystem.IsWindows())
-            return;
-        if (holdingShutdown)
-        {
-            e.Cancel = true;
-            return;
-        }
-        var pending = ShutdownSaves.Pending(shell.Monitor.VirtualDisks);
-        if (pending.Count == 0 || window.TryGetPlatformHandle()?.Handle is not { } handle)
-            return;
-        e.Cancel = true;
-        holdingShutdown = true;
-        ShowWindow();
-        ShutdownSaves.Hold(handle, ShutdownSaves.Reason(pending[0]));
-        _ = SaveThenExitAsync(desktop, shell.Monitor, pending, handle);
-    }
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static async Task SaveThenExitAsync(IClassicDesktopStyleApplicationLifetime desktop, DashboardMonitor monitor, IReadOnlyList<VirtualDiskViewModel> pending, IntPtr handle)
-    {
-        try
-        {
-            foreach (var disk in pending)
-            {
-                var reason = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-                reason.Tick += (_, _) => ShutdownSaves.Hold(handle, ShutdownSaves.Reason(disk));
-                reason.Start();
-                try { await monitor.RunDiskAsync(disk, "Saving", ManagedDiskAction.Save, atShutdown: true); }
-                finally { reason.Stop(); }
-            }
-        }
-        finally { ShutdownSaves.Release(handle); }
-        // A save that failed is tried again by the QueueCache service while Windows shuts down.
-        desktop.Shutdown();
     }
 
     private void ShowWindow()

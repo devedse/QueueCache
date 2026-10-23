@@ -508,12 +508,11 @@ public sealed partial class DashboardMonitor : ObservableObject
         }
     }
 
-    /// <param name="atShutdown">A save while Windows shuts down: the broker keeps it as the disk's last shutdown save.</param>
-    internal Task RunDiskAsync(VirtualDiskViewModel disk, string operation, ManagedDiskAction action, bool atShutdown = false) =>
+    internal Task RunDiskAsync(VirtualDiskViewModel disk, string operation, ManagedDiskAction action) =>
         RunDiskOperationAsync(disk, operation, (progress, token) =>
         {
             var expected = action == ManagedDiskAction.Recover || disk.Record.Runtime is null ? null : ManagedDiskExpected.From(disk.Record.Runtime);
-            return Disks.ExecuteAsync(new(disk.ResourceId, action, expected, AtShutdown: atShutdown), progress, token)!;
+            return Disks.ExecuteAsync(new(disk.ResourceId, action, expected), progress, token)!;
         });
 
     internal async Task RunDiskOperationAsync(VirtualDiskViewModel disk, string operation,

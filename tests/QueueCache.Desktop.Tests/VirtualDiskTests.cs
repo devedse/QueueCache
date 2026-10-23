@@ -21,14 +21,6 @@ internal static class VirtualDiskTests
         var fact = image.Facts.Single(f => f.Label == "At Windows shutdown").Value;
         Check(fact.Contains("about 7 min") && fact.Contains("Shutting down waits that long"), "a long shutdown save says how long, from the last save, and that shutdown waits for it");
         Check(!image.HasNotice, "no notice without a save at the last shutdown");
-        Check(ShutdownSaves.Pending(monitor.VirtualDisks).Single() == image, "an image with unsaved changes that saves at shutdown is saved before Windows shuts down");
-        image.OperationText = "Copying the complete frozen RAM disk. 37%";
-        Check(ShutdownSaves.Reason(image) == $"Saving {image.Letter}: to its image (copying, 37%)", "the reason Windows shows names the disk, the step and the progress");
-        image.OperationText = "Verifying every saved logical sector before committing the image. 80%";
-        Check(ShutdownSaves.Reason(image).EndsWith("(checking, 80%)"), "the check after copying is shown as checking");
-        image.OperationText = "";
-        Settle(monitor.RunDiskAsync(image, "Saving", ManagedDiskAction.Save, atShutdown: true));
-        Check(disks.Requests[^1] is { Action: ManagedDiskAction.Save, AtShutdown: true }, "the app's save at shutdown is marked so the broker keeps it as the last shutdown save");
         disks.Records[0] = record with { LastShutdownSave = new(booted - TimeSpan.FromMinutes(2), false, TimeSpan.FromMinutes(4), 0, "The save stopped making progress.") };
         Settle(monitor.RefreshAsync());
         Check(image.HasNotice && image.NoticeSeverity == NoticeSeverity.Warning && image.NoticeText!.Contains("did not finish") &&
@@ -42,7 +34,6 @@ internal static class VirtualDiskTests
         disks.Records[0] = record with { Definition = record.Definition with { SaveDuringShutdown = false } };
         Settle(monitor.RefreshAsync());
         Check(image.Facts.Single(f => f.Label == "At Windows shutdown").Value.StartsWith("Not saved"), "without saving at shutdown, the details say changes are lost");
-        Check(ShutdownSaves.Pending(monitor.VirtualDisks).Count == 0, "an image that does not save at shutdown does not hold Windows' shutdown");
     }
 
     public static void Run()
