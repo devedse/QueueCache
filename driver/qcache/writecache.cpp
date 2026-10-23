@@ -131,6 +131,8 @@ static void Publish(QC_CACHE* c)
     c->ReadWriteSnapshot.GlobalReservedBytes = QcReservedMemory(&SharedMemoryBudget);
     c->Diagnostics.Version = 6;
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
+    c->Diagnostics.StrictPieces = c->StrictPieces;
+    c->Diagnostics.StrictPieceLimit = c->UnsafeDefer ? 0 : QcStrictPieceLimit(c->PiecesPerSecond);
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -1073,6 +1075,24 @@ static void WaitForCacheProgress(QC_CACHE* c, PIRP blockedRequest)
     else
         KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
 }
+// Strict (#16): pieces of unwritten data the drain completes per second of time with drain writes in
+// flight (idle gaps excluded), over windows of at least half a second; a window that completed fewer
+// than 8 pieces (a long contiguous run) keeps the previous rate. Mutex held, after a completed batch.
+static void MeasurePieceRate(QC_CACHE* c, ULONG pieces)
+{
+    const auto now = KeQueryInterruptTime();
+    c->PieceRateDone += pieces;
+    c->PieceRateTime += now - c->DrainBusySince;
+    c->DrainBusySince = now;
+    if (c->PieceRateTime < 5000000) // 100 ns units
+        return;
+    if (c->PieceRateDone >= 8)
+    {
+        const auto rate = c->PieceRateDone * 10000000 / c->PieceRateTime;
+        c->PiecesPerSecond = c->PiecesPerSecond ? (c->PiecesPerSecond + rate) / 2 : rate;
+    }
+    c->PieceRateDone = c->PieceRateTime = 0;
+}
 static void Drainer(PVOID context)
 {
     auto worker = static_cast<QC_DRAIN_WORKER*>(context);
@@ -1223,6 +1243,8 @@ static void Drainer(PVOID context)
         if (transferBytes <= 65536) ++c->Performance.DrainSizeSmall;
         else if (transferBytes <= 1048576) ++c->Performance.DrainSizeMedium;
         else ++c->Performance.DrainSizeLarge;
+        if (!c->State.InFlightBytes)
+            c->DrainBusySince = KeQueryInterruptTime(); // The disk starts writing (MeasurePieceRate).
         c->State.InFlightBytes += transferBytes;
         worker->InFlightStart = io.Offset.QuadPart;
         worker->InFlightEnd = io.Offset.QuadPart + io.Length;
@@ -1324,10 +1346,17 @@ static void Drainer(PVOID context)
             c->State.DirtyBytes -= transferBytes;
             c->DirtySlots -= merged;
             c->State.DrainedBytes += transferBytes;
+            ULONG pieces = 0;
             for (ULONG i = 0; i < merged; ++i)
             {
                 auto completedIndex = selected[i];
                 auto slot = &c->Slots[completedIndex];
+                if (slot->PieceStart)
+                {
+                    slot->PieceStart = FALSE;
+                    --c->StrictPieces;
+                    ++pieces;
+                }
                 const bool retain = c->Enabled && (c->Options.Retention & QcRetainWrites) &&
                                     FindSlot(c, slot->Offset.QuadPart) == completedIndex;
                 if (retain || slot->Pins)
@@ -1341,6 +1370,7 @@ static void Drainer(PVOID context)
                 else
                     RetireSlot(c, completedIndex);
             }
+            MeasurePieceRate(c, pieces);
             if (retirementStart)
                 c->Performance.DrainRetirementTicks += Tick() - retirementStart;
             Publish(c);
@@ -1459,7 +1489,7 @@ static void FreeSlots(QC_CACHE* c)
         ExFreePoolWithTag(c->SlabMdls, Tag);
     c->SlabMdls = nullptr;
     c->Count = c->CleanCount[0] = c->CleanCount[1] = 0;
-    c->DirtySlots = 0;
+    c->DirtySlots = c->StrictPieces = 0;
     c->CleanValidBytes[0] = c->CleanValidBytes[1] = 0;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     c->Slots = nullptr;
@@ -2077,6 +2107,20 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
                             bool writeThrough, bool pagingIo);
 // callerPath: QcCacheTryCallerPath. Anything that would wait, forward to the
 // disk or take a barrier returns QcCallerPathDeclined before any change.
+// Strict (#16): a version that just became dirty begins a separate piece of unwritten data, unless the
+// block before it is dirty and waiting too (the drain then writes both with one disk write). Mutex held.
+static void MarkPiece(QC_CACHE* c, ULONG index)
+{
+    auto slot = &c->Slots[index];
+    if (c->UnsafeDefer || slot->PieceStart)
+        return;
+    const auto block = slot->Offset.QuadPart;
+    const auto previous = block >= Chunk ? FindSlot(c, block - Chunk) : NoSlot;
+    if (previous != NoSlot && c->Slots[previous].Dirty && !c->Slots[previous].InFlight)
+        return;
+    slot->PieceStart = TRUE;
+    ++c->StrictPieces;
+}
 static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -2201,8 +2245,13 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         if (c->Options.Allocation == QcFixed &&
             (needed > c->Capacity - c->Count || writeUsed + newWriteOccupancy > admissionLimit) && Evict(c, 0))
             continue;
-        if ((needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= admissionLimit) ||
-            !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
+        // Strict (#16): a write that adds dirty data waits while the backlog holds as many separate pieces as
+        // the drain completes in about two seconds, so a later flush finishes in seconds. Overwrites of dirty
+        // blocks and a write into an empty backlog never wait.
+        const bool piecesFit = c->UnsafeDefer || !newDirty || !c->StrictPieces ||
+                               c->StrictPieces < QcStrictPieceLimit(c->PiecesPerSecond);
+        const bool roomFits = needed <= c->Capacity - c->Count && c->DirtySlots + newDirty <= admissionLimit;
+        if ((roomFits && piecesFit) || !NT_SUCCESS(c->State.LastError) || c->Gone || irp->Cancel)
             break;
         if (callerPath)
         {
@@ -2212,9 +2261,14 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         }
         c->WriterWaiting = TRUE;
         ++c->State.ThrottleWaits;
-        ++c->Performance.CapacityWaits;
-        if (pagingIo)
-            InterlockedIncrement64(&c->PagingCapacityWaits);
+        if (roomFits)
+            ++c->Diagnostics.StrictPieceWaits;
+        else
+        {
+            ++c->Performance.CapacityWaits;
+            if (pagingIo)
+                InterlockedIncrement64(&c->PagingCapacityWaits);
+        }
         c->Performance.Phase = QcCapacityPhase;
         Publish(c);
         KeClearEvent(&c->Changed);
@@ -2291,6 +2345,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             IndexSlot(c, index);
             c->State.DirtyBytes += QcValidBytes(slot->ValidSectors);
             ++c->DirtySlots;
+            MarkPiece(c, index);
         }
         auto slot = &c->Slots[index];
         if (!slot->Dirty)
@@ -2302,6 +2357,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             Link(c, index);
             c->State.DirtyBytes += QcValidBytes(slot->ValidSectors);
             ++c->DirtySlots;
+            MarkPiece(c, index);
         }
         slot->Filling = TRUE;
         if (blocks == 1)
@@ -3108,6 +3164,8 @@ static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask)
     if (!slot->ValidSectors)
     {
         --c->DirtySlots;
+        if (slot->PieceStart)
+            --c->StrictPieces;
         RetireSlot(c, i);
     }
 }

@@ -163,6 +163,9 @@ struct QC_DIAGNOSTICS
     // dropped cached data by range lookup, lower TRIMs sent asynchronously, and
     // asynchronous TRIMs that fell back to the ordered path (fence or table full).
     ULONGLONG ReadAware, ReadAwareWaits, TrimMode, TrimLookups, TrimAsync, TrimAsyncFallbacks;
+    // V25: Strict's backlog (#16): separate pieces of unwritten data now held, the limit in effect
+    // (QcStrictPieceLimit; 0 in Fast mode) and writes that waited because the backlog was at it.
+    ULONGLONG StrictPieces, StrictPieceLimit, StrictPieceWaits;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -187,7 +190,9 @@ static constexpr ULONG QcDiagnosticsV20Size = 976;
 static constexpr ULONG QcDiagnosticsV21Size = 1008;
 static constexpr ULONG QcDiagnosticsV22Size = 1064;
 static constexpr ULONG QcDiagnosticsV23Size = 1136;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1184);
+static constexpr ULONG QcDiagnosticsV24Size = 1184;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1208);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StrictPieces) == QcDiagnosticsV24Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadAware) == QcDiagnosticsV23Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, RamReadQueueMode) == QcDiagnosticsV21Size);
@@ -363,6 +368,7 @@ struct QC_SLOT
     BOOLEAN Dirty, ReadClass;
     ULONG Pins;
     BOOLEAN Filling, RetireWhenUnpinned;
+    BOOLEAN PieceStart; // Strict (#16): this dirty version began a separate piece of unwritten data (StrictPieces)
     ULONG ValidSectors; // sectorcoverage.h: unknown sectors must never be read from this buffer or drained
     ULONGLONG DirtySince;
 };
@@ -432,6 +438,11 @@ struct QC_CACHE
     QC_OPTIONS Options;
     ULONG CleanHead[2], CleanTail[2], CleanCount[2]; // write/read LRU lists
     ULONG DirtySlots;
+    // Strict (#16), Mutex: dirty versions marked PieceStart, and pieces the drain completed per second of
+    // time with drain writes in flight (0: not measured yet), for QcStrictPieceLimit. DrainBusySince is
+    // interrupt time; PieceRateDone/PieceRateTime accumulate the current measurement window.
+    ULONG StrictPieces;
+    ULONGLONG DrainBusySince, PieceRateDone, PieceRateTime, PiecesPerSecond;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
     BOOLEAN Pressure, WriterWaiting;

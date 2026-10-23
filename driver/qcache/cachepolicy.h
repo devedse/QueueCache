@@ -76,6 +76,20 @@ constexpr ULONG QcAdmissionWriteLimit(ULONG writeLimit, bool, bool)
     // retain the full quota; no unused paging reserve is held in nonpaged RAM.
     return writeLimit;
 }
+// Strict (#16): a flush writes out every dirty block before it completes, and the drain needs at least
+// one disk write for each separate piece of unwritten data. So Strict holds at most the pieces its
+// drain completes in QcStrictFlushTargetMs at the measured rate (0: not measured yet, then
+// QcStrictInitialPieces), never fewer than QcStrictMinPieces. A write that adds dirty data beyond it
+// waits for the drain: scattered small writes slow down to the disk's speed instead of a later flush
+// stalling for minutes. A long contiguous write is one piece, so it is not slowed (the byte cap tried
+// first throttled those, see docs/PERFORMANCE.md "Strict (#16)").
+constexpr ULONGLONG QcStrictFlushTargetMs = 2000;
+constexpr ULONG QcStrictMinPieces = 256, QcStrictInitialPieces = 1024;
+constexpr ULONG QcStrictPieceLimit(ULONGLONG piecesPerSecond)
+{
+    const auto pieces = piecesPerSecond ? piecesPerSecond * QcStrictFlushTargetMs / 1000 : QcStrictInitialPieces;
+    return pieces < QcStrictMinPieces ? QcStrictMinPieces : pieces > 0xFFFFFFFFULL ? 0xFFFFFFFFUL : static_cast<ULONG>(pieces);
+}
 // IRP_PAGING_IO also marks filesystem cache and mapped-file traffic, not only
 // pagefile contents. T085: cache a paging-marked request only when a current
 // special-file map proves it is outside pagefile/swapfile/hiberfil/dump ranges.
