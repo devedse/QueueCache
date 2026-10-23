@@ -22,9 +22,6 @@ still to do. Open items link to their details.
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict mode can stall writes while an unrelated backlog drains](#strict-mode-can-stall-writes-while-an-unrelated-backlog-drains-performance) | ❌ | Open, [#16](https://github.com/devedse/QueueCache/issues/16) |
-| [A saved cache can stay off after a restart when RAM is briefly short](#a-saved-cache-can-stay-off-after-a-restart-when-ram-is-briefly-short-bug) | ❌ | Open, [#12](https://github.com/devedse/QueueCache/issues/12) |
-| [Detaching a virtual disk loses a Fast cache's pending writes](#detaching-a-virtual-disk-loses-a-fast-caches-pending-writes-bug) | ❌ | Open, [#21](https://github.com/devedse/QueueCache/issues/21) |
-| [A large image in RAM may not finish saving at shutdown](#a-large-image-in-ram-may-not-finish-saving-at-shutdown) | ❌ | Open, [#22](https://github.com/devedse/QueueCache/issues/22) |
 | [Low-priority programs read cached data up to 30% slower](#low-priority-programs-read-cached-data-slower-performance) | ❌ | Not planned (Windows scheduling) |
 | [ReFS: fewer requests take the fast caller-thread path](#refs-fewer-requests-take-the-fast-caller-thread-path-performance) | ❌ | Not planned (measured trade-off) |
 | [A re-read file briefly takes space from a random workload](#a-re-read-file-briefly-takes-space-from-a-random-workload-performance) | ❌ | By design (most recent read wins) |
@@ -41,6 +38,9 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
+| Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
+| A saved cache, or a RAM disk that starts with Windows, stayed off after a restart when RAM was briefly short ([#12](https://github.com/devedse/QueueCache/issues/12)) | ✅ | 0.4.803.1 (retried every 15 s for 10 minutes; the app and `qcache volume list` show a cache waiting for RAM or not restored) |
+| A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart) |
 | Every Windows shutdown waited for the virtual-disk service (Service Control Manager event 7043), and image-in-RAM saves at shutdown ran only in the short final phase: the service answered the wrong control code for Windows' early shutdown notice | ✅ | 0.4.796.1 ([#23](https://github.com/devedse/QueueCache/issues/23)) |
 | QueueCache's System log entry for a removed volume (`qcachelab` event 157) had no text, and was written for every removed volume, cached or not | ✅ | 0.4.796.1: only cached volumes; event 1 (writes were pending, with the byte count) or 2 (nothing pending), with text |
 | A refused image or evidence folder's error did not say how to fix it | ✅ | 0.4.796.1 (names the `icacls` command; never for a drive root) |
@@ -110,38 +110,6 @@ on 0.4.604.1 measured stops of more than 100 seconds and file operations several
 times slower than the bare disk. The read-miss and drain-default fixes do not
 change this durability boundary. Bounded Strict admission and overlapping-version
 ordering remain open in [issue #16](https://github.com/devedse/QueueCache/issues/16).
-
-### A saved cache can stay off after a restart when RAM is briefly short (bug)
-
-At startup QueueCache restores saved caches once. If Windows reports too little
-available memory at that moment (a cache must leave at least 2 GiB or 25% of RAM
-free), the restore is refused and not tried again: the volume runs uncached until
-`qcache policy restore` or the app applies it again. The refusal is in
-`C:\ProgramData\QueueCache\ManagedDisks\service.log`. Data is unaffected. Seen on the
-16 GB test VM on 2026-10-12. The planned fix in
-[#12](https://github.com/devedse/QueueCache/issues/12) retries a refusal caused only
-by memory for a few minutes and shows a cache that is waiting or was not restored.
-
-### Detaching a virtual disk loses a Fast cache's pending writes (bug)
-
-Detaching a VHD/VHDX (`diskpart detach vdisk`, Disk Management, `Dismount-DiskImage`)
-while its volume has a Fast cache with writes not yet on the disk loses those writes.
-When Windows asks first whether the volume may go, as an eject does, QueueCache writes
-everything out; a detach removes the volume without asking. On the test VM (0.4.796.1, 2026-10-22) a closed
-64 MiB file did not exist after the disk was attached again; the System log names the
-lost amount (`qcachelab` event 1). QueueCache's own cached VHDX disks and
-`qcache disk eject` drain first and are not affected. Flush the cache before
-detaching. The fix is tracked in [#21](https://github.com/devedse/QueueCache/issues/21).
-
-### A large image in RAM may not finish saving at shutdown
-
-A save copies the whole image and reads it back before switching to it, so it takes
-about twice the image size divided by the disk's speed. At shutdown the broker asks
-Windows to wait at most 2 minutes, then stops trying. The unfinished save is never
-used: the image starts from its previous save, and the changes since that save are
-lost. Save-on-shutdown is off by default; save manually before shutting down when an
-image is large or its disk slow. No time limit, a visible "saving" message and faster
-saves are proposed in [#22](https://github.com/devedse/QueueCache/issues/22).
 
 ### Low-priority programs read cached data slower (performance)
 
@@ -216,8 +184,8 @@ cache or a disk.
 - **Power-loss evidence:** no power-cut test has run since 0.4.604.1. Those and the
   competitor results remain historical and do not establish a newer build's crash
   behavior.
-- **Removal and power:** Windows eject with pending writes passes; detaching a
-  virtual disk loses them ([above](#detaching-a-virtual-disk-loses-a-fast-caches-pending-writes-bug)); live reconnect
+- **Removal and power:** Windows eject with pending writes passes, and so does
+  detaching a virtual disk since 0.4.803.1 (`volumes/volume-detach`); live reconnect
   failed in Proxmox hotplug and stays unqualified. Surprise removal under load,
   FAT32/ReFS removal, sleep, hibernate, Fast Startup and crash-dump handling have
   not passed the maintained matrix. Sleep (S3) passed on one real PC (Windows 11
@@ -256,7 +224,10 @@ cache or a disk.
   lower request that cannot be allocated is retried for about 5 s before the
   cache faults.
 - **Managed disks:** sleep passed once on a real PC (above); hibernate, Fast
-  Startup and a crash during a checkpoint commit are not covered.
+  Startup and a crash during a checkpoint commit are not covered. Shutdown saves of
+  136–151 s (a 2 GiB image on a deliberately slowed host volume) committed on the VM
+  (0.4.803.1); longer saves, Windows' 3-hour limit and what a real PC's shutdown screen
+  shows meanwhile are not covered.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is
   verified by attaching the new image read-only while the RAM disk it was copied
