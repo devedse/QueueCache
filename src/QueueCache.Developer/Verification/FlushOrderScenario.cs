@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.Versioning;
+using QueueCache.Developer.FileTests;
 using QueueCache.Management;
 using QueueCache.Operations;
 
@@ -124,6 +125,26 @@ public static class FlushOrderScenario
             checks.Add(new("flush-order/failed-flush-and-retry", "PASS",
                 "The deliberate lower flush failure faulted the cache, retained the newer version and stopped the frontier. Explicit Retry drained it; bytes matched after release."));
 
+            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+            {
+                Apply(target, device);
+                file.Write(Offset, Pattern(8));
+                var before = device.GetDiagnostics();
+                UnbufferedFileWrite.WriteRange(path, Offset, Pattern(9), writeThrough: true);
+                var after = device.GetDiagnostics();
+                RunStorage.AtomicJson(evidence + ".write-through-before.json", before);
+                RunStorage.AtomicJson(evidence + ".write-through-after.json", after);
+                ValidateRamAdmission(before, after);
+                if (after.FlushOrder!.Seals < before.FlushOrder!.Seals + 2)
+                    throw new IOException("Write-through did not seal both its predecessor and its own write.");
+                AssertRead(file, Offset, Pattern(9));
+                device.Control(WriteCacheAction.Flush);
+            }
+            Reset(device);
+            using (var file = new AlignedFile(path, Block, create: false, shareAll: true)) AssertRead(file, Offset, Pattern(9));
+            checks.Add(new("flush-order/write-through-boundaries", "PASS",
+                "Fast write-through sealed both sides of its write with zero lower-I/O admission attempts and a retained old version; latest bytes matched after release."));
+
             Apply(target, device);
             device.Control(WriteCacheAction.LabTrimMode, value: 3);
             using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
@@ -149,6 +170,24 @@ public static class FlushOrderScenario
             }
             checks.Add(new("flush-order/trim-predecessor-and-rewrite", "PASS",
                 "TRIM waited for the sealed predecessor and its lower flush; a later rewrite and its untouched neighbor matched after release. Trimmed bytes were not assumed to be zero."));
+            Apply(target, device);
+            device.Control(WriteCacheAction.LabTrimMode, value: 0);
+            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+            {
+                file.Write(Offset, Pattern(10));
+                file.Flush();
+                file.Trim(Offset, Block);
+                file.Write(Offset, Pattern(11));
+                device.Control(WriteCacheAction.Flush);
+            }
+            Reset(device);
+            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+            {
+                AssertRead(file, Offset, Pattern(11));
+                AssertRead(file, Offset + Block, Pattern(3));
+            }
+            checks.Add(new("flush-order/synchronous-trim", "PASS",
+                "The conservative synchronous TRIM path reconciled the sealed predecessor; a later rewrite and untouched neighbor matched after release."));
         }
         finally
         {

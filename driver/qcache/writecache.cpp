@@ -3692,11 +3692,18 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
     }
     else ReleaseCache(c);
+    NTSTATUS orderedFlush = STATUS_SUCCESS;
     if (NT_SUCCESS(status))
+    {
         status = OriginalIo(c, irp);
-    if (ordered && NT_SUCCESS(status))
-        status = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+        if (ordered)
+        {
+            orderedFlush = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+            if (NT_SUCCESS(status)) status = orderedFlush;
+        }
+    }
     AcquireCache(c);
+    if (!NT_SUCCESS(orderedFlush) && NT_SUCCESS(c->State.LastError)) Fault(c, orderedFlush);
     if (NT_SUCCESS(status))
     {
         ++c->TrimRequests;
