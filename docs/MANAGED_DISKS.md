@@ -132,6 +132,19 @@ Windows would refresh a QueueCache label once displayed. The helper was interrup
 before restoring the final name, so a "verifying 40%" display name persisted after
 reboot until cleanup restored it. Service renaming is not a reliable shutdown UI.
 
+The unchanged-name control then showed "Shutting down service: QueueCache managed
+disks." in 477 of 500 captured frames while the same-sized save completed. This
+confirms that Windows can identify QueueCache during a long save; it does not
+establish that the earlier renames caused the Passport Container label. A further
+save waited until QueueCache was visibly named before changing its display name
+once to "QueueCache image save - copying 0% (test snapshot)", using the current
+save's logged progress. Windows accepted the change, and an independent live query
+read it back while the service was Stop Pending, but the console kept displaying
+"QueueCache managed disks.". Renaming an already displayed service therefore did
+not refresh the shutdown text in this VM test. The original display name was
+restored and the temporary backing delay cleared. These observations support a
+static Windows-backed status toggle, but not live percentages through renaming.
+
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
 and local NTFS image/checkpoint hosts. Reparse, compressed/encrypted files,

@@ -253,7 +253,14 @@ cache or a disk.
   and verification name changes held for at least 10 s. A helper interrupted by
   shutdown left its final name after reboot until cleanup restored it. These
   results establish stale Windows text in this run, not that a displayed QueueCache
-  label can never refresh. A save still copies the whole image:
+  label can never refresh. An unchanged-name control subsequently displayed
+  QueueCache in 477 of 500 frames and committed its save. In a further save,
+  changing the name only after QueueCache was visibly selected still left the
+  original QueueCache text on screen, despite an independent live service query
+  reading back the accepted "copying 0%" name while Stop Pending. Thus the rename
+  did not refresh an already displayed label in this VM; the cause of the earlier
+  Passport-only selection remains unproven. The test restored the original name
+  and removed its backing delay. A save still copies the whole image:
   writing only the changed parts needs direct writes to the VHDX file, because Windows
   brings a saved copy online and mounts it when it is attached read-write, even while its
   RAM disk with the same disk ID is online (#22). Longer saves, the 1-hour shutdown limit
