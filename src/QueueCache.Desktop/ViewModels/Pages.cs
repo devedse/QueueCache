@@ -219,9 +219,10 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private readonly ISignInTask signIn;
 
-    internal SettingsViewModel(IDesktopSettingsStore store, ISignInTask? signIn = null)
+    internal SettingsViewModel(IDesktopSettingsStore store, ISignInTask? signIn = null, WindowsStatusViewModel? windowsStatus = null)
     {
         this.store = store;
+        WindowsStatus = windowsStatus ?? new WindowsStatusViewModel();
         this.signIn = signIn ?? new MemorySignInTask(null);
         loading = true;
         try
@@ -245,6 +246,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     public DesktopSettings Current { get; private set; }
+    public WindowsStatusViewModel WindowsStatus { get; }
     public IReadOnlyList<string> ThemeChoices { get; } = ["Use the Windows setting", "Light", "Dark"];
     public IReadOnlyList<string> UpdateChoices { get; } = DesktopSettings.UpdateChoices.Select(s => s switch
     {

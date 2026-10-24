@@ -13,10 +13,12 @@ public sealed partial class ShellViewModel : ObservableObject
 
     public ShellViewModel(ICacheTaskService caches, IManagedDiskService disks, IDialogService dialogs, IDesktopSettingsStore settings,
         Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null,
-        Func<string, VolumeSpace?>? volumeSpace = null, Func<DateTimeOffset>? clock = null, ISignInTask? signIn = null)
+        Func<string, VolumeSpace?>? volumeSpace = null, Func<DateTimeOffset>? clock = null, ISignInTask? signIn = null,
+        IWindowsStatusPolicy? windowsStatus = null)
     {
-        Monitor = new DashboardMonitor(caches, disks, dialogs, clock, availableRam, usedLetters, volumeSpace);
-        Settings = new SettingsViewModel(settings, signIn);
+        var status = new WindowsStatusViewModel(windowsStatus);
+        Monitor = new DashboardMonitor(caches, disks, dialogs, clock, availableRam, usedLetters, volumeSpace, status);
+        Settings = new SettingsViewModel(settings, signIn, status);
         Overview = new OverviewViewModel(this);
         Caches = new CachesViewModel(Monitor);
         Caches.SetActive(false);

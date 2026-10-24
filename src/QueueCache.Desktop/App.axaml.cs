@@ -28,7 +28,7 @@ public sealed class App : Application
         {
             var dialogs = new DialogService(() => window);
             shell = new ShellViewModel(new WindowsCacheTaskService(), new WindowsManagedDiskService(), dialogs, new DesktopSettingsStore(DesktopSettingsStore.DefaultPath),
-                signIn: new WindowsSignInTask());
+                signIn: new WindowsSignInTask(), windowsStatus: new WindowsStatusPolicy());
             ApplyTheme(shell.Settings.Current.Theme);
             shell.Settings.Changed += (_, settings) => ApplyTheme(settings.Theme);
             // The window may hide to the notification area; the app ends only on Exit or a real close.

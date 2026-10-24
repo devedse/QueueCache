@@ -1,0 +1,16 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             x:Class="QueueCache.Desktop.Views.WindowsStatusView"
+             x:DataType="vm:WindowsStatusViewModel">
+  <StackPanel Spacing="6">
+    <ToggleSwitch Name="WindowsStatusToggle" IsChecked="{Binding Enabled}" IsEnabled="{Binding CanChange}"
+                  Content="Show detailed Windows startup and shutdown messages"
+                  AutomationProperties.Name="Show detailed Windows startup and shutdown messages" />
+    <TextBlock Name="WindowsStatusState" Classes="caption secondary" Text="{Binding State}" TextWrapping="Wrap" />
+    <TextBlock Classes="secondary" TextWrapping="Wrap"
+               Text="Changes Windows messages for this computer's startup, sign-in, sign-out and shutdown. Windows can show ‘Shutting down service: QueueCache managed disks.’ while the service stops. Windows chooses the message; it may name another service or keep an earlier message. This does not show a save percentage or confirm that saving finished." />
+    <TextBlock Classes="error" Text="{Binding Error}" TextWrapping="Wrap"
+               IsVisible="{Binding Error, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+  </StackPanel>
+</UserControl>

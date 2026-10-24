@@ -28,7 +28,7 @@ still to do. Open items link to their details.
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
-| [Shutdown-save feedback and speed](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#22](https://github.com/devedse/QueueCache/issues/22): the one-hour limit shipped; a Windows-backed status toggle and faster saves remain open. Service-name changes did not establish a reliable on-screen percentage in the short VM probe |
+| [Faster image-in-RAM saves](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#28](https://github.com/devedse/QueueCache/issues/28), split from #22: saves still copy and verify the complete image. Changed-region checkpoint updates need a replacement for the rejected read-write attach approach |
 | [Hibernate, Fast Startup and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC; the test VM's firmware offers no hibernation |
 | [Cached system disk (C:): full boot, paging and hibernation acceptance](#not-yet-proven) | ❌ | Restart soaks and a crash dump on the VM (0.4.810.1); restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
@@ -42,6 +42,7 @@ still to do. Open items link to their details.
 | Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
 | A saved cache, or a RAM disk that starts with Windows, stayed off after a restart when RAM was briefly short ([#12](https://github.com/devedse/QueueCache/issues/12)) | ✅ | 0.4.803.1 (retried every 15 s for 10 minutes; the app and `qcache volume list` show a cache waiting for RAM or not restored) |
 | A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart); 0.4.825.1: Windows waits at most 1 hour |
+| Detailed Windows shutdown messages required a manual policy edit; VHDX creation did not recommend them ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | Settings and VHDX creation expose the actual Windows policy, refresh external edits, report suppression/errors and explain the limits. Dynamic percentages were investigated but are not a supported feature; faster saves moved to #28 |
 | Every Windows shutdown waited for the virtual-disk service (Service Control Manager event 7043), and image-in-RAM saves at shutdown ran only in the short final phase: the service answered the wrong control code for Windows' early shutdown notice | ✅ | 0.4.796.1 ([#23](https://github.com/devedse/QueueCache/issues/23)) |
 | QueueCache's System log entry for a removed volume (`qcachelab` event 157) had no text, and was written for every removed volume, cached or not | ✅ | 0.4.796.1: only cached volumes; event 1 (writes were pending, with the byte count) or 2 (nothing pending), with text |
 | A refused image or evidence folder's error did not say how to fix it | ✅ | 0.4.796.1 (names the `icacls` command; never for a drive root) |
@@ -263,7 +264,7 @@ cache or a disk.
   and removed its backing delay. A save still copies the whole image:
   writing only the changed parts needs direct writes to the VHDX file, because Windows
   brings a saved copy online and mounts it when it is attached read-write, even while its
-  RAM disk with the same disk ID is online (#22). Longer saves, the 1-hour shutdown limit
+  RAM disk with the same disk ID is online (#28, split from #22). Longer saves, the 1-hour shutdown limit
   and a real PC's shutdown are not covered.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is

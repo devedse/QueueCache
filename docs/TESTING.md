@@ -23,6 +23,13 @@ dotnet run --project tests/QueueCache.Management.Tests -c Release
 dotnet run --project tests/QueueCache.Desktop.Tests -c Release
 ```
 
+Desktop status-policy contracts cover read-back, external changes, suppression,
+failed/overridden writes, unavailable state and VHDX creation guidance. On Windows,
+the same host tests exercise the registry adapter against a unique temporary HKCU
+key and remove it afterwards; they do not change machine policy. A manual Windows
+UI check of the actual machine toggle records and restores both original policy
+values. This desktop-only change does not require another driver benchmark matrix.
+
 Windows CI also builds the drivers (warnings are errors), runs the CLI contract
 checks in `build/Test-Cli.ps1`, test-signs the package and builds the installer.
 Some runner contracts only run on Windows; the cross-platform subset runs on Linux.

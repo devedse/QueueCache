@@ -16,9 +16,10 @@ public sealed partial class CreateDiskViewModel : ObservableObject
     private ImageInspection? inspected;
     private CancellationTokenSource? operation;
 
-    public CreateDiskViewModel(IManagedDiskService service, IReadOnlySet<char> usedLetters)
+    public CreateDiskViewModel(IManagedDiskService service, IReadOnlySet<char> usedLetters, WindowsStatusViewModel? windowsStatus = null)
     {
         this.service = service;
+        WindowsStatus = windowsStatus ?? new WindowsStatusViewModel();
         Letters = Enumerable.Range('D', 'Z' - 'D' + 1).Select(c => (char)c).Where(c => !usedLetters.Contains(c)).Select(c => $"{c}:").ToArray();
         letter = Letters.Contains("R:") ? "R:" : Letters.FirstOrDefault() ?? "R:";
         access = (int)ManagedDiskDefinition.DefaultRamAccess;
@@ -26,6 +27,7 @@ public sealed partial class CreateDiskViewModel : ObservableObject
     }
 
     public IReadOnlyList<string> Letters { get; }
+    public WindowsStatusViewModel WindowsStatus { get; }
     public IReadOnlyList<string> AccessChoices { get; } = ["Standard (full Windows disk stack)", "Direct (fastest: read and written straight from RAM)"];
     public IReadOnlyList<string> AllocationChoices { get; } = ["Dynamic (grows as it fills)", "Fixed (full size on disk now)"];
 

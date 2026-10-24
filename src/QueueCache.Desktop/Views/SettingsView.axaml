@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="using:FluentAvalonia.UI.Controls"
              xmlns:vm="using:QueueCache.Desktop.ViewModels"
+             xmlns:views="using:QueueCache.Desktop.Views"
              x:Class="QueueCache.Desktop.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
   <ScrollViewer>
@@ -42,6 +43,9 @@
       </ui:FASettingsExpander>
       <TextBlock Classes="error" Text="{Binding SignInError}" TextWrapping="Wrap"
                  IsVisible="{Binding SignInError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+      <TextBlock Classes="section" Text="Windows shutdown" Margin="0,16,0,4" />
+      <views:WindowsStatusView DataContext="{Binding WindowsStatus}" />
 
       <TextBlock Classes="section" Text="Advanced" Margin="0,16,0,4" />
       <ui:FASettingsExpander Name="AdvancedSettings" Header="Developer settings"

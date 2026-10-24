@@ -202,6 +202,13 @@ one per Windows session. Windows fit the screen's working area, so title bars
 and dialog buttons stay reachable on small screens. Desktop settings are stored in
 `%LOCALAPPDATA%\QueueCache\desktop.json`; they never affect caches or disks.
 
+Settings → **Windows shutdown** and VHDX creation share the detailed Windows
+status-message control. It reads and writes the machine's `VerboseStatus` policy,
+reports `DisableStatusMessages` suppression and errors, and never saves a copy in
+`desktop.json`. While the control is visible it rereads once per second and on
+window activation. This affects Windows' messages across the machine; it does not
+provide a live save percentage. See [saving at shutdown](MANAGED_DISKS.md#saving-at-shutdown).
+
 ### Live figures
 
 A running RAM disk or image in RAM shows reads and writes per second (both access

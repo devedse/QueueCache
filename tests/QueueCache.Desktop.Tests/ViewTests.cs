@@ -32,9 +32,10 @@ internal static class ViewTests
         var volumes = new VolumeFixture { FaultStick = theme == "dark" };
         var dialogs = new FakeDialogs();
         var disks = DiskFixture.Sample();
+        var statusPolicy = new StatusPolicyFixture();
         var now = DateTimeOffset.UtcNow;
         var shell = new ShellViewModel(volumes, disks, dialogs, new MemorySettingsStore(), () => 8UL << 30, () => new HashSet<char>(),
-            _ => new VolumeSpace(2UL << 30, 1300UL << 20), () => now);
+            _ => new VolumeSpace(2UL << 30, 1300UL << 20), () => now, windowsStatus: statusPolicy);
         var window = new MainWindow { DataContext = shell, Width = 1180, Height = 820 };
         window.Show();
         Settle(shell.Monitor.RefreshAsync());
@@ -119,6 +120,22 @@ internal static class ViewTests
         Save(window, output, $"diagnostics-{theme}");
         Show(window, shell, AppPage.Settings);
         Check(Named<ComboBox>(window, "UpdateBox").SelectedIndex == Array.IndexOf(DesktopSettings.UpdateChoices, 1d), $"{theme}: Settings shows the update interval");
+        var statusView = window.GetVisualDescendants().OfType<WindowsStatusView>().Single();
+        var statusToggle = Named<ToggleSwitch>(window, "WindowsStatusToggle");
+        statusToggle.IsChecked = true;
+        Dispatcher.UIThread.RunJobs();
+        Check(statusPolicy.Value.Enabled && statusToggle.IsChecked == true, $"{theme}: the bound toggle changes the Windows policy adapter");
+        statusPolicy.Value = new(false, true);
+        statusView.RefreshIfVisible();
+        Dispatcher.UIThread.RunJobs();
+        Check(statusToggle.IsChecked == false && Named<TextBlock>(window, "WindowsStatusState").Text!.StartsWith("Blocked by Windows policy", StringComparison.Ordinal),
+            $"{theme}: an external edit refreshes both the toggle and the suppression message");
+        statusPolicy.Value = new(false, false);
+        Show(window, shell, AppPage.Caches);
+        var reads = statusPolicy.Reads;
+        statusView.RefreshIfVisible();
+        Check(statusPolicy.Reads == reads, $"{theme}: a hidden status control does not poll Windows");
+        Show(window, shell, AppPage.Settings);
         Save(window, output, $"settings-{theme}");
         Named<FASettingsExpander>(window, "AdvancedSettings").IsExpanded = true;
         Show(window, shell, AppPage.Settings);
@@ -170,17 +187,27 @@ internal static class ViewTests
         Save(settings, output, $"cache-settings-advanced-{theme}");
         settings.Close();
 
-        var create = new CreateDiskWindow { DataContext = new CreateDiskViewModel(new DiskFixture(), new HashSet<char> { 'C' }) };
+        var status = new WindowsStatusViewModel(new StatusPolicyFixture());
+        var create = new CreateDiskWindow { DataContext = new CreateDiskViewModel(new DiskFixture(), new HashSet<char> { 'C' }, status) };
         create.Show();
         Settle(((CreateDiskViewModel)create.DataContext!).LoadAsync());
         Check(!Named<Control>(create, "DiskImagePath").IsEffectivelyVisible && Named<Button>(create, "CreateManagedDisk").IsEnabled,
             $"{theme}: a RAM disk asks only for size, letter and name");
+        Check(!Named<Control>(create, "DiskWindowsStatusGuidance").IsEffectivelyVisible, $"{theme}: the VHDX status recommendation is hidden for a temporary RAM disk");
         Save(create, output, $"new-disk-{theme}");
         Named<RadioButton>(create, "ImageOption").IsChecked = true;
         Dispatcher.UIThread.RunJobs();
         Check(Named<Control>(create, "DiskImagePath").IsEffectivelyVisible && Named<Control>(create, "DiskCheckpointDirectory").IsEffectivelyVisible,
             $"{theme}: an image in RAM asks for its file and the folder for saved copies");
+        Check(Named<Control>(create, "DiskWindowsStatusGuidance").IsEffectivelyVisible && Named<ToggleSwitch>(create, "WindowsStatusToggle").IsChecked == false,
+            $"{theme}: image creation recommends detailed Windows messages and exposes the real setting");
         Save(create, output, $"new-disk-image-{theme}");
+        Named<Control>(create, "DiskWindowsStatusGuidance").BringIntoView();
+        Dispatcher.UIThread.RunJobs();
+        Save(create, output, $"new-disk-shutdown-{theme}");
+        Named<RadioButton>(create, "CachedImageOption").IsChecked = true;
+        Dispatcher.UIThread.RunJobs();
+        Check(Named<Control>(create, "DiskWindowsStatusGuidance").IsEffectivelyVisible, $"{theme}: cached VHDX creation also offers the recommendation");
         create.Close();
 
         var disks = DiskFixture.Sample();

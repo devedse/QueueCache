@@ -3,6 +3,7 @@
         xmlns:ui="using:FluentAvalonia.UI.Controls"
         xmlns:vm="using:QueueCache.Desktop.ViewModels"
         xmlns:ctl="using:QueueCache.Desktop.Controls"
+        xmlns:views="using:QueueCache.Desktop.Views"
         x:Class="QueueCache.Desktop.Views.CreateDiskWindow"
         x:DataType="vm:CreateDiskViewModel"
         Title="New disk" Icon="/Assets/queuecache.ico"
@@ -120,6 +121,13 @@
             <CheckBox Name="DiskShutdownSave" IsChecked="{Binding SaveDuringShutdown}" IsEnabled="{Binding !ReadOnly}">
               <TextBlock TextWrapping="Wrap" Text="Try to save during Windows shutdown, for at most 1 hour (a forced shutdown or power cut can prevent it)" />
             </CheckBox>
+          </StackPanel>
+
+          <StackPanel Name="DiskWindowsStatusGuidance" Spacing="8" IsVisible="{Binding ShowImage}">
+            <TextBlock Classes="field strong" Text="Windows shutdown messages" />
+            <TextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="We recommend enabling detailed Windows messages for VHDX-based disks, especially when saving an image in RAM at shutdown. Change the Windows setting here or in QueueCache Settings." />
+            <views:WindowsStatusView DataContext="{Binding WindowsStatus}" />
           </StackPanel>
 
           <StackPanel Spacing="2">

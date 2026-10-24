@@ -86,12 +86,21 @@ progress, or when they have run for 58 minutes, and records that; its log record
 each tenth of the progress. A save that takes longer than that will not finish at
 shutdown: save before shutting down (the app's disk details warn when the last save
 took an hour or more). Meanwhile Windows shows its own shutdown
-screen. Windows' "Display highly detailed status messages" setting can show
-"Shutting down service: QueueCache managed disks." instead of "Restarting". This
-identifies a stopping service; it does not report whether an image is saved or
-show a percentage. Windows chooses the current message and can show other services.
-The setting applies to the whole machine's startup, sign-in, sign-out and shutdown
-screens. It is the Windows `VerboseStatus` policy under
+screen. **Settings → Windows shutdown → Show detailed Windows startup and
+shutdown messages** changes Windows' actual machine policy. It is also offered
+with a recommendation when creating either kind of VHDX-based disk. It does not
+turn on automatically when a disk is created. The control rereads Windows while
+visible and when its window is activated, so changes made outside QueueCache are
+shown too. There is no duplicate per-user QueueCache preference.
+
+Detailed messages can show "Shutting down service: QueueCache managed disks."
+instead of "Restarting". This identifies a stopping service; it does not report
+whether an image is saved or show a percentage. Windows chooses the message and
+can leave an earlier message on screen. The setting applies to the whole machine's
+startup, sign-in, sign-out and shutdown screens, including other services. If
+Windows suppresses status messages, QueueCache reports that override and leaves
+that separate policy untouched. Read/write failures are displayed; an unreadable
+state is unavailable rather than off. The Windows policy is `VerboseStatus` under
 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`; the separate
 `DisableStatusMessages=1` policy suppresses these messages even when detailed
 status is enabled ([Microsoft's policy documentation](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/enable-verbose-startup-shutdown-logon-logoff-status-messages)).
@@ -104,46 +113,20 @@ unfinished save is never used: the image starts from its previous save. After th
 restart the app says whether the shutdown save finished; `disk status` shows it
 as `LastShutdownSave` (#22).
 
-A short Windows 11 VM investigation (October 24, 0.4.825.1) did not establish a
-reliable percentage display. Windows accepted a service display-name change to a
-synthetic "80%" during a save, but console samples showed another stopping service
-or a spinner. This does not prove that a name already displayed would never refresh;
-QueueCache was not the named service in those samples. Renaming is therefore not
-a qualified progress feature. The public [service status structure](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status)
-has checkpoints and a wait hint, without an arbitrary message or percentage field;
-the [old Winlogon status-message API](https://learn.microsoft.com/en-us/windows/win32/api/winwlx/nf-winwlx-wlxdisplaystatusmessage)
-is unavailable on modern Windows. The Windows-backed Settings toggle and
-disk-creation recommendation are tracked in [#22](https://github.com/devedse/QueueCache/issues/22)
-and are not implemented yet.
+The shutdown-percentage investigation is complete for [#22](https://github.com/devedse/QueueCache/issues/22):
+Windows accepted service display-name changes, but did not refresh an already
+visible QueueCache label in the VM probe. Other runs retained Passport Container's
+name after that service had stopped. No reliable percentage feature was established;
+QueueCache does not rename its service to simulate one. The detailed evidence is
+recorded in #22 and [known issues](KNOWN_ISSUES.md).
 
-A longer retest used a 4 GiB image with a 3 GiB changed file and deliberately slow
-backing writes. A live service query while QueueCache was copying at 20% confirmed
-that Microsoft Passport Container was already Stopped with PID 0, while QueueCache
-was StopPending and its changed display name read back correctly. The console
-still named Passport Container. Windows can therefore leave a stale message about
-an already stopped service; detailed status is not a reliable indicator of which
-service is currently holding shutdown. This save committed after 508 seconds
-(8 min 28 s). The observer read back changing copy/verification names, held for at
-least 10 seconds, but no QueueCache progress text was found in 702 console frames
-covering the shutdown and reboot. The deliberate backing delay was cleared near
-90% to finish the observation; the duration is not a performance result. This rules
-out a brief save as the explanation in that run, but still does not prove how
-Windows would refresh a QueueCache label once displayed. The helper was interrupted
-before restoring the final name, so a "verifying 40%" display name persisted after
-reboot until cleanup restored it. Service renaming is not a reliable shutdown UI.
-
-The unchanged-name control then showed "Shutting down service: QueueCache managed
-disks." in 477 of 500 captured frames while the same-sized save completed. This
-confirms that Windows can identify QueueCache during a long save; it does not
-establish that the earlier renames caused the Passport Container label. A further
-save waited until QueueCache was visibly named before changing its display name
-once to "QueueCache image save - copying 0% (test snapshot)", using the current
-save's logged progress. Windows accepted the change, and an independent live query
-read it back while the service was Stop Pending, but the console kept displaying
-"QueueCache managed disks.". Renaming an already displayed service therefore did
-not refresh the shutdown text in this VM test. The original display name was
-restored and the temporary backing delay cleared. These observations support a
-static Windows-backed status toggle, but not live percentages through renaming.
+Faster saves are tracked separately in [#28](https://github.com/devedse/QueueCache/issues/28).
+Today any changed data still requires a complete image copy and full read-back
+verification. The changed-region prototype was reverted: a read-write Windows
+attach mounted and changed the older candidate. A replacement must update VHDX
+contents without mounting the candidate, preserve the newest committed image,
+and verify before commit. General automatic checkpoint retention and background
+saving without pausing writes are separate future features.
 
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,

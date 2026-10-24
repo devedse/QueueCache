@@ -21,14 +21,16 @@ public sealed partial class DashboardMonitor : ObservableObject
     private readonly Func<DateTimeOffset> clock;
     private readonly Func<ulong> availableRam;
     private readonly Func<string, VolumeSpace?> volumeSpace;
+    private readonly WindowsStatusViewModel? windowsStatus;
     /// <summary>Volumes of disk images with a RAM cache: sampled here, shown on the virtual disk.</summary>
     private readonly List<VolumeViewModel> diskVolumes = [];
     private bool discovering, samplingDisks, closed;
 
     public DashboardMonitor(ICacheTaskService caches, IManagedDiskService disks, IDialogService dialogs,
         Func<DateTimeOffset>? clock = null, Func<ulong>? availableRam = null, Func<IReadOnlySet<char>>? usedLetters = null,
-        Func<string, VolumeSpace?>? volumeSpace = null)
+        Func<string, VolumeSpace?>? volumeSpace = null, WindowsStatusViewModel? windowsStatus = null)
     {
+        this.windowsStatus = windowsStatus;
         this.volumeSpace = volumeSpace ?? (path => OperatingSystem.IsWindows() ? VolumeSpaceReader.Read(path) : null);
         Caches = caches;
         Disks = disks;
@@ -493,7 +495,7 @@ public sealed partial class DashboardMonitor : ObservableObject
         GlobalBusy = true;
         try
         {
-            var editor = new CreateDiskViewModel(Disks, UsedLetters());
+            var editor = new CreateDiskViewModel(Disks, UsedLetters(), windowsStatus);
             var created = await Dialogs.CreateDiskAsync(editor);
             if (created is null)
                 return null;

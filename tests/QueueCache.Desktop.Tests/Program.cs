@@ -17,5 +17,6 @@ CacheTests.Run();
 VirtualDiskTests.Run();
 StatisticsTests.Run();
 EditorTests.Run();
+WindowsStatusTests.Run();
 ViewTests.Run(output);
 Console.WriteLine("Desktop checks passed; no real volume or disk operations performed.");
