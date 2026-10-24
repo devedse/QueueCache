@@ -12,6 +12,8 @@ internal static class CheckpointReuseTests
             CheckpointReuseScenario.ValidateImageMiB(2048) == 2048, "bounded checkpoint fixture sizes retain small checks and a larger same-build observation");
         try { CheckpointReuseScenario.ValidateImageMiB(4096); throw new Exception("Unbounded image fixture accepted."); }
         catch (ArgumentOutOfRangeException) { }
+        Check(CheckpointReuseScenario.ExistingDataMiB(128) == 0 && CheckpointReuseScenario.ExistingDataMiB(1024) == 512 &&
+            CheckpointReuseScenario.ExistingDataMiB(2048) == 1024, "larger observations retain half an image of nonzero existing data with growth headroom");
         var success = new Fixture();
         var result = await success.Save();
         Check(result.Image.Identity.Path == success.OlderPath && result.Record.PreviousImage == success.Current,

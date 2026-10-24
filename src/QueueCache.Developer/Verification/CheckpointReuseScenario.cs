@@ -14,6 +14,7 @@ public static class CheckpointReuseScenario
     private const int MiB = 1 << 20;
     public static int ValidateImageMiB(int imageMiB) => imageMiB is >= 128 and <= 2048
         ? imageMiB : throw new ArgumentOutOfRangeException(nameof(imageMiB), "Checkpoint fixtures require 128..2048 MiB.");
+    public static int ExistingDataMiB(int imageMiB) => ValidateImageMiB(imageMiB) >= 1024 ? imageMiB / 2 : 0;
     public static void ValidateSave(ManagedDiskRecord before, ManagedDiskRecord after, bool reused)
     {
         var size = after.Definition.CapacityBytes;
@@ -63,6 +64,14 @@ public static class CheckpointReuseScenario
                 var bytes = ConcurrentCacheOracle.Pattern(229, 1, 4 * MiB);
                 var guard = ConcurrentCacheOracle.Pattern(230, 1, MiB);
                 Write(payloadPath, bytes); Write(guardPath, guard);
+                var existingPath = Path.Combine(root, "existing-data.bin");
+                var existingMiB = ExistingDataMiB(imageMiB);
+                var existingHash = existingMiB > 0 ? SeedExisting(existingPath, existingMiB) : null;
+                if (existingHash is not null)
+                {
+                    trace.Add(new { Stage = "ExistingData", ResourceId = id, Path = existingPath, Bytes = (ulong)existingMiB * MiB, Sha256 = existingHash });
+                    RunStorage.AtomicJson(evidence, trace);
+                }
                 await Act(ManagedDiskAction.Save); // First generated checkpoint and fingerprints.
                 await Act(ManagedDiskAction.Save); // Second; first can now be reused without touching current.
                 var before = await Record();
@@ -114,7 +123,10 @@ public static class CheckpointReuseScenario
                 await Act(ManagedDiskAction.Start);
                 if (!File.ReadAllBytes(payloadPath).SequenceEqual(bytes) || !File.ReadAllBytes(guardPath).SequenceEqual(guard))
                     throw new IOException("Committed checkpoint reload lost payload or untouched guard bytes.");
-                Pass("committed-reload", "Payload and untouched guard match after discard and committed-image reload.");
+                if (existingHash is not null && Hash(existingPath) != existingHash)
+                    throw new IOException("Committed checkpoint reload lost existing populated-image data.");
+                Pass("committed-reload", "Payload and untouched guard match after discard and committed-image reload." +
+                    (existingHash is null ? "" : " Populated-image data also matches its recorded SHA-256."));
 
                 // A user can choose an export name resembling an automatic checkpoint.
                 // Even after committing it and rotating it to PreviousImage, never consume it.
@@ -174,6 +186,18 @@ public static class CheckpointReuseScenario
     { using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough); file.Write(bytes); file.Flush(true); }
     private static string Hash(string path)
     { using var file = File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(file)); }
+    private static string SeedExisting(string path, int mebibytes)
+    {
+        using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, MiB, FileOptions.WriteThrough);
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        for (var offset = 0; offset < mebibytes; offset += 8)
+        {
+            var bytes = ConcurrentCacheOracle.Pattern(232, offset + 1, Math.Min(8, mebibytes - offset) * MiB);
+            file.Write(bytes); digest.AppendData(bytes);
+        }
+        file.Flush(true);
+        return Convert.ToHexString(digest.GetHashAndReset());
+    }
     private sealed class ConsoleProgress : IProgress<ManagedDiskProgress>
     { public void Report(ManagedDiskProgress value) => Console.WriteLine($"{value.Stage}: {value.Message} {value.CompletedBytes}/{value.TotalBytes}"); }
 }
