@@ -8,6 +8,10 @@ internal static class CheckpointReuseTests
     private static void Check(bool value, string message) { if (!value) throw new Exception("Checkpoint reuse: " + message); }
     public static async Task RunAsync()
     {
+        Check(CheckpointReuseScenario.ValidateImageMiB(128) == 128 && CheckpointReuseScenario.ValidateImageMiB(1024) == 1024 &&
+            CheckpointReuseScenario.ValidateImageMiB(2048) == 2048, "bounded checkpoint fixture sizes retain small checks and a larger same-build observation");
+        try { CheckpointReuseScenario.ValidateImageMiB(4096); throw new Exception("Unbounded image fixture accepted."); }
+        catch (ArgumentOutOfRangeException) { }
         var success = new Fixture();
         var result = await success.Save();
         Check(result.Image.Identity.Path == success.OlderPath && result.Record.PreviousImage == success.Current,

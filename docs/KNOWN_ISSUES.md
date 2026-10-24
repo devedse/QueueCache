@@ -350,6 +350,31 @@ Correctness checks and their evidence. Performance evidence is in [performance](
 
 ### Correctness qualification
 
+**Issue #28, plan 179, 0.4.839.1 (2026-10-24):**
+`QueueCache-Campaign-20261024-192341-fc96567ee45c40d18d5530321d8866d7`
+completed all seven changed-region checkpoint checks on NTFS W:, restoration
+RESTORED, terminal event validated. Both loaded hashes matched the signed package;
+Q:'s backing cache was paused. The two owned 128 MiB fixtures were dynamic/512-byte
+and fixed/4096-byte sector images. Each reuse wrote 11 MiB of logical payload and
+8192 VHDX header bytes, then read the entire 128 MiB through Windows for verification.
+The protected current and original containers retained their hashes. Dynamic growth
+requiring allocation selected a new complete candidate before mutation, as did
+corrupt fingerprints; committed reloads preserved payload and untouched guard bytes.
+Campaign 37.9 s, worker 29.4 s. This run was shortly after restart: its times are
+correctness evidence, not a performance verdict. Exact archive SHA-256:
+`38D71E535667A5BFF06B3E6165EDE15A28A3C04B15841CACC1CD512AE0051AC8`.
+
+The existing `image-in-ram` regression on 0.4.837.1 passed all 28 subchecks under
+Verifier `0x209bb` in 108 s, restoring its state. It covered save/export, open-file
+vetoes, destination collisions, source-unavailable RAM runtime and committed reload
+for both sector sizes with Direct/Standard variants. Plan 178's first reuse probe
+was INCOMPLETE: Windows left dynamic zero regions unallocated, so it safely used
+a full save instead of the required reuse. That evidence remains separate. Plan
+180 adds explicit automatic-checkpoint provenance: user-chosen committed exports
+and older records without the marker cannot be consumed, even with a generated-looking
+filename. General retention, background saving and a crash during commit remain
+separate work.
+
 **Issue #13 experimental ordering, plan 176 (2026-10-24):** controller 0.4.835.1
 against native 0.4.834.1 (driver source unchanged) completed
 `QueueCache-Campaign-20261024-173926-2160192872334652b812e53814703163`:
@@ -398,6 +423,18 @@ The complete five-run evidence archive SHA-256 is
 This single cut is supporting evidence, not a guarantee, a Strict control or a
 performance comparison. Default promotion, system/special-file paths and broader
 crash/capacity/lifecycle qualification remain open in #13.
+
+**Ordinary Fast smoke, 0.4.839.1 (2026-10-24):**
+`20261024-192914-cc5b5f3b9fcc4ae9adc38ee29c366573` used the original enabled
+2 GiB Fast Q: profile with experimental ordering off, Verifier off. The six
+current-boot file checks passed: four 64 MiB write/overwrite passes with live reads,
+2048 random 4 KiB overwrites, explicit flush/reopen, hashed copy/rename, owned
+deletion and settings/health. State and error count were preserved. Four scope
+checks were SKIP, including file-level TRIM (Windows refused it with error 326),
+TRIM notification observation and the deliberately excluded crash/race/pressure
+paths. An initial paused-cache run also passed but does not prove the Fast path.
+Both exact-run records are retained; archive SHA-256
+`8C018D1C4043BC7E845B01FAC5DBCAF198E17FD5E77A07B4B91A0E06953C0118`.
 
 
 **Issues #14 / #15, plan 126:** signed 0.4.675.1 completed the focused Driver

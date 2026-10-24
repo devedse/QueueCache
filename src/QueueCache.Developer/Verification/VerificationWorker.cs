@@ -1095,7 +1095,7 @@ public static class VerificationWorker
                 ReportFailures(detachChecks, Console.Error);
                 return detachChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "checkpoint-reuse":
-                var checkpointChecks = await CheckpointReuseScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply);
+                var checkpointChecks = await CheckpointReuseScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply, job.BudgetMiB);
                 RunStorage.AtomicJson(job.Reply, checkpointChecks);
                 ReportFailures(checkpointChecks, Console.Error);
                 return checkpointChecks.Count > 0 && checkpointChecks.All(c => c.Result == "PASS") ? 0 : 1;

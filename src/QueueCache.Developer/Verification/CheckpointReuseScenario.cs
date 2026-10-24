@@ -12,6 +12,8 @@ namespace QueueCache.Developer.Verification;
 public static class CheckpointReuseScenario
 {
     private const int MiB = 1 << 20;
+    public static int ValidateImageMiB(int imageMiB) => imageMiB is >= 128 and <= 2048
+        ? imageMiB : throw new ArgumentOutOfRangeException(nameof(imageMiB), "Checkpoint fixtures require 128..2048 MiB.");
     public static void ValidateSave(ManagedDiskRecord before, ManagedDiskRecord after, bool reused)
     {
         var size = after.Definition.CapacityBytes;
@@ -26,8 +28,9 @@ public static class CheckpointReuseScenario
             throw new InvalidDataException("Save lacks changed-payload/full-verification evidence or did not use the required candidate strategy.");
     }
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice host,
-        string work, string evidence)
+        string work, string evidence, int imageMiB = 128)
     {
+        ValidateImageMiB(imageMiB);
         // The worker writes its CheckResult[] to the reply itself after this method
         // returns. Keep transaction/I/O evidence separate from that final reply.
         evidence += ".trace.json";
@@ -47,7 +50,7 @@ public static class CheckpointReuseScenario
                 existing.All(r => r.Definition.PreferredLetter != c));
             var definition = ManagedDiskDefinition.New(ManagedDiskMode.ImageInRam) with
             {
-                ResourceId = id, CapacityBytes = 128UL * MiB, SectorBytes = sector, PreferredLetter = letter,
+                ResourceId = id, CapacityBytes = (ulong)imageMiB * MiB, SectorBytes = sector, PreferredLetter = letter,
                 Label = "QC-Delta", Allocation = allocation, ImagePath = Path.Combine(directory, "source.vhdx"),
                 CheckpointDirectory = Path.Combine(directory, "Checkpoints"), Access = RamAccess.Direct
             };
