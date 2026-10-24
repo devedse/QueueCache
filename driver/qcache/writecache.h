@@ -167,6 +167,9 @@ struct QC_DIAGNOSTICS
     // (QcStrictPieceLimit; 0 in Fast mode) and the waits of writes held because the backlog was at it
     // (counted per wait, like CapacityWaits).
     ULONGLONG StrictPieces, StrictPieceLimit, StrictPieceWaits;
+    // V26: experimental volatile write ordering (#13), sealed flush groups and lower flushes.
+    ULONGLONG FlushOrderMode, WriteEpoch, DrainEpoch, EpochSeals, EpochFlushes;
+    ULONGLONG EpochVersionCopies, EpochTrimWaits, EpochFlushFailures, EpochMaxSubmitted;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -192,7 +195,9 @@ static constexpr ULONG QcDiagnosticsV21Size = 1008;
 static constexpr ULONG QcDiagnosticsV22Size = 1064;
 static constexpr ULONG QcDiagnosticsV23Size = 1136;
 static constexpr ULONG QcDiagnosticsV24Size = 1184;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1208);
+static constexpr ULONG QcDiagnosticsV25Size = 1208;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1280);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, FlushOrderMode) == QcDiagnosticsV25Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StrictPieces) == QcDiagnosticsV24Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadAware) == QcDiagnosticsV23Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, CallerBackoff) == QcDiagnosticsV22Size);
@@ -321,7 +326,9 @@ enum : ULONG
     QcLabReadAware,
     // Lab: Value = QcTrimLookup | QcTrimAsync | QcTrimLabHold (default QcDefaultTrimMode;
     // 0: full slot scan, ordered lower TRIM).
-    QcLabTrimMode
+    QcLabTrimMode,
+    // Experimental #13 ordering, 0/1 at a clean disabled boundary; never persisted.
+    QcLabFlushOrder
 };
 enum : ULONG
 {
@@ -346,6 +353,7 @@ struct QC_TRIM_FENCE
     DEVICE_DATA_SET_RANGE* Ranges; // Sorted, merged, owned (pool); null when the slot is free.
     ULONG Count;
     LONGLONG Low, High;
+    ULONGLONG Epoch; // Ordered Fast: this lower TRIM belongs between sealed write groups.
 }; // Toggle optional detailed timing; never resets counters.
 enum : ULONG
 {
@@ -372,6 +380,7 @@ struct QC_SLOT
     BOOLEAN PieceStart; // Strict (#16): this dirty version began a separate piece of unwritten data (StrictPieces)
     ULONG ValidSectors; // sectorcoverage.h: unknown sectors must never be read from this buffer or drained
     ULONGLONG DirtySince;
+    ULONGLONG Epoch; // Dirty versions from a sealed group are immutable even before submission.
 };
 struct QC_CACHE;
 // Free slots of one 256 KiB slab (64 slots, bit set = free). A chunk with any free slot
@@ -444,6 +453,10 @@ struct QC_CACHE
     // interrupt time; PieceRateDone/PieceRateTime accumulate the current measurement window.
     ULONG StrictPieces;
     ULONGLONG DrainBusySince, PieceRateDone, PieceRateTime, PiecesPerSecond;
+    LONG FlushOrderMode;
+    ULONGLONG WriteEpoch, DrainEpoch;
+    BOOLEAN EpochHasWrites, EpochFlushInFlight;
+    ULONG EpochWaiters;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;
     BOOLEAN Pressure, WriterWaiting;

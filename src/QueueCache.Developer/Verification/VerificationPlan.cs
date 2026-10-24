@@ -46,12 +46,12 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 173;
+    public const int Version = 174;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
-    public static bool InjectsLabFaults(string suite) => suite is "ordering-faults" or "stress-races";
+    public static bool InjectsLabFaults(string suite) => suite is "ordering-faults" or "stress-races" or "flush-order";
     public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
@@ -83,6 +83,7 @@ public static class VerificationPlan
         "cache-allocation",
         "paging-coherence",
         "ordering-faults",
+        "flush-order",
         "stress-races",
         "app-write-profile",
         "pressure",
@@ -218,6 +219,7 @@ public static class VerificationPlan
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
         var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
+        "flush-order" => [new("flush-order", "flush-order")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "stress-races" => [new("stress-races", "stress-races")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],

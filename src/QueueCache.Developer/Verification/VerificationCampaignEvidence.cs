@@ -91,6 +91,7 @@ public static class VerificationCampaignEvidence
         if (expected.Target != actual.Target || expected.Machine != actual.Machine || actual.SchemaVersion != 1 ||
             expected.Profiles != actual.Profiles || expected.Timing != actual.Timing || expected.ReadRecall != actual.ReadRecall ||
             expected.CallerBackoff != actual.CallerBackoff || expected.CopyFlags != actual.CopyFlags ||
+            expected.FlushOrderMode != actual.FlushOrderMode ||
             expected.State.Enabled != actual.State.Enabled ||
             expected.State.BudgetBytes != actual.State.BudgetBytes || expected.State.UnsafeDefer != actual.State.UnsafeDefer ||
             expected.State.Options != actual.State.Options || expected.State.Instance != actual.State.Instance ||

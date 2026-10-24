@@ -202,5 +202,7 @@ public enum WriteCacheAction : uint
     LabReadAware,
     /// <summary>Lab: value = 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM
     /// asynchronously with a range fence | 4 lab: hold that TRIM for 2 s (default 3 since plan 164; 0: full slot scan, ordered lower TRIM).</summary>
-    LabTrimMode
+    LabTrimMode,
+    /// <summary>Experimental Fast flush-group ordering, 0/1 at a clean disabled boundary. Runtime only.</summary>
+    LabFlushOrder
 }

@@ -33,6 +33,11 @@ constexpr bool PolicyChecks()
     if (QcStrictPieceLimit(0) != 1024 || QcStrictPieceLimit(2000) != 4000 || QcStrictPieceLimit(50) != 256 ||
         QcStrictPieceLimit(0x200000000ULL) != 0xFFFFFFFFUL)
         return false;
+    if (!QcEpochMayDrain(true, 3, 3) || QcEpochMayDrain(true, 4, 3) ||
+        !QcEpochMayDrain(false, 4, 3) || !QcEpochNeedsVersion(true, true, 3, 4) ||
+        QcEpochNeedsVersion(true, false, 3, 4) || QcEpochNeedsVersion(true, true, 4, 4) ||
+        QcEpochNeedsVersion(false, true, 3, 4))
+        return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||

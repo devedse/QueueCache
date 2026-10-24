@@ -26,7 +26,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
-    ulong? CallerBackoff = null, ulong? CopyFlags = null);
+    ulong? CallerBackoff = null, ulong? CopyFlags = null, ulong? FlushOrderMode = null);
 public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 /// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
 public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
@@ -232,7 +232,7 @@ public static class VerificationWorker
     /// from Windows, so pending bytes are required to be zero afterwards only when it stays disabled.</param>
     public static IReadOnlyList<string> RestorationMismatches(RecoverySnapshot original,
         WriteCacheState drained, WriteCacheState restored, string profiles, ulong timing, ulong? callerBackoff = null,
-        ulong? copyFlags = null, bool copyFlagsRestoreRequired = false)
+        ulong? copyFlags = null, bool copyFlagsRestoreRequired = false, ulong? flushOrderMode = null)
     {
         var mismatches = new List<string>();
         void Compare<T>(string name, T expected, T actual)
@@ -261,6 +261,7 @@ public static class VerificationWorker
             mismatches.AddRange(CopyFlagsMismatches(expectedCopyFlags, copyFlags));
         else if (copyFlagsRestoreRequired)
             mismatches.Add($"CopyFlags: original value unavailable for this legacy run; actual {FormatCopyFlags(copyFlags)}");
+        if (original.FlushOrderMode is not null) Compare(nameof(original.FlushOrderMode), original.FlushOrderMode, flushOrderMode);
         return mismatches;
     }
     public static IReadOnlyList<string> CopyFlagsMismatches(ulong expected, ulong? actual) =>
@@ -762,7 +763,7 @@ public static class VerificationWorker
                 var capturedDiagnostics = device.GetDiagnostics();
                 var capturedSnapshot = new RecoverySnapshot(1, target, state, device.GetPerformance().TimingEnabled != 0,
                     Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, capturedDiagnostics.ReadRecall?.Mode,
-                    capturedDiagnostics.CallerRouting?.Backoff, capturedDiagnostics.CopyFlags);
+                    capturedDiagnostics.CallerRouting?.Backoff, capturedDiagnostics.CopyFlags, capturedDiagnostics.FlushOrder?.Mode);
                 if (job.Operation == "campaign-prepare")
                 {
                     var expectedPreparation = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(job.Recovery!))
@@ -772,7 +773,7 @@ public static class VerificationWorker
                         var diagnostics = device.GetDiagnostics();
                         return new RecoverySnapshot(1, target, device.GetWriteCacheState(), device.GetPerformance().TimingEnabled != 0,
                             Profiles(), DateTimeOffset.UtcNow, Environment.MachineName, diagnostics.ReadRecall?.Mode,
-                            diagnostics.CallerRouting?.Backoff, diagnostics.CopyFlags);
+                            diagnostics.CallerRouting?.Backoff, diagnostics.CopyFlags, diagnostics.FlushOrder?.Mode);
                     },
                         () => { Stage("explicit phase preparation: flushing filesystem volume"); using var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, writable: true); volume.Flush(); },
                         () => { Stage("explicit phase preparation: draining cache"); device.Control(WriteCacheAction.Flush); },
@@ -818,7 +819,7 @@ public static class VerificationWorker
                     device.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
                     device.SetSpecialRanges([], SpecialRangeKind.Reference);
                 }
-                // Only ordering-faults and stress-races deliberately raise the lifetime error count through
+                // Only designated fault suites deliberately raise the lifetime error count through
                 // driver lab faults, and each fault is recovered with Retry. Accept that count only when the
                 // cache is currently healthy, and record exactly what was accepted. Every other suite
                 // still treats any error-count change as a restoration failure.
@@ -830,7 +831,7 @@ public static class VerificationWorker
                         RunStorage.AtomicJson(job.Reply + ".accepted-lab-errors.json", new
                         {
                             OriginalErrors = original.State.Errors, CurrentErrors = current.Errors,
-                            Reason = "Deliberate lab-fault failures (ordering-faults or stress-races), each recovered by Retry"
+                            Reason = "Deliberate lab-fault failures in a designated fault suite, each recovered by Retry"
                         });
                         original = original with { State = original.State with { Errors = current.Errors } };
                     }
@@ -850,6 +851,8 @@ public static class VerificationWorker
                     device.Control(WriteCacheAction.Disable);
                 }, device.GetWriteCacheState,
                     (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot));
+                if (original.FlushOrderMode is { } flushOrderMode)
+                    device.Control(WriteCacheAction.LabFlushOrder, value: flushOrderMode);
                 if (original.State.BudgetBytes == 0)
                 {
                     device.Control(WriteCacheAction.Release);
@@ -884,6 +887,7 @@ public static class VerificationWorker
                 var restoredProfiles = Profiles();
                 var restoredTiming = device.GetPerformance().TimingEnabled;
                 var restoredDiagnostics = device.GetDiagnostics();
+                RunStorage.AtomicJson(job.Reply + ".flush-order.json", new { Expected = original.FlushOrderMode, Actual = restoredDiagnostics.FlushOrder?.Mode });
                 var restoredBackoff = restoredDiagnostics.CallerRouting?.Backoff;
                 var restoredCopyFlags = restoredDiagnostics.CopyFlags;
                 RunStorage.AtomicJson(job.Reply + ".caller-backoff.json", new { Expected = original.CallerBackoff, Actual = restoredBackoff });
@@ -895,7 +899,7 @@ public static class VerificationWorker
                 });
                 var restorationBaseline = original with { CopyFlags = expectedCopyFlags };
                 var mismatches = RestorationMismatches(restorationBaseline, drainedState, restored, restoredProfiles,
-                    restoredTiming, restoredBackoff, restoredCopyFlags, job.RequireCopyFlagsRestore);
+                    restoredTiming, restoredBackoff, restoredCopyFlags, job.RequireCopyFlagsRestore, restoredDiagnostics.FlushOrder?.Mode);
                 if (mismatches.Count != 0)
                 {
                     RunStorage.AtomicJson(job.Reply + ".mismatch.json", new
@@ -1090,6 +1094,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, detachChecks);
                 ReportFailures(detachChecks, Console.Error);
                 return detachChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "flush-order":
+                var orderChecks = await FlushOrderScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, orderChecks);
+                ReportFailures(orderChecks, Console.Error);
+                return orderChecks.Count > 0 && orderChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);

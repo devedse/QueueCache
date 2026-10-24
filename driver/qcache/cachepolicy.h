@@ -99,6 +99,17 @@ constexpr bool QcShouldCacheDataIo(bool pagingIo, bool applicationPaging)
 {
     return !pagingIo || applicationPaging;
 }
+// #13: keep later versions in RAM until the earlier group's lower flush completed.
+// The lab mode remains off until its real-driver qualification is complete.
+static constexpr LONG QcDefaultFlushOrder = 0;
+constexpr bool QcEpochMayDrain(bool ordered, ULONGLONG version, ULONGLONG frontier)
+{
+    return !ordered || version == frontier;
+}
+constexpr bool QcEpochNeedsVersion(bool ordered, bool dirty, ULONGLONG version, ULONGLONG writing)
+{
+    return ordered && dirty && version != writing;
+}
 constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool healthy, bool gone)
 {
     return wasEnabled && hasCapacity && healthy && !gone;

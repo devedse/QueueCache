@@ -676,7 +676,7 @@ BinaryPrimitives.WriteUInt32LittleEndian(strictBytes.AsSpan(4), CacheDiagnostics
 foreach (var (offset, value) in new[] { (0, 300UL), (8, 4000UL), (16, 17UL) })
     BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + offset), value);
 Check(CacheDiagnostics.Decode(strictBytes).StrictBacklog == new CacheStrictBacklog(300, 4000, 17) &&
-    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1208,
+    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1280,
     "V25 diagnostics report Strict's backlog pieces, limit and waits (#16); V24 reports none");
 BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + 8), 100);
 Reject(() => CacheDiagnostics.Decode(strictBytes), "Strict backlog limit below its 256-piece floor rejected");
@@ -687,6 +687,27 @@ Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "read-aware limit abov
 BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize), 2);
 BinaryPrimitives.WriteUInt64LittleEndian(drainPriorityBytes.AsSpan(CacheDiagnostics.CallerRoutingWireSize + 16), 8);
 Reject(() => CacheDiagnostics.Decode(drainPriorityBytes), "unknown TRIM mode bits rejected");
+// V26 appends ordering evidence; older drivers must never fabricate that capability.
+var orderedBytes = new byte[CacheDiagnostics.FlushOrderWireSize];
+strictBytes.CopyTo(orderedBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 26);
+BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes.AsSpan(4), CacheDiagnostics.FlushOrderWireSize);
+ulong[] orderedValues = [1, 7, 3, 6, 2, 11, 5, 1, 3];
+for (var i = 0; i < orderedValues.Length; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + 8 * i), orderedValues[i]);
+Check(CacheDiagnostics.Decode(orderedBytes).FlushOrder == new CacheFlushOrder(1, 7, 3, 6, 2, 11, 5, 1, 3) &&
+    CacheDiagnostics.Decode(strictBytes).FlushOrder is null, "V26 decodes ordering without inventing evidence on V25");
+Reject(() => CacheDiagnostics.Decode(orderedBytes.AsSpan(0, orderedBytes.Length - 1)), "short ordering diagnostics rejected");
+BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 25);
+Reject(() => CacheDiagnostics.Decode(orderedBytes), "ordering size requires V26 version");
+BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 26);
+foreach (var (offset, value) in new[] { (0, 2UL), (8, 0UL), (16, 0UL), (16, 8UL) })
+{
+    var original = BinaryPrimitives.ReadUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset));
+    BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset), value);
+    Reject(() => CacheDiagnostics.Decode(orderedBytes), "invalid ordering mode or frontier rejected");
+    BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset), original);
+}
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

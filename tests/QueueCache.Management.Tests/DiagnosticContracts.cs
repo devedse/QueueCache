@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 173, "plan 173 paging-coherence expects page-ins of file data to be kept (#19)");
+        Check(VerificationPlan.Version == 174, "plan 174 adds experimental Fast flush ordering (#13)");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
@@ -36,6 +36,39 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order", "flush-order")]) &&
+            VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
+        var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
+            new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
+        Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
+            flushOrderMode: 0).Count == 0, "ordering restoration accepts an observed zero mode");
+        Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
+            flushOrderMode: 1).Any(m => m.StartsWith("FlushOrderMode:")), "ordering restoration rejects a changed runtime mode");
+        var orderBefore = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        {
+            FlushOrder = new(1, 1, 1, 0, 0, 0, 0, 0, 0),
+            Attribution = new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+        };
+        var orderAfter = orderBefore with { FlushOrder = new(1, 2, 1, 1, 0, 1, 0, 0, 0) };
+        FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter);
+        Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with { FlushOrder = null }));
+        Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
+            { Attribution = orderAfter.Attribution! with { LowerFlushAttempts = 1 } }));
+        Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
+            { FlushOrder = orderAfter.FlushOrder! with { VersionCopies = 0 } }));
+        var heldOrder = orderAfter with
+        {
+            FlushOrder = orderAfter.FlushOrder! with { MaxSubmittedEpoch = 1 },
+            LabGate = new(2, 1, 1, 2, 0, 0, 0, 0)
+        };
+        FlushOrderScenario.ValidateHeld(heldOrder);
+        Reject(() => FlushOrderScenario.ValidateHeld(heldOrder with { FlushOrder = heldOrder.FlushOrder! with { MaxSubmittedEpoch = 2 } }));
+        var faultOrder = heldOrder with { FlushOrder = heldOrder.FlushOrder! with { FlushFailures = 1 } };
+        var faultState = new WriteCacheState(1, unchecked((int)0xC0000185), 8UL << 30, 64UL << 20, 64UL << 20, 4096, 0, 64UL << 20, 2, 8192, 4096, 0, 0, 1, 0, 8192);
+        FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, true);
+        Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, false));
+        Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder with
+            { FlushOrder = faultOrder.FlushOrder! with { DrainingEpoch = 2 } }, faultState, true));
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);

@@ -164,6 +164,7 @@ static ULONG AllocateSlot(QC_CACHE* c, bool dirty = true, bool read = false)
     s->ReadClass = read;
     s->InFlight = FALSE;
     s->DirtySince = dirty ? NowMs() : 0;
+    s->Epoch = c->WriteEpoch;
     s->Pins = 0;
     s->ValidSectors = 0;
     s->Filling = s->RetireWhenUnpinned = s->PieceStart = FALSE;

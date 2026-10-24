@@ -86,6 +86,13 @@ flushes, so clean cuts are evidence, not a guarantee. Another write-back cache t
 the same way also damaged NTFS when cut during its write-out.
 [Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
+An experimental, default-off ordering path is being qualified for #13. It retains
+old dirty versions across filesystem flush/write-through boundaries, writes groups
+in order with a real lower flush between them, and orders TRIM with those groups.
+The standalone plan-174 `flush-order` suite targets those changed paths. This is
+not yet a verified fix; the default Fast behavior and the open safety warning above
+remain in effect until the live-driver and power-loss evidence supports promotion.
+
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.

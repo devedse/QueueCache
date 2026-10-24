@@ -74,8 +74,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int CallerRoutingWireSize = 1136;
     public const int DrainPriorityWireSize = 1184;
     public const int StrictBacklogWireSize = 1208;
+    public const int FlushOrderWireSize = 1280;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = StrictBacklogWireSize;
+    public const int CurrentWireSize = FlushOrderWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -122,6 +123,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V25: Strict's backlog of separate pieces of unwritten data, its limit and the writes that waited (#16);
     /// null on older drivers.</summary>
     public CacheStrictBacklog? StrictBacklog { get; init; }
+    /// <summary>V26: experimental Fast flush-group ordering and its lower-flush/version counters.</summary>
+    public CacheFlushOrder? FlushOrder { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -151,6 +154,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CallerRoutingWireSize => 23u,
             DrainPriorityWireSize => 24u,
             StrictBacklogWireSize => 25u,
+            FlushOrderWireSize => 26u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -339,6 +343,20 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(DrainPriorityWireSize + 16)..]))
             : null;
         if (strictBacklog is { Limit: > 0 and < 256 }) throw new InvalidDataException("Invalid Strict backlog limit.");
+        var flushOrder = bytes.Length >= FlushOrderWireSize
+            ? new CacheFlushOrder(BinaryPrimitives.ReadUInt64LittleEndian(bytes[StrictBacklogWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 24)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 32)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 40)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 48)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 56)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 64)..]))
+            : null;
+        if (flushOrder is { Mode: > 1 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
+            flushOrder is not null && flushOrder.DrainingEpoch > flushOrder.CurrentEpoch)
+            throw new InvalidDataException("Invalid Fast flush-group ordering state.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
         {
             Attribution = attribution,
@@ -367,7 +385,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             RamReadQueue = ramReadQueue,
             CallerRouting = callerRouting,
             DrainPriority = drainPriority,
-            StrictBacklog = strictBacklog
+            StrictBacklog = strictBacklog,
+            FlushOrder = flushOrder
         };
     }
 }
@@ -390,14 +409,15 @@ public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed
 /// <summary>Dispatch candidates only (eligible buffer/IRQL/stack, active routing). Each
 /// declined candidate has one first reason; later cache-service declines are in CallerPath.
 /// Snapshots are individually atomic. Backoff is configured length, not requests remaining.</summary>
-/// <summary>V24: ReadAware 0 = off, else the most drain batches outstanding while foreground reads wait;
-/// ReadAwareWaits counts the drainers' 1 ms holds. TrimMode 1 = index lookup, 2 = asynchronous lower TRIM, 4 = lab hold of that TRIM for 2 s;
-/// TrimLookups/TrimAsync count TRIMs that used them, TrimAsyncFallbacks the ordered sends instead.</summary>
 /// <summary>V25 (#16): separate pieces of unwritten data Strict holds now, the most it holds before a write that adds
 /// dirty data waits (about two seconds of the drain's measured rate, at least 256; 0 in Fast mode, which has no
 /// limit), and how often a write waited for it (each wait counts, like capacity waits). Pieces may exceed the limit by
 /// the writes admitted before it was reached.</summary>
 public sealed record CacheStrictBacklog(ulong Pieces, ulong Limit, ulong Waits);
+/// <summary>V26: experimental Fast groups; MaxSubmittedEpoch resets with the allocation or mode. Other counters are lifetime counts.</summary>
+public sealed record CacheFlushOrder(ulong Mode, ulong CurrentEpoch, ulong DrainingEpoch, ulong Seals,
+    ulong Flushes, ulong VersionCopies, ulong TrimWaits, ulong FlushFailures, ulong MaxSubmittedEpoch);
+/// <summary>V24: read-aware drain limit and waits, TRIM flags, indexed drops, async sends and fallback sends.</summary>
 public sealed record CacheDrainPriority(ulong ReadAware, ulong ReadAwareWaits, ulong TrimMode, ulong TrimLookups,
     ulong TrimAsync, ulong TrimAsyncFallbacks);
 public sealed record CacheCallerRouting(ulong Backoff, ulong Candidates, ulong Controls, ulong Queued,

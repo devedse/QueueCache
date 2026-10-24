@@ -133,6 +133,9 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.Size = sizeof(QC_DIAGNOSTICS);
     c->Diagnostics.StrictPieces = c->StrictPieces;
     c->Diagnostics.StrictPieceLimit = c->UnsafeDefer ? 0 : QcStrictPieceLimit(c->PiecesPerSecond);
+    c->Diagnostics.FlushOrderMode = c->FlushOrderMode;
+    c->Diagnostics.WriteEpoch = c->WriteEpoch;
+    c->Diagnostics.DrainEpoch = c->DrainEpoch;
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -925,13 +928,34 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
 }
 // Mutex held. True when block lies inside a TRIM whose lower request is still
 // outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
-static bool TrimFenced(QC_CACHE* c, LONGLONG block)
+static bool FlushOrdering(QC_CACHE* c)
+{
+    return c->UnsafeDefer && c->FlushOrderMode != 0;
+}
+// Foreground owner, Mutex held. Repeated empty barriers share the same boundary.
+// An outstanding copy still owns its dirty versions, so sealing never waits for I/O.
+static bool SealEpoch(QC_CACHE* c)
+{
+    if (!FlushOrdering(c) || !c->EpochHasWrites)
+        return true;
+    if (c->WriteEpoch == MAXULONGLONG)
+    {
+        Fault(c, STATUS_INTEGER_OVERFLOW);
+        return false;
+    }
+    ++c->WriteEpoch;
+    c->EpochHasWrites = FALSE;
+    ++c->Diagnostics.EpochSeals;
+    WakeDrainers(c);
+    return true;
+}
+static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLONG)
 {
     if (!c->TrimFenceCount)
         return false;
     for (const auto& fence : c->TrimFences)
     {
-        if (!fence.Ranges || block >= fence.High || block + Chunk <= fence.Low)
+        if (!fence.Ranges || (FlushOrdering(c) && epoch < fence.Epoch) || block >= fence.High || block + Chunk <= fence.Low)
             continue;
         // First range ending after block (sorted, merged, disjoint).
         ULONG low = 0, high = fence.Count;
@@ -964,8 +988,8 @@ static bool ReadPressure(QC_CACHE* c, ULONGLONG now)
 static bool DrainCandidate(QC_CACHE* c, ULONG index)
 {
     const auto slot = &c->Slots[index];
-    if (slot->InFlight || slot->Filling || FindOldestSlot(c, slot->Offset.QuadPart) != index ||
-        TrimFenced(c, slot->Offset.QuadPart))
+    if (slot->InFlight || slot->Filling || !QcEpochMayDrain(FlushOrdering(c), slot->Epoch, c->DrainEpoch) ||
+        FindOldestSlot(c, slot->Offset.QuadPart) != index || TrimFenced(c, slot->Offset.QuadPart, slot->Epoch))
         return false;
     return !c->RangeDrain || !c->RangeForward ||
         !RangeOverlaps(c->RangeStart, c->RangeEnd, slot->Offset.QuadPart);
@@ -1116,6 +1140,47 @@ static void Drainer(PVOID context)
             KeWaitForSingleObject(&c->Stopping, Executive, KernelMode, FALSE, &interval);
             continue;
         }
+        // Only drainer zero advances a sealed group. No later group can submit
+        // writes until this lower flush completes successfully. The foreground
+        // owner may meanwhile admit later versions entirely in RAM.
+        bool epochOperation = false;
+        for (const auto& fence : c->TrimFences)
+            epochOperation |= fence.Ranges && fence.Epoch <= c->DrainEpoch;
+        if (worker->Number == 0 && FlushOrdering(c) && !c->TrimPaused &&
+            !c->EpochFlushInFlight && c->DrainEpoch < c->WriteEpoch &&
+            !c->State.InFlightBytes && !epochOperation &&
+            (c->Head == NoSlot || c->Slots[c->Head].Epoch > c->DrainEpoch) &&
+            NT_SUCCESS(c->State.LastError) && !c->Gone)
+        {
+            c->EpochFlushInFlight = TRUE;
+            const bool inject = c->InjectFault == 3;
+            if (inject) c->InjectFault = 0;
+            Publish(c);
+            ReleaseCache(c);
+            const auto status = inject ? STATUS_IO_DEVICE_ERROR : LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+            AcquireCache(c);
+            c->EpochFlushInFlight = FALSE;
+            if (NT_SUCCESS(status))
+            {
+                ++c->Diagnostics.EpochFlushes;
+                // Empty groups have no lower effects left to order. A pending
+                // TRIM is an effect even when the dirty FIFO is empty.
+                auto next = c->Head == NoSlot ? c->WriteEpoch : c->Slots[c->Head].Epoch;
+                for (const auto& fence : c->TrimFences)
+                    if (fence.Ranges) next = min(next, fence.Epoch);
+                c->DrainEpoch = max(c->DrainEpoch + 1, next);
+            }
+            else
+            {
+                ++c->Diagnostics.EpochFlushFailures;
+                Fault(c, status); // Keep the boundary for explicit Retry, like a failed drain.
+            }
+            Publish(c);
+            KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+            WakeDrainers(c);
+            ReleaseCache(c);
+            continue;
+        }
         if (c->State.DirtyBytes == 0 || c->TrimPaused ||
             !NT_SUCCESS(c->State.LastError) || c->Gone)
         {
@@ -1133,7 +1198,7 @@ static void Drainer(PVOID context)
                                          static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                                          now - c->Slots[c->Head].DirtySince,
                                          now - c->LastWriteTime,
-                                         c->Barrier || c->WriterWaiting,
+                                         c->Barrier || c->WriterWaiting || c->EpochWaiters,
                                          pressure);
         c->Pressure = pressure;
         const bool fenceDrain = c->RangeDrain && !c->RangeForward;
@@ -1197,8 +1262,10 @@ static void Drainer(PVOID context)
             if (c->Slots[previous].InFlight) { backReason = &c->Performance.DrainBackInFlight; break; }
             if (c->Slots[previous].Filling) { backReason = &c->Performance.DrainBackFilling; break; }
             if (c->Slots[previous].ValidSectors != 255) { backReason = &c->Performance.DrainBackPartial; break; }
+            if (!QcEpochMayDrain(FlushOrdering(c), c->Slots[previous].Epoch, c->DrainEpoch))
+            { backReason = &c->Performance.DrainBackFence; break; }
             if (FenceSplitsBatch(c, c->Slots[previous].Offset.QuadPart, batchOverlapsFence) ||
-                TrimFenced(c, c->Slots[previous].Offset.QuadPart))
+                TrimFenced(c, c->Slots[previous].Offset.QuadPart, c->Slots[previous].Epoch))
             { backReason = &c->Performance.DrainBackFence; break; }
             index = previous;
         }
@@ -1218,9 +1285,11 @@ static void Drainer(PVOID context)
             auto slot = &c->Slots[index];
             if (slot->InFlight) { endReason = &c->Performance.DrainEndInFlight; break; }
             if (slot->Filling) { endReason = &c->Performance.DrainEndFilling; break; }
+            if (!QcEpochMayDrain(FlushOrdering(c), slot->Epoch, c->DrainEpoch))
+            { endReason = &c->Performance.DrainEndFence; break; }
             if (merged && slot->ValidSectors != 255)
             { endReason = &c->Performance.DrainEndPartial; break; }
-            if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence) || TrimFenced(c, slot->Offset.QuadPart))
+            if (FenceSplitsBatch(c, slot->Offset.QuadPart, batchOverlapsFence) || TrimFenced(c, slot->Offset.QuadPart, slot->Epoch))
             { endReason = &c->Performance.DrainEndFence; break; }
             selected[merged++] = index;
             slot->InFlight = TRUE;
@@ -1245,6 +1314,8 @@ static void Drainer(PVOID context)
         else ++c->Performance.DrainSizeLarge;
         if (!c->State.InFlightBytes)
             c->DrainBusySince = KeQueryInterruptTime(); // The disk starts writing (MeasurePieceRate).
+        if (FlushOrdering(c))
+            c->Diagnostics.EpochMaxSubmitted = max(c->Diagnostics.EpochMaxSubmitted, c->Slots[selected[0]].Epoch);
         c->State.InFlightBytes += transferBytes;
         worker->InFlightStart = io.Offset.QuadPart;
         worker->InFlightEnd = io.Offset.QuadPart + io.Length;
@@ -1412,6 +1483,8 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
     c->ReadRecall = 1;
     c->ReadAware = QcDefaultReadAware;
     c->TrimMode = QcDefaultTrimMode;
+    c->FlushOrderMode = QcDefaultFlushOrder;
+    c->WriteEpoch = c->DrainEpoch = 1;
     LARGE_INTEGER frequency;
     KeQueryPerformanceCounter(&frequency);
     c->Performance.Frequency = frequency.QuadPart;
@@ -1490,6 +1563,10 @@ static void FreeSlots(QC_CACHE* c)
     c->SlabMdls = nullptr;
     c->Count = c->CleanCount[0] = c->CleanCount[1] = 0;
     c->DirtySlots = c->StrictPieces = 0;
+    c->WriteEpoch = c->DrainEpoch = 1;
+    c->Diagnostics.EpochMaxSubmitted = 0;
+    c->EpochHasWrites = c->EpochFlushInFlight = FALSE;
+    c->EpochWaiters = 0;
     c->CleanValidBytes[0] = c->CleanValidBytes[1] = 0;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
     c->Slots = nullptr;
@@ -1538,7 +1615,9 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
     c->Barrier = TRUE;
     c->Performance.Phase = QcDrainPhase;
     Publish(c);
-    while (c->State.DirtyBytes && NT_SUCCESS(c->State.LastError) && !c->Gone)
+    while ((c->State.DirtyBytes || c->EpochFlushInFlight ||
+            (FlushOrdering(c) && (c->Head != NoSlot || c->TrimFenceCount || c->DrainEpoch < c->WriteEpoch))) &&
+           NT_SUCCESS(c->State.LastError) && !c->Gone)
     {
         KeClearEvent(&c->Changed);
         WakeDrainers(c);
@@ -1557,7 +1636,22 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
         status = inject ? STATUS_IO_DEVICE_ERROR : LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
     AcquireCache(c);
     if (NT_SUCCESS(status))
+    {
         ++c->State.Flushes;
+        if (FlushOrdering(c))
+        {
+            if (c->WriteEpoch == MAXULONGLONG)
+            {
+                status = STATUS_INTEGER_OVERFLOW;
+                Fault(c, status);
+            }
+            else
+            {
+                c->DrainEpoch = ++c->WriteEpoch;
+                c->EpochHasWrites = FALSE;
+            }
+        }
+    }
     else if (NT_SUCCESS(c->State.LastError))
         Fault(c, status);
     if (disable && NT_SUCCESS(status))
@@ -1806,6 +1900,23 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     NTSTATUS status = STATUS_SUCCESS;
     switch (command.Action)
     {
+    case QcLabFlushOrder:
+        if (command.Value > 1 || command.BudgetBytes)
+            status = STATUS_INVALID_PARAMETER;
+        else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
+                 !NT_SUCCESS(c->State.LastError))
+            status = STATUS_DEVICE_BUSY;
+        else if (QcCachePagingPathCount(c) > 0)
+            status = STATUS_NOT_SUPPORTED; // Experimental qualification starts on a disposable data volume.
+        else
+        {
+            c->FlushOrderMode = static_cast<LONG>(command.Value);
+            c->WriteEpoch = c->DrainEpoch = 1;
+            c->Diagnostics.EpochMaxSubmitted = 0;
+            c->EpochHasWrites = FALSE;
+            ++c->Generation;
+        }
+        break;
     case QcFlushPolicy:
         // Explicit operator choice, only at a clean disabled boundary. Never persists across boot.
         if (command.Value > 1 || command.BudgetBytes)
@@ -2025,6 +2136,16 @@ static PUCHAR Map(PIRP irp)
 // write-through write (#16).
 static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
 {
+    const bool ordered = FlushOrdering(c);
+    if (ordered)
+    {
+        // An unsupported/unmappable paging write cannot be admitted to RAM.
+        // It must not bypass sealed dependencies elsewhere on the volume.
+        ReleaseCache(c);
+        const auto status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
+        if (!NT_SUCCESS(status)) return status;
+        AcquireCache(c);
+    }
     const auto end = first + length;
     // A paging-marked write can also be ordinary mapped-file data. Drain
     // only its overlapping versions, including writes already issued by a
@@ -2088,7 +2209,14 @@ static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
         RecordLabSequence(c, &c->LabGateDirectDoneSeq);
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
         status = STATUS_DEVICE_DATA_ERROR;
+    NTSTATUS orderedFlush = STATUS_SUCCESS;
+    if (ordered)
+    {
+        orderedFlush = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+        if (NT_SUCCESS(status)) status = orderedFlush;
+    }
     AcquireCache(c);
+    if (!NT_SUCCESS(orderedFlush) && NT_SUCCESS(c->State.LastError)) Fault(c, orderedFlush);
     // A failed or short lower write may still have changed some sectors.
     // The request reports that failure; no old clean view may survive it.
     InvalidateCleanRange(c, first, length);
@@ -2186,6 +2314,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     // Only explicit durability/disabled/over-budget fallbacks remain here.
     if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
     {
+        const bool ordered = FlushOrdering(c);
         auto reason = !c->Enabled ? QcDisabledWriteBarrier :
             (writeThrough && !c->UnsafeDefer) ? QcStrictWriteBarrier : QcQuotaWriteBarrier;
         ReleaseCache(c);
@@ -2194,7 +2323,20 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         InvalidateCleanRange(c, offset.QuadPart, length);
         Publish(c);
         ReleaseCache(c);
-        return NT_SUCCESS(status) ? OriginalIo(c, irp) : status;
+        if (!NT_SUCCESS(status)) return status;
+        status = OriginalIo(c, irp);
+        if (ordered)
+        {
+            const auto flushed = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+            if (!NT_SUCCESS(flushed))
+            {
+                AcquireCache(c);
+                if (NT_SUCCESS(c->State.LastError)) Fault(c, flushed);
+                ReleaseCache(c);
+                if (NT_SUCCESS(status)) status = flushed;
+            }
+        }
+        return status;
     }
     // Lab fault 11: the next paging write's buffer cannot be mapped (fallback proof only).
     const bool mapFault = pagingIo && c->InjectFault == 11;
@@ -2218,20 +2360,34 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
+    ULONGLONG writeEpoch = c->WriteEpoch;
     for (;;)
     {
         // Preflight the WHOLE request before modifying any payload. Recompute after
         // every wait because the drainer may have removed or pinned indexed slots.
+        writeEpoch = c->WriteEpoch;
+        if (FlushOrdering(c))
+        {
+            if (writeEpoch >= MAXULONGLONG - 2)
+            {
+                Fault(c, STATUS_INTEGER_OVERFLOW);
+                ReleaseCache(c);
+                return STATUS_INTEGER_OVERFLOW;
+            }
+            if (writeThrough && c->EpochHasWrites) ++writeEpoch;
+        }
         needed = 0;
         ULONG newDirty = 0, newWriteOccupancy = 0;
         for (auto block = firstBlock; block < end; block += Chunk)
         {
             auto index = FindSlot(c, block);
-            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins)
+            const bool immutable = index != NoSlot && QcEpochNeedsVersion(FlushOrdering(c),
+                c->Slots[index].Dirty, c->Slots[index].Epoch, writeEpoch);
+            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins || immutable)
                 ++needed;
-            if (index == NoSlot || !c->Slots[index].Dirty || c->Slots[index].InFlight || c->Slots[index].Pins)
+            if (index == NoSlot || !c->Slots[index].Dirty || c->Slots[index].InFlight || c->Slots[index].Pins || immutable)
                 ++newDirty;
-            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins ||
+            if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins || immutable ||
                 (!c->Slots[index].Dirty && c->Slots[index].ReadClass))
                 ++newWriteOccupancy;
         }
@@ -2317,11 +2473,19 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return error;
     }
+    if (FlushOrdering(c) && writeThrough && !SealEpoch(c))
+    {
+        const auto error = c->State.LastError;
+        ReleaseCache(c);
+        return error;
+    }
+    NT_ASSERT(!FlushOrdering(c) || writeEpoch == c->WriteEpoch);
     ULONG admittedSlot = NoSlot;
     for (auto block = firstBlock; block < end; block += Chunk)
     {
         auto index = FindSlot(c, block);
-        if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins)
+        if (index == NoSlot || c->Slots[index].InFlight || c->Slots[index].Pins ||
+            QcEpochNeedsVersion(FlushOrdering(c), c->Slots[index].Dirty, c->Slots[index].Epoch, writeEpoch))
         {
             const auto previous = index;
             index = AllocateSlot(c);
@@ -2335,6 +2499,8 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             if (previous != NoSlot)
             {
                 auto old = &c->Slots[previous];
+                if (QcEpochNeedsVersion(FlushOrdering(c), old->Dirty, old->Epoch, writeEpoch))
+                    ++c->Diagnostics.EpochVersionCopies;
                 slot->ValidSectors = old->ValidSectors;
                 for (ULONG sector = 0; sector < 8; ++sector)
                     if (old->ValidSectors & (1UL << sector))
@@ -2354,6 +2520,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
             slot->Dirty = TRUE;
             slot->ReadClass = FALSE;
             slot->DirtySince = NowMs();
+            slot->Epoch = writeEpoch;
             Link(c, index);
             c->State.DirtyBytes += QcValidBytes(slot->ValidSectors);
             ++c->DirtySlots;
@@ -2362,6 +2529,13 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         slot->Filling = TRUE;
         if (blocks == 1)
             admittedSlot = index;
+    }
+    if (FlushOrdering(c))
+    {
+        c->EpochHasWrites = TRUE;
+        // Seal at admission, before an offloaded copy lets the foreground owner
+        // accept another non-overlapping write. Filling keeps this version alive.
+        if (writeThrough) SealEpoch(c); // Overflow was excluded before reservation.
     }
     // A large write's copy can run on an offloaded-request thread, in parallel with
     // other copies. Its entry keeps the range owned until FinishWrite: overlapping
@@ -2455,7 +2629,7 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
     const bool pagingReservePressure = pagingIo && c->DirtySlots > ordinaryLimit;
     if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                               c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
-                              c->Barrier || c->WriterWaiting || pagingReservePressure, pressure))
+                              c->Barrier || c->WriterWaiting || c->EpochWaiters || pagingReservePressure, pressure))
         WakeDrainers(c);
     c->Pressure = pressure;
     ReleaseCache(c);
@@ -3146,7 +3320,7 @@ static void SortTrimRanges(DEVICE_DATA_SET_RANGE* ranges, ULONG count)
 }
 // Mutex held. One cached version whose block overlaps a TRIM: a clean copy is
 // released; a dirty version loses the trimmed sectors and is retired when none remain.
-static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask)
+static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask, bool cleanOnly = false)
 {
     auto slot = &c->Slots[i];
     NT_ASSERT(!slot->InFlight); // overlapping writes were awaited and no batch started since
@@ -3155,6 +3329,10 @@ static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask)
         RetireSlot(c, i);
         return;
     }
+    // A later discard cannot erase a journal predecessor retained by an earlier
+    // volatile flush. It drains before the lower TRIM; newer versions stay fenced.
+    if (cleanOnly || (FlushOrdering(c) && slot->Epoch < c->WriteEpoch))
+        return;
     const auto trimmed = slot->ValidSectors & mask;
     if (!trimmed)
         return;
@@ -3172,7 +3350,7 @@ static void TrimSlot(QC_CACHE* c, ULONG i, unsigned mask)
 // Mutex held. Drops cached data inside the sorted, merged TRIM ranges. With lookup, a
 // TRIM of at most a quarter of the slots visits only its blocks through the index:
 // scanning every slot under Mutex cost milliseconds per small TRIM (plan 159).
-static void TrimCached(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG merged, bool lookup)
+static void TrimCached(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG merged, bool lookup, bool cleanOnly = false)
 {
     ULONGLONG blocks = 0;
     for (ULONG j = 0; j < merged && blocks <= c->Capacity / 4; ++j)
@@ -3198,7 +3376,7 @@ static void TrimCached(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG m
                 {
                     const auto next = c->Slots[i].HashNext;
                     if (c->Slots[i].Offset.QuadPart == block)
-                        TrimSlot(c, i, mask);
+                        TrimSlot(c, i, mask, cleanOnly);
                     i = next;
                 }
             }
@@ -3229,7 +3407,7 @@ static void TrimCached(QC_CACHE* c, const DEVICE_DATA_SET_RANGE* ranges, ULONG m
             mask |= QcTrimMask(block, ranges[j].StartingOffset, ranges[j].LengthInBytes);
         }
         if (mask)
-            TrimSlot(c, i, mask);
+            TrimSlot(c, i, mask, cleanOnly);
     }
 }
 // Hands an asynchronous lower TRIM to an offload thread. The caller (inside this
@@ -3276,6 +3454,8 @@ static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status)
         ++c->TrimRequests;
     auto& entry = c->TrimFences[fence];
     auto ranges = entry.Ranges;
+    if (FlushOrdering(c))
+        TrimCached(c, ranges, entry.Count, true, true); // Older dirty versions may now be retained clean.
     entry.Ranges = nullptr;
     entry.Count = 0;
     --c->TrimFenceCount;
@@ -3287,8 +3467,41 @@ static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status)
 }
 // Offload thread. QcTrimLabHold holds the lower TRIM first, so trim-cache can act
 // while it is outstanding; drain batches are unaffected.
+static NTSTATUS WaitTrimEpoch(QC_CACHE* c, ULONG fence)
+{
+    AcquireCache(c);
+    if (!FlushOrdering(c))
+    {
+        ReleaseCache(c);
+        return STATUS_SUCCESS;
+    }
+    const auto epoch = c->TrimFences[fence].Epoch;
+    ++c->EpochWaiters;
+    if (c->DrainEpoch < epoch) ++c->Diagnostics.EpochTrimWaits;
+    WakeDrainers(c);
+    while (c->DrainEpoch < epoch && NT_SUCCESS(c->State.LastError) && !c->Gone && !c->Stop)
+    {
+        KeClearEvent(&c->Changed);
+        ReleaseCache(c);
+        LARGE_INTEGER interval;
+        interval.QuadPart = -1000000;
+        KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, &interval);
+        AcquireCache(c);
+    }
+    --c->EpochWaiters;
+    const auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->Stop ? STATUS_DEVICE_NOT_READY : c->State.LastError;
+    Publish(c);
+    ReleaseCache(c);
+    return status;
+}
 static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry)
 {
+    auto status = WaitTrimEpoch(c, entry->Fence);
+    if (!NT_SUCCESS(status))
+    {
+        FinishAsyncTrim(c, entry->Fence, status);
+        return status;
+    }
     const auto delay = (InterlockedCompareExchange(&c->TrimMode, 0, 0) & QcTrimLabHold) ? QcTrimLabHoldMs : 0UL;
     if (delay)
     {
@@ -3296,7 +3509,7 @@ static NTSTATUS RunAsyncTrim(QC_CACHE* c, const QC_PAGING_READ* entry)
         interval.QuadPart = -10000LL * delay;
         KeDelayExecutionThread(KernelMode, FALSE, &interval);
     }
-    const auto status = OriginalIo(c, entry->Irp, false);
+    status = OriginalIo(c, entry->Irp, false);
     FinishAsyncTrim(c, entry->Fence, status);
     return status;
 }
@@ -3405,6 +3618,11 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
     }
     auto status = c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
     const auto mode = static_cast<ULONG>(InterlockedCompareExchange(&c->TrimMode, 0, 0));
+    if (FlushOrdering(c) && c->WriteEpoch >= MAXULONGLONG - 2)
+    {
+        status = STATUS_INTEGER_OVERFLOW;
+        Fault(c, status);
+    }
     if (NT_SUCCESS(status) && (mode & QcTrimAsync))
     {
         // Asynchronous lower TRIM: drop the cached data now, fence the ranges so no
@@ -3426,6 +3644,14 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
         {
             TrimCached(c, owned, merged, (mode & QcTrimLookup) != 0);
             auto& entry = c->TrimFences[fence];
+            if (FlushOrdering(c))
+            {
+                SealEpoch(c);
+                entry.Epoch = c->WriteEpoch;
+                c->EpochHasWrites = TRUE;
+                SealEpoch(c); // A lower TRIM is its own ordered effect, including an empty range cache.
+            }
+            else entry.Epoch = 0;
             entry.Ranges = owned;
             entry.Count = merged;
             entry.Low = owned[0].StartingOffset;
@@ -3445,7 +3671,8 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
                 return true;
             }
             InterlockedIncrement64(&c->TrimAsyncFallbacks); // table full: send it here
-            status = OriginalIo(c, irp);
+            status = WaitTrimEpoch(c, fence);
+            if (NT_SUCCESS(status)) status = OriginalIo(c, irp);
             FinishAsyncTrim(c, fence, status);
             *result = status;
             return true;
@@ -3454,14 +3681,26 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             ExFreePoolWithTag(owned, Tag);
         InterlockedIncrement64(&c->TrimAsyncFallbacks); // no fence slot: ordered path
     }
-    ReleaseCache(c);
+    const bool ordered = FlushOrdering(c);
+    if (ordered && NT_SUCCESS(status))
+    {
+        // No fence/table memory: reconcile the closed history synchronously.
+        // Only this unsupported/fallback TRIM path holds the foreground owner.
+        TrimCached(c, ranges, merged, (mode & QcTrimLookup) != 0);
+        c->TrimPaused = FALSE;
+        ReleaseCache(c);
+        status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
+    }
+    else ReleaseCache(c);
     if (NT_SUCCESS(status))
         status = OriginalIo(c, irp);
+    if (ordered && NT_SUCCESS(status))
+        status = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
     AcquireCache(c);
     if (NT_SUCCESS(status))
     {
         ++c->TrimRequests;
-        TrimCached(c, ranges, merged, (mode & QcTrimLookup) != 0);
+        TrimCached(c, ranges, merged, (mode & QcTrimLookup) != 0, ordered);
     }
     c->TrimPaused = FALSE;
     Publish(c);
@@ -3685,12 +3924,16 @@ static NTSTATUS Process(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes)
         const bool defer = c->Enabled && c->UnsafeDefer;
         const auto error = c->State.LastError;
         if (defer && NT_SUCCESS(error))
+        {
             ++c->Diagnostics.DeferredFlushes;
+            SealEpoch(c);
+        }
+        const auto deferredStatus = c->State.LastError;
         Publish(c);
         ReleaseCache(c);
         // Unsafe policy changes only application/OS flush semantics. Never hide an existing I/O error.
         if (defer)
-            return error;
+            return deferredStatus;
         return QcCacheBarrier(c, FALSE, QcApplicationBarrier, irp);
     }
     // Before the file system lets go of the volume, put its pending writes on the disk (#21): a detach

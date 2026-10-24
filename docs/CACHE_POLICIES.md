@@ -284,3 +284,35 @@ One header selector sets the live update interval (0.5/1/2/5/10 s) for every val
 Each volume has one independent in-flight telemetry request. Slow inventory discovery or another volume cannot hold up healthy volumes. Samples older than three seconds are shown as unavailable, never as a live Active state.
 
 Uncached/partial writes invalidate only intersecting clean blocks. Known geometry and descriptor queries preserve cached payload; unknown media-changing operations still drain and invalidate conservatively. Descriptor query semantics follow [Microsoft's storage-property contract](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-storage_property_query).
+
+## Experimental Fast write ordering (#13)
+
+The runtime-only `qcache developer driver flush-order <device> 1` switch is off by
+default and accepted only on a clean disabled non-paging volume. It is intended
+for disposable-volume qualification, not a filesystem-safety claim. The matching
+`flush-order` verification suite sets and restores it itself.
+
+In this prototype, a filesystem flush seals a group of RAM writes without waiting
+for disk. Fast write-through seals both before and after its write. Overwriting a
+sealed dirty block retains the older payload as a separate version. Drainers may
+write only the oldest group; a real lower flush must succeed before any later group
+is submitted. TRIM is also an ordered effect: sealed dirty history drains before
+the lower discard, and newer writes cannot drain ahead of it. Empty boundaries
+coalesce. A failed ordering flush faults the cache and retains its boundary for
+explicit Retry.
+
+Supported fitting writes still enter RAM without lower I/O for admission. Retained
+versions consume the existing budget and can cause capacity backpressure. An
+unsupported/unmappable direct write, an oversized write, or a synchronous TRIM
+fallback reconciles earlier history and flushes its lower effect before returning.
+These conservative fallbacks can wait for unrelated dirty data. Strict and explicit
+QueueCache Flush/Pause/Remove retain their durable boundary. This does not make Fast
+application flushes durable or promise that recently acknowledged data survives a
+crash.
+
+Diagnostics V26 appends the mode, current/draining group, seal and successful/failed
+ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
+selected for a drain in this allocation. A lower group flush must be supported and
+honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
+The proposed NTFS benefit still requires live-driver ordering checks and targeted
+power-loss tests. FAT/exFAT and arbitrary media-changing controls are not qualified.
