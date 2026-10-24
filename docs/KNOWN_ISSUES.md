@@ -89,9 +89,11 @@ the same way also damaged NTFS when cut during its write-out.
 An experimental, default-off ordering path is being qualified for #13. It retains
 old dirty versions across filesystem flush/write-through boundaries, writes groups
 in order with a real lower flush between them, and orders TRIM with those groups.
-The standalone plan-176 `flush-order` suite targets those changed paths. This is
-not yet a verified fix; the default Fast behavior and the open safety warning above
-remain in effect until the live-driver and power-loss evidence supports promotion.
+The plan-176 `flush-order` suite passed all six changed-path checks under Driver
+Verifier on a disposable non-OS NTFS volume (see the record below). Power-loss,
+system-volume and dynamic usage-path qualification remain open. The default Fast
+behavior and the safety warning above remain in effect; this is not yet a qualified
+filesystem-safety fix.
 
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
@@ -343,6 +345,26 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #13 experimental ordering, plan 176 (2026-10-24):** controller 0.4.835.1
+against native 0.4.834.1 (driver source unchanged) completed
+`QueueCache-Campaign-20261024-173926-2160192872334652b812e53814703163`:
+all six checks PASS, restoration RESTORED, durable completion event validated.
+The test took 4.6 s; the complete one-phase campaign took about 16 s. Both loaded
+module hashes were matched to the signed 0.4.834.1 package; Verifier `0x209bb`
+targeted the filter and RAM provider. Q:'s backing cache was paused by the campaign.
+
+The admission and write-through windows added zero lower read/write/flush
+attempts while retaining an old dirty version. With two drainers and an older
+write held after lower completion, the highest submitted group remained 1 while
+the current writing group was 2. An injected group-flush failure retained the
+newer 4096 dirty bytes and frontier 1; explicit Retry and post-release byte checks
+passed. Asynchronous and synchronous TRIM/rewrite checks passed, including the
+untouched neighbor. No power cut or performance comparison is claimed by this run.
+The earlier plan-175 run was INCOMPLETE because its observer used the same
+synchronous device handle as the blocking Flush; plan 176 uses a separate handle.
+Both runs restored their original cache state. The prototype remains off by default.
+
 
 **Issues #14 / #15, plan 126:** signed 0.4.675.1 completed the focused Driver
 Verifier campaign `QueueCache-Campaign-20261013-175418-7aa42644d0cc4a90912f7fb85199ff9c`:

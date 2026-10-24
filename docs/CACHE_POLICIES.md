@@ -314,5 +314,9 @@ Diagnostics V26 appends the mode, current/draining group, seal and successful/fa
 ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
 selected for a drain in this allocation. A lower group flush must be supported and
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
-The proposed NTFS benefit still requires live-driver ordering checks and targeted
-power-loss tests. FAT/exFAT and arbitrary media-changing controls are not qualified.
+Plan 176 passed the six focused live-driver ordering checks under Verifier on a
+non-OS NTFS lab volume. Targeted power-loss qualification remains open. The lab
+switch rejects currently registered paging/hibernation/dump paths; system volumes
+and dynamic special-file growth are not qualified. Registration already establishes
+a lower barrier, but later bypassed writes and allocation reuse need their own audit.
+FAT/exFAT and arbitrary media-changing controls are not qualified.
