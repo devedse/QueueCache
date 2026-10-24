@@ -80,15 +80,24 @@ public static class FlushOrderScenario
                     "Filesystem flush sealed the old version; its overwrite and adjacent write completed with zero lower read/write/flush attempts. Newest reads matched."));
                 var diskOffset = PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root);
                 device.Control(WriteCacheAction.LabGate, (ulong)diskOffset, 4000UL << 32 | Block);
-                var flush = Task.Run(() => device.Control(WriteCacheAction.Flush));
+                // A synchronous Windows file handle serializes its IOCTLs. Keep the
+                // blocking control on another handle so diagnostics can observe the hold.
+                var flush = Task.Run(() =>
+                {
+                    using var control = new CacheDevice(target.Device, writable: true);
+                    control.Control(WriteCacheAction.Flush);
+                });
                 try
                 {
-                    await WaitHeld(device, flush);
-                    var held = device.GetDiagnostics();
+                    var held = await WaitHeld(device, flush);
                     RunStorage.AtomicJson(evidence + ".held.json", held);
                     ValidateHeld(held);
                 }
-                finally { await flush; }
+                finally
+                {
+                    await flush;
+                    RunStorage.AtomicJson(evidence + ".held-final.json", device.GetDiagnostics());
+                }
                 device.Control(WriteCacheAction.LabGate, value: 0);
                 var done = device.GetDiagnostics();
                 RunStorage.AtomicJson(evidence + ".drained.json", done);
@@ -216,12 +225,13 @@ public static class FlushOrderScenario
                 BatchKiB: 4, Parallelism: 2, RetainWrites: false)
         }, true);
     }
-    private static async Task WaitHeld(CacheDevice device, Task flush)
+    private static async Task<CacheDiagnostics> WaitHeld(CacheDevice device, Task flush)
     {
-        var until = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < until)
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        while (timer.Elapsed < TimeSpan.FromSeconds(10))
         {
-            if (device.GetDiagnostics().LabGate is { State: 2, OldLowerDoneSeq: > 0 }) return;
+            var observed = device.GetDiagnostics();
+            if (observed.LabGate is { State: 2, OldLowerDoneSeq: > 0 }) return observed;
             if (flush.IsCompleted) { await flush; break; }
             await Task.Delay(10);
         }

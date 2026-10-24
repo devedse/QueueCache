@@ -89,7 +89,7 @@ the same way also damaged NTFS when cut during its write-out.
 An experimental, default-off ordering path is being qualified for #13. It retains
 old dirty versions across filesystem flush/write-through boundaries, writes groups
 in order with a real lower flush between them, and orders TRIM with those groups.
-The standalone plan-175 `flush-order` suite targets those changed paths. This is
+The standalone plan-176 `flush-order` suite targets those changed paths. This is
 not yet a verified fix; the default Fast behavior and the open safety warning above
 remain in effect until the live-driver and power-loss evidence supports promotion.
 
