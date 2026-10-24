@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 179, "plan 179 qualifies sparse checkpoint reuse with full fallback before allocation (#28)");
+        Check(VerificationPlan.Version == 180, "plan 180 protects committed user exports using explicit checkpoint provenance (#28)");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

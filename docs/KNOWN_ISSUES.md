@@ -90,9 +90,10 @@ An experimental, default-off ordering path is being qualified for #13. It retain
 old dirty versions across filesystem flush/write-through boundaries, writes groups
 in order with a real lower flush between them, and orders TRIM with those groups.
 The plan-176 `flush-order` suite passed all six changed-path checks under Driver
-Verifier on a disposable non-OS NTFS volume (see the record below). Power-loss,
-system-volume and dynamic usage-path qualification remain open. The default Fast
-behavior and the safety warning above remain in effect; this is not yet a qualified
+Verifier on a disposable non-OS NTFS volume (see the record below). One subsequent
+partly drained NTFS churn cut kept the filesystem clean and an untouched durable
+guard exact. Broader power-loss, system-volume and dynamic usage-path qualification
+remain open. The default Fast behavior and the safety warning above remain in effect; this is not yet a qualified
 filesystem-safety fix.
 
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
@@ -367,6 +368,36 @@ untouched neighbor. No power cut or performance comparison is claimed by this ru
 The earlier plan-175 run was INCOMPLETE because its observer used the same
 synchronous device handle as the blocking Flush; plan 176 uses a separate handle.
 Both runs restored their original cache state. The prototype remains off by default.
+
+**Issue #13 single churn cut, native/controller 0.4.837.1 (2026-10-24):**
+`QueueCache-Verify-20261024-191159-6ff745d708354afdba06e682ef614397`
+used the maintained `compare-durability-churn` workload on disposable NTFS W:,
+experimental ordering enabled, Fast Deferred 10 s, 512 MiB, 1024 KiB × 2,
+Verifier `0x209bb`; Q:'s backing cache was paused. Both loaded hashes matched
+the published package. The external hypervisor observer reset VM109 immediately
+after a completed write phase and a healthy observation of 12,165,120 dirty bytes,
+475,004,928 drained bytes and no in-flight bytes. A sample 23 s earlier showed
+372,363,264 drained bytes: write-out progressed while newer work remained pending.
+Ordering showed current group 183, draining group 181, 180 completed group flushes
+and zero flush failures. The first attempt drained before reset and is not a cut.
+
+After normal Windows startup and lab reattachment, the exact oracle check
+`20261024-191653-c33408231e4640729fe6af5a4ff35186` found all 1,000 kept base files
+and all 5,251 churn files at least 10 s old intact. Of 1,874 newest kept files,
+1,026 were intact, 271 contained zeros and 577 were missing. Some recent deletions
+were lost. There were no unreadable files; `chkdsk /scan` returned 0. No manual
+repair or snapshot rollback was used; normal NTFS recovery still applies.
+
+An independent untouched guard was prepared with `compare-durability-write`
+while W: was uncached, then an explicit QueueCache lower Flush, before enabling
+the experimental cache. Post-cut run
+`20261024-191706-9e2a9544c0c74985a4f8dcc9e3bbc7ab` found both 256 MiB files
+100% generation-2 bytes and all 10,000 small files exact; its scan also returned 0.
+The complete five-run evidence archive SHA-256 is
+`E33A9EB0892F7DABAECBFCBA953E17E803008412E7DD9EA6C08DD1A1BDA2DBB3`.
+This single cut is supporting evidence, not a guarantee, a Strict control or a
+performance comparison. Default promotion, system/special-file paths and broader
+crash/capacity/lifecycle qualification remain open in #13.
 
 
 **Issues #14 / #15, plan 126:** signed 0.4.675.1 completed the focused Driver

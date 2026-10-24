@@ -112,6 +112,22 @@ public static class CheckpointReuseScenario
                 if (!File.ReadAllBytes(payloadPath).SequenceEqual(bytes) || !File.ReadAllBytes(guardPath).SequenceEqual(guard))
                     throw new IOException("Committed checkpoint reload lost payload or untouched guard bytes.");
                 Pass("committed-reload", "Payload and untouched guard match after discard and committed-image reload.");
+
+                // A user can choose an export name resembling an automatic checkpoint.
+                // Even after committing it and rotating it to PreviousImage, never consume it.
+                var exportPath = Path.Combine(definition.CheckpointDirectory!, $"{id:N}-user-selected.vhdx");
+                await Act(ManagedDiskAction.Export, path: exportPath, commitExport: true);
+                var exportHash = Hash(exportPath);
+                if ((await Record()).CommittedImage!.GeneratedCheckpoint)
+                    throw new IOException("User-selected export acquired automatic checkpoint provenance.");
+                await Act(ManagedDiskAction.Save);
+                var rotated = await Record();
+                if (rotated.PreviousImage!.Identity.Path != exportPath || ManagedCheckpointReuse.Candidate(rotated) is not null)
+                    throw new IOException("User-selected export was eligible after pointer rotation.");
+                await Act(ManagedDiskAction.Save);
+                if (Hash(exportPath) != exportHash)
+                    throw new IOException("A later automatic save modified the user-selected export.");
+                Pass("export-provenance", "A committed export with an automatic-looking filename remains byte-identical after two later saves.");
             }
             catch (Exception ex) { failure = ex; throw; }
             finally
@@ -135,11 +151,12 @@ public static class CheckpointReuseScenario
                     failure is null ? cleanup : new AggregateException(failure, cleanup));
             }
             async Task<ManagedDiskRecord> Record() => (await service.ListAsync()).Single(r => r.ResourceId == id);
-            async Task Act(ManagedDiskAction action, bool discard = false)
+            async Task Act(ManagedDiskAction action, bool discard = false, string? path = null, bool commitExport = false)
             {
                 var record = await Record();
                 var result = await service.ExecuteAsync(new(id, action, ManagedDiskExpected.From(record.Runtime!),
-                    discard ? ManagedDiskStopIntent.DiscardThenStop : null, AcceptDiscard: discard), new ConsoleProgress());
+                    discard ? ManagedDiskStopIntent.DiscardThenStop : null, Path: path, CommitExport: commitExport,
+                    AcceptDiscard: discard), new ConsoleProgress());
                 trace.Add(new { Stage = action.ToString(), Result = result }); RunStorage.AtomicJson(evidence, trace);
             }
             void Pass(string name, string detail)

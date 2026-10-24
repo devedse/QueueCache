@@ -47,7 +47,7 @@ public static class ManagedCheckpointReuse
     private static bool SameFile(ImageInspection a, ImageInspection b) =>
         a.FileIdentity[(a.FileIdentity.LastIndexOf('|') + 1)..].Equals(
             b.FileIdentity[(b.FileIdentity.LastIndexOf('|') + 1)..], StringComparison.OrdinalIgnoreCase);
-    public static string? Candidate(ManagedDiskRecord record) => record.PreviousImage is { Digest: not null } previous &&
+    public static string? Candidate(ManagedDiskRecord record) => record.PreviousImage is { Digest: not null, GeneratedCheckpoint: true } previous &&
         OwnedCheckpoint(record.Definition, previous.Identity.Path) &&
         !previous.Identity.Path.Equals(record.Definition.ImagePath, StringComparison.OrdinalIgnoreCase) &&
         (record.CommittedImage is not { } current || !SameFile(current.Identity, previous.Identity)) &&
@@ -129,7 +129,8 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             progress?.Report(new(ManagedDiskState.Saving, "Saved image verified; committing it."));
             if (identity.VirtualBytes != record.Definition.CapacityBytes || identity.SectorBytes != record.Definition.SectorBytes || identity.Differencing)
                 throw new InvalidDataException("The verified checkpoint image geometry changed.");
-            candidate = new(identity, digest, stable.Generation);
+            candidate = new(identity, digest, stable.Generation)
+            { GeneratedCheckpoint = allowReuse && ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, path) };
             if (commit && copy is not null) backend.SaveChunkMap(record, identity, copy);
             journal = journal with { Stage = ManagedDiskJournalStage.CandidateVerified, Candidate = candidate };
             store.SaveJournal(journal);

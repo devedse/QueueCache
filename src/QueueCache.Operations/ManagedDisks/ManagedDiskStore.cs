@@ -18,7 +18,12 @@ public sealed record ManagedSaveStatistics(TimeSpan Duration, ulong Bytes, ulong
 /// <summary>The last save attempted while Windows shut down (#22): when, whether it committed, how long it
 /// took and, if not, why. Kept across restarts so the app can say what happened.</summary>
 public sealed record ManagedShutdownSave(DateTimeOffset At, bool Committed, TimeSpan Duration, ulong Bytes, string? Detail);
-public sealed record ManagedImageReference(ImageInspection Identity, LogicalImageDigest? Digest, ulong? Generation);
+public sealed record ManagedImageReference(ImageInspection Identity, LogicalImageDigest? Digest, ulong? Generation)
+{
+    /// <summary>Explicit provenance for automatic save candidates. False for user-selected
+    /// exports and older catalogs; a filename alone never grants reuse permission.</summary>
+    public bool GeneratedCheckpoint { get; init; }
+}
 public sealed record ManagedDiskRecord(ManagedDiskDefinition Definition, ManagedDiskRuntime? Runtime = null,
     ManagedImageReference? CommittedImage = null, ManagedImageReference? PreviousImage = null,
     ImageInspection? OriginalSource = null, RamDiskSnapshot? Native = null, int? PhysicalDiskNumber = null,

@@ -130,7 +130,9 @@ the attempt. After commit, it becomes the previous checkpoint; the consumed olde
 file now contains the new save, so checkpoint filenames do not form an immutable
 history. Imported/original images and explicit export destinations are not reused.
 
-Reuse requires an intact fingerprint sidecar, matching file identity/size/time,
+Reuse requires explicit catalog provenance from an automatic save (never a user-selected
+export or an older catalog lacking this marker), an intact fingerprint sidecar,
+matching file identity/size/time,
 valid headers and allocation metadata and an empty VHDX log. Before modifying a
 candidate, QueueCache checks the frozen source fingerprints for any unallocated
 blocks. Unchanged sparse blocks can stay sparse; a change in one selects a full

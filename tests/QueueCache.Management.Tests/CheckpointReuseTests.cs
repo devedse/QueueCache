@@ -23,6 +23,9 @@ internal static class CheckpointReuseTests
         var full = new Fixture(); var export = await full.Save(allowReuse: false);
         Check(full.OpenReuseCalls == 0 && export.Image.Identity.Path == full.RequestedPath &&
             export.Record.LastSave is { PayloadBytes: Capacity, ReusedCandidate: false }, "explicit destination is honored even for a committed export");
+        Check(!export.Image.GeneratedCheckpoint && ManagedCheckpointReuse.Candidate(full.Store.Record with
+            { PreviousImage = export.Image, CommittedImage = full.Current }) is null,
+            "committed export in the generated filename namespace cannot become a future reuse candidate");
         var sparse = new Fixture("sparse-unchanged");
         var sparseResult = await sparse.Save();
         Check(sparseResult.Record.LastSave is { ReusedCandidate: true, PayloadBytes: MiB },
@@ -46,6 +49,8 @@ internal static class CheckpointReuseTests
         var ownership = new Fixture();
         var record = ownership.Store.Record;
         Check(ManagedCheckpointReuse.Candidate(record) == ownership.OlderPath, "catalog-owned older candidate eligible");
+        Check(ManagedCheckpointReuse.Candidate(record with { PreviousImage = record.PreviousImage! with { GeneratedCheckpoint = false } }) is null,
+            "legacy or unrecorded filename provenance never grants automatic reuse");
         Check(ManagedCheckpointReuse.Candidate(record with { OriginalSource = record.PreviousImage!.Identity with { Path = @"C:\Imports\alias.vhdx" } }) is null,
             "an imported image's file identity cannot be reused through another path");
         Check(ManagedCheckpointReuse.Candidate(record with { PreviousImage = record.PreviousImage! with
@@ -124,7 +129,8 @@ internal static class CheckpointReuseTests
             RequestedPath = $@"C:\Images\{definition.ResourceId:N}-new.vhdx";
             var digest = new LogicalImageDigest(Capacity, Convert.ToHexString(SHA256.HashData(CurrentBytes)));
             Current = new(new($@"C:\Images\{definition.ResourceId:N}-current.vhdx", "current-key", Guid.NewGuid(), Capacity, Capacity, 512, false), digest, 1);
-            var older = new ManagedImageReference(new(OlderPath, "older-key", Guid.NewGuid(), Capacity, Capacity, 512, false), digest, 0);
+            var older = new ManagedImageReference(new(OlderPath, "older-key", Guid.NewGuid(), Capacity, Capacity, 512, false), digest, 0)
+            { GeneratedCheckpoint = true };
             Store = new(new(definition, new(definition.ResourceId, Guid.NewGuid(), 1, definition.Mode, ManagedDiskState.Ready, 2, 1), Current, older));
             Candidate.BeforeWrite = () =>
             {
