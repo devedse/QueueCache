@@ -23,6 +23,15 @@ internal static class CheckpointReuseTests
         var full = new Fixture(); var export = await full.Save(allowReuse: false);
         Check(full.OpenReuseCalls == 0 && export.Image.Identity.Path == full.RequestedPath &&
             export.Record.LastSave is { PayloadBytes: Capacity, ReusedCandidate: false }, "explicit destination is honored even for a committed export");
+        var sparse = new Fixture("sparse-unchanged");
+        var sparseResult = await sparse.Save();
+        Check(sparseResult.Record.LastSave is { ReusedCandidate: true, PayloadBytes: MiB },
+            "unchanged sparse source regions can be skipped without allocating BAT entries");
+        var growth = new Fixture("sparse-growth");
+        var growthResult = await growth.Save();
+        Check(growthResult.Record.LastSave is { ReusedCandidate: false, PayloadBytes: Capacity } && growth.Candidate.Writes == 0 &&
+            growthResult.Image.Identity.Path == growth.RequestedPath && growthResult.Record.PreviousImage == growth.Current,
+            "changed unallocated region selects full save before any reuse mutation");
         foreach (var reason in new[] { "partial-read", "stale-map", "reporting-read" })
         {
             var broken = new Fixture(reason);
@@ -89,6 +98,7 @@ internal static class CheckpointReuseTests
 
     private sealed class Fixture : IManagedCheckpointBackend
     {
+        private readonly string? fault;
         public readonly ManagedDiskTests.MemoryDisk Source = new(Capacity);
         public readonly byte[] CurrentBytes = Enumerable.Repeat((byte)0x17, Capacity).ToArray();
         public readonly TrackedDisk Candidate = new();
@@ -101,6 +111,7 @@ internal static class CheckpointReuseTests
         public int OpenReuseCalls;
         public Fixture(string? fault = null, bool change = true)
         {
+            this.fault = fault;
             Source.Bytes.AsSpan().Fill(0x17); Candidate.Data.Bytes.AsSpan().Fill(0x17);
             hashes = new byte[16 * 32];
             for (var i = 0; i < 16; i++) SHA256.HashData(Candidate.Data.Bytes.AsSpan(i * MiB, MiB), hashes.AsSpan(i * 32, 32));
@@ -152,6 +163,12 @@ internal static class CheckpointReuseTests
             public string Path => owner.OlderPath;
             public ReadOnlyMemory<byte> Hashes => owner.hashes;
             public ulong HeaderBytesWritten => owner.Candidate.Writes == 0 ? 0UL : 8192UL;
+            public bool CanWrite(ulong offset, int bytes) => owner.fault switch
+            {
+                "sparse-unchanged" => offset != 0,
+                "sparse-growth" => offset != MiB,
+                _ => true
+            };
             public ILogicalDisk Storage => owner.Candidate;
             public Task CompleteAndDetachAsync(CancellationToken token) => Task.CompletedTask;
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;

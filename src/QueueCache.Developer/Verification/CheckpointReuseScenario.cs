@@ -76,15 +76,34 @@ public static class CheckpointReuseScenario
                     $"{reused.LastSave.ContainerHeaderBytes} VHDX header bytes; full logical read-back and unchanged current/source containers verified. Save {reused.LastSave.Duration.TotalSeconds:F3} s.");
                 trace.Add(new { Stage = "ReuseEvidence", Before = before, After = reused, ProtectedHash = protectedHash, SourceHash = sourceHash });
 
+                if (allocation == ImageAllocation.Dynamic)
+                {
+                    // Force growth beyond the small saved payload. The older dynamic
+                    // candidate must really contain a sparse BAT block for this case.
+                    using (var container = File.OpenRead(reused.PreviousImage!.Identity.Path))
+                        if (!VhdxPayloadLayout.Read(container, definition.CapacityBytes, sector).PayloadOffsets.Any(p => p < 0))
+                            throw new IOException("Dynamic growth fixture has no sparse block to exercise allocation fallback.");
+                    Write(Path.Combine(root, "growth.bin"), ConcurrentCacheOracle.Pattern(231, 1, 80 * MiB));
+                    before = await Record();
+                    protectedHash = Hash(before.CommittedImage!.Identity.Path);
+                    await Act(ManagedDiskAction.Save);
+                    var grown = await Record(); ValidateSave(before, grown, false);
+                    if (Hash(before.CommittedImage.Identity.Path) != protectedHash || Hash(definition.ImagePath!) != sourceHash)
+                        throw new IOException("Sparse-growth fallback changed a protected image.");
+                    trace.Add(new { Stage = "SparseGrowthEvidence", Before = before, After = grown });
+                    Pass("sparse-growth-full-save", "A changed unallocated block selected a complete new verified candidate before modifying the older image.");
+                    reused = grown;
+                }
+
                 // A corrupt hint must cause a new complete save, never another attempt to trust it.
                 var sidecar = ImageChunkMap.PathFor(reused.PreviousImage!.Identity.Path);
                 File.WriteAllBytes(sidecar, [0x51]);
-                protectedHash = Hash(reused.CommittedImage.Identity.Path);
+                protectedHash = Hash(reused.CommittedImage!.Identity.Path);
                 bytes[MiB] ^= 0x5f; Write(payloadPath, bytes);
                 before = await Record();
                 await Act(ManagedDiskAction.Save);
                 var full = await Record(); ValidateSave(before, full, false);
-                if (Hash(reused.CommittedImage.Identity.Path) != protectedHash || Hash(definition.ImagePath!) != sourceHash)
+                if (Hash(reused.CommittedImage!.Identity.Path) != protectedHash || Hash(definition.ImagePath!) != sourceHash)
                     throw new IOException("Full fallback changed a protected checkpoint or source.");
                 trace.Add(new { Stage = "FullFallbackEvidence", Before = before, After = full });
                 Pass("invalid-map-full-save", $"Corrupt candidate fingerprints caused a new full verified save of {full.LastSave!.PayloadBytes} bytes; prior current/source unchanged. Save {full.LastSave.Duration.TotalSeconds:F3} s. Times are not a performance verdict.");

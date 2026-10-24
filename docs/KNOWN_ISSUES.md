@@ -272,7 +272,10 @@ cache or a disk.
   Passport-only selection remains unproven. The test restored the original name
   and removed its backing delay. The new #28 path updates already allocated payload
   in an older owned VHDX without a Windows read-write attachment and still verifies
-  every logical sector read-only. Its dedicated plan-177 qualification is separate
+  every logical sector read-only. Plan 178 found Windows left dynamic zero regions
+  unallocated; the safe fallback completed but did not satisfy the reuse check.
+  Plan 179 adds unchanged sparse-block eligibility and pre-mutation full fallback
+  for changes needing allocation. Its dedicated qualification is separate
   from these shutdown-screen checks. Longer saves, the 1-hour shutdown limit and a
   real PC's shutdown are not covered by the screen experiment.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the

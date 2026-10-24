@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 178;
+    public const int Version = 179;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with

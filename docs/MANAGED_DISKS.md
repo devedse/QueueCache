@@ -131,8 +131,11 @@ file now contains the new save, so checkpoint filenames do not form an immutable
 history. Imported/original images and explicit export destinations are not reused.
 
 Reuse requires an intact fingerprint sidecar, matching file identity/size/time,
-valid headers and allocation metadata, an empty VHDX log and fully allocated payload
-blocks. Missing/stale hints or unsupported layouts take the complete-new-image path
+valid headers and allocation metadata and an empty VHDX log. Before modifying a
+candidate, QueueCache checks the frozen source fingerprints for any unallocated
+blocks. Unchanged sparse blocks can stay sparse; a change in one selects a full
+new save before any candidate mutation. Only already allocated payload blocks
+can be modified. Missing/stale hints or unsupported layouts take the complete-new-image path
 before payload mutation. All logical sectors are verified through a separate
 read-only Windows VHDX view, including regions skipped during writing. An interrupted
 candidate is not a committed checkpoint; its predecessor reference and reuse hint

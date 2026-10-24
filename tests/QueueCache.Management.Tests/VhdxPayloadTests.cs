@@ -77,6 +77,23 @@ internal static class VhdxPayloadTests
                 throw new Exception("Allocated non-differencing bitmap accepted.");
             }
             catch (NotSupportedException) { }
+            foreach (var state in new[] { 0UL, 2UL })
+            {
+                var sparseBytes = Fixture(512); U64(sparseBytes, Bat, state);
+                var sparsePath = Path.Combine(directory, "sparse-" + state + ".vhdx");
+                File.WriteAllBytes(sparsePath, sparseBytes);
+                await using (var view = VhdxPayloadStorage.Open(sparsePath, 4UL * MiB, 512))
+                {
+                    Check(!view.CanWrite(0, 512) && view.CanWrite(Block, 512), "sparse BAT has no invented writable offset");
+                    try { await view.WriteAsync(0, new byte[512], default); throw new Exception("Sparse write accepted."); }
+                    catch (NotSupportedException) { }
+                    Check(view.HeaderBytesWritten == 0, "refused allocation does not change headers");
+                    var zeros = Enumerable.Repeat((byte)0xa5, 512).ToArray();
+                    await view.ReadAsync(0, zeros, default);
+                    Check(zeros.All(b => b == 0), "sparse logical read returns zero");
+                }
+                Check(File.ReadAllBytes(sparsePath).AsSpan().SequenceEqual(sparseBytes), "sparse refusal leaves all container bytes unchanged");
+            }
             var fixture = Fixture(512);
             var broken = Path.Combine(directory, "unsupported.vhdx");
             foreach (var mutate in new Action<byte[]>[]
@@ -85,7 +102,7 @@ internal static class VhdxPayloadTests
                 b => b[192 * 1024 + 100] ^= 1,
                 b => { Guid.NewGuid().TryWriteBytes(b.AsSpan(65536 + 48, 16)); HeaderChecksum(b, 65536); },
                 b => U32(b, Metadata + 65536 + 4, 2), // HasParent.
-                b => U64(b, Bat, 0),
+                b => U64(b, Bat, 3),
                 b => U64(b, Bat, (ulong)Payload | 7),
                 b => U64(b, Bat, (ulong)Metadata | 6),
                 b => U64(b, Bat + 8, (ulong)(Payload + Block) | 6),

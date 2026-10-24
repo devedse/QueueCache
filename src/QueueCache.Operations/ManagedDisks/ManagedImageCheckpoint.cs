@@ -19,6 +19,7 @@ public interface IReusedCheckpoint : ICheckpointImage
     string Path { get; }
     ReadOnlyMemory<byte> Hashes { get; }
     ulong HeaderBytesWritten { get; }
+    bool CanWrite(ulong offset, int bytes) => true;
 }
 
 public interface IManagedCheckpointBackend
@@ -92,6 +93,15 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             var canMap = ImageChunkMap.Supports(record.Definition.CapacityBytes);
             var reused = allowReuse && commit && canMap && ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, path)
                 ? await backend.OpenReusedAsync(record, token) : null;
+            if (reused is not null)
+            {
+                try
+                {
+                    if (!await LogicalImageTransfer.CanReuseAsync(stable.Storage, reused.Hashes, reused.CanWrite, token))
+                    { await reused.DisposeAsync(); reused = null; }
+                }
+                catch { if (reused is not null) await reused.DisposeAsync(); throw; }
+            }
             await using (var destination = reused ?? await backend.CreateCandidateAsync(record.Definition, path, token))
             {
                 if (reused is not null)

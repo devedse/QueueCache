@@ -53,6 +53,40 @@ public static class LogicalImageTransfer
             throw new InvalidDataException("Saved image logical sectors do not match the frozen RAM generation.");
     }
 
+    /// <summary>Before any candidate mutation, hash only source chunks that cannot be written
+    /// through its existing BAT. An unchanged sparse chunk needs no allocation. A changed one
+    /// requires a complete new candidate. The source remains frozen through both passes.</summary>
+    public static async Task<bool> CanReuseAsync(ILogicalDisk source, ReadOnlyMemory<byte> previous,
+        Func<ulong, int, bool> canWrite, CancellationToken token = default)
+    {
+        Validate(source, DefaultChunkBytes);
+        if (previous.Length != ImageChunkMap.ChunkCount(source.CapacityBytes) * ImageChunkMap.HashBytes)
+            throw new InvalidDataException("Checkpoint fingerprints do not match image geometry.");
+        var rented = ArrayPool<byte>.Shared.Rent(ImageChunkMap.ChunkBytes);
+        try
+        {
+            for (ulong offset = 0; offset < source.CapacityBytes; offset += ImageChunkMap.ChunkBytes)
+            {
+                token.ThrowIfCancellationRequested();
+                var length = (int)Math.Min((ulong)ImageChunkMap.ChunkBytes, source.CapacityBytes - offset);
+                if (canWrite(offset, length)) continue;
+                var memory = rented.AsMemory(0, length);
+                for (var read = 0; read < length;)
+                {
+                    var count = await source.ReadAsync(offset + (ulong)read, memory[read..], token);
+                    if (count <= 0 || count > length - read || count % source.SectorBytes != 0)
+                        throw new InvalidDataException("Invalid frozen logical image read during sparse reuse preflight.");
+                    read += count;
+                }
+                if (!SHA256.HashData(memory.Span).AsSpan().SequenceEqual(previous.Span.Slice(
+                    checked((int)(offset / ImageChunkMap.ChunkBytes) * ImageChunkMap.HashBytes), ImageChunkMap.HashBytes)))
+                    return false;
+            }
+            return true;
+        }
+        finally { ArrayPool<byte>.Shared.Return(rented, clearArray: true); }
+    }
+
     /// <summary>Reads the frozen source completely, writes only changed MiB regions, and flushes
     /// the candidate. A missing map writes everything. The caller still verifies the ENTIRE image.</summary>
     public static async Task<ChunkedImageCopy> CopyChangedAsync(ILogicalDisk source, ILogicalDisk destination,

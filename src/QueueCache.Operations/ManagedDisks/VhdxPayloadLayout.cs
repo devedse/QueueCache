@@ -112,8 +112,14 @@ internal sealed record VhdxPayloadLayout(ulong CapacityBytes, uint SectorBytes, 
         for (ulong block = 0; block < blocks; block++)
         {
             var entry = U64(allocation, checked((int)((block + block / ratio) * 8)));
-            // No BAT writes or allocation. Metadata changes require VHDX logging; payload
-            // changes must not be logged. Non-present/zero/unmapped/partial states fall back.
+            // Sparse blocks may remain unchanged. The coordinator checks their source
+            // fingerprints before consuming the candidate; they are never writable here.
+            if (entry is 0 or 2)
+            {
+                offsets[checked((int)block)] = -1;
+                continue;
+            }
+            // No BAT writes or allocation. Other non-present/unmapped/partial states fall back.
             if ((entry & 0xfffff) != 6)
                 throw new NotSupportedException("Checkpoint payload is not fully allocated.");
             var offset = entry & 0xfffffffffff00000UL;

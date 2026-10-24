@@ -162,6 +162,7 @@ public sealed partial class WindowsManagedDiskEngine
         public ReadOnlyMemory<byte> Hashes => hashes;
         public ILogicalDisk Storage => measured;
         public ulong HeaderBytesWritten => storage.HeaderBytesWritten;
+        public bool CanWrite(ulong offset, int bytes) => storage.CanWrite(offset, bytes);
         public async Task CompleteAndDetachAsync(CancellationToken token)
         { await measured.FlushAsync(token); await storage.DisposeAsync(); }
         public async ValueTask DisposeAsync()

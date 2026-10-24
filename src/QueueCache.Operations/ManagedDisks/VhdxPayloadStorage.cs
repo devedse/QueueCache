@@ -3,7 +3,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace QueueCache.Operations.ManagedDisks;
 
-/// <summary>Exclusive file access to the payload of a validated, fully allocated VHDX candidate.
+/// <summary>Exclusive file access to allocated payload in a validated VHDX candidate.
 /// No Windows attachment, BAT allocation, log replay or metadata-region update occurs here.
 /// The caller owns candidate provenance, parent pinning, journal removal of old pointers and final verification.</summary>
 internal sealed class VhdxPayloadStorage : ILogicalDisk, IAsyncDisposable
@@ -38,8 +38,19 @@ internal sealed class VhdxPayloadStorage : ILogicalDisk, IAsyncDisposable
     {
         var block = checked((int)(offset / layout.BlockBytes));
         var within = offset % layout.BlockBytes;
-        return (checked(layout.PayloadOffsets[block] + (long)within),
+        return (layout.PayloadOffsets[block] < 0 ? -1 : checked(layout.PayloadOffsets[block] + (long)within),
             (int)Math.Min((ulong)remaining, layout.BlockBytes - within));
+    }
+    public bool CanWrite(ulong offset, int bytes)
+    {
+        Validate(offset, bytes);
+        for (var completed = 0; completed < bytes;)
+        {
+            var part = Part(offset + (ulong)completed, bytes - completed);
+            if (part.Physical < 0) return false;
+            completed += part.Bytes;
+        }
+        return true;
     }
     public async ValueTask<int> ReadAsync(ulong offset, Memory<byte> buffer, CancellationToken token)
     {
@@ -51,6 +62,12 @@ internal sealed class VhdxPayloadStorage : ILogicalDisk, IAsyncDisposable
             while (completed < buffer.Length)
             {
                 var part = Part(offset + (ulong)completed, buffer.Length - completed);
+                if (part.Physical < 0)
+                {
+                    buffer.Slice(completed, part.Bytes).Span.Clear();
+                    completed += part.Bytes;
+                    continue;
+                }
                 var read = 0;
                 while (read < part.Bytes)
                 {
@@ -72,6 +89,8 @@ internal sealed class VhdxPayloadStorage : ILogicalDisk, IAsyncDisposable
         try
         {
             if (buffer.Length == 0) return;
+            if (!CanWrite(offset, buffer.Length))
+                throw new NotSupportedException("Changed VHDX payload needs allocation; use a new complete candidate.");
             await UpdateHeadersAsync(token);
             var completed = 0;
             while (completed < buffer.Length)
