@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 176, "plan 176 observes a held drain on an independent device handle (#13)");
+        Check(VerificationPlan.Version == 177, "plan 177 adds changed-region checkpoint and complete verification checks (#28)");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&

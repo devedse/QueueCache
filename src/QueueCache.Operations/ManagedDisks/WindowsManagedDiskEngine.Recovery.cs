@@ -73,6 +73,7 @@ public sealed partial class WindowsManagedDiskEngine
     {
         using var measured = MeasureImages(entry);
         token.ThrowIfCancellationRequested(); var record = store.Read(entry.Record.ResourceId); var journal = store.ReadJournal(record.ResourceId);
+        record = ManagedCheckpointReuse.ExcludeInterruptedCandidate(record, journal);
         entry.Record = record;
         if (record.Definition.Mode != ManagedDiskMode.CachedVhdx)
         {

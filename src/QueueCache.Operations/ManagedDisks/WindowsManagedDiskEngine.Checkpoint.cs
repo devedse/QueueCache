@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.Versioning;
 using QueueCache.Management;
 
@@ -104,6 +105,94 @@ public sealed partial class WindowsManagedDiskEngine
         }
         catch { disk?.Dispose(); image?.Dispose(); pins.Dispose(); throw; }
     }
+    public Task<IReusedCheckpoint?> OpenReusedAsync(ManagedDiskRecord record, CancellationToken token) => Task.Run<IReusedCheckpoint?>(() =>
+    {
+        token.ThrowIfCancellationRequested();
+        if (ManagedCheckpointReuse.Candidate(record) is not { } path || record.PreviousImage is not { Digest: { } digest } previous)
+            return null;
+        IDisposable? pins = null;
+        VhdxPayloadStorage? storage = null;
+        try
+        {
+            pins = ManagedDiskHostProtection.Pin(Path.GetDirectoryName(path)!, true);
+            var mapPath = ImageChunkMap.PathFor(path);
+            var mapFile = new FileInfo(mapPath);
+            if (!mapFile.Exists || mapFile.Length is <= 0 or > ImageChunkMap.MaximumFileBytes)
+            { return null; }
+            var map = ImageChunkMap.Parse(File.ReadAllBytes(mapPath));
+            if (map is null || map.CapacityBytes != record.Definition.CapacityBytes ||
+                !map.Sha256.Equals(digest.Sha256, StringComparison.OrdinalIgnoreCase) ||
+                map.FileKeySha256 != ImageChunkMap.FileKeyHash(previous.Identity.FileIdentity))
+            { return null; }
+            // Keep a conservative reserve even for sparse/COW host files. Reuse never grows
+            // the VHDX or allocates BAT entries, but host allocation can still grow on overwrite.
+            var reserve = checked(record.Definition.CapacityBytes + record.Definition.CapacityBytes / 64 + (64UL << 20));
+            if ((ulong)new DriveInfo(Path.GetPathRoot(path)!).AvailableFreeSpace < reserve)
+            { return null; }
+            var counters = entries[record.ResourceId].ImageIo;
+            storage = VhdxPayloadStorage.Open(path, record.Definition.CapacityBytes, record.Definition.SectorBytes, counters.FlushAttempt);
+            WindowsVirtualDisk.RequireFileIdentity(storage.Handle, previous.Identity.FileIdentity);
+            var file = new FileInfo(path);
+            if (storage.DiskId != previous.Identity.DiskId || storage.FileBytes != map.FileBytes || file.LastWriteTimeUtc.Ticks != map.FileWriteTicks)
+            { return null; }
+            // A candidate with a consumed map is not reused again after interruption. The
+            // coordinator journals this path and removes its PreviousImage pointer before writing.
+            File.Delete(mapPath);
+            ManagedDiskHostProtection.RegisterAdditionalHost(record.ResourceId, Path.GetDirectoryName(path)!);
+            var result = new ReusedImage(pins, storage, counters.Measure(storage), path, map.Hashes);
+            storage = null; pins = null;
+            return result;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or Win32Exception or UnauthorizedAccessException or NotSupportedException)
+        {
+            WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: checkpoint reuse unavailable ({ex.Message}); saving a complete new image.");
+            return null;
+        }
+        finally
+        {
+            if (storage is not null) storage.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            pins?.Dispose();
+        }
+    }, token);
+
+    private sealed class ReusedImage(IDisposable pins, VhdxPayloadStorage storage, ILogicalDisk measured,
+        string path, byte[] hashes) : IReusedCheckpoint
+    {
+        public string Path => path;
+        public ReadOnlyMemory<byte> Hashes => hashes;
+        public ILogicalDisk Storage => measured;
+        public ulong HeaderBytesWritten => storage.HeaderBytesWritten;
+        public async Task CompleteAndDetachAsync(CancellationToken token)
+        { await measured.FlushAsync(token); await storage.DisposeAsync(); }
+        public async ValueTask DisposeAsync()
+        { try { await storage.DisposeAsync(); } finally { pins.Dispose(); } }
+    }
+
+    public void SaveChunkMap(ManagedDiskRecord record, ImageInspection identity, ChunkedImageCopy copy)
+    {
+        if (!ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, identity.Path)) return;
+        try
+        {
+            using var pins = ManagedDiskHostProtection.Pin(Path.GetDirectoryName(identity.Path)!, true);
+            var file = new FileInfo(identity.Path);
+            var bytes = new ImageChunkMap(copy.Digest.Bytes, copy.Digest.Sha256, copy.Hashes,
+                file.Length, file.LastWriteTimeUtc.Ticks, ImageChunkMap.FileKeyHash(identity.FileIdentity)).Serialize();
+            var mapPath = ImageChunkMap.PathFor(identity.Path);
+            var staged = mapPath + ".stage-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                {
+                    stream.Write(bytes); entries[record.ResourceId].ImageIo.FlushAttempt(); stream.Flush(flushToDisk: true);
+                }
+                File.Move(staged, mapPath, overwrite: true);
+            }
+            finally { File.Delete(staged); }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or FormatException or NotSupportedException)
+        { WindowsManagedBrokerService.Log($"Managed disk {record.ResourceId}: checkpoint fingerprints not retained ({ex.Message}); future saves can copy the complete image."); }
+    }
+
     private sealed class CandidateImage(IDisposable pins, WindowsVirtualDisk image, WindowsDiskStorage disk, ILogicalDisk measured, ManagedImageIo counters, string path) : ICheckpointImage
     {
         private bool detached;
@@ -142,7 +231,7 @@ public sealed partial class WindowsManagedDiskEngine
             $"{entry.Record.ResourceId:N}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.vhdx");
         try
         {
-            var result = await new ManagedImageCheckpoint(store, this).SaveAsync(Snapshot(entry), path, commit, progress, token, stopAfterSave);
+            var result = await new ManagedImageCheckpoint(store, this).SaveAsync(Snapshot(entry), path, commit, progress, token, stopAfterSave, allowReuse: export is null);
             entry.Record = result.Record with { Native = entry.Provider?.Query(entry.Record.Native!),
                 ImageTransferAttempts = checked(entry.Record.ImageTransferAttempts + 1),
                 ImageTransferredBytes = checked(entry.Record.ImageTransferredBytes + result.Image.Digest!.Bytes) };

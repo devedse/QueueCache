@@ -569,7 +569,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ProductPrefix = test.Operation == "managed-cli" ? prefix.ToArray() : null }, deadline.Token,
                         test.Operation == "ram-read-reference" ? RamReadReferencePlan.CasesFor(options).Count * (options.DurationSeconds + 30) + 300 :
                         test.Operation == "stress-races" ? (options.SoakSeconds ?? VerificationPlan.StressDefaultSeconds) + 1800 : 900);
-                    if (test.Operation is "cache-allocation" or "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "flush-order" or "stress-races" or "app-write-profile" or
+                    if (test.Operation is "cache-allocation" or "managed-cli" or "managed-provider" or "ram-disk" or "vhdx-backed" or "image-in-ram" or "checkpoint-reuse" or "trim-file" or "paging-coherence" or "concurrent-sectors" or "partial-read-accounting" or "ram-read-reference" or "ordering-faults" or "flush-order" or "stress-races" or "app-write-profile" or
                         "volume-registration" or "volume-raw-disk-commands" or "volume-shared-disk" or "volume-resize" or "volume-snapshot" or "volume-detach" or "trim-cache" or
                         "parallel-copies-2048" or "parallel-copies-1024")
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(reply, deadline.Token))

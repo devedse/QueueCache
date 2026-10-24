@@ -37,6 +37,17 @@ public sealed class WindowsVirtualDisk : IDisposable
             BitConverter.ToUInt32(size, 28), BitConverter.ToUInt32(subtype, 8) == 4);
     }
 
+    /// <summary>Check the already-exclusive container handle, without opening or attaching a virtual disk provider.</summary>
+    internal static void RequireFileIdentity(SafeFileHandle handle, string expected)
+    {
+        var id = new byte[24];
+        if (!GetFileInformationByHandleEx(handle, 18, id, (uint)id.Length))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        var key = Convert.ToHexString(id);
+        if (!key.Equals(expected[(expected.LastIndexOf('|') + 1)..], StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The exclusive checkpoint file identity changed.");
+    }
+
     public static void DeleteDetachedOwnedImage(ImageInspection expected)
     {
         ManagedDiskPaths.ValidateImagePath(expected.Path);

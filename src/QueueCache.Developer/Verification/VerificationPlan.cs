@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 176;
+    public const int Version = 177;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -66,6 +66,7 @@ public static class VerificationPlan
         "ram-disk",
         "vhdx-backed",
         "image-in-ram",
+        "checkpoint-reuse",
         "managed-broker-restart",
         "managed-lifecycle-prepare",
         "managed-lifecycle-verify",
@@ -195,6 +196,7 @@ public static class VerificationPlan
         "managed-cli" => [new("managed-product-cli", "managed-cli")],
         "ram-disk" => [new("managed-pure-ram-lifecycle", "ram-disk")],
         "vhdx-backed" => [new("managed-backed-vhdx-persistence", "vhdx-backed")],
+        "checkpoint-reuse" => [new("checkpoint-reuse", "checkpoint-reuse")],
         "image-in-ram" => [new("managed-whole-image-checkpoints", "image-in-ram")],
         "managed-broker-restart" => [new("managed-broker-restart", "managed-broker-restart")],
         "managed-lifecycle-prepare" => [new("managed-lifecycle-prepare", "managed-lifecycle-prepare")],

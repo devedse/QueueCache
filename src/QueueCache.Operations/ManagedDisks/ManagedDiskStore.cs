@@ -7,7 +7,14 @@ namespace QueueCache.Operations.ManagedDisks;
 public enum ManagedDiskJournalStage { Creating, Loading, Ready, Exporting, CandidateVerified, Committed, Stopping, Stopped, RecoveryRequired, Formatting }
 /// <summary>The last committed save: how long it took, how much it copied, and the disk's
 /// <see cref="ManagedDiskRecord.WrittenBytes"/> when it was frozen (for "written since").</summary>
-public sealed record ManagedSaveStatistics(TimeSpan Duration, ulong Bytes, ulong? WrittenBytes, Guid BootEpoch, ulong CreationGeneration);
+public sealed record ManagedSaveStatistics(TimeSpan Duration, ulong Bytes, ulong? WrittenBytes, Guid BootEpoch, ulong CreationGeneration)
+{
+    /// <summary>Completed logical payload writes; null for older saves. Bytes stays the full image size for estimates.</summary>
+    public ulong? PayloadBytes { get; init; }
+    /// <summary>Direct-reuse VHDX header bytes, excluding filesystem metadata; null for the native full-save adapter.</summary>
+    public ulong? ContainerHeaderBytes { get; init; }
+    public bool ReusedCandidate { get; init; }
+}
 /// <summary>The last save attempted while Windows shut down (#22): when, whether it committed, how long it
 /// took and, if not, why. Kept across restarts so the app can say what happened.</summary>
 public sealed record ManagedShutdownSave(DateTimeOffset At, bool Committed, TimeSpan Duration, ulong Bytes, string? Detail);

@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 176, "plan 176 observes a held drain on an independent device handle (#13)");
+        Check(VerificationPlan.Version == 177, "plan 177 adds changed-region checkpoint and complete verification checks (#28)");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

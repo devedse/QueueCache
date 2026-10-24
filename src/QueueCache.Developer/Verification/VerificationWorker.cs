@@ -1094,6 +1094,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, detachChecks);
                 ReportFailures(detachChecks, Console.Error);
                 return detachChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "checkpoint-reuse":
+                var checkpointChecks = await CheckpointReuseScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, checkpointChecks);
+                ReportFailures(checkpointChecks, Console.Error);
+                return checkpointChecks.Count > 0 && checkpointChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "flush-order":
                 var orderChecks = await FlushOrderScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply);
                 RunStorage.AtomicJson(job.Reply, orderChecks);

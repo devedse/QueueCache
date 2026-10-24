@@ -121,12 +121,32 @@ QueueCache does not rename its service to simulate one. The detailed evidence is
 recorded in #22 and [known issues](KNOWN_ISSUES.md).
 
 Faster saves are tracked separately in [#28](https://github.com/devedse/QueueCache/issues/28).
-Today any changed data still requires a complete image copy and full read-back
-verification. The changed-region prototype was reverted: a read-write Windows
-attach mounted and changed the older candidate. A replacement must update VHDX
-contents without mounting the candidate, preserve the newest committed image,
-and verify before commit. General automatic checkpoint retention and background
-saving without pausing writes are separate future features.
+Each committed save is still a complete standalone VHDX and is read back in full
+before QueueCache switches its startup pointer. An eligible older owned checkpoint
+can now be reused: QueueCache fingerprints the frozen RAM image in 1 MiB regions
+and writes only changed regions directly into the VHDX payload, without mounting
+that candidate read-write. The newest committed checkpoint stays untouched during
+the attempt. After commit, it becomes the previous checkpoint; the consumed older
+file now contains the new save, so checkpoint filenames do not form an immutable
+history. Imported/original images and explicit export destinations are not reused.
+
+Reuse requires an intact fingerprint sidecar, matching file identity/size/time,
+valid headers and allocation metadata, an empty VHDX log and fully allocated payload
+blocks. Missing/stale hints or unsupported layouts take the complete-new-image path
+before payload mutation. All logical sectors are verified through a separate
+read-only Windows VHDX view, including regions skipped during writing. An interrupted
+candidate is not a committed checkpoint; its predecessor reference and reuse hint
+are consumed before writes, while the current checkpoint remains available.
+
+The sidecar is named `<checkpoint>.qcache-chunks`; removing it is safe and makes
+that candidate ineligible for reuse. The conservative free-space check still keeps
+worst-case room for a complete image plus metadata reserve, even for reuse, because
+host sparse/COW allocation can grow on overwrite. `LastSave.Bytes` remains the full
+logical image size for time estimates; `PayloadBytes`, `ContainerHeaderBytes` and
+`ReusedCandidate` describe the actual save strategy. Header bytes exclude host
+filesystem metadata. See [#28](https://github.com/devedse/QueueCache/issues/28) for
+qualification and measured scope. General automatic checkpoint retention and
+background saving without pausing writes remain separate features.
 
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
@@ -174,7 +194,7 @@ one-shot; startup and later Start operations never repeat it.
 | `disk stop <id> --save` | Verify/commit the frozen image before stopping |
 | `disk stop <id> --discard` | Explicit loss of this RAM creation; retain source/checkpoint files |
 | `disk flush <id>` | Device/RAM flush; whole-image RAM stays unsaved |
-| `disk save <id>` | Unique full verified checkpoint; retain source and previous image |
+| `disk save <id>` | Complete verified checkpoint; may reuse an older owned candidate while retaining the newest checkpoint until commit |
 | `disk export <id> --path <new.vhdx>` | Verified standalone export; startup pointer unchanged |
 | `disk export <id> --path <new.vhdx> --commit` | Use verified export as the committed startup image |
 | `disk format <id> --accept-erase [--label Name]` | Erase the exact owned NTFS volume; for image-in-RAM this changes only RAM until Save |
@@ -226,7 +246,7 @@ does not discard RAM or delete image data. Native provider/budget ABI mismatches
 or a stopped/missing broker make activation unavailable with an error.
 
 Use the maintained opt-in verification suites ([testing](TESTING.md)):
-`managed-provider`, `ram-disk`, `vhdx-backed` and `image-in-ram`, plus
+`managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram` and `checkpoint-reuse`, plus
 `ram-read-reference`, `ram-read-async` and `ram-read-async-lifecycle` for reads. The legacy
 `developer lab-disk` helper remains for the multi-volume/raw legacy verification
 fixtures; product managed disks do not replace those test layouts.

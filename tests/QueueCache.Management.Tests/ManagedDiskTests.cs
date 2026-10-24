@@ -23,7 +23,9 @@ internal static class ManagedDiskTests
         DurableCatalog();
         await LogicalTransfers();
         await CreationTransactions();
+        await VhdxPayloadTests.RunAsync();
         await ManagedCheckpointTests.RunAsync();
+        await CheckpointReuseTests.RunAsync();
         await ManagedBrokerTests.RunAsync();
         await ManagedLayoutTests.RunAsync();
         Console.WriteLine("Managed-disk contracts passed (no driver or real disk access).");

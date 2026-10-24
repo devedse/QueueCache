@@ -28,7 +28,7 @@ still to do. Open items link to their details.
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
-| [Faster image-in-RAM saves](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#28](https://github.com/devedse/QueueCache/issues/28), split from #22: saves still copy and verify the complete image. Changed-region checkpoint updates need a replacement for the rejected read-write attach approach |
+| [Faster image-in-RAM saves](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#28](https://github.com/devedse/QueueCache/issues/28), split from #22: direct updates of eligible older checkpoints and full read-back verification are implemented; Windows qualification and benefit measurement remain open. The rejected read-write attach approach is not used |
 | [Hibernate, Fast Startup and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC; the test VM's firmware offers no hibernation |
 | [Cached system disk (C:): full boot, paging and hibernation acceptance](#not-yet-proven) | ❌ | Restart soaks and a crash dump on the VM (0.4.810.1); restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
@@ -270,11 +270,11 @@ cache or a disk.
   reading back the accepted "copying 0%" name while Stop Pending. Thus the rename
   did not refresh an already displayed label in this VM; the cause of the earlier
   Passport-only selection remains unproven. The test restored the original name
-  and removed its backing delay. A save still copies the whole image:
-  writing only the changed parts needs direct writes to the VHDX file, because Windows
-  brings a saved copy online and mounts it when it is attached read-write, even while its
-  RAM disk with the same disk ID is online (#28, split from #22). Longer saves, the 1-hour shutdown limit
-  and a real PC's shutdown are not covered.
+  and removed its backing delay. The new #28 path updates already allocated payload
+  in an older owned VHDX without a Windows read-write attachment and still verifies
+  every logical sector read-only. Its dedicated plan-177 qualification is separate
+  from these shutdown-screen checks. Longer saves, the 1-hour shutdown limit and a
+  real PC's shutdown are not covered by the screen experiment.
 - **Event `partmgr` 58 while saving an image in RAM (explained, harmless):** "the
   disk signature of disk X is equal to the disk signature of disk Y". A checkpoint is
   verified by attaching the new image read-only while the RAM disk it was copied

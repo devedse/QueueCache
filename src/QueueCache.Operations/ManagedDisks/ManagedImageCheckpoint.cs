@@ -12,8 +12,19 @@ public interface ICheckpointImage : IAsyncDisposable
     ILogicalDisk Storage { get; }
     Task CompleteAndDetachAsync(CancellationToken token);
 }
+/// <summary>An older owned checkpoint opened exclusively without changing its payload. The catalog
+/// must stop treating it as a valid predecessor before the first write. Complete read-back is mandatory.</summary>
+public interface IReusedCheckpoint : ICheckpointImage
+{
+    string Path { get; }
+    ReadOnlyMemory<byte> Hashes { get; }
+    ulong HeaderBytesWritten { get; }
+}
+
 public interface IManagedCheckpointBackend
 {
+    Task<IReusedCheckpoint?> OpenReusedAsync(ManagedDiskRecord record, CancellationToken token) => Task.FromResult<IReusedCheckpoint?>(null);
+    void SaveChunkMap(ManagedDiskRecord record, ImageInspection identity, ChunkedImageCopy copy) { }
     Task<IStableManagedImage> AcquireAsync(ManagedDiskRecord record, Guid operation, CancellationToken token);
     Task<ICheckpointImage> CreateCandidateAsync(ManagedDiskDefinition definition, string path, CancellationToken token);
     Task<ImageInspection> VerifyCandidateAsync(string path, LogicalImageDigest digest, CancellationToken token, IProgress<ImageTransferProgress>? progress = null);
@@ -21,17 +32,43 @@ public interface IManagedCheckpointBackend
 }
 public sealed record ManagedCheckpointResult(ManagedDiskRecord Record, ManagedImageReference Image, bool ChangedStartupSource);
 
-/// <summary>One full-sector save/export transaction; pointer commits begin only after detached read-back verification.</summary>
+/// <summary>Eligibility is based on catalog ownership, never an image-directory search.</summary>
+public static class ManagedCheckpointReuse
+{
+    public static bool OwnedCheckpoint(ManagedDiskDefinition definition, string path)
+    {
+        var split = path.LastIndexOf('\\'); // Windows paths, including in Linux host contracts.
+        return split > 0 && definition.CheckpointDirectory is { } directory &&
+            path[..split].Equals(directory.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase) &&
+            path[(split + 1)..].StartsWith(definition.ResourceId.ToString("N") + "-", StringComparison.OrdinalIgnoreCase) &&
+            path.EndsWith(".vhdx", StringComparison.OrdinalIgnoreCase);
+    }
+    private static bool SameFile(ImageInspection a, ImageInspection b) =>
+        a.FileIdentity[(a.FileIdentity.LastIndexOf('|') + 1)..].Equals(
+            b.FileIdentity[(b.FileIdentity.LastIndexOf('|') + 1)..], StringComparison.OrdinalIgnoreCase);
+    public static string? Candidate(ManagedDiskRecord record) => record.PreviousImage is { Digest: not null } previous &&
+        OwnedCheckpoint(record.Definition, previous.Identity.Path) &&
+        !previous.Identity.Path.Equals(record.Definition.ImagePath, StringComparison.OrdinalIgnoreCase) &&
+        (record.CommittedImage is not { } current || !SameFile(current.Identity, previous.Identity)) &&
+        (record.OriginalSource is not { } original || !SameFile(original, previous.Identity)) ? previous.Identity.Path : null;
+    public static ManagedDiskRecord ExcludeInterruptedCandidate(ManagedDiskRecord record, ManagedDiskJournal? journal) =>
+        journal is { CandidatePath: { } path } && journal.Stage != ManagedDiskJournalStage.Committed &&
+        record.PreviousImage is { } previous && previous.Identity.Path.Equals(path, StringComparison.OrdinalIgnoreCase)
+            ? record with { PreviousImage = null } : record;
+}
+
+/// <summary>One complete logical save/export transaction; pointer commits begin only after detached full read-back verification.</summary>
 public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManagedCheckpointBackend backend)
 {
     public async Task<ManagedCheckpointResult> SaveAsync(ManagedDiskRecord record, string path, bool commit,
-        IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default, bool stopAfterSave = false)
+        IProgress<ManagedDiskProgress>? progress = null, CancellationToken token = default, bool stopAfterSave = false, bool allowReuse = false)
     {
         if (record.Definition.Mode != ManagedDiskMode.ImageInRam || record.Runtime is null ||
             record.Runtime.State is not (ManagedDiskState.Ready or ManagedDiskState.Creating or ManagedDiskState.Formatting))
             throw new IOException("Only a ready owned RAM image can be checkpointed.");
         ManagedDiskPaths.ValidateImagePath(path);
-        var runtime = record.Runtime;
+        record = ManagedCheckpointReuse.ExcludeInterruptedCandidate(record, store.ReadJournal(record.ResourceId));
+        var runtime = record.Runtime!;
         var operation = Guid.NewGuid();
         var started = System.Diagnostics.Stopwatch.StartNew();
         var journal = new ManagedDiskJournal(operation, record.ResourceId, ManagedDiskJournalStage.Exporting,
@@ -51,10 +88,30 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             var saving = record with { Runtime = runtime with { State = ManagedDiskState.Saving, WriteGeneration = stable.Generation } };
             store.Save(saving);
             LogicalImageDigest digest;
-            await using (var destination = await backend.CreateCandidateAsync(record.Definition, path, token))
+            ChunkedImageCopy? copy = null;
+            var canMap = ImageChunkMap.Supports(record.Definition.CapacityBytes);
+            var reused = allowReuse && commit && canMap && ManagedCheckpointReuse.OwnedCheckpoint(record.Definition, path)
+                ? await backend.OpenReusedAsync(record, token) : null;
+            await using (var destination = reused ?? await backend.CreateCandidateAsync(record.Definition, path, token))
             {
-                digest = await LogicalImageTransfer.CopyAsync(stable.Storage, destination.Storage,
-                    progress is null ? null : new TransferProgress(progress), token);
+                if (reused is not null)
+                {
+                    if (!reused.Path.Equals(ManagedCheckpointReuse.Candidate(record), StringComparison.OrdinalIgnoreCase))
+                        throw new IOException("The backend did not return the catalog-owned older candidate.");
+                    path = reused.Path;
+                    journal = journal with { CandidatePath = path };
+                    store.SaveJournal(journal);
+                    store.Save(saving with { PreviousImage = null });
+                    // Reporting recovery must never resurrect the now-consumed predecessor.
+                    record = record with { PreviousImage = null };
+                }
+                var transfer = progress is null ? null : new TransferProgress(progress, reused is not null);
+                if (canMap)
+                {
+                    copy = await LogicalImageTransfer.CopyChangedAsync(stable.Storage, destination.Storage, reused?.Hashes, transfer, token);
+                    digest = copy.Digest;
+                }
+                else digest = await LogicalImageTransfer.CopyAsync(stable.Storage, destination.Storage, transfer, token);
                 await destination.CompleteAndDetachAsync(token);
             }
             progress?.Report(new(ManagedDiskState.Saving, "Verifying every saved logical sector before committing the image."));
@@ -63,6 +120,7 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             if (identity.VirtualBytes != record.Definition.CapacityBytes || identity.SectorBytes != record.Definition.SectorBytes || identity.Differencing)
                 throw new InvalidDataException("The verified checkpoint image geometry changed.");
             candidate = new(identity, digest, stable.Generation);
+            if (commit && copy is not null) backend.SaveChunkMap(record, identity, copy);
             journal = journal with { Stage = ManagedDiskJournalStage.CandidateVerified, Candidate = candidate };
             store.SaveJournal(journal);
             token.ThrowIfCancellationRequested();
@@ -71,7 +129,9 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             if (commit)
                 next = next with { CommittedImage = candidate, PreviousImage = record.CommittedImage,
                     Runtime = next.Runtime!.RecordSaved(stable.Generation), SavedAt = DateTimeOffset.UtcNow, LastError = null,
-                    LastSave = new(started.Elapsed, record.Definition.CapacityBytes, stable.WrittenBytes, runtime.BootEpoch, runtime.CreationGeneration) };
+                    LastSave = new(started.Elapsed, record.Definition.CapacityBytes, stable.WrittenBytes, runtime.BootEpoch, runtime.CreationGeneration)
+                    { PayloadBytes = copy?.WrittenBytes ?? record.Definition.CapacityBytes, ReusedCandidate = reused is not null,
+                        ContainerHeaderBytes = reused?.HeaderBytesWritten } };
             commitStarted = true;
             store.Save(next);
             committed = true;
@@ -125,8 +185,9 @@ public sealed class ManagedImageCheckpoint(IManagedDiskRecordStore store, IManag
             catch (Exception reporting) { failure = failure is null ? reporting : new AggregateException(failure, reporting); }
         }
     }
-    private sealed class TransferProgress(IProgress<ManagedDiskProgress> progress) : IProgress<ImageTransferProgress>
-    { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving, "Copying the complete frozen RAM disk.", value.CompletedBytes, value.TotalBytes)); }
+    private sealed class TransferProgress(IProgress<ManagedDiskProgress> progress, bool reuse) : IProgress<ImageTransferProgress>
+    { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving,
+        reuse ? "Checking the frozen RAM disk and saving changed regions." : "Copying the complete frozen RAM disk.", value.CompletedBytes, value.TotalBytes)); }
     private sealed class VerifyProgress(IProgress<ManagedDiskProgress> progress) : IProgress<ImageTransferProgress>
     { public void Report(ImageTransferProgress value) => progress.Report(new(ManagedDiskState.Saving, "Verifying every saved logical sector before committing the image.", value.CompletedBytes, value.TotalBytes)); }
 }
