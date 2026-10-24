@@ -28,6 +28,7 @@ still to do. Open items link to their details.
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
+| [Shutdown-save feedback and speed](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#22](https://github.com/devedse/QueueCache/issues/22): the one-hour limit shipped; a Windows-backed status toggle and faster saves remain open. Service-name changes did not establish a reliable on-screen percentage in the short VM probe |
 | [Hibernate, Fast Startup and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC; the test VM's firmware offers no hibernation |
 | [Cached system disk (C:): full boot, paging and hibernation acceptance](#not-yet-proven) | ❌ | Restart soaks and a crash dump on the VM (0.4.810.1); restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
@@ -238,7 +239,13 @@ cache or a disk.
   (0.4.803.1 and 0.4.810.1). Throughout a 139 s save the VM's screen showed Windows' own
   "Restarting"; QueueCache adds no message there. With Windows' "Display highly detailed
   status messages" setting on (VerboseStatus 1), the screen said "Shutting down service:
-  QueueCache managed disks." throughout a save. A save still copies the whole image:
+  QueueCache managed disks." throughout a save. In the October 24 display-name probe
+  on 0.4.825.1, Windows accepted a synthetic "80%" name during a 19 s save, but the
+  console samples showed Microsoft Passport Container or a spinner. The first helper
+  was interrupted during a separate 61 s save and provides no rename evidence. These
+  were Windows UI/API probes, not maintained driver correctness or performance runs.
+  Neither a live percentage nor consistent display of QueueCache's name is established;
+  Windows chooses the message. A save still copies the whole image:
   writing only the changed parts needs direct writes to the VHDX file, because Windows
   brings a saved copy online and mounts it when it is attached read-write, even while its
   RAM disk with the same disk ID is online (#22). Longer saves, the 1-hour shutdown limit

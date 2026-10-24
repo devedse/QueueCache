@@ -86,13 +86,35 @@ progress, or when they have run for 58 minutes, and records that; its log record
 each tenth of the progress. A save that takes longer than that will not finish at
 shutdown: save before shutting down (the app's disk details warn when the last save
 took an hour or more). Meanwhile Windows shows its own shutdown
-screen ("Restarting"; with Windows' "Display highly detailed status messages" setting
-on it says "Shutting down service: QueueCache managed disks."). The app does not hold the shutdown to show progress: Windows cancels a
-held shutdown after about a minute unless you click "Shut down anyway". A power
+screen. Windows' "Display highly detailed status messages" setting can show
+"Shutting down service: QueueCache managed disks." instead of "Restarting". This
+identifies a stopping service; it does not report whether an image is saved or
+show a percentage. Windows chooses the current message and can show other services.
+The setting applies to the whole machine's startup, sign-in, sign-out and shutdown
+screens. It is the Windows `VerboseStatus` policy under
+`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System`; the separate
+`DisableStatusMessages=1` policy suppresses these messages even when detailed
+status is enabled ([Microsoft's policy documentation](https://learn.microsoft.com/en-us/troubleshoot/windows-server/performance/enable-verbose-startup-shutdown-logon-logoff-status-messages)).
+The app does not hold the shutdown to show progress: the VM experiment found
+Windows cancelling an application-held shutdown after about a minute unless the
+user intervened. This is separate from the service's preshutdown save and its
+one-hour maximum. A power
 cut, holding the power button or a forced shutdown can still stop a save. An
 unfinished save is never used: the image starts from its previous save. After the
 restart the app says whether the shutdown save finished; `disk status` shows it
 as `LastShutdownSave` (#22).
+
+A short Windows 11 VM investigation (October 24, 0.4.825.1) did not establish a
+reliable percentage display. Windows accepted a service display-name change to a
+synthetic "80%" during a save, but console samples showed another stopping service
+or a spinner. This does not prove that a name already displayed would never refresh;
+QueueCache was not the named service in those samples. Renaming is therefore not
+a qualified progress feature. The public [service status structure](https://learn.microsoft.com/en-us/windows/win32/api/winsvc/ns-winsvc-service_status)
+has checkpoints and a wait hint, without an arbitrary message or percentage field;
+the [old Winlogon status-message API](https://learn.microsoft.com/en-us/windows/win32/api/winwlx/nf-winwlx-wlxdisplaystatusmessage)
+is unavailable on modern Windows. The Windows-backed Settings toggle and
+disk-creation recommendation are tracked in [#22](https://github.com/devedse/QueueCache/issues/22)
+and are not implemented yet.
 
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
