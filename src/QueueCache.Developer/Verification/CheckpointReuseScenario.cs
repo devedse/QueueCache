@@ -28,6 +28,9 @@ public static class CheckpointReuseScenario
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice host,
         string work, string evidence)
     {
+        // The worker writes its CheckResult[] to the reply itself after this method
+        // returns. Keep transaction/I/O evidence separate from that final reply.
+        evidence += ".trace.json";
         target.ValidateCurrent();
         if (target.IsBoot || target.IsSystem || target.IsPaging || Directory.Exists(work) ||
             !Path.GetDirectoryName(Path.GetFullPath(work))!.Equals(target.Root, StringComparison.OrdinalIgnoreCase))
