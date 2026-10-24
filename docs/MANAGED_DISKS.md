@@ -116,6 +116,22 @@ is unavailable on modern Windows. The Windows-backed Settings toggle and
 disk-creation recommendation are tracked in [#22](https://github.com/devedse/QueueCache/issues/22)
 and are not implemented yet.
 
+A longer retest used a 4 GiB image with a 3 GiB changed file and deliberately slow
+backing writes. A live service query while QueueCache was copying at 20% confirmed
+that Microsoft Passport Container was already Stopped with PID 0, while QueueCache
+was StopPending and its changed display name read back correctly. The console
+still named Passport Container. Windows can therefore leave a stale message about
+an already stopped service; detailed status is not a reliable indicator of which
+service is currently holding shutdown. This save committed after 508 seconds
+(8 min 28 s). The observer read back changing copy/verification names, held for at
+least 10 seconds, but no QueueCache progress text was found in 702 console frames
+covering the shutdown and reboot. The deliberate backing delay was cleared near
+90% to finish the observation; the duration is not a performance result. This rules
+out a brief save as the explanation in that run, but still does not prove how
+Windows would refresh a QueueCache label once displayed. The helper was interrupted
+before restoring the final name, so a "verifying 40%" display name persisted after
+reboot until cleanup restored it. Service renaming is not a reliable shutdown UI.
+
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
 and local NTFS image/checkpoint hosts. Reparse, compressed/encrypted files,

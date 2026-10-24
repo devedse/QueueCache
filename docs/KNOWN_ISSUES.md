@@ -245,7 +245,15 @@ cache or a disk.
   was interrupted during a separate 61 s save and provides no rename evidence. These
   were Windows UI/API probes, not maintained driver correctness or performance runs.
   Neither a live percentage nor consistent display of QueueCache's name is established;
-  Windows chooses the message. A save still copies the whole image:
+  Windows chooses the message. A longer 4 GiB image / 3 GiB changed-file retest
+  confirmed stale text: Passport Container was already Stopped with PID 0 while
+  QueueCache was StopPending, copying at 20%, with its new name read back from
+  Windows. The console still named Passport Container. That save committed in
+  508 s; none of the 702 captured frames showed QueueCache progress despite copy
+  and verification name changes held for at least 10 s. A helper interrupted by
+  shutdown left its final name after reboot until cleanup restored it. These
+  results establish stale Windows text in this run, not that a displayed QueueCache
+  label can never refresh. A save still copies the whole image:
   writing only the changed parts needs direct writes to the VHDX file, because Windows
   brings a saved copy online and mounts it when it is attached read-write, even while its
   RAM disk with the same disk ID is online (#22). Longer saves, the 1-hour shutdown limit
