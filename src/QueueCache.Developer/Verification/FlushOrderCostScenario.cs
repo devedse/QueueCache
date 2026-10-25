@@ -68,37 +68,41 @@ public static class FlushOrderCostScenario
                     Options = new(Drain: DrainAlgorithm.Eager, BatchKiB: 1024, Parallelism: 4,
                         RetainWrites: true, PromoteOnRead: true)
                 }, true);
-                using var file = item.Workload == "flush-heavy-files" ? null : new AlignedFile(path, MiB, create: false, shareAll: true);
-                using var writeThrough = isWriteThrough
-                    ? new AlignedFile(path, 4096, create: false, shareAll: true, writeThrough: true) : null;
                 var smallData = data.AsSpan(0, 4096).ToArray();
-                var before = device.GetWriteCacheState(); var diagBefore = device.GetDiagnostics();
-                var started = DateTimeOffset.UtcNow; var timer = Stopwatch.StartNew();
-                long bytes = 0; var requests = 0;
-                if (item.Workload == "sequential-write")
+                WriteCacheState before; CacheDiagnostics diagBefore;
+                DateTimeOffset started, scoreEnd; double applicationSeconds;
+                var timer = new Stopwatch(); long bytes = 0; var requests = 0;
+                using (var file = item.Workload == "flush-heavy-files" ? null : new AlignedFile(path, MiB, create: false, shareAll: true))
+                using (var writeThrough = isWriteThrough
+                    ? new AlignedFile(path, 4096, create: false, shareAll: true, writeThrough: true) : null)
                 {
-                    for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                    { Stamp(data, i); file!.Write((long)i * MiB, data); bytes += MiB; requests++; }
-                }
-                else if (item.Workload == "flush-heavy-files")
-                {
-                    for (var i = 0; i < FlushOrderCostPlan.SmallFiles; i++)
+                    before = device.GetWriteCacheState(); diagBefore = device.GetDiagnostics();
+                    started = DateTimeOffset.UtcNow; timer.Start();
+                    if (item.Workload == "sequential-write")
                     {
-                        using var small = new FileStream(Path.Combine(directory, $"file-{i:D4}.bin"), FileMode.CreateNew,
-                            FileAccess.Write, FileShare.None, 4096);
-                        Stamp(data, i); small.Write(data, 0, 4096); small.Flush(true); bytes += 4096; requests++;
+                        for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
+                        { Stamp(data, i); file!.Write((long)i * MiB, data); bytes += MiB; requests++; }
                     }
-                }
-                else
-                {
-                    for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
+                    else if (item.Workload == "flush-heavy-files")
                     {
-                        Stamp(smallData, i);
-                        (i % 2 == 0 ? file! : writeThrough!).Write((long)i * 4096, smallData);
-                        bytes += 4096; requests++;
+                        for (var i = 0; i < FlushOrderCostPlan.SmallFiles; i++)
+                        {
+                            using var small = new FileStream(Path.Combine(directory, $"file-{i:D4}.bin"), FileMode.CreateNew,
+                                FileAccess.Write, FileShare.None, 4096);
+                            Stamp(data, i); small.Write(data, 0, 4096); small.Flush(true); bytes += 4096; requests++;
+                        }
                     }
-                }
-                var applicationSeconds = timer.Elapsed.TotalSeconds; var scoreEnd = DateTimeOffset.UtcNow;
+                    else
+                    {
+                        for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
+                        {
+                            Stamp(smallData, i);
+                            (i % 2 == 0 ? file! : writeThrough!).Write((long)i * 4096, smallData);
+                            bytes += 4096; requests++;
+                        }
+                    }
+                    applicationSeconds = timer.Elapsed.TotalSeconds; scoreEnd = DateTimeOffset.UtcNow;
+                } // Last-close metadata belongs to the running durable-tail timer.
                 // Include filesystem metadata that has not reached our volume
                 // cache yet; flushing only QueueCache would undercount the tail.
                 var checkpoint = DurableCheckpoint.Complete(target.Letter, device, evidence + "." + item.Id + ".checkpoint.json");
@@ -122,12 +126,16 @@ public static class FlushOrderCostScenario
                         Stamp(data, i); Check(small, 0, data.AsSpan(0, 4096).ToArray());
                     }
                 }
-                else if (isWriteThrough)
-                    for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
-                    { Stamp(smallData, i); Check(file!, (long)i * 4096, smallData); }
                 else
-                    for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                    { Stamp(data, i); Check(file!, (long)i * MiB, data); }
+                {
+                    using var verify = new AlignedFile(path, MiB, create: false, sharedReadOnly: true);
+                    if (isWriteThrough)
+                        for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
+                        { Stamp(smallData, i); Check(verify, (long)i * 4096, smallData); }
+                    else
+                        for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
+                        { Stamp(data, i); Check(verify, (long)i * MiB, data); }
+                }
                 checks.Add(new(item.Id, "PASS", $"Measured {bytes} bytes in {applicationSeconds:F4} s application / {durableSeconds:F4} s including durable tail; lower-device bytes verified. This is collection success, not a speed verdict."));
                 Console.WriteLine($"{item.Id}: {checks[^1].Detail}");
                 await Task.Yield();

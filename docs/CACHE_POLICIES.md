@@ -330,7 +330,11 @@ No FUA optimization is enabled or qualified by that capability report.
 The original mode-1 suite passed nine focused live-driver checks under Verifier on a
 non-OS NTFS lab volume. Three bounded follow-up cuts kept NTFS clean and durable
 guards exact; broader qualification remains open ([evidence](KNOWN_ISSUES.md)).
-Mode 2 remains an unqualified experiment; those earlier cuts apply to mode 1.
+Plan 188 on 0.4.851.1 passed eleven live checks per mode under Driver Verifier,
+including held and failed post-write-through successors, retained explicit
+predecessors, RAM admission, TRIM, capacity and lifecycle (22 total). The isolated
+write-through sealed two boundaries in mode 1 versus one in mode 2. Mode 2 remains
+an unqualified experiment; the earlier cuts apply to mode 1.
 A short mode-0/mode-1 same-build screen measured about 5× the total durable time for 256
 flush-heavy files; sequential pairs disagreed and the read timing control was
 unqualified ([cost and limits](PERFORMANCE.md#fast-ordering-13-cost)). The lab

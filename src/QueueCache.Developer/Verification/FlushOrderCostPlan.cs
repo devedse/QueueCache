@@ -12,7 +12,7 @@ public static class FlushOrderCostPlan
         return [.. Enumerable.Range(1, repeats).SelectMany(repeat =>
             new[] { "sequential-write", "flush-heavy-files", "write-through-pairs" }.SelectMany(workload =>
                 (repeat % 2 == 1 ? new ulong[] { 1, 2 } : [2UL, 1UL]).Select(mode =>
-                    new FlushOrderCostCase($"flush-order-cost-v188-r{repeat}-{workload}-mode{mode}", repeat, workload, mode))))];
+                    new FlushOrderCostCase($"flush-order-cost-v189-r{repeat}-{workload}-mode{mode}", repeat, workload, mode))))];
     }
     public static void ValidateChecks(IReadOnlyList<FlushOrderCostCase> expected, IReadOnlyList<QueueCache.Operations.CheckResult> actual)
     {

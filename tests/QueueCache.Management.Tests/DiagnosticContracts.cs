@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 188, "plan 188 compares original/post-write-through ordering with dependency checks and equal-work pairs (#13)");
+        Check(VerificationPlan.Version == 189, "plan 189 closes scored writers before measuring the complete metadata durability tail (#13)");
         foreach (var suite in new[] { "compare-durability-write", "compare-durability-churn" })
         {
             var writer = new VerificationOptions("W:", suite, Product: "QueueCache fixture", Repeats: 1);
@@ -137,7 +137,7 @@ internal static class DiagnosticContracts
             costPlan.Take(2).Select(c => c.Mode).SequenceEqual([1UL, 2UL]) &&
             costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 1UL]) &&
             costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
-            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v188", StringComparison.Ordinal)),
+            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v189", StringComparison.Ordinal)),
             "ordering cost retains unique IDs, equal workload counts and reversed arm order");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);

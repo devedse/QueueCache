@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off ordering prototype passed nine focused checks and three follow-up cuts, with intact durable guards. Broader qualification remains open; ordinary Fast defaults are unchanged |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off original prototype passed nine checks and three follow-up cuts; plan 188 passed eleven targeted checks per ordering mode (22 total). Crash qualification of mode 2 and broader scope remain open; ordinary Fast defaults are unchanged |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
@@ -99,8 +99,13 @@ filesystem-safety fix.
 
 Runtime mode 2 is a separate experiment that removes the extra boundary before a
 write-through request while retaining its post-boundary, explicit flush history
-and same-range ordering. It has not inherited the original mode's live/crash
-qualification. The lower path still uses explicit flushes: the lab W: VHDX reports
+and same-range ordering. On 0.4.851.1, plan 188 passed eleven targeted checks for
+each mode under Driver Verifier (22 total), including an explicitly sealed
+predecessor and held/failed post-write-through successors. The isolated write
+sealed two groups and retained one older version in mode 1, versus one group and
+no extra version in mode 2, with zero lower-I/O admission attempts in both.
+The three earlier crash checks apply to mode 1; mode 2 has no crash qualification.
+The lower path still uses explicit flushes: the lab W: VHDX reports
 no write-through support, although its Q: host reports support. Both report flush
 support; a shared bus type is insufficient to select a FUA optimization.
 
