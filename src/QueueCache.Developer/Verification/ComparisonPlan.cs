@@ -37,15 +37,23 @@ public static class ComparisonPlan
     public static bool IsDurabilityWrite(string suite) => suite is "compare-durability-write" or "compare-durability-churn";
 
     /// <summary>Where a suite keeps its files on the target: RAM runs use a run-owned folder (removed after a
-    /// completed run); cache and durability runs reuse fixed folders.</summary>
+    /// completed run). Cache comparisons reuse a fixed folder. Durability writers own a fresh
+    /// run namespace, so a new cut cannot overwrite an earlier oracle or durable guard.</summary>
     public static string? WorkDirectory(string suite, string root, string runName) => suite switch
     {
         "compare-ram" or "compare-drain" or ComparisonDrain.SustainedSuite or ComparisonDrainRead.Suite or DrainBatching.Suite => Path.Combine(root, runName),
         "compare-cache" or "compare-cache-cold" => Path.Combine(root, "QCBench"),
-        "compare-durability-write" or "compare-durability-verify" => Path.Combine(root, "QCBench-durability"),
-        "compare-durability-churn" => Path.Combine(root, "QCBench-churn"),
+        "compare-durability-write" or "compare-durability-churn" => DurabilityDirectory(root, runName),
         _ => null
     };
+
+    private static string DurabilityDirectory(string root, string runName)
+    {
+        if (!runName.StartsWith("QueueCache-Verify-", StringComparison.Ordinal) || runName.Length > 128 ||
+            runName.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '-'))
+            throw new ArgumentException("Durability writers require the runner's unique directory name.");
+        return Path.Combine(root, runName);
+    }
 
     public static int TimeoutSeconds(string suite, int repeats) => suite switch
     {

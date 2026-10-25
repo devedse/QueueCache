@@ -98,6 +98,9 @@ public static class FlushOrderCostScenario
                         { file!.Read((long)i * MiB, data); bytes += MiB; requests++; }
                 }
                 var applicationSeconds = timer.Elapsed.TotalSeconds; var scoreEnd = DateTimeOffset.UtcNow;
+                // Include filesystem metadata that has not reached our volume
+                // cache yet; flushing only QueueCache would undercount the tail.
+                ComparisonScenarios.FlushVolume(target.Letter);
                 device.Control(WriteCacheAction.Flush);
                 var durableSeconds = timer.Elapsed.TotalSeconds; var durableEnd = DateTimeOffset.UtcNow;
                 var after = device.GetWriteCacheState(); var diagAfter = device.GetDiagnostics();

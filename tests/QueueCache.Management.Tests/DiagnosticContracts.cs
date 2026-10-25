@@ -20,7 +20,13 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 183, "plan 183 adds ordering capacity/lifecycle checks and a maintained same-build cost screen (#13)");
+        Check(VerificationPlan.Version == 184, "plan 184 counts filesystem metadata in the durable tail and gives each cut its own directory (#13)");
+        const string cutRunA = "QueueCache-Verify-20261025-030000-11111111111111111111111111111111";
+        const string cutRunB = "QueueCache-Verify-20261025-030000-22222222222222222222222222222222";
+        Check(ComparisonPlan.WorkDirectory("compare-durability-write", "W:\\", cutRunA) !=
+            ComparisonPlan.WorkDirectory("compare-durability-write", "W:\\", cutRunB) &&
+            ComparisonPlan.WorkDirectory("compare-durability-verify", "W:\\", cutRunA) is null,
+            "power-cut repetitions keep distinct target directories; verification uses its immutable oracle directory");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
@@ -857,7 +863,7 @@ internal static class DiagnosticContracts
         check(ComparisonPlan.CasesFor("compare-durability-churn", 1).Single().Kind == "durability-churn" &&
             ComparisonPlan.IsDurabilityWrite("compare-durability-churn") && ComparisonPlan.IsDurabilityWrite("compare-durability-write") &&
             !ComparisonPlan.IsDurabilityWrite("compare-durability-verify") && !ComparisonPlan.UsesDiskSpd("compare-durability-churn") &&
-            ComparisonPlan.WorkDirectory("compare-durability-churn", @"Q:\", "Run") == Path.Combine(@"Q:\", "QCBench-churn"),
+            ComparisonPlan.WorkDirectory("compare-durability-churn", @"Q:\", "QueueCache-Verify-fixture") == Path.Combine(@"Q:\", "QueueCache-Verify-fixture"),
             "the churn power-cut test writes an oracle and a durable FINISHED marker, without DiskSpd, in its own folder");
         reject(() => { try { ComparisonPlan.CasesFor("compare-ram", 4); } catch (ArgumentOutOfRangeException) { throw new InvalidDataException(); } });
 

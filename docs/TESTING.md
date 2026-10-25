@@ -127,6 +127,11 @@ disable/release/reapply checks (nine total), plus the narrow `flush-order-cost`
 screen. Its observer must complete the ready handshake before the worker starts,
 cover the whole worker interval with no gap over two seconds, and retain all raw
 samples. The retained matrix is unchanged.
+Plan 184 includes the filesystem volume flush before the QueueCache lower flush
+in the cost screen's durable tail, so deferred NTFS metadata is counted too.
+Its power-cut writers also use fresh run-owned directories and refuse an existing
+destination; later cuts preserve earlier oracles and independent durable guards.
+Verification reads the directory recorded in its selected immutable oracle.
 Since plan 173, the retained correctness suites contain 94 subchecks: 22 partial
 reads, 9 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
 `stress-races` campaign adds its five checks, for 99 in total. Plan 173 (#19) turned

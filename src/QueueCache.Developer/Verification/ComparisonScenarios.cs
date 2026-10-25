@@ -103,7 +103,7 @@ internal static class ComparisonScenarios
         if (ComparisonDrain.IsSuite(job.Operation))
             return await ComparisonDrainScenarios.RunAsync(job, target, plan);
         var work = job.WorkDirectory;
-        if (work is not null) Directory.CreateDirectory(work);
+        if (work is not null && !ComparisonPlan.IsDurabilityWrite(job.Operation)) Directory.CreateDirectory(work);
         var checks = new List<CheckResult>();
         foreach (var step in plan)
         {
@@ -498,7 +498,7 @@ internal static class ComparisonScenarios
 
     private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix)
     {
-        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        if (Directory.Exists(work)) throw new IOException("Durability writer refuses an existing directory; preserve its oracle and evidence.");
         Directory.CreateDirectory(work);
         var nonce = BinaryPrimitives.ReadUInt64LittleEndian(RandomNumberGenerator.GetBytes(8));
         var flushed = Path.Combine(work, "flushed.dat"); var unflushed = Path.Combine(work, "unflushed.dat");
@@ -538,7 +538,7 @@ internal static class ComparisonScenarios
     /// that follows FINISHED.txt (the host watches the disk counters).</summary>
     private static string DurabilityChurn(ComparisonTarget target, string work, string oraclePath, string product, string prefix)
     {
-        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
+        if (Directory.Exists(work)) throw new IOException("Churn writer refuses an existing directory; preserve its oracle and evidence.");
         var baseDirectory = Path.Combine(work, "base"); var churnDirectory = Path.Combine(work, "churn");
         Directory.CreateDirectory(baseDirectory); Directory.CreateDirectory(churnDirectory);
         var nonce = BinaryPrimitives.ReadUInt64LittleEndian(RandomNumberGenerator.GetBytes(8));
