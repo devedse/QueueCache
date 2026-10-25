@@ -77,9 +77,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     {
         Options = new(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 600000, RetainWrites: true, PromoteOnRead: true)
     };
-    /// <summary>System and managed-lifecycle phases leave workloads that a later phase reads, and disk-removal
+    /// <summary>Durability writers, system and managed-lifecycle phases leave workloads that a later phase reads, and disk-removal
     /// targets a disposable disk; every other suite removes its own workload folders after completing.</summary>
     public static bool RemovesWorkloads(VerificationOptions options) => !options.KeepWorkloads && !IsSystemSuite(options.Suite) &&
+        !ComparisonPlan.IsDurabilityWrite(options.Suite) &&
         !options.Suite.StartsWith("managed-", StringComparison.Ordinal) && !options.Suite.StartsWith("disk-removal", StringComparison.Ordinal);
     private static bool IsSystemSuite(string suite) => suite is
         "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session";

@@ -154,6 +154,8 @@ internal static class CacheExerciseTests
               !VerificationRunner.RemovesWorkloads(options with { KeepWorkloads = true }) &&
               !VerificationRunner.RemovesWorkloads(options with { Suite = "system-files" }) &&
               !VerificationRunner.RemovesWorkloads(options with { Suite = "managed-lifecycle-prepare" }) &&
+              !VerificationRunner.RemovesWorkloads(options with { Suite = "compare-durability-write" }) &&
+              !VerificationRunner.RemovesWorkloads(options with { Suite = "compare-durability-churn" }) &&
               !VerificationRunner.RemovesWorkloads(options with { Suite = "disk-removal" }),
             "Suites whose later phases read their workloads, and --keep-workloads, keep them.");
 

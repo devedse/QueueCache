@@ -139,6 +139,10 @@ verification requires every sector of both files and all small files to match,
 plus a clean scan; an old/missing/damaged byte or nonzero scan fails after the raw
 classification is saved. Ordinary volatile cuts keep their classification-only
 contract. The option is refused for other suites and campaigns.
+Plan 186 excludes both durability writers from the general successful-run cleanup:
+their fresh directories must remain for the post-cut oracle, including independent
+durable guards. A plan-185 guard attempt exposed this cleanup error before any cut;
+its removed data is not a prepared guard or crash result.
 
 For the Ceph-backed lab, retain UTC-aligned pool free space, client I/O, OSD
 latency, the test VM's block counters, other guests' I/O and active/recent

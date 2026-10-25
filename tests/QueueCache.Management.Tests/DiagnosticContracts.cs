@@ -20,7 +20,17 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 185, "plan 185 records explicit durable cut readiness and requires exact post-checkpoint bytes (#13)");
+        Check(VerificationPlan.Version == 186, "plan 186 retains run-owned durability data for post-cut verification (#13)");
+        foreach (var suite in new[] { "compare-durability-write", "compare-durability-churn" })
+        {
+            var writer = new VerificationOptions("W:", suite, Product: "QueueCache fixture", Repeats: 1);
+            Check(!VerificationRunner.RemovesWorkloads(writer) &&
+                ComparisonPlan.WorkDirectory(suite, @"W:\", "QueueCache-Verify-retention") == Path.Combine(@"W:\", "QueueCache-Verify-retention"),
+                "A fresh durability directory survives the write phase for its later oracle.");
+        }
+        Check(!VerificationRunner.RemovesWorkloads(new("W:", "compare-durability-write", Product: "QueueCache fixture",
+                Repeats: 1, DurableCheckpoint: true)) && VerificationRunner.RemovesWorkloads(new("W:", "quick")),
+            "Checkpoint guards are retained while ordinary successful suites still clean up.");
         const string cutRunA = "QueueCache-Verify-20261025-030000-11111111111111111111111111111111";
         const string cutRunB = "QueueCache-Verify-20261025-030000-22222222222222222222222222222222";
         Check(ComparisonPlan.WorkDirectory("compare-durability-write", "W:\\", cutRunA) !=
