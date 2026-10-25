@@ -20,7 +20,31 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 189, "plan 189 closes scored writers before measuring the complete metadata durability tail (#13)");
+        Check(VerificationPlan.Version == 190, "plan 190 retains exact high-watermark checkpoint evidence before restoration (#30)");
+        var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
+        var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
+        var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
+        watermarkEvidence.ValidateBelow();
+        Check(watermarkEvidence.AcceptedDelta == 8 && watermarkEvidence.AcceptedBeyondFileBytes == 0,
+            "watermark evidence distinguishes the owned file bytes from additional accepted writes");
+        foreach (var (observed, reason) in new[]
+        {
+            (watermarkBelow with { DirtyBytes = 10, AcceptedBytes = 110 }, "actual dirty bytes reached the high watermark"),
+            (watermarkBelow with { DrainedBytes = 21 }, "completed drain bytes changed"),
+            (watermarkBelow with { DrainWriteAttempts = 5 }, "lower drain attempts changed")
+        })
+        {
+            try { (watermarkEvidence with { Below = observed }).ValidateBelow(); throw new Exception("Bad watermark accepted."); }
+            catch (InvalidDataException error)
+            {
+                Check(error.Message.Contains(reason) && error.Message.Contains("ExpectedFileBytes") &&
+                    error.Message.Contains("DrainWriteAttempts"), "watermark failure identifies its condition and retains raw evidence");
+            }
+        }
+        Check((watermarkEvidence with { Below = watermarkBelow with { AcceptedBytes = 99 } }).AcceptedDelta is null &&
+              (watermarkEvidence with { Below = watermarkBelow with { AcceptedBytes = 107 } }).AcceptedBeyondFileBytes is null,
+            "reset or incomplete admission counters remain unknown, not zero");
+        (watermarkEvidence with { Below = watermarkBelow with { LowerWriteAttempts = 10 } }).ValidateBelow();
         foreach (var suite in new[] { "compare-durability-write", "compare-durability-churn" })
         {
             var writer = new VerificationOptions("W:", suite, Product: "QueueCache fixture", Repeats: 1);

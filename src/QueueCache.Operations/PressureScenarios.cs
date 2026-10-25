@@ -167,9 +167,9 @@ public static class PressureScenarios
         }
         var below = device.GetWriteCacheState();
         var attemptsBelow = RequiredDiagnostics(device, label);
-        if (below.DirtyBytes >= highBytes || below.DrainedBytes != before.DrainedBytes ||
-            SectorScenarios.DrainWriteAttempts(attemptsBelow) != SectorScenarios.DrainWriteAttempts(attemptsBefore))
-            throw new IOException(label + ": lower I/O started below the configured high watermark");
+        var checkpoint = new PressureWatermarkEvidence(highBytes, checked((ulong)belowBlocks * TransferBytes),
+            WatermarkCounters(before, attemptsBefore), WatermarkCounters(below, attemptsBelow));
+        checkpoint.ValidateBelow();
 
         file.Write(belowBlocks * TransferBytes, Pattern(9200, belowBlocks));
         var attempt = WaitForWriteAttempt(device, SectorScenarios.DrainWriteAttempts(attemptsBefore), TimeSpan.FromSeconds(2), token,
@@ -186,7 +186,8 @@ public static class PressureScenarios
             $"No lower write attempt at {below.DirtyBytes} bytes below the {highBytes}-byte high watermark; " +
             $"crossing it produced drain-write attempt delta {SectorScenarios.DrainWriteAttempts(attempt) - SectorScenarios.DrainWriteAttempts(attemptsBefore)} and " +
             $"drained delta {triggered.DrainedBytes - before.DrainedBytes}. " +
-            "Persisted bytes verified after Disable."));
+            "Persisted bytes verified after Disable. Checkpoint evidence: " +
+            System.Text.Json.JsonSerializer.Serialize(checkpoint)));
         if (admission is not null)
             results.Add(SectorScenarios.AdmissionCheck(label + "/first-write-zero-lower-io", admission));
     }
@@ -261,6 +262,12 @@ public static class PressureScenarios
     private static CacheDiagnostics RequiredDiagnostics(CacheDevice device, string label) =>
         device.GetDiagnostics() is { Attribution: not null } diagnostics ? diagnostics :
         throw new NotSupportedException(label + " requires diagnostics V2 lower-I/O attempt counters.");
+
+    private static PressureWatermarkCounters WatermarkCounters(WriteCacheState state, CacheDiagnostics diagnostics) =>
+        new(state.DirtyBytes, state.InFlightBytes, state.AcceptedBytes, state.DrainedBytes,
+            SectorScenarios.DrainWriteAttempts(diagnostics), diagnostics.Attribution!.LowerWriteAttempts,
+            diagnostics.Attribution.LowerFlushAttempts, diagnostics.ApplicationFlushes,
+            diagnostics.WriteThroughWrites, state.Errors, state.LastError, diagnostics.FlushOrder?.Mode);
 
     internal static void ValidateTriggerWindow(double observedMilliseconds, double noEarlierMilliseconds,
         double noLaterMilliseconds)

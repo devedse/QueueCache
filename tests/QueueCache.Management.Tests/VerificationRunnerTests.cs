@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 189, "plan 189 closes scored writers before measuring the complete metadata durability tail (#13)");
+        Check(VerificationPlan.Version == 190, "plan 190 retains exact high-watermark checkpoint evidence before restoration (#30)");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -997,7 +997,7 @@ internal static class VerificationRunnerTests
         VerificationPlan.Validate(new VerificationOptions("Q:", "policies"));
         VerificationPlan.Validate(new VerificationOptions("Q:", "pressure"));
         Check(VerificationPlan.Integrity(options with { Suite = "pressure" }).SequenceEqual(
-            new IntegrityCase[] { new("pressure-integrity", "pressure") }),
+            new IntegrityCase[] { new("pressure-integrity-v190", "pressure") }),
             "pressure remains a focused opt-in integrity suite");
         var drainDecision = VerificationPlan.DrainDecision(options with { Suite = "drain-decision" });
         Check(drainDecision.Count == 42 && drainDecision.Select(c => c.Id).Distinct().Count() == 42,

@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 189;
+    public const int Version = 190;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -227,7 +227,7 @@ public static class VerificationPlan
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "stress-races" => [new("stress-races", "stress-races")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
-        "pressure" => [new("pressure-integrity", "pressure")],
+        "pressure" => [new("pressure-integrity-v190", "pressure")],
         "full" => [new("file-integrity", "files"), new("policy-integrity", "policies")],
         "trim-diagnostic" => [new("trim-cache-enabled", "files", true), new("trim-cache-disabled", "files", false)],
         "trim-file" => [new("trim-file", "trim-file")],

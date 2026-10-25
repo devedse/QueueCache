@@ -183,6 +183,14 @@ Windows' standby memory is purged the next read comes from RAM.
 harness's built-in background-task mechanism. Wait for completion, then read that
 run's evidence and use `verify-completion`.
 
+Plan 190 gives pressure runs the immutable `pressure-integrity-v190` case ID.
+The existing high-watermark observations now retain dirty/in-flight, accepted and
+completed bytes, lower drain/write/flush attempts, application flush/write-through
+counts, errors and ordering mode before restoration. The three original failure
+conditions remain strict and are reported separately. Additional accepted bytes
+are distinguished from the planned file payload; missing/reset deltas stay unknown.
+The workload, timing windows and trigger thresholds are unchanged.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The
