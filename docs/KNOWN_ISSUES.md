@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off ordering prototype passed six focused checks and one witnessed partial-drain cut, with intact durable guards. Broader crash/lifecycle qualification and performance remain open; ordinary Fast defaults are unchanged |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off ordering prototype passed nine focused checks and three follow-up cuts, with intact durable guards. Broader qualification remains open; ordinary Fast defaults are unchanged |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
@@ -89,10 +89,11 @@ the same way also damaged NTFS when cut during its write-out.
 An experimental, default-off ordering path is being qualified for #13. It retains
 old dirty versions across filesystem flush/write-through boundaries, writes groups
 in order with a real lower flush between them, and orders TRIM with those groups.
-The plan-176 `flush-order` suite passed all six changed-path checks under Driver
-Verifier on a disposable non-OS NTFS volume (see the record below). One subsequent
-partly drained NTFS churn cut kept the filesystem clean and an untouched durable
-guard exact. Broader power-loss, system-volume and dynamic usage-path qualification
+The expanded `flush-order` suite passed nine changed-path checks under Driver
+Verifier on a disposable non-OS NTFS volume. Three October 25 cuts covered a burst,
+a partial-drain boundary and a completed explicit checkpoint; each kept NTFS clean
+and an untouched durable guard exact (see the records below). Broader power-loss,
+system-volume and dynamic usage-path qualification
 remain open. The default Fast behavior and the safety warning above remain in effect; this is not yet a qualified
 filesystem-safety fix.
 
@@ -411,6 +412,79 @@ a full save instead of the required reuse. That evidence remains separate. Plan
 and older records without the marker cannot be consumed, even with a generated-looking
 filename. General retention, background saving and a crash during commit remain
 separate work.
+
+**Issue #13 follow-up, plans 186/187 (2026-10-25):** native 0.4.847.1
+included the late usage-registration guard; both loaded hashes matched its signed
+package. Controller 0.4.848.1 ran the nine-check suite and the two volatile cuts;
+controller 0.4.849.1 ran the completed explicit-checkpoint cut. Native source was
+unchanged between these packages. Verifier `0x209bb` targeted both drivers, Q:'s
+backing cache was paused, and W: was the disposable non-OS NTFS lab volume.
+
+All nine checks passed in 8.5 s, about 18 s for the complete campaign, with
+restoration RESTORED and its terminal event validated:
+`QueueCache-Campaign-20261025-051540-3863f11229624760a86c7e19feb79046`.
+In addition to the six original checks, retained versions forced capacity waits
+in an 8 MiB allocation; live mode changes returned ERROR_BUSY without changing
+state; and disable/release/reapply preserved the newest bytes and untouched
+neighbor. The RAM-first admission windows still added zero lower-I/O attempts.
+The one deliberate lower-flush fault was explicitly retried by its own check.
+
+| Cut | Dirty / in-flight bytes at witness | Result after normal NTFS recovery |
+|---|---:|---|
+| Burst, Fast Deferred 10 s, 2 GiB, 1024 KiB × 4 | 564,465,664 / 0; 537,063,424 already drained | Both changed 256 MiB files reverted completely to generation 1; all 10,000 new small files missing. Scan exit 0. |
+| Partial drain after another group flush, 512 MiB, 128 KiB × 2, controlled 40 ms drain delay | 54,738,944 / 262,144; 175,497,216 already drained | All 1,000 kept base files and all 3,500 kept churn files at least 20 s old intact. Of 1,751 aged 10–20 s, 1,324 intact, 237 zero-filled, 190 missing; all 1,874 newest files missing. Some deletions rolled back. No foreign-content or unreadable files; scan exit 0. |
+| Completed filesystem + QueueCache checkpoint, Fast Deferred 10 s, 2 GiB | 0 / 0 | Both 256 MiB files entirely generation 2 and all 10,000 small files exact; scan exit 0. |
+
+The independent, untouched guard (two 256 MiB files plus 10,000 small files,
+prepared uncached with a completed explicit checkpoint) was exact after **each**
+cut, with a clean scan. The boundary observer saw completed group flushes advance
+while later data remained pending. Reset was requested approximately 0.48, 1.04
+and 0.84 s after the respective healthy witnesses; these are observed cut windows,
+not a claim to interrupt one exact kernel instruction. The final witness retained
+exactly the one lifetime error deliberately injected by the completed nine-check
+suite; LastError was zero and no additional error was accepted. No offline repair
+or snapshot rollback was used.
+
+Writer/oracle run IDs, respectively:
+`20261025-050204-688c6c258a864d0dbcae4bf3c7d4f11e` /
+`20261025-050415-1af7720576594cc185d8b95c811a8f97`;
+`20261025-050604-8ff2e4d4caad4a939f4abf9eb278600d` /
+`20261025-050900-7957c27970164ca8a6b82da576666db7`;
+`20261025-052318-a4d4ddd8257043e7b1e87e0cf91a7e74` /
+`20261025-052538-d21416ca27ae47ba9a3c3873a2d1490c`.
+
+Two preparations were not cuts: plan 185's new durability directory was removed
+by general cleanup (fixed in plan 186), and plan 186's checkpoint check stopped
+with 8 KiB newly dirty and no driver error. Plan 187 records admission immediately
+around Flush and permits at most three calls only if accepted writes advanced.
+The successful checkpoint used two: the first observed a new 4 KiB admission;
+the second drained the later tail, with no error increase. Existing pending work
+without new admission, errors and identity changes still fail. All incomplete
+attempts and their raw evidence remain separate.
+
+UTC-aligned Ceph observations covered these runs without gaps beyond their 5 s
+traffic / 15 s pool-and-task cadences. No backup, scrub, recovery or new health
+warning overlapped them; ordinary other-guest I/O remained present. Minimum pool
+free space across the cut intervals was 261.2 GB. The intentionally offline pools
+were separate from the VM's pool. The same-build plan-187 short cost screen
+completed all 12 cases but measured 4.9–5.0× total durable time for 256 flush-heavy
+files. Sequential pairs disagreed, and metadata I/O left the resident read timing
+control unqualified ([measurements and limits](PERFORMANCE.md#fast-ordering-13-cost)).
+This bounded evidence supports keeping the prototype default off; it does not
+close #13 or qualify system/special-file paths. Actual late usage registration
+under mode 1 was not exercised live; compile-time contracts cover that guard.
+Direct/oversized bypasses, special-file growth and storage-wide power loss still
+need their own qualification if the supported scope expands.
+
+The complete guest evidence archive contains 690 hash-verified files, including
+all incomplete preparations and raw scans: `QC13Followup-20261025-evidence.zip`,
+SHA-256 `822A4BFE58B52EA479254F595961B07E73BEC81DCDEDC9C7F4A62B4B3E115B63`.
+The temporary snapshot was deleted without rollback; installed 0.4.849.1, ordering
+off, Verifier off, the original Q: profile and applications were restored. After
+export, five run-owned W: workload directories were removed. Free space at cleanup
+was C: 55.24 GiB, Q: 170.91 GiB, V: 7.97 GiB and W: 7.93 GiB. The original stopped
+1 GiB R: definition was preserved. The separately transferred cleanup receipt has
+SHA-256 `7472143A1303746783B5F5449987CCC8356D6E0C1881CF62B2996B5EF925E432`.
 
 **Issue #13 experimental ordering, plan 176 (2026-10-24):** controller 0.4.835.1
 against native 0.4.834.1 (driver source unchanged) completed

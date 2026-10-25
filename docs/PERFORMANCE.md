@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | Keep default off. Sealed write groups, older dirty versions and lower flushes preserve RAM-first admission in focused checks; one partial-drain cut passed. No on/off cost result is established yet. Plan 183 adds a narrow equal-work cost screen with full telemetry, application/durable-tail times and reversed arm order. [Scope](CACHE_POLICIES.md#experimental-fast-write-ordering-13). | Targeted crash/lifecycle evidence, the remaining bypass audit and a same-build cost screen before considering a limited NTFS data-volume promotion. Do not use Strict's measurements as this prototype's cost. |
+| Experimental Fast write ordering (#13) | **Keep default off.** Nine focused checks and three follow-up cuts passed their scoped checks. The same-build short screen made 256 flush-heavy files take **4.9–5.0× as long to finish durably** (0.093–0.115 → 0.467–0.564 s); sequential pairs changed direction. Resident bytes were verified, but metadata I/O invalidates a clean read timing control. [Cost and limits](#fast-ordering-13-cost); [scope](CACHE_POLICIES.md#experimental-fast-write-ordering-13). | An explicit supported-scope/promotion decision, qualification of the remaining bypass and special-file paths, or changes to group retention/flush scheduling. No global or system-volume safety claim; do not substitute Strict's measurements for this prototype's cost. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,86 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-13-cost"></a>**Experimental Fast ordering (#13, October 25).**
+Keep the runtime experiment off by default. Ordered groups preserved RAM-first
+admission in the focused checks, but finishing a flush-heavy workload durably
+cost substantially more. This is a short equal-work screen, with two repetitions
+and reversed arm order, rather than a release-performance qualification.
+
+Plan 187, source `38464a75664405f3fbc0f5af27155150313f7a10`, installed and loaded
+0.4.849.1, used the maintained `flush-order-cost` experiment on disposable NTFS W:
+inside the lab VHDX. Q:'s backing cache was paused. Both arms used a 256 MiB
+Fast/Eager cache, retained writes/read promotion, 1024 KiB × 4 drains and normal
+priority. Verifier was off, Windows had been up for over 15 minutes, and Everything,
+Steam and the tray were closed. The owner's dedicated Defender/Search-disabled
+baseline and disabled last-access updates were verified. The temporary snapshot
+was removed before this comparison.
+
+Equal work was 1 GiB of unbuffered sequential writes at 1 MiB Q1 (larger than the
+cache); 256 fresh 4 KiB files, each with `Flush(true)`; and 4 GiB of reads over a
+warmed 16 MiB file. Repeat 1 ran off/on for each shape; repeat 2 ran on/off. All
+12 unique cases were collected, and lower-device bytes were checked after cache
+release. Application time ends after the workload; total durable time also includes
+the filesystem volume flush and explicit QueueCache flush, including any bounded
+follow-up for newly admitted writes. Every cost case needed one explicit call.
+
+| Workload | Repeat | Off application s | On application s | Off total durable s | On total durable s |
+|---|---:|---:|---:|---:|---:|
+| Sequential 1 GiB | 1 | 3.9518 | 4.1221 | 5.1924 | 5.3632 |
+| Sequential 1 GiB | 2 | 5.3937 | 4.0705 | 7.0863 | 5.3503 |
+| 256 file flushes | 1 | 0.0965 | 0.0966 | 0.1148 | 0.5640 |
+| 256 file flushes | 2 | 0.0787 | 0.0847 | 0.0927 | 0.4668 |
+| Resident reads, timing control unqualified | 1 | 0.4658 | 0.4009 | 0.4714 | 0.4093 |
+| Resident reads, timing control unqualified | 2 | 0.3571 | 0.4114 | 0.3625 | 0.4196 |
+
+The file-flush shape repeated a **4.91× / 5.04× total durable-time cost**. Its
+application acknowledgments remained around 0.08–0.10 s: Fast still acknowledges
+these flushes from RAM. The later cost is real disk work: mode 1 completed 258
+group flushes and 259 lower flush attempts per repetition, versus zero group
+flushes and one lower flush with mode 0. Lower write attempts rose from 301/289 to
+543/542. Preserving earlier versions and their boundaries reduces coalescing and
+adds real barriers. This small workload does not establish a universal 5× slowdown
+or the cost when a larger backlog starts blocking admission.
+
+Sequential application time was 4.3% worse in the first pair and 24.5% better in
+the second. The directions disagree; there is no established sequential gain or
+loss from these two pairs. Sequential mode 1 added four group flushes versus zero
+with mode 0. No cache error increased in any case.
+
+All four read cases accounted for exactly 4,294,967,296 cache-read bytes and zero
+lower-read attempts. However, their enclosing diagnostic interval also contained
+6–9 lower metadata writes; mode 1 completed two group flushes. The current record
+does not separate that I/O between the timed reads and the durable tail. These
+windows therefore **do not qualify as clean resident timing controls**, and the
+opposite pair directions cannot support a read-speed acceptance claim. The raw
+observations are retained, and no broader performance acceptance is claimed.
+
+The campaign completed in 58.7 s with restoration RESTORED and its durable terminal
+event validated:
+`QueueCache-Campaign-20261025-054430-eeb5036c208747ac9f8e133a8bb0ff9b`, child
+`20261025-054435-c404f803b9574f2e9b536fd6780a29bc`.
+Worker telemetry covered 05:44:36.059–05:45:26.579 UTC after its ready handshake,
+within the 2 s coverage contract. Loaded hashes matched the signed package:
+filter `91250E12106A82F5EE342F3A9367DD69C61FCAAFF9D9FBAA2271B2D4D58807D8`,
+RAM provider `00FAD28F4A51D3BED79E92FCEC6FD44747CE440E0250BCA3F3790D6FF1D17BC0`.
+
+UTC-aligned Ceph observations covered the full worker with 5 s traffic and 15 s
+pool/task/other-guest observations. No backup, scrub, recovery, overlapping
+non-console Proxmox job or new health warning was observed. Backups had finished
+by 02:17:49 UTC. The serving pool retained at least 262.1 GB available; reported
+OSD commit/apply latency reached 2 ms (coarse integer reports). Ordinary shared
+load remained: the available other-guest counters increased by about 56.9 MB in
+the bracketing interval. Three intentionally offline guests had unavailable
+counters and were not treated as zero. Those deltas and cluster traffic are
+bracketing observations, not exact attribution to the scored work. They rule out
+an observed overlapping backup, not all environmental variation.
+
+[Known issues](KNOWN_ISSUES.md) records the nine Verifier checks, three cuts,
+incomplete preparations, untouched durable guards and remaining safety scope.
+Raw evidence, full telemetry and all incomplete attempts were exported and verified
+before owned workload cleanup: `QC13Followup-20261025-evidence.zip`, 690 files,
+SHA-256 `822A4BFE58B52EA479254F595961B07E73BEC81DCDEDC9C7F4A62B4B3E115B63`.
 
 <a id="checkpoint-reuse-28"></a>**Changed-region checkpoints (#28, October 24–25).**
 The save freezes RAM, compares SHA-256 fingerprints per MiB, writes changed runs
