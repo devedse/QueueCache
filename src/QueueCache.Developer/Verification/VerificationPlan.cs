@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 191;
+    public const int Version = 192;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -222,7 +222,7 @@ public static class VerificationPlan
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
         var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
-        "flush-order" => [new("flush-order-v191", "flush-order")],
+        "flush-order" => [new("flush-order-v192", "flush-order")],
         "flush-order-cost" => [new("flush-order-cost", "flush-order-cost")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "stress-races" => [new("stress-races", "stress-races")],

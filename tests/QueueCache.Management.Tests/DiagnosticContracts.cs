@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 191, "plan 191 adds ordered direct-fallback checks and witnessed write-through cut oracles");
+        Check(VerificationPlan.Version == 192, "plan 192 shares the mapped fallback handle with its open predecessor handle");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -110,11 +110,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v191", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v192", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v191"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v192"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,

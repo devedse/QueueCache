@@ -46,7 +46,7 @@ internal static class VerificationRunnerTests
             Check(sameDisk.Wait(TimeSpan.FromSeconds(2)), "same-disk mutation resumes after eject transaction releases ownership");
         });
         var options = new VerificationOptions("Q:", "performance");
-        Check(VerificationPlan.Version == 191, "plan 191 adds ordered direct-fallback checks and witnessed write-through cut oracles");
+        Check(VerificationPlan.Version == 192, "plan 192 shares the mapped fallback handle with its open predecessor handle");
         var coordinationPlan = RamReadReferencePlan.CoordinationCases(1);
         Check(coordinationPlan.Count == 9 && coordinationPlan.Select(c => c.Id).Distinct().Count() == 9 &&
             coordinationPlan.Count(c => c.CoordinationEnabled) == 3 &&
@@ -892,6 +892,21 @@ internal static class VerificationRunnerTests
         Check(expectedImageHash.Length == 64 && expectedImageHash.All(Uri.IsHexDigit) &&
             expectedImageHash != QueueCache.Operations.SystemImageScenarios.ExpectedHash(104759),
             "large BMP SHA is deterministic input-derived, not copied from file reads");
+        var sharedMapDirectory = Path.Combine(Path.GetTempPath(), "QueueCache-shared-map-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(sharedMapDirectory);
+        try
+        {
+            var sharedMapPath = Path.Combine(sharedMapDirectory, "predecessor.bin");
+            File.WriteAllBytes(sharedMapPath, new byte[8 << 20]);
+            using var predecessor = new FileStream(sharedMapPath, FileMode.Open, FileAccess.ReadWrite,
+                FileShare.ReadWrite | FileShare.Delete);
+            var mappedBytes = Enumerable.Repeat((byte)0xB7, 4096).ToArray();
+            QueueCache.Operations.OrderingFaultScenarios.MappedSave(sharedMapPath, mappedBytes, shareAll: true);
+            predecessor.Position = 4 << 20;
+            var mappedRead = new byte[mappedBytes.Length]; predecessor.ReadExactly(mappedRead);
+            Check(mappedRead.SequenceEqual(mappedBytes), "mapped fallback can save while its predecessor handle stays open");
+        }
+        finally { Directory.Delete(sharedMapDirectory, recursive: true); }
         QueueCache.Operations.PressureScenarios.ValidateTriggerWindow(1000, 850, 1450);
         foreach (var observed in new[] { 849d, 1451d })
         {

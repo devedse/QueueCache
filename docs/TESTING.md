@@ -205,6 +205,12 @@ ordinary-write schemas 1/3 remain distinct. Schema 5 requires the same exact-byt
 and clean-scan checkpoint proof as schema 3. This option cannot be used with
 campaigns, other suites or other products. It does not perform a power cut itself.
 
+Plan 192 uses `flush-order-v192`. The new mapped fallback opens its mapping
+through a stream that shares read/write/delete with the existing unbuffered
+predecessor handle. The plan-191 attempt stopped on an incompatible sharing mode
+before exercising this check; restoration succeeded, and that attempt stays
+incomplete. Required ordering/attempt/byte assertions are unchanged.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

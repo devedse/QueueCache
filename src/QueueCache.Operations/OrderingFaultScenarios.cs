@@ -536,9 +536,14 @@ public static class OrderingFaultScenarios
         return new(label, "PASS", evidence + " Retry drained it and the owned 1 MiB matched after release.");
     }
 
-    internal static void MappedSave(string path, byte[] data)
+    internal static void MappedSave(string path, byte[] data, bool shareAll = false)
     {
-        using var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.ReadWrite);
+        using var stream = shareAll ? new FileStream(path, FileMode.Open, FileAccess.ReadWrite,
+            FileShare.ReadWrite | FileShare.Delete) : null;
+        using var map = stream is null
+            ? MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.ReadWrite)
+            : MemoryMappedFile.CreateFromFile(stream, null, 0, MemoryMappedFileAccess.ReadWrite,
+                HandleInheritability.None, leaveOpen: true);
         using var view = map.CreateViewAccessor(0, FileBytes, MemoryMappedFileAccess.ReadWrite);
         view.WriteArray(Offset, data, 0, data.Length);
         view.Flush();

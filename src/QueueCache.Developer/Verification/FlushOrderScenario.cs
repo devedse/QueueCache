@@ -396,7 +396,7 @@ public static class FlushOrderScenario
         file.Write(Offset, Pattern(41)); file.Flush();
         var before = device.GetDiagnostics(); var originalErrors = device.GetWriteCacheState().Errors;
         device.Control(WriteCacheAction.LabFault, value: 11);
-        try { OrderingFaultScenarios.MappedSave(path, Pattern(42)); }
+        try { OrderingFaultScenarios.MappedSave(path, Pattern(42), shareAll: true); }
         finally { device.Control(WriteCacheAction.LabFault, value: 0); }
         var after = device.GetDiagnostics(); var state = device.GetWriteCacheState();
         RunStorage.AtomicJson(evidence + ".map-fallback.json", new { Before = before, After = after, State = state });
