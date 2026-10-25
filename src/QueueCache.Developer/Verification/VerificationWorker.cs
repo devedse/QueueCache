@@ -1104,6 +1104,12 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, orderChecks);
                 ReportFailures(orderChecks, Console.Error);
                 return orderChecks.Count > 0 && orderChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case "flush-order-cost":
+                var costChecks = await FlushOrderCostScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply,
+                    job.ReferenceRepeats, job.BudgetMiB);
+                RunStorage.AtomicJson(job.Reply, costChecks);
+                ReportFailures(costChecks, Console.Error);
+                return costChecks.Count > 0 && costChecks.All(c => c.Result == "PASS") ? 0 : 1;
             case "ordering-faults":
                 var faultChecks = OrderingFaultScenarios.Run(target, device, job.WorkDirectory!);
                 RunStorage.AtomicJson(job.Reply, faultChecks);

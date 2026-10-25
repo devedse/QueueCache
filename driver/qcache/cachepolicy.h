@@ -102,6 +102,17 @@ constexpr bool QcShouldCacheDataIo(bool pagingIo, bool applicationPaging)
 // #13: keep later versions in RAM until the earlier group's lower flush completed.
 // The lab mode remains off until its real-driver qualification is complete.
 static constexpr LONG QcDefaultFlushOrder = 0;
+// Experimental ordering excludes paging/hibernation/dump paths for its entire
+// lifetime, including registrations arriving after mode selection. Both checks
+// run under RoutingLock so a reservation and mode selection cannot pass each other.
+constexpr bool QcMaySelectFlushOrder(ULONGLONG mode, LONG usagePaths)
+{
+    return mode == 0 || (mode == 1 && usagePaths == 0);
+}
+constexpr bool QcMayRegisterUsage(LONG flushOrderMode)
+{
+    return flushOrderMode == 0;
+}
 constexpr bool QcEpochMayDrain(bool ordered, ULONGLONG version, ULONGLONG frontier)
 {
     return !ordered || version == frontier;

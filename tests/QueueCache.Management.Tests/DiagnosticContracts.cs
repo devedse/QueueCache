@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 182, "plan 182 populates larger checkpoint fixtures and verifies their unchanged data after reload (#28)");
+        Check(VerificationPlan.Version == 183, "plan 183 adds ordering capacity/lifecycle checks and a maintained same-build cost screen (#13)");
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);
@@ -72,6 +72,30 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, false));
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder with
             { FlushOrder = faultOrder.FlushOrder! with { DrainingEpoch = 2 } }, faultState, true));
+        var pressureBefore = faultState with { LastError = 0, ThrottleWaits = 0 };
+        var pressureAfter = pressureBefore with { ThrottleWaits = 1 };
+        FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter, pressureBefore, pressureAfter);
+        Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter, pressureBefore, pressureBefore));
+        Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter with { FlushOrder = null }, pressureBefore, pressureAfter));
+        Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter, pressureBefore,
+            pressureAfter with { LastError = unchecked((int)0xC0000185) }));
+        var costPlan = FlushOrderCostPlan.Cases(2);
+        Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
+            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 1UL]) &&
+            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
+            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4),
+            "ordering cost retains unique IDs, equal workload counts and reversed arm order");
+        var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
+        FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);
+        Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));
+        Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, [.. costChecks[..^1], costChecks[0]]));
+        Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks.Reverse().ToArray()));
+        VerificationPlan.Validate(new("W:", "flush-order-cost", BudgetMiB: 256, Repeats: 2));
+        var costCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 256, Repeats: 2),
+            "experiment", "W:", FocusSuite: "flush-order-cost", PauseBackingCache: true));
+        Check(costCampaign.Count == 1 && costCampaign[0].Role == CampaignTargetRole.NtfsLab &&
+            costCampaign[0].ExpectedCases.SequenceEqual(["flush-order-cost"]),
+            "ordering cost uses the maintained lab role and restores the backing cache");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);

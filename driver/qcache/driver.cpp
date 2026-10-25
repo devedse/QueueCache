@@ -1050,9 +1050,20 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 reinterpret_cast<ULONGLONG>(PsGetCurrentProcessId()));
             KIRQL irql;
             KeAcquireSpinLock(&ext->QueueLock, &irql);
+            if (stack->Parameters.UsageNotification.InPath && !QcMayRegisterUsage(ext->Cache.FlushOrderMode))
+            {
+                // A later registration must not turn an experimentally ordered
+                // data volume into an unqualified paging/hibernation/dump path.
+                // No count is reserved and no lower request has been issued.
+                KeReleaseSpinLock(&ext->QueueLock, irql);
+                QcCacheRecordUsageCompletion(&ext->Cache, stack->Parameters.UsageNotification.Type,
+                    TRUE, STATUS_NOT_SUPPORTED);
+                IoReleaseRemoveLock(&ext->RemoveLock, irp);
+                return Complete(irp, STATUS_NOT_SUPPORTED);
+            }
             if (stack->Parameters.UsageNotification.InPath)
-                // QcEnable holds this same lock from its count check through the
-                // Enabled transition, so either it rejects or this is ordered next.
+                // Mode selection and Enable hold this same lock, so either the
+                // experimental selection or this reservation is refused.
                 QcCacheRecordUsage(&ext->Cache, stack->Parameters.UsageNotification.Type, TRUE);
             const bool routed = ext->Routing != FALSE;
             if (routed && stack->Parameters.UsageNotification.InPath)

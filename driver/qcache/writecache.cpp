@@ -1906,15 +1906,21 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
                  !NT_SUCCESS(c->State.LastError))
             status = STATUS_DEVICE_BUSY;
-        else if (QcCachePagingPathCount(c) > 0)
-            status = STATUS_NOT_SUPPORTED; // Experimental qualification starts on a disposable data volume.
         else
         {
-            c->FlushOrderMode = static_cast<LONG>(command.Value);
-            c->WriteEpoch = c->DrainEpoch = 1;
-            c->Diagnostics.EpochMaxSubmitted = 0;
-            c->EpochHasWrites = FALSE;
-            ++c->Generation;
+            KIRQL irql;
+            KeAcquireSpinLock(c->RoutingLock, &irql);
+            if (!QcMaySelectFlushOrder(command.Value, QcCachePagingPathCount(c)))
+                status = STATUS_NOT_SUPPORTED;
+            else
+            {
+                c->FlushOrderMode = static_cast<LONG>(command.Value);
+                c->WriteEpoch = c->DrainEpoch = 1;
+                c->Diagnostics.EpochMaxSubmitted = 0;
+                c->EpochHasWrites = FALSE;
+                ++c->Generation;
+            }
+            KeReleaseSpinLock(c->RoutingLock, irql);
         }
         break;
     case QcFlushPolicy:
@@ -1946,11 +1952,15 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             // paging/hibernation/dump path. Keep it through Enabled transition.
             KIRQL irql;
             KeAcquireSpinLock(c->RoutingLock, &irql);
-            // System and data disks share one activation policy. Usage-path
-            // registration is ordered by this routing lock and admission keeps
-            // reserve for paging traffic; it is not a reason to reject Enable.
-            c->Enabled = TRUE;
-            ++c->Generation;
+            // Ordinary caching supports registered usage paths. Experimental
+            // ordering does not; also check activation against a prior reservation.
+            if (!QcMaySelectFlushOrder(static_cast<ULONGLONG>(c->FlushOrderMode), QcCachePagingPathCount(c)))
+                status = STATUS_NOT_SUPPORTED;
+            else
+            {
+                c->Enabled = TRUE;
+                ++c->Generation;
+            }
             KeReleaseSpinLock(c->RoutingLock, irql);
         }
         break;

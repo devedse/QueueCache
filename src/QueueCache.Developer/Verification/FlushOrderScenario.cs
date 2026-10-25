@@ -42,6 +42,16 @@ public static class FlushOrderScenario
             throw new InvalidDataException("A failed group flush advanced the frontier, lost the later version or reported success.");
     }
 
+    public static void ValidateCapacity(CacheDiagnostics before, CacheDiagnostics after,
+        WriteCacheState stateBefore, WriteCacheState stateAfter)
+    {
+        var a = before.FlushOrder ?? throw new InvalidDataException("Missing pre-pressure ordering evidence.");
+        var b = after.FlushOrder ?? throw new InvalidDataException("Missing post-pressure ordering evidence.");
+        if (a.Mode != 1 || b.Mode != 1 || b.VersionCopies <= a.VersionCopies ||
+            stateAfter.ThrottleWaits <= stateBefore.ThrottleWaits || stateAfter.LastError != 0)
+            throw new InvalidDataException("Retained-version capacity pressure was not exercised or the cache faulted.");
+    }
+
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice device,
         string workDirectory, string evidence)
     {
@@ -197,6 +207,50 @@ public static class FlushOrderScenario
             }
             checks.Add(new("flush-order/synchronous-trim", "PASS",
                 "The conservative synchronous TRIM path reconciled the sealed predecessor; a later rewrite and untouched neighbor matched after release."));
+            Reset(device);
+            var pressurePath = OrderingFaultScenarios.CreateOwned(workDirectory, "capacity.bin");
+            using (var file = new AlignedFile(pressurePath, 64 * 1024, create: false, shareAll: true))
+            {
+                Apply(target, device, budgetMiB: 8);
+                var before = device.GetDiagnostics();
+                var stateBefore = device.GetWriteCacheState();
+                var first = ConcurrentCacheOracle.Pattern(214, 1, 64 * 1024);
+                var latest = ConcurrentCacheOracle.Pattern(214, 2, 64 * 1024);
+                for (var offset = 0; offset < 4 * MiB; offset += first.Length) file.Write(offset, first);
+                file.Flush();
+                for (var offset = 0; offset < 4 * MiB; offset += latest.Length) file.Write(offset, latest);
+                var after = device.GetDiagnostics();
+                var stateAfter = device.GetWriteCacheState();
+                RunStorage.AtomicJson(evidence + ".capacity.json", new { Before = before, After = after, StateBefore = stateBefore, StateAfter = stateAfter });
+                ValidateCapacity(before, after, stateBefore, stateAfter);
+                for (var offset = 0; offset < 4 * MiB; offset += latest.Length) AssertRead(file, offset, latest);
+
+                var rejected = false;
+                try { device.Control(WriteCacheAction.LabFlushOrder, value: 0); }
+                catch (Win32Exception ex) when (ex.NativeErrorCode == 170 /* ERROR_BUSY */) { rejected = true; }
+                if (!rejected || device.GetDiagnostics().FlushOrder?.Mode != 1 || !device.GetWriteCacheState().Enabled)
+                    throw new IOException("A live ordering-mode change was accepted or disturbed the cache.");
+                checks.Add(new("flush-order/live-mode-change-refused", "PASS",
+                    "A mode change while enabled was refused with ERROR_BUSY; the ordering mode and enabled state stayed intact."));
+                Reset(device); // Disable drains and flushes sealed versions before Release frees the budget.
+                var released = device.GetWriteCacheState();
+                if (released.Enabled || released.BudgetBytes != 0 || released.DirtyBytes != 0 || released.LastError != 0 ||
+                    device.GetDiagnostics().FlushOrder?.Mode != 1)
+                    throw new IOException("Disable/Release lost the ordering state or left pending resources.");
+                for (var offset = 0; offset < 4 * MiB; offset += latest.Length) AssertRead(file, offset, latest);
+                AssertRead(file, 4 * MiB, new byte[64 * 1024]);
+                checks.Add(new("flush-order/retained-version-capacity", "PASS",
+                    "An 8 MiB budget held two 4 MiB generations until pressure forced progress; capacity waits and retained versions increased. Latest bytes and untouched neighbor matched after release."));
+
+                Apply(target, device, budgetMiB: 8);
+                file.Write(0, first);
+                file.Flush();
+                file.Write(0, latest);
+                Reset(device);
+                AssertRead(file, 0, latest);
+                checks.Add(new("flush-order/disable-release-reapply", "PASS",
+                    "Disable drained sealed work, Release returned the allocation, and a new allocation preserved ordering and the newest on-disk version."));
+            }
         }
         finally
         {
@@ -216,10 +270,10 @@ public static class FlushOrderScenario
         device.Control(WriteCacheAction.Disable);
         device.Control(WriteCacheAction.Release);
     }
-    private static void Apply(DiskTarget target, CacheDevice device)
+    private static void Apply(DiskTarget target, CacheDevice device, int budgetMiB = 64)
     {
         device.Control(WriteCacheAction.LabFlushOrder, value: 1);
-        ConfigurationManager.Apply(target, new CacheConfiguration(64, CachePreset.Fast)
+        ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000,
                 BatchKiB: 4, Parallelism: 2, RetainWrites: false)
@@ -242,7 +296,7 @@ public static class FlushOrderScenario
     private static byte[] Pattern(int epoch) => ConcurrentCacheOracle.Pattern(213, epoch, Block);
     private static void AssertRead(AlignedFile file, long offset, byte[] expected)
     {
-        var actual = new byte[Block];
+        var actual = new byte[expected.Length];
         file.Read(offset, actual);
         if (!actual.AsSpan().SequenceEqual(expected))
             throw new IOException($"Flush ordering byte oracle mismatch at owned offset {offset}.");

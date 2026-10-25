@@ -453,7 +453,7 @@ struct QC_CACHE
     // interrupt time; PieceRateDone/PieceRateTime accumulate the current measurement window.
     ULONG StrictPieces;
     ULONGLONG DrainBusySince, PieceRateDone, PieceRateTime, PiecesPerSecond;
-    LONG FlushOrderMode;
+    LONG FlushOrderMode; // Writes hold Mutex and RoutingLock; dispatch reads under RoutingLock.
     ULONGLONG WriteEpoch, DrainEpoch;
     BOOLEAN EpochHasWrites, EpochFlushInFlight;
     ULONG EpochWaiters;

@@ -316,7 +316,12 @@ selected for a drain in this allocation. A lower group flush must be supported a
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
 Plan 176 passed the six focused live-driver ordering checks under Verifier on a
 non-OS NTFS lab volume. Targeted power-loss qualification remains open. The lab
-switch rejects currently registered paging/hibernation/dump paths; system volumes
+switch rejects currently registered paging/hibernation/dump paths. Mode selection,
+cache activation and usage reservation share the routing lock; a new registration
+is refused while experimental ordering is selected, including after the cache is
+disabled. This closes the late-registration race without waiting for I/O in the
+dispatch path. Resetting the mode to zero remains possible at a clean disabled
+boundary. System volumes
 and dynamic special-file growth are not qualified. Registration already establishes
 a lower barrier, but later bypassed writes and allocation reuse need their own audit.
 FAT/exFAT and arbitrary media-changing controls are not qualified.

@@ -38,6 +38,10 @@ constexpr bool PolicyChecks()
         QcEpochNeedsVersion(true, false, 3, 4) || QcEpochNeedsVersion(true, true, 4, 4) ||
         QcEpochNeedsVersion(false, true, 3, 4))
         return false;
+    if (!QcMaySelectFlushOrder(0, 3) || !QcMaySelectFlushOrder(1, 0) ||
+        QcMaySelectFlushOrder(1, 1) || QcMaySelectFlushOrder(1, -1) ||
+        QcMaySelectFlushOrder(2, 0) || !QcMayRegisterUsage(0) || QcMayRegisterUsage(1))
+        return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||

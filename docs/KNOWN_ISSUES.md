@@ -96,6 +96,13 @@ guard exact. Broader power-loss, system-volume and dynamic usage-path qualificat
 remain open. The default Fast behavior and the safety warning above remain in effect; this is not yet a qualified
 filesystem-safety fix.
 
+The follow-up audit found that a new paging/hibernation/dump registration could
+arrive after experimental mode selection. The guard now serializes selection and
+registration under the routing lock and refuses the new registration, preserving
+the non-special-file scope. Ordinary mode-zero behavior is unchanged. Compile-time
+policy contracts cover either reservation order; a real new special-file
+registration under experimental mode has not yet been exercised on Windows.
+
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
