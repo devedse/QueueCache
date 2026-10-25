@@ -114,6 +114,12 @@ no write-through support, although its Q: host reports support. Both report flus
 support; a shared bus type is insufficient to select a FUA optimization.
 The complete 18-case plan-189 cost comparison cut write-through-pair durable time
 by 42–54%, with no established improvement to the explicit file-flush workload.
+A subsequent direct off/current-mode-2 comparison (plan 193) completed 18/18
+cases on the same loaded native build: total durable time was 4.06–4.91× longer
+for 256 explicit file flushes and 18.06–29.45× for 256 write-through pairs with
+ordering on. Sequential and application-time differences changed direction;
+all bytes verified and restoration completed
+([direct result and limits](PERFORMANCE.md#fast-ordering-13-toggle)).
 Both modes remain default off. The plan-189 release attempt stopped at a mode-zero
 pressure check (see the separate issue below); the plan-192 release campaign then
 completed on the same native build with ordering off

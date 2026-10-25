@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 192, "plan 192 shares the mapped fallback handle with its open predecessor handle");
+        Check(VerificationPlan.Version == 193, "plan 193 directly compares ordering off with current mode 2");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -187,11 +187,12 @@ internal static class DiagnosticContracts
             orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false);
         var costPlan = FlushOrderCostPlan.Cases(2);
         Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
-            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([1UL, 2UL]) &&
-            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 1UL]) &&
+            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 2UL]) &&
+            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 0UL]) &&
             costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
-            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v189", StringComparison.Ordinal)),
-            "ordering cost retains unique IDs, equal workload counts and reversed arm order");
+            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v193", StringComparison.Ordinal)) &&
+            costPlan.All(c => c.Mode is 0 or 2),
+            "ordering cost compares off/current on with unique IDs, equal workload counts and reversed arm order");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));

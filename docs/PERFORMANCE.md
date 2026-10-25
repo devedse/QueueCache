@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep both experiments default off.** Mode 2 removes only the extra pre-write-through boundary. In the complete 18-case plan-189 comparison, write-through-pair durable time fell **42–54%**, with about half as many lower writes/flushes. The explicit file-flush workload has no established speedup; its earlier mode-0/mode-1 cost remains about 5×. Eleven checks per mode passed under Verifier; the follow-up passed 26 expanded checks with Verifier off and three bounded mode-2 cuts with clean NTFS and exact durable guards. Broader crash/storage/system-volume scope remains unqualified. After the plan-189 release attempt stopped at a mode-zero pressure check that has not recurred ([#30](https://github.com/devedse/QueueCache/issues/30)), the [plan-192 release campaign](#release-192) completed 11/11 phases on the same native build. [New results](#fast-ordering-13-write-through); [earlier cost](#fast-ordering-13-cost). | A supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep both experiments default off.** A direct same-build mode-0/mode-2 comparison completed all 18 cases: sequential pairs had no consistent change, while durable completion took **4.06–4.91×** as long for explicit file flushes and **18.06–29.45×** for ordinary/write-through pairs with ordering on. Application-time differences were mixed. The earlier mode-1/mode-2 improvement does not measure the off/on cost. [Direct toggle result](#fast-ordering-13-toggle). Targeted checks and bounded cuts passed, but broader crash/storage/system-volume scope remains unqualified. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,78 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-13-toggle"></a>**Direct ordering off/on comparison (#13, plan 193, October 25).**
+The current toggle has a measured durable-completion cost. On the same loaded
+native build, mode 2 took **4.06–4.91×** as long as off for 256 explicit file
+flushes and **18.06–29.45×** for 256 ordinary/write-through pairs. Sequential
+pairs changed direction and their ranges overlap; no sequential gain or loss is
+established. Application-time differences also changed direction. These results
+measure the toggle directly; release runs from other days and the earlier
+mode-1/mode-2 comparison are not controls for it. Keep both experiments off by
+default.
+
+The maintained `flush-order-cost` experiment now compares mode 0 with mode 2,
+using new immutable `flush-order-cost-v193` case IDs. Workloads and timing/byte
+contracts are unchanged from plan 189. A locally published plan-193 controller
+ran the complete three-workload, three-repetition matrix in **79.28 s** on the
+unchanged native 0.4.851.1. Loaded hashes were checked: filter
+`89964D25937701001AE16CC86102AD9246BA3ED78E7FE4E84088E5CBCE202CF4`, RAM driver
+`82501FF4434782636F1E267D1488123430B749453A30D639ED220C5268217FF1`.
+Campaign `QueueCache-Campaign-20261025-211920-a9a5ba13fd3e48689b92d54c403e8ba2`
+completed 1/1 phases and 1/1 outer cases; all **18/18 inner cases passed byte checks**, with
+restoration `RESTORED` and `verify-completion` passed. Host management tests and
+the Windows CLI publish passed; no native code changed or broad release rerun
+was needed.
+
+Both arms used disposable NTFS W:, 256 MiB Fast/Eager, retained writes/read
+promotion and 1024 KiB × 4 drains, with backing Q: paused by the campaign.
+Verifier was off, Windows had been up almost five hours, normal priority and
+disabled last-access updates were checked, and Everything/service, Steam and the
+tray were closed. The dedicated Defender/Search-disabled baseline was verified.
+Repeat 1 and 3 ran off/on for each shape; repeat 2 ran on/off. Each arm did the
+same fixed work: 1 GiB of 1 MiB Q1 writes; 256 fresh 4 KiB files, each explicitly
+flushed; or 256 ordinary/write-through 4 KiB pairs. This is a short equal-work
+screen, not a five-minute sustained or peak-throughput test.
+
+Application time ends after the writes; total durable time additionally includes
+writer close, filesystem volume flush and the explicit QueueCache checkpoint.
+All bytes were checked with unbuffered reads after releasing the cache. Seconds
+below are the recorded values from this single completed run.
+
+| Workload | Rep | Off application s | On application s | Off total durable s | On total durable s |
+|---|---:|---:|---:|---:|---:|
+| Sequential 1 GiB | 1 | 4.2497225 | 4.0096971 | 5.4428456 | 5.2083103 |
+| Sequential 1 GiB | 2 | 4.1741032 | 4.1661592 | 5.3397584 | 5.4322743 |
+| Sequential 1 GiB | 3 | 4.12529 | 4.1262387 | 5.2651809 | 5.3644406 |
+| 256 file flushes | 1 | 0.1353385 | 0.1214631 | 0.146629 | 0.5957926 |
+| 256 file flushes | 2 | 0.1145052 | 0.1233104 | 0.1252898 | 0.5701554 |
+| 256 file flushes | 3 | 0.115868 | 0.1207615 | 0.1281177 | 0.629289 |
+| 256 write-through pairs | 1 | 0.02224 | 0.0141004 | 0.0302839 | 0.5470719 |
+| 256 write-through pairs | 2 | 0.0029266 | 0.0144278 | 0.0170345 | 0.5016934 |
+| 256 write-through pairs | 3 | 0.0074119 | 0.0077919 | 0.0238465 | 0.6328589 |
+
+The lower-I/O mechanism matches the durable cost. File-flush cases had one lower
+flush and no group flushes when off, versus 259 lower flushes and 258 group
+flushes when on; lower writes rose from 274–298 to 538–539. Write-through pairs
+had one lower flush when off versus 261–263 when on (260 group flushes); lower
+writes rose from 16–62 to 265–267. Counts cover the enclosing diagnostic interval,
+including metadata and the durable tail, not physical Ceph requests or exactly
+the application timing window. Every case ended clean in the requested mode,
+with no error-count increase. These small workloads do not establish a universal
+application slowdown, sustained admission behavior or filesystem crash safety.
+
+UTC-aligned backend evidence bracketed the full 21:19:21–21:20:40 campaign and
+every case within the expected cadence. No backup/restore task, scrub,
+recovery/backfill or new health warning overlapped it; serving-pool availability
+stayed above 251.51 GB. Other guests continued I/O; three guest counters were
+missing/reset and remain unknown. The existing availability warnings concerned
+separate intentionally offline pools. Q:'s original active 2 GiB Fast/Idle
+1024 KiB × 4 profile and saved configuration were restored; W: is unconfigured,
+ordering is off, and Everything/service, Steam and the tray were restored. The VM
+remained on the tested driver. Private evidence contains 476 independently
+hash-verified files; archive SHA-256
+`DF8FE9E72B67601AD05A67DB71DE4678886EE74F3D8193EC5DD4DD2AB75943F5`.
 
 <a id="fast-ordering-13-write-through"></a>**Experimental write-through boundary reduction (#13, October 25).**
 Retain mode 2 as a separate, default-off experiment. It removes the extra boundary

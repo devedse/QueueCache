@@ -350,9 +350,11 @@ off, after the plan-189 attempt had stopped at a mode-zero pressure check
 ([#30](https://github.com/devedse/QueueCache/issues/30)); it covers the default
 path, not mode 2. Neither the timing result nor the focused checks establish
 mode-2 release or crash qualification.
-A short mode-0/mode-1 same-build screen measured about 5× the total durable time for 256
-flush-heavy files; sequential pairs disagreed and the read timing control was
-unqualified ([cost and limits](PERFORMANCE.md#fast-ordering-13-cost)). The lab
+The direct plan-193 off/current-mode-2 comparison measured 4.06–4.91× the total
+durable time for 256 flush-heavy files and 18.06–29.45× for 256 write-through
+pairs with ordering on. Sequential and application-time pairs changed direction;
+these are short equal-work durable costs, not universal application slowdowns
+([direct toggle result](PERFORMANCE.md#fast-ordering-13-toggle)). The lab
 switch rejects currently registered paging/hibernation/dump paths. Mode selection,
 cache activation and usage reservation share the routing lock; a new registration
 is refused while experimental ordering is selected, including after the cache is
