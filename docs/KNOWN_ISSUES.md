@@ -139,6 +139,12 @@ consistent once QueueCache replayed it, so recovery tools, another PC or an
 uninstalled QueueCache would see damage; and it cannot protect C:, because the
 Windows boot loader reads C: before any QueueCache code runs.
 
+**Also decided 2026-10-25: no reuse of NTFS's own journal.** Merging flush groups
+by writing NTFS's journal (`$LogFile`) blocks first, then everything else, was
+also rejected. It depends on undocumented NTFS internals, deliberately creates
+an order NTFS never requested, works only for NTFS, and would mainly shorten
+background write-out.
+
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
