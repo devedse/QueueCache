@@ -1803,7 +1803,8 @@ it is an unproven design direction, not a crash-safety guarantee. Merely sorting
 by address, retaining arrival order, or tagging the latest block version is not
 enough to establish the required journal dependencies. Persistent redo/recovery
 logging is a fallback with extra I/O and boot-recovery work, not the first small
-optimization. Passing every Fast flush through as Strict changes the volatile
+optimization (rejected on 2026-10-25; see
+[KNOWN_ISSUES](KNOWN_ISSUES.md#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue)). Passing every Fast flush through as Strict changes the volatile
 contract and is not an incidental fix.
 
 Keep the next step narrow: a short lower-I/O diagnostic, then a maintained,

@@ -132,6 +132,13 @@ the non-special-file scope. Ordinary mode-zero behavior is unchanged. Compile-ti
 policy contracts cover either reservation order; a real new special-file
 registration under experimental mode has not yet been exercised on Windows.
 
+**Decided 2026-10-25: no separate QueueCache journal.** A write-ahead journal on
+the disk was considered as a way to speed up ordered write-out and rejected.
+Every write would reach the disk twice; after a crash the volume would only be
+consistent once QueueCache replayed it, so recovery tools, another PC or an
+uninstalled QueueCache would see damage; and it cannot protect C:, because the
+Windows boot loader reads C: before any QueueCache code runs.
+
 Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
