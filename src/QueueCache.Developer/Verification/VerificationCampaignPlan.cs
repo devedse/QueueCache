@@ -35,7 +35,8 @@ public static class VerificationCampaignPlan
             options.Verification.SystemInstance is not null || options.Verification.SystemBytes is not null ||
             options.Verification.RecoverableVm || options.Verification.OraclePath is not null ||
             options.Verification.DisposableInstance is not null || options.Verification.DisposableBytes is not null ||
-            options.Verification.ManagedOraclePath is not null || options.Verification.ManagedTransition is not null)
+            options.Verification.ManagedOraclePath is not null || options.Verification.ManagedTransition is not null ||
+            options.Verification.DurableCheckpoint)
             throw new ArgumentException("Campaign selection cannot be combined with a suite, case filter or lifecycle/system options.");
         if (options.Verification.TraceSymbols is not null && options.FocusSuite != "ram-read-attribution")
             throw new ArgumentException("--trace-symbols requires focused ram-read-attribution.");

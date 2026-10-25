@@ -22,7 +22,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     string? Product = null, string? Suite = null, ulong? RecoveryCopyFlags = null,
     bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
     long? DrainSeedBytes = null, string? StartFile = null,
-    string? ProcessEvidence = null, ComparisonProvider? Provider = null, string? PrimoCli = null);
+    string? ProcessEvidence = null, ComparisonProvider? Provider = null, string? PrimoCli = null,
+    bool DurableCheckpoint = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,

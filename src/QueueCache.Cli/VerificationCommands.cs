@@ -63,6 +63,10 @@ internal static class VerificationCommands
                                  --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
+              flush-order        Nine focused experimental ordering/version/capacity/lifecycle checks on lab NTFS.
+                                 Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
+              flush-order-cost   Equal-work off/on cost screen, reversed order across repeats; full telemetry/byte oracle.
+                                 --budget-mib 256 --repeats 2, Verifier off, 15-minute warm boot; no DiskSpd.
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
                                  256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
                                  Requires DiskSpd.
@@ -159,7 +163,8 @@ internal static class VerificationCommands
               compare-durability-churn  2,000 base files settled, then 40 s of file creation (200/s) with deletes and no flush;
                                  FINISHED.txt as above. Reset the VM while the cache writes the churn out to the disk.
               compare-durability-verify After the reset, with --oracle <write run>\durability-oracle.json: what survived (for the
-                                 churn test by file age) and chkdsk /scan. Measurement only.
+                                 churn test by file age) and chkdsk /scan. Volatile cuts classify loss; a schema-3
+                                 --durable-checkpoint oracle requires exact contents and a clean scan.
 
             DiskSpd: download standard Microsoft DiskSpd from https://github.com/microsoft/diskspd/releases
             Extract DiskSpd.ZIP; use amd64\diskspd.exe on x64 Windows (also for Intel CPUs).
@@ -210,6 +215,7 @@ internal static class VerificationCommands
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
         var oracle = new Option<string?>("--oracle") { Description = "system-post-restart: prior system-files oracle.json on a separate physical disk; compare-durability-verify: the write run's durability-oracle.json." };
+        var durableCheckpoint = new Option<bool>("--durable-checkpoint") { Description = "QueueCache compare-durability-write only: flush filesystem and QueueCache before cut readiness; post-cut verification requires exact contents and a clean scan." };
         var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal suites only: exact PnP instance of the disposable physical disk to eject." };
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
         var managedOracle = new Option<string?>("--managed-oracle") { Description = "managed-lifecycle-verify/cleanup only: prior managed-lifecycle-manifest.json on another physical disk." };
@@ -221,7 +227,7 @@ internal static class VerificationCommands
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli, durableCheckpoint })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -235,7 +241,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli), p.GetValue(durableCheckpoint));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))

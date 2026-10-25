@@ -35,7 +35,10 @@ public sealed record TreeResult(int Files, long Bytes, double CreateSeconds, dou
     TreeCacheSnapshot? BeforeDeleteCache, TreeCacheSnapshot? AfterDeleteCache);
 
 public sealed record DurabilityOracle(int SchemaVersion, ulong Nonce, string Directory, int SetMiB, int SmallFiles,
-    DateTimeOffset Generation1Utc, DateTimeOffset CompletedUtc, double FlushedSetFlushSeconds, string Product);
+    DateTimeOffset Generation1Utc, DateTimeOffset CompletedUtc, double FlushedSetFlushSeconds, string Product)
+{
+    public bool DurableCheckpoint { get; init; }
+}
 
 public sealed record SectorCounts(long Expected, long New, long Old, long Other, long Missing);
 
@@ -204,7 +207,7 @@ internal static class ComparisonScenarios
                 return $"Rewrote and read back {step.Bytes >> 20} MiB; bytes identical.";
             }
             case "durability-write":
-                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
+                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix, job.DurableCheckpoint);
             case "durability-churn":
                 return DurabilityChurn(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
             case "durability-verify":
@@ -496,7 +499,7 @@ internal static class ComparisonScenarios
         file.Flush(flushToDisk: generation == 1 || set == 1);
     }
 
-    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix)
+    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix, bool durableCheckpoint)
     {
         if (Directory.Exists(work)) throw new IOException("Durability writer refuses an existing directory; preserve its oracle and evidence.");
         Directory.CreateDirectory(work);
@@ -521,8 +524,22 @@ internal static class ComparisonScenarios
             ComparisonData.FillSector(sector, nonce, 2, 3, i);
             File.WriteAllBytes(Path.Combine(small, $"n{i:D5}.bin"), sector);
         }
-        var oracle = new DurabilityOracle(1, nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
-            generation1, DateTimeOffset.UtcNow, flushSeconds, product);
+        if (durableCheckpoint)
+        {
+            using var cache = new CacheDevice($"{target.Letter}:", writable: true);
+            var before = cache.GetWriteCacheState(); var diagBefore = cache.GetDiagnostics();
+            var started = DateTimeOffset.UtcNow;
+            FlushVolume(target.Letter);
+            cache.Control(WriteCacheAction.Flush);
+            var after = cache.GetWriteCacheState(); var diagAfter = cache.GetDiagnostics();
+            RunStorage.AtomicJson(prefix + ".checkpoint.json", new { Start = started, End = DateTimeOffset.UtcNow,
+                Before = before, After = after, DiagnosticsBefore = diagBefore, DiagnosticsAfter = diagAfter });
+            if (after.DirtyBytes != 0 || after.InFlightBytes != 0 || after.LastError != 0 || after.Errors != before.Errors ||
+                diagAfter.ControlBarriers <= diagBefore.ControlBarriers)
+                throw new IOException("Explicit durability boundary did not complete cleanly; the VM is not cut-ready.");
+        }
+        var oracle = new DurabilityOracle(durableCheckpoint ? 3 : 1, nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
+            generation1, DateTimeOffset.UtcNow, flushSeconds, product) { DurableCheckpoint = durableCheckpoint };
         using (var file = new FileStream(oraclePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
         {
             file.Write(JsonSerializer.SerializeToUtf8Bytes(oracle, RunStorage.Json));
@@ -530,7 +547,9 @@ internal static class ComparisonScenarios
         }
         RunStorage.AtomicJson(prefix + ".settle.json", settle);
         return $"Generation 1 flushed and settled ({Describe(settle)}); generation 2 written: durable save (flush {flushSeconds:F3} s), " +
-            $"{ComparisonPlan.DurabilitySetMiB} MiB raw writes and {ComparisonPlan.DurabilitySmallFiles} small files without a flush. Reset the VM now.";
+            $"{ComparisonPlan.DurabilitySetMiB} MiB raw writes and {ComparisonPlan.DurabilitySmallFiles} small files. " +
+            (durableCheckpoint ? "Filesystem and QueueCache durability boundary completed; exact contents are required after reset."
+                : "The raw writes and small files were not explicitly checkpointed. Reset the VM now.");
     }
 
     /// <summary>Base files written and settled, then 40 s of steady file creation (200 per second) with deletes, so a
@@ -650,7 +669,8 @@ internal static class ComparisonScenarios
                 return await ChurnVerify(target, churn, prefix);
             }
         var oracle = JsonSerializer.Deserialize<DurabilityOracle>(oracleBytes) ?? throw new InvalidDataException("Missing durability oracle.");
-        if (oracle.SchemaVersion != 1) throw new InvalidDataException("Unknown durability oracle version.");
+        if (oracle.SchemaVersion is not (1 or 3) || oracle.DurableCheckpoint != (oracle.SchemaVersion == 3))
+            throw new InvalidDataException("Unknown or inconsistent durability oracle version.");
         if (char.ToUpperInvariant(oracle.Directory[0]) != target.Letter) throw new IOException("The oracle belongs to another volume.");
         var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(System.Environment.TickCount64);
         if (boot <= oracle.CompletedUtc) throw new IOException("Windows has not restarted since the write phase; reset the VM first.");
@@ -669,9 +689,11 @@ internal static class ComparisonScenarios
             prefix + ".chkdsk", TimeSpan.FromMinutes(20), CancellationToken.None);
         var result = new DurabilityResult(boot, flushed, unflushed, oracle.SmallFiles, intact, damaged, missing, chkdsk.ExitCode);
         RunStorage.AtomicJson(prefix + ".result.json", result);
+        if (oracle.DurableCheckpoint) DurabilityCheckpointEvidence.Validate(oracle, result);
         static string Share(SectorCounts c) => $"{c.New * 100.0 / c.Expected:F1}% new, {c.Old * 100.0 / c.Expected:F1}% old, {(c.Other + c.Missing) * 100.0 / c.Expected:F1}% other or missing";
         return $"After the reset: durable save {Share(flushed)}; raw writes without a flush {Share(unflushed)}; small files {intact} intact, " +
-            $"{damaged} damaged, {missing} missing of {oracle.SmallFiles}; chkdsk /scan exit {chkdsk.ExitCode}. Measurement only.";
+            $"{damaged} damaged, {missing} missing of {oracle.SmallFiles}; chkdsk /scan exit {chkdsk.ExitCode}. " +
+            (oracle.DurableCheckpoint ? "Explicit checkpoint: exact contents and a clean scan verified." : "Measurement only.");
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -415,6 +415,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
                             Provider = options.Provider, PrimoCli = options.PrimoCli, BudgetMiB = options.BudgetMiB,
+                            DurableCheckpoint = options.DurableCheckpoint,
                             OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))

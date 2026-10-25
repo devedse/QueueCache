@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 184;
+    public const int Version = 185;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -500,6 +500,9 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (options.DurableCheckpoint && (options.Suite != "compare-durability-write" ||
+            options.Product?.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase) != true))
+            throw new ArgumentException("--durable-checkpoint requires compare-durability-write and a QueueCache product label.");
         if (options.Suite == "drain-lock-diagnostic") DrainLockDiagnostic.ValidateOptions(options);
         ComparisonDrain.ValidateOptions(options);
         if (ComparisonPlan.IsComparison(options.Suite))

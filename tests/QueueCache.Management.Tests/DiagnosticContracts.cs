@@ -20,13 +20,26 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 184, "plan 184 counts filesystem metadata in the durable tail and gives each cut its own directory (#13)");
+        Check(VerificationPlan.Version == 185, "plan 185 records explicit durable cut readiness and requires exact post-checkpoint bytes (#13)");
         const string cutRunA = "QueueCache-Verify-20261025-030000-11111111111111111111111111111111";
         const string cutRunB = "QueueCache-Verify-20261025-030000-22222222222222222222222222222222";
         Check(ComparisonPlan.WorkDirectory("compare-durability-write", "W:\\", cutRunA) !=
             ComparisonPlan.WorkDirectory("compare-durability-write", "W:\\", cutRunB) &&
             ComparisonPlan.WorkDirectory("compare-durability-verify", "W:\\", cutRunA) is null,
             "power-cut repetitions keep distinct target directories; verification uses its immutable oracle directory");
+        var durableOracle = new DurabilityOracle(3, 42, "W:\\owned", 1, 17,
+            DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(1), 0.1, "QueueCache fixture") { DurableCheckpoint = true };
+        var exactSectors = new SectorCounts(256, 256, 0, 0, 0);
+        var durableResult = new DurabilityResult(DateTimeOffset.UnixEpoch.AddMinutes(2), exactSectors, exactSectors, 17, 17, 0, 0, 0);
+        DurabilityCheckpointEvidence.Validate(durableOracle, durableResult);
+        Reject(() => DurabilityCheckpointEvidence.Validate(durableOracle, durableResult with
+            { Unflushed = exactSectors with { New = 255, Old = 1 } }));
+        Reject(() => DurabilityCheckpointEvidence.Validate(durableOracle, durableResult with
+            { SmallFilesIntact = 16, SmallFilesMissing = 1 }));
+        Reject(() => DurabilityCheckpointEvidence.Validate(durableOracle, durableResult with { ChkdskExitCode = 13 }));
+        Reject(() => DurabilityCheckpointEvidence.Validate(durableOracle with { SchemaVersion = 1, DurableCheckpoint = false }, durableResult));
+        VerificationPlan.Validate(new("W:", "compare-durability-write", Repeats: 1,
+            Product: "QueueCache fixture", DurableCheckpoint: true));
         Check(VerificationPlan.Integrity(new("Q:", "cache-allocation")).Single().Id == "cache-allocation-bounds",
             "small-cache allocation runs through the maintained verification runner");
         var drainTiming = DrainDecisionTiming.ForScore(10);

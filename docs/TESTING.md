@@ -132,6 +132,20 @@ in the cost screen's durable tail, so deferred NTFS metadata is counted too.
 Its power-cut writers also use fresh run-owned directories and refuse an existing
 destination; later cuts preserve earlier oracles and independent durable guards.
 Verification reads the directory recorded in its selected immutable oracle.
+Plan 185 adds `--durable-checkpoint` to QueueCache's `compare-durability-write`:
+after writing, flush the filesystem volume and then QueueCache before the durable
+ready marker. The schema-3 oracle marks this stronger boundary. Post-cut
+verification requires every sector of both files and all small files to match,
+plus a clean scan; an old/missing/damaged byte or nonzero scan fails after the raw
+classification is saved. Ordinary volatile cuts keep their classification-only
+contract. The option is refused for other suites and campaigns.
+
+For the Ceph-backed lab, retain UTC-aligned pool free space, client I/O, OSD
+latency, the test VM's block counters, other guests' I/O and active/recent
+backup/restore tasks. Check the actual task intervals, not just a schedule whose
+timezone may differ. Keep unrelated intentionally offline pools separate from
+the pool serving the VM. Flag competing work or recovery during scored windows;
+do not attribute all cluster traffic to the test or silently mix affected arms.
 Since plan 173, the retained correctness suites contain 94 subchecks: 22 partial
 reads, 9 paging, 42 policies, 13 pressure and 8 ordering/faults. A focused
 `stress-races` campaign adds its five checks, for 99 in total. Plan 173 (#19) turned
