@@ -26,7 +26,9 @@ public static class FlushOrderCostScenario
             !new DriveInfo(target.Root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase) ||
             device.GetStatistics().PagingPathCount != 0 || Directory.Exists(work) ||
             !string.Equals(Path.GetDirectoryName(Path.GetFullPath(work)), target.Root, StringComparison.OrdinalIgnoreCase))
-            throw new IOException("Ordering cost requires a fresh owned non-OS NTFS directory and --budget-mib 256.");
+            throw new IOException($"Ordering cost requires a fresh owned non-OS NTFS directory and --budget-mib {FlushOrderCostPlan.BudgetMiB}.");
+        if (new DriveInfo(target.Root).AvailableFreeSpace < (FlushOrderCostPlan.SequentialMiB + 1024L) * MiB)
+            throw new IOException("Ordering cost needs room for its sequential file plus 1 GiB on the lab volume.");
         var verifier = await OwnedProcess.RunAsync(Path.Combine(Environment.SystemDirectory, "verifier.exe"),
             ["/query"], evidence + ".verifier", TimeSpan.FromSeconds(30), CancellationToken.None);
         if (!(verifier.Output + verifier.Error).Contains("No drivers are currently verified.", StringComparison.Ordinal))
@@ -51,7 +53,7 @@ public static class FlushOrderCostScenario
                 var isWriteThrough = item.Workload == "write-through-pairs";
                 if (item.Workload != "flush-heavy-files")
                 {
-                    var sizeMiB = isWriteThrough ? 2 : FlushOrderCostPlan.SequentialMiB;
+                    var sizeMiB = isWriteThrough ? FlushOrderCostPlan.WriteThroughMiB : FlushOrderCostPlan.SequentialMiB;
                     using var prepare = new AlignedFile(path, MiB, create: true);
                     prepare.Reserve((long)sizeMiB * MiB);
                     var zeros = new byte[MiB];
@@ -80,14 +82,18 @@ public static class FlushOrderCostScenario
                     started = DateTimeOffset.UtcNow; timer.Start();
                     if (item.Workload == "sequential-write")
                     {
-                        for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                        { Stamp(data, i); file!.Write((long)i * MiB, data); bytes += MiB; requests++; }
+                        for (var pass = 0; pass < FlushOrderCostPlan.SequentialPasses; pass++)
+                            for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
+                            {
+                                Stamp(data, pass * FlushOrderCostPlan.SequentialMiB + i);
+                                file!.Write((long)i * MiB, data); bytes += MiB; requests++;
+                            }
                     }
                     else if (item.Workload == "flush-heavy-files")
                     {
                         for (var i = 0; i < FlushOrderCostPlan.SmallFiles; i++)
                         {
-                            using var small = new FileStream(Path.Combine(directory, $"file-{i:D4}.bin"), FileMode.CreateNew,
+                            using var small = new FileStream(Path.Combine(directory, $"file-{i:D5}.bin"), FileMode.CreateNew,
                                 FileAccess.Write, FileShare.None, 4096);
                             Stamp(data, i); small.Write(data, 0, 4096); small.Flush(true); bytes += 4096; requests++;
                         }
@@ -122,7 +128,7 @@ public static class FlushOrderCostScenario
                 {
                     for (var i = 0; i < FlushOrderCostPlan.SmallFiles; i++)
                     {
-                        using var small = new AlignedFile(Path.Combine(directory, $"file-{i:D4}.bin"), 4096, create: false);
+                        using var small = new AlignedFile(Path.Combine(directory, $"file-{i:D5}.bin"), 4096, create: false);
                         Stamp(data, i); Check(small, 0, data.AsSpan(0, 4096).ToArray());
                     }
                 }
@@ -134,8 +140,13 @@ public static class FlushOrderCostScenario
                         { Stamp(smallData, i); Check(verify, (long)i * 4096, smallData); }
                     else
                         for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                        { Stamp(data, i); Check(verify, (long)i * MiB, data); }
+                        {
+                            Stamp(data, (FlushOrderCostPlan.SequentialPasses - 1) * FlushOrderCostPlan.SequentialMiB + i);
+                            Check(verify, (long)i * MiB, data);
+                        }
                 }
+                // The lab volume holds one case's files at a time; the cache is released here.
+                Directory.Delete(directory, true);
                 checks.Add(new(item.Id, "PASS", $"Measured {bytes} bytes in {applicationSeconds:F4} s application / {durableSeconds:F4} s including durable tail; lower-device bytes verified. This is collection success, not a speed verdict."));
                 Console.WriteLine($"{item.Id}: {checks[^1].Detail}");
                 await Task.Yield();

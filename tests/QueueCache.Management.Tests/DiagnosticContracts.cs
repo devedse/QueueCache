@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 193, "plan 193 directly compares ordering off with current mode 2");
+        Check(VerificationPlan.Version == 194, "plan 194 sizes the ordering off/on comparison to about a minute per arm");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -190,7 +190,7 @@ internal static class DiagnosticContracts
             costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 2UL]) &&
             costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 0UL]) &&
             costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
-            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v193", StringComparison.Ordinal)) &&
+            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v194", StringComparison.Ordinal)) &&
             costPlan.All(c => c.Mode is 0 or 2),
             "ordering cost compares off/current on with unique IDs, equal workload counts and reversed arm order");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
@@ -198,8 +198,10 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, [.. costChecks[..^1], costChecks[0]]));
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks.Reverse().ToArray()));
-        VerificationPlan.Validate(new("W:", "flush-order-cost", BudgetMiB: 256, Repeats: 2));
-        var costCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 256, Repeats: 2),
+        VerificationPlan.Validate(new("W:", "flush-order-cost", BudgetMiB: 2048, Repeats: 2));
+        try { VerificationPlan.Validate(new("W:", "flush-order-cost", BudgetMiB: 256, Repeats: 2)); throw new Exception("Old ordering cost budget accepted."); }
+        catch (ArgumentException) { }
+        var costCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 2),
             "experiment", "W:", FocusSuite: "flush-order-cost", PauseBackingCache: true));
         Check(costCampaign.Count == 1 && costCampaign[0].Role == CampaignTargetRole.NtfsLab &&
             costCampaign[0].ExpectedCases.SequenceEqual(["flush-order-cost"]),

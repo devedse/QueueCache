@@ -354,7 +354,11 @@ The direct plan-193 off/current-mode-2 comparison measured 4.06–4.91× the tot
 durable time for 256 flush-heavy files and 18.06–29.45× for 256 write-through
 pairs with ordering on. Sequential and application-time pairs changed direction;
 these are short equal-work durable costs, not universal application slowdowns
-([direct toggle result](PERFORMANCE.md#fast-ordering-13-toggle)). The lab
+([direct toggle result](PERFORMANCE.md#fast-ordering-13-toggle)). At minute
+scale (plan 194, 2 GiB) ordering on also slowed the application: 2.5× for
+25,600 flushed files and 43× for 25,600 write-through pairs, with no waits for
+cache space, and 25× / 170× longer until everything was on disk; sequential
+writes were unchanged ([minute-scale result](PERFORMANCE.md#fast-ordering-13-minute)). The lab
 switch rejects currently registered paging/hibernation/dump paths. Mode selection,
 cache activation and usage reservation share the routing lock; a new registration
 is refused while experimental ordering is selected, including after the cache is

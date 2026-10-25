@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep both experiments default off.** A direct same-build mode-0/mode-2 comparison completed all 18 cases: sequential pairs had no consistent change, while durable completion took **4.06–4.91×** as long for explicit file flushes and **18.06–29.45×** for ordinary/write-through pairs with ordering on. Application-time differences were mixed. The earlier mode-1/mode-2 improvement does not measure the off/on cost. [Direct toggle result](#fast-ordering-13-toggle). Targeted checks and bounded cuts passed, but broader crash/storage/system-volume scope remains unqualified. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep both experiments default off.** At a realistic size (plan 194, 2 GiB Fast, about a minute per case, 18/18 cases) ordering on left sequential writes unchanged but made the application itself slower: 25,600 flushed small files took **2.5×** as long to write into the cache and **25×** as long to reach the disk; 25,600 write-through pairs took **43×** and **170×**. The cache never filled, so the application slowdown is not capacity backpressure. The short plan-193 screen did not show it. [Minute-scale result](#fast-ordering-13-minute). Targeted checks and bounded cuts passed, but broader crash/storage/system-volume scope remains unqualified. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A fix for the application-side slowdown, a supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,58 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-13-minute"></a>**Ordering off/on at minute scale (#13, plan 194, October 25–26).**
+Keep ordering off by default. With the same work in both arms, ordering on
+did not change sequential writes, but it made the application itself slower
+and the disk much later for flush-heavy work. Times are the middle of three
+runs (range in brackets). "Into the cache" ends when the application's last
+write returns; "on disk" additionally includes closing the files, the NTFS
+volume flush and an explicit QueueCache checkpoint, so everything is on the
+disk at its end.
+
+| Workload | Into the cache, off | Into the cache, on | On disk, off | On disk, on |
+|---|---:|---:|---:|---:|
+| 4 GiB file written twice (8 GiB, 1 MiB writes) | 62.2 s [46.8–72.3] | 56.2 s [53.7–62.3] | 85.4 s [63.0–93.6] | 74.9 s [71.7–88.7] |
+| 25,600 new 4 KiB files, each flushed | 8.1 s [7.3–10.8] | 20.7 s [20.4–24.6] | 8.2 s [7.4–10.9] | 203.9 s [192.6–255.6] |
+| 25,600 ordinary + write-through 4 KiB pairs | 0.21 s [0.19–0.21] | 8.97 s [8.87–9.52] | 0.97 s [0.94–1.12] | 166.0 s [145.3–168.7] |
+
+Per run (off / on, seconds into the cache; seconds on disk): sequential
+62.24/53.73, 72.31/62.32, 46.81/56.18; 85.4/74.9, 93.6/88.7, 63.0/71.7. Files
+10.81/20.38, 8.12/24.59, 7.30/20.67; 10.9/192.6, 8.2/203.9, 7.4/255.6. Pairs
+0.21/8.87, 0.21/9.52, 0.19/8.97; 1.1/168.7, 1.0/166.0, 0.9/145.3. Repeat 2 ran
+on before off. Sequential ranges overlap: no difference is established; both
+arms filled the cache and wrote at the disk's speed (about 100 MB/s that night),
+with 3,853–3,980 waits for cache space each.
+
+The flush-heavy slowdowns are not capacity backpressure: those cases recorded
+no waits for cache space, and the unwritten backlog peaked at 312–332 MiB
+(files) and 180–191 MiB (pairs) of 2 GiB. Getting to the disk took one group
+flush per bookmark (25,627–25,632 and 25,604), at about 100–190 per second. That rate
+stayed flat while the backlog shrank from about 320 to 100 MiB, so the write-out
+waited on the disk for each bookmark (about 5–10 ms each that night, against
+about 2 ms in the afternoon's short screen; sequential throughput was also
+roughly half the afternoon's). During the application phase the drain threads
+were woken 52,098–84,958 times with ordering on, against 0–258 with it off. A
+plausible cause of the application-side slowdown is those threads competing
+with the writer for the cache lock; lock timing was off, so this is not proven.
+
+Setup: plan-194 controller published locally from the committed source, loaded
+native 0.4.851.1 (filter
+`89964D25937701001AE16CC86102AD9246BA3ED78E7FE4E84088E5CBCE202CF4`, RAM driver
+`82501FF4434782636F1E267D1488123430B749453A30D639ED220C5268217FF1`). Disposable
+NTFS W: (8 GiB VHDX on Ceph-backed storage), backing Q: paused by the campaign,
+Fast 2 GiB, Eager 1024 KiB × 4, Verifier off, Windows up 6.6 hours, normal
+priority, Everything/service, Steam and the tray closed. Campaign
+`QueueCache-Campaign-20261025-230348-812f5ca387ab4238bc2d418817e973f6`
+completed 1/1 phases and 1/1 outer cases in 2,083 s; all 18 inner cases passed
+their unbuffered byte checks; restoration `RESTORED` and `verify-completion`
+passed. Backend observations covered every case: no backup/restore task, scrub,
+recovery or new health warning; serving-pool space stayed above 249.7 GB. Other
+guests kept doing I/O and three guest counters were unavailable. Q:'s saved and
+runtime profile, the applications and the loaded driver were restored; W: is
+unconfigured with ordering off. Private evidence: 476 hash-verified files,
+archive SHA-256 `00F3E372CEAC418A9F5D7B5D1BDA441F2D87F64AB61AE5BCCFDC4BA987B6FC28`.
 
 <a id="fast-ordering-13-toggle"></a>**Direct ordering off/on comparison (#13, plan 193, October 25).**
 The current toggle has a measured durable-completion cost. On the same loaded

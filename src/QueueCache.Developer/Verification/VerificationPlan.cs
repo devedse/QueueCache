@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 193;
+    public const int Version = 194;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -527,7 +527,7 @@ public static class VerificationPlan
         if (options.Product is not null) throw new ArgumentException("--product applies only to comparison suites.");
         if (options.Suite == "flush-order-cost" && (options.BudgetMiB != FlushOrderCostPlan.BudgetMiB ||
             options.Repeats is < 1 or > 3 || options.DiskSpd is not null || options.CaseFilter is not null))
-            throw new ArgumentException("flush-order-cost requires --budget-mib 256, --repeats 1..3 and no DiskSpd/case filter.");
+            throw new ArgumentException($"flush-order-cost requires --budget-mib {FlushOrderCostPlan.BudgetMiB}, --repeats 1..3 and no DiskSpd/case filter.");
         var managedLifecycle = options.Suite is "managed-broker-restart" or "managed-lifecycle-prepare" or "managed-lifecycle-verify" or "managed-lifecycle-cleanup";
         if (managedLifecycle)
         {

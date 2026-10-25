@@ -120,6 +120,11 @@ for 256 explicit file flushes and 18.06–29.45× for 256 write-through pairs wi
 ordering on. Sequential and application-time differences changed direction;
 all bytes verified and restoration completed
 ([direct result and limits](PERFORMANCE.md#fast-ordering-13-toggle)).
+The minute-scale plan-194 comparison (2 GiB, 18/18 cases) found an application
+slowdown the short screen missed: 2.5× for 25,600 flushed files and 43× for
+25,600 write-through pairs, without the cache filling; reaching the disk took
+25× and 170× as long. Sequential writes were unchanged
+([minute-scale result](PERFORMANCE.md#fast-ordering-13-minute)).
 Both modes remain default off. The plan-189 release attempt stopped at a mode-zero
 pressure check (see the separate issue below); the plan-192 release campaign then
 completed on the same native build with ordering off

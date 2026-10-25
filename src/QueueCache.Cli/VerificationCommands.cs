@@ -66,7 +66,7 @@ internal static class VerificationCommands
               flush-order        Thirteen dependency/version/fault/capacity/direct-fallback checks for each ordering mode on lab NTFS.
                                  Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
               flush-order-cost   Ordering off/current mode-2 cost pairs, reversed order; full telemetry/byte oracle.
-                                 --budget-mib 256 --repeats 2, Verifier off, 15-minute warm boot; no DiskSpd.
+                                 --budget-mib 2048 --repeats 3 (about 30 min), Verifier off, 15-minute warm boot; no DiskSpd.
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch
                                  256/1024 KiB x parallelism 1/2/4, three alternated repetitions (42 cases).
                                  Requires DiskSpd.
