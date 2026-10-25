@@ -527,16 +527,8 @@ internal static class ComparisonScenarios
         if (durableCheckpoint)
         {
             using var cache = new CacheDevice($"{target.Letter}:", writable: true);
-            var before = cache.GetWriteCacheState(); var diagBefore = cache.GetDiagnostics();
-            var started = DateTimeOffset.UtcNow;
-            FlushVolume(target.Letter);
-            cache.Control(WriteCacheAction.Flush);
-            var after = cache.GetWriteCacheState(); var diagAfter = cache.GetDiagnostics();
-            RunStorage.AtomicJson(prefix + ".checkpoint.json", new { Start = started, End = DateTimeOffset.UtcNow,
-                Before = before, After = after, DiagnosticsBefore = diagBefore, DiagnosticsAfter = diagAfter });
-            if (after.DirtyBytes != 0 || after.InFlightBytes != 0 || after.LastError != 0 || after.Errors != before.Errors ||
-                diagAfter.ControlBarriers <= diagBefore.ControlBarriers)
-                throw new IOException("Explicit durability boundary did not complete cleanly; the VM is not cut-ready.");
+            var checkpoint = DurableCheckpoint.Complete(target.Letter, cache, prefix + ".checkpoint.json");
+            RunStorage.AtomicJson(prefix + ".checkpoint.json", checkpoint);
         }
         var oracle = new DurabilityOracle(durableCheckpoint ? 3 : 1, nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
             generation1, DateTimeOffset.UtcNow, flushSeconds, product) { DurableCheckpoint = durableCheckpoint };

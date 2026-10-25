@@ -143,6 +143,13 @@ Plan 186 excludes both durability writers from the general successful-run cleanu
 their fresh directories must remain for the post-cut oracle, including independent
 durable guards. A plan-185 guard attempt exposed this cleanup error before any cut;
 its removed data is not a prepared guard or crash result.
+Plan 187 records state immediately before and after each explicit Flush. If a
+healthy cache has new pending work and its accepted-write counter advanced, allow
+at most three Flush calls to reach a clean observation. Pending work with no new
+admission, an error or an identity change fails immediately; faults are never
+retried. The cost screen includes every call in its durable tail. A plan-186
+checkpoint attempt stopped with 8 KiB aged 1 ms pending and no driver error;
+no cut was made and the incomplete attempt remains separate.
 
 For the Ceph-backed lab, retain UTC-aligned pool free space, client I/O, OSD
 latency, the test VM's block counters, other guests' I/O and active/recent

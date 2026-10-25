@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 186, "plan 186 retains run-owned durability data for post-cut verification (#13)");
+        Check(VerificationPlan.Version == 187, "plan 187 records flush admission and permits bounded follow-up only for new writes (#13)");
         foreach (var suite in new[] { "compare-durability-write", "compare-durability-churn" })
         {
             var writer = new VerificationOptions("W:", suite, Product: "QueueCache fixture", Repeats: 1);
@@ -97,6 +97,17 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateHeld(heldOrder with { FlushOrder = heldOrder.FlushOrder! with { MaxSubmittedEpoch = 2 } }));
         var faultOrder = heldOrder with { FlushOrder = heldOrder.FlushOrder! with { FlushFailures = 1 } };
         var faultState = new WriteCacheState(1, unchecked((int)0xC0000185), 8UL << 30, 64UL << 20, 64UL << 20, 4096, 0, 64UL << 20, 2, 8192, 4096, 0, 0, 1, 0, 8192);
+        var checkpointBefore = faultState with { LastError = 0, DirtyBytes = 569528320, AcceptedBytes = 1170317312, Instance = 9 };
+        var checkpointNewWrite = checkpointBefore with { DirtyBytes = 8192, AcceptedBytes = 1170325504, OldestDirtyMs = 1 };
+        Check(DurabilityCheckpointEvidence.MaximumFlushAttempts == 3 &&
+            DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite) &&
+            !DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointNewWrite, checkpointNewWrite with { DirtyBytes = 0 }),
+            "A newly admitted 8 KiB tail permits a bounded explicit follow-up; a clean boundary needs none.");
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { AcceptedBytes = checkpointBefore.AcceptedBytes }));
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { Errors = checkpointBefore.Errors + 1 }));
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { LastError = -1 }));
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { Instance = 10 }));
+        Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { AcceptedBytes = 1 }));
         FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, true);
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, false));
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder with

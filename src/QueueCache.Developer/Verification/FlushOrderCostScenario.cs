@@ -100,10 +100,10 @@ public static class FlushOrderCostScenario
                 var applicationSeconds = timer.Elapsed.TotalSeconds; var scoreEnd = DateTimeOffset.UtcNow;
                 // Include filesystem metadata that has not reached our volume
                 // cache yet; flushing only QueueCache would undercount the tail.
-                ComparisonScenarios.FlushVolume(target.Letter);
-                device.Control(WriteCacheAction.Flush);
+                var checkpoint = DurableCheckpoint.Complete(target.Letter, device, evidence + "." + item.Id + ".checkpoint.json");
                 var durableSeconds = timer.Elapsed.TotalSeconds; var durableEnd = DateTimeOffset.UtcNow;
-                var after = device.GetWriteCacheState(); var diagAfter = device.GetDiagnostics();
+                var after = checkpoint.Final.After; var diagAfter = checkpoint.Final.DiagnosticsAfter;
+                RunStorage.AtomicJson(evidence + "." + item.Id + ".checkpoint.json", checkpoint);
                 if (after.LastError != 0 || after.Errors != before.Errors || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
                     diagAfter.FlushOrder?.Mode != item.Mode || diagBefore.FlushOrder?.Mode != item.Mode)
                     throw new IOException("Ordering cost ended unhealthy, dirty or in the wrong mode.");
