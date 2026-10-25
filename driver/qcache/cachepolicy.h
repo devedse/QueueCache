@@ -107,7 +107,13 @@ static constexpr LONG QcDefaultFlushOrder = 0;
 // run under RoutingLock so a reservation and mode selection cannot pass each other.
 constexpr bool QcMaySelectFlushOrder(ULONGLONG mode, LONG usagePaths)
 {
-    return mode == 0 || (mode == 1 && usagePaths == 0);
+    return mode == 0 || ((mode == 1 || mode == 2) && usagePaths == 0);
+}
+// Mode 1 is the original conservative prototype. Mode 2 preserves the
+// post-write-through boundary without ordering unrelated predecessors before it.
+constexpr bool QcSealBeforeWriteThrough(LONG mode)
+{
+    return mode == 1;
 }
 constexpr bool QcMayRegisterUsage(LONG flushOrderMode)
 {

@@ -40,7 +40,9 @@ constexpr bool PolicyChecks()
         return false;
     if (!QcMaySelectFlushOrder(0, 3) || !QcMaySelectFlushOrder(1, 0) ||
         QcMaySelectFlushOrder(1, 1) || QcMaySelectFlushOrder(1, -1) ||
-        QcMaySelectFlushOrder(2, 0) || !QcMayRegisterUsage(0) || QcMayRegisterUsage(1))
+        !QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(2, 1) || QcMaySelectFlushOrder(3, 0) ||
+        !QcMayRegisterUsage(0) || QcMayRegisterUsage(1) || QcMayRegisterUsage(2) ||
+        !QcSealBeforeWriteThrough(1) || QcSealBeforeWriteThrough(0) || QcSealBeforeWriteThrough(2))
         return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||

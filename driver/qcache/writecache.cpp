@@ -1901,7 +1901,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     switch (command.Action)
     {
     case QcLabFlushOrder:
-        if (command.Value > 1 || command.BudgetBytes)
+        if (command.Value > 2 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
                  !NT_SUCCESS(c->State.LastError))
@@ -2384,7 +2384,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
                 ReleaseCache(c);
                 return STATUS_INTEGER_OVERFLOW;
             }
-            if (writeThrough && c->EpochHasWrites) ++writeEpoch;
+            if (writeThrough && QcSealBeforeWriteThrough(c->FlushOrderMode) && c->EpochHasWrites) ++writeEpoch;
         }
         needed = 0;
         ULONG newDirty = 0, newWriteOccupancy = 0;
@@ -2483,7 +2483,11 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return error;
     }
-    if (FlushOrdering(c) && writeThrough && !SealEpoch(c))
+    // The original prototype orders every predecessor before a write-through.
+    // Mode 2 keeps unrelated ordinary writes in this group: the post-boundary
+    // below still makes the entire group durable before any later group submits.
+    // Explicitly sealed history and in-flight same-range versions remain intact.
+    if (FlushOrdering(c) && writeThrough && QcSealBeforeWriteThrough(c->FlushOrderMode) && !SealEpoch(c))
     {
         const auto error = c->State.LastError;
         ReleaseCache(c);

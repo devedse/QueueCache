@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 187, "plan 187 records flush admission and permits bounded follow-up only for new writes (#13)");
+        Check(VerificationPlan.Version == 188, "plan 188 compares original/post-write-through ordering with dependency checks and equal-work pairs (#13)");
         foreach (var suite in new[] { "compare-durability-write", "compare-durability-churn" })
         {
             var writer = new VerificationOptions("W:", suite, Product: "QueueCache fixture", Repeats: 1);
@@ -119,11 +119,25 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter with { FlushOrder = null }, pressureBefore, pressureAfter));
         Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter, pressureBefore,
             pressureAfter with { LastError = unchecked((int)0xC0000185) }));
+        var wtBefore = orderBefore with { FlushOrder = new(2, 1, 1, 0, 0, 0, 0, 0, 0) };
+        var wtAfter = wtBefore with { WriteThroughWrites = 1, FlushOrder = new(2, 2, 1, 1, 0, 0, 0, 0, 0) };
+        FlushOrderScenario.ValidateWriteThrough(wtBefore, wtAfter, sealedPredecessor: false);
+        Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore,
+            wtAfter with { FlushOrder = wtAfter.FlushOrder! with { Seals = 0 } }, false));
+        Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore,
+            wtAfter with { Attribution = wtAfter.Attribution! with { LowerWriteAttempts = 1 } }, false));
+        Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore, wtAfter, sealedPredecessor: true));
+        var wtSealedBefore = wtBefore with { FlushOrder = new(2, 2, 1, 1, 0, 0, 0, 0, 0) };
+        var wtSealedAfter = wtAfter with { FlushOrder = new(2, 3, 1, 2, 0, 1, 0, 0, 0) };
+        FlushOrderScenario.ValidateWriteThrough(wtSealedBefore, wtSealedAfter, sealedPredecessor: true);
+        FlushOrderScenario.ValidateWriteThrough(orderBefore,
+            orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false);
         var costPlan = FlushOrderCostPlan.Cases(2);
         Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
-            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 1UL]) &&
-            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
-            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4),
+            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([1UL, 2UL]) &&
+            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 1UL]) &&
+            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
+            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v188", StringComparison.Ordinal)),
             "ordering cost retains unique IDs, equal workload counts and reversed arm order");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);

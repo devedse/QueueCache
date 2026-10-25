@@ -287,13 +287,21 @@ Uncached/partial writes invalidate only intersecting clean blocks. Known geometr
 
 ## Experimental Fast write ordering (#13)
 
-The runtime-only `qcache developer driver flush-order <device> 1` switch is off by
+The runtime-only `qcache developer driver flush-order <device> <mode>` switch is off by
 default and accepted only on a clean disabled non-paging volume. It is intended
 for disposable-volume qualification, not a filesystem-safety claim. The matching
 `flush-order` verification suite sets and restores it itself.
 
 In this prototype, a filesystem flush seals a group of RAM writes without waiting
-for disk. Fast write-through seals both before and after its write. Overwriting a
+for disk. Mode 1 is the original prototype: Fast write-through seals both before
+and after its write. Experimental mode 2 retains the boundary after write-through
+without adding a boundary before unrelated predecessors. Existing explicit flush
+boundaries and same-range ordering remain intact. This follows the per-request
+[Windows write-through contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_stack_location):
+an unrelated ordinary write need not become durable before the write-through
+request. A successful group flush still makes the write-through and its group
+durable before any later group can submit. Both modes remain off by default.
+Overwriting a
 sealed dirty block retains the older payload as a separate version. Drainers may
 write only the oldest group; a real lower flush must succeed before any later group
 is submitted. TRIM is also an ordered effect: sealed dirty history drains before
@@ -314,10 +322,16 @@ Diagnostics V26 appends the mode, current/draining group, seal and successful/fa
 ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
 selected for a drain in this allocation. A lower group flush must be supported and
 honoured by the complete storage stack. See [Microsoft's write-cache contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/storage/querying-for-the-write-cache-property).
-The expanded suite passed nine focused live-driver checks under Verifier on a
+The lower-I/O path continues to use ordinary writes and explicit group flushes.
+A read-only October 25 capability query reported write-through support on the VM's
+Q: device but **not** on its W: VHDX lab device; both reported flush support.
+Their shared SCSI interface therefore does not justify assuming FUA support.
+No FUA optimization is enabled or qualified by that capability report.
+The original mode-1 suite passed nine focused live-driver checks under Verifier on a
 non-OS NTFS lab volume. Three bounded follow-up cuts kept NTFS clean and durable
 guards exact; broader qualification remains open ([evidence](KNOWN_ISSUES.md)).
-A short same-build screen measured about 5× the total durable time for 256
+Mode 2 remains an unqualified experiment; those earlier cuts apply to mode 1.
+A short mode-0/mode-1 same-build screen measured about 5× the total durable time for 256
 flush-heavy files; sequential pairs disagreed and the read timing control was
 unqualified ([cost and limits](PERFORMANCE.md#fast-ordering-13-cost)). The lab
 switch rejects currently registered paging/hibernation/dump paths. Mode selection,

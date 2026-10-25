@@ -354,7 +354,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 56)..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 64)..]))
             : null;
-        if (flushOrder is { Mode: > 1 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
+        if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
             flushOrder is not null && flushOrder.DrainingEpoch > flushOrder.CurrentEpoch)
             throw new InvalidDataException("Invalid Fast flush-group ordering state.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])

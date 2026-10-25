@@ -97,6 +97,13 @@ system-volume and dynamic usage-path qualification
 remain open. The default Fast behavior and the safety warning above remain in effect; this is not yet a qualified
 filesystem-safety fix.
 
+Runtime mode 2 is a separate experiment that removes the extra boundary before a
+write-through request while retaining its post-boundary, explicit flush history
+and same-range ordering. It has not inherited the original mode's live/crash
+qualification. The lower path still uses explicit flushes: the lab W: VHDX reports
+no write-through support, although its Q: host reports support. Both report flush
+support; a shared bus type is insufficient to select a FUA optimization.
+
 The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after experimental mode selection. The guard now serializes selection and
 registration under the routing lock and refuses the new registration, preserving

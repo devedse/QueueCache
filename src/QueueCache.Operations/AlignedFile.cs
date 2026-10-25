@@ -18,7 +18,7 @@ internal sealed class AlignedFile : IDisposable
     /// <param name="shareAll">Share read, write and delete, so another handle can write while this one is busy
     /// (trim-cache: a write to a range whose TRIM is still outstanding).</param>
     public AlignedFile(string path, int capacity, bool create, int alignment = 4096, bool sharedReadOnly = false,
-        bool shareRead = false, bool shareAll = false)
+        bool shareRead = false, bool shareAll = false, bool writeThrough = false)
     {
         if (alignment is not (512 or 4096))
             throw new ArgumentOutOfRangeException(nameof(alignment));
@@ -29,7 +29,7 @@ internal sealed class AlignedFile : IDisposable
             throw new ArgumentException("Transfer buffer must be 4 KiB aligned.");
         this.capacity = capacity;
         handle = CreateFileW(path, sharedReadOnly ? 0x80000000 : 0xC0000000, sharedReadOnly || shareAll ? 7u : shareRead ? 1u : 0u, IntPtr.Zero,
-            create ? 1u : 3u, 0x20000000, IntPtr.Zero);
+            create ? 1u : 3u, 0x20000000u | (writeThrough ? 0x80000000u : 0u), IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();

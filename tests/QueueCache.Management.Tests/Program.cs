@@ -701,7 +701,10 @@ Reject(() => CacheDiagnostics.Decode(orderedBytes.AsSpan(0, orderedBytes.Length 
 BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 25);
 Reject(() => CacheDiagnostics.Decode(orderedBytes), "ordering size requires V26 version");
 BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 26);
-foreach (var (offset, value) in new[] { (0, 2UL), (8, 0UL), (16, 0UL), (16, 8UL) })
+BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize), 2);
+Check(CacheDiagnostics.Decode(orderedBytes).FlushOrder?.Mode == 2, "V26 reports the post-write-through ordering candidate");
+BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize), 1);
+foreach (var (offset, value) in new[] { (0, 3UL), (8, 0UL), (16, 0UL), (16, 8UL) })
 {
     var original = BinaryPrimitives.ReadUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset));
     BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset), value);

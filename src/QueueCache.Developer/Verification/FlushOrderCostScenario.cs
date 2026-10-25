@@ -48,17 +48,17 @@ public static class FlushOrderCostScenario
                 var directory = Path.Combine(work, item.Id); Directory.CreateDirectory(directory);
                 var path = Path.Combine(directory, "data.bin");
                 var data = ConcurrentCacheOracle.Pattern(215, 1, MiB);
-                var isRead = item.Workload == "resident-read";
+                var isWriteThrough = item.Workload == "write-through-pairs";
                 if (item.Workload != "flush-heavy-files")
                 {
-                    var sizeMiB = isRead ? FlushOrderCostPlan.ResidentMiB : FlushOrderCostPlan.SequentialMiB;
+                    var sizeMiB = isWriteThrough ? 2 : FlushOrderCostPlan.SequentialMiB;
                     using var prepare = new AlignedFile(path, MiB, create: true);
                     prepare.Reserve((long)sizeMiB * MiB);
                     var zeros = new byte[MiB];
                     for (var i = 0; i < sizeMiB; i++)
                     {
                         Stamp(data, i);
-                        prepare.Write((long)i * MiB, isRead ? data : zeros);
+                        prepare.Write((long)i * MiB, zeros);
                     }
                     prepare.Flush();
                 }
@@ -69,11 +69,9 @@ public static class FlushOrderCostScenario
                         RetainWrites: true, PromoteOnRead: true)
                 }, true);
                 using var file = item.Workload == "flush-heavy-files" ? null : new AlignedFile(path, MiB, create: false, shareAll: true);
-                if (isRead)
-                {
-                    for (var i = 0; i < FlushOrderCostPlan.ResidentMiB; i++) file!.Read((long)i * MiB, data);
-                    device.Control(WriteCacheAction.Flush);
-                }
+                using var writeThrough = isWriteThrough
+                    ? new AlignedFile(path, 4096, create: false, shareAll: true, writeThrough: true) : null;
+                var smallData = data.AsSpan(0, 4096).ToArray();
                 var before = device.GetWriteCacheState(); var diagBefore = device.GetDiagnostics();
                 var started = DateTimeOffset.UtcNow; var timer = Stopwatch.StartNew();
                 long bytes = 0; var requests = 0;
@@ -93,9 +91,12 @@ public static class FlushOrderCostScenario
                 }
                 else
                 {
-                    for (var pass = 0; pass < FlushOrderCostPlan.ResidentPasses; pass++)
-                        for (var i = 0; i < FlushOrderCostPlan.ResidentMiB; i++)
-                        { file!.Read((long)i * MiB, data); bytes += MiB; requests++; }
+                    for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
+                    {
+                        Stamp(smallData, i);
+                        (i % 2 == 0 ? file! : writeThrough!).Write((long)i * 4096, smallData);
+                        bytes += 4096; requests++;
+                    }
                 }
                 var applicationSeconds = timer.Elapsed.TotalSeconds; var scoreEnd = DateTimeOffset.UtcNow;
                 // Include filesystem metadata that has not reached our volume
@@ -107,9 +108,8 @@ public static class FlushOrderCostScenario
                 if (after.LastError != 0 || after.Errors != before.Errors || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
                     diagAfter.FlushOrder?.Mode != item.Mode || diagBefore.FlushOrder?.Mode != item.Mode)
                     throw new IOException("Ordering cost ended unhealthy, dirty or in the wrong mode.");
-                if (isRead && (diagBefore.Attribution is not { } a || diagAfter.Attribution is not { } b ||
-                    b.LowerReadAttempts != a.LowerReadAttempts || after.CacheReadBytes - before.CacheReadBytes != (ulong)bytes))
-                    throw new IOException("Resident read control was not entirely served from RAM.");
+                if (isWriteThrough && diagAfter.WriteThroughWrites < diagBefore.WriteThroughWrites + FlushOrderCostPlan.WriteThroughPairs)
+                    throw new IOException("The paired workload did not exercise its write-through requests.");
                 RunStorage.AtomicJson(evidence + "." + item.Id + ".json", new FlushOrderCostMeasurement(item,
                     started, scoreEnd, durableEnd, bytes, requests, applicationSeconds, durableSeconds, before, after, diagBefore, diagAfter));
                 Reset(device);
@@ -122,8 +122,11 @@ public static class FlushOrderCostScenario
                         Stamp(data, i); Check(small, 0, data.AsSpan(0, 4096).ToArray());
                     }
                 }
+                else if (isWriteThrough)
+                    for (var i = 0; i < FlushOrderCostPlan.WriteThroughPairs * 2; i++)
+                    { Stamp(smallData, i); Check(file!, (long)i * 4096, smallData); }
                 else
-                    for (var i = 0; i < (isRead ? FlushOrderCostPlan.ResidentMiB : FlushOrderCostPlan.SequentialMiB); i++)
+                    for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
                     { Stamp(data, i); Check(file!, (long)i * MiB, data); }
                 checks.Add(new(item.Id, "PASS", $"Measured {bytes} bytes in {applicationSeconds:F4} s application / {durableSeconds:F4} s including durable tail; lower-device bytes verified. This is collection success, not a speed verdict."));
                 Console.WriteLine($"{item.Id}: {checks[^1].Detail}");
