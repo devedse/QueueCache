@@ -18,8 +18,8 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off original prototype passed nine checks and three follow-up cuts; plan 188 passed eleven targeted checks per ordering mode (22 total). Crash qualification of mode 2 and broader scope remain open; ordinary Fast defaults are unchanged |
-| [Final release campaign stopped at the high-watermark pressure check](#high-watermark-pressure-check-stopped-the-final-release-campaign) | ❌ | Unresolved verification failure, [#30](https://github.com/devedse/QueueCache/issues/30); 3/11 phases completed, restoration succeeded; no release qualification |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off prototypes passed 22 checks under Verifier, then 26 expanded checks with Verifier off. Three bounded mode-2 cuts kept NTFS clean and untouched durable guards exact; broader crash/storage/system-volume scope remains open. Ordinary Fast defaults are unchanged |
+| [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
@@ -105,15 +105,19 @@ each mode under Driver Verifier (22 total), including an explicitly sealed
 predecessor and held/failed post-write-through successors. The isolated write
 sealed two groups and retained one older version in mode 1, versus one group and
 no extra version in mode 2, with zero lower-I/O admission attempts in both.
-The three earlier crash checks apply to mode 1; mode 2 has no crash qualification.
+The three earlier crash checks apply to mode 1. The plan-191/192 follow-up below
+adds 26 checks and three bounded mode-2 cuts, including witnessed write-through
+requests and a completed explicit checkpoint. This does not qualify the full
+crash matrix, other storage or system-volume paths.
 The lower path still uses explicit flushes: the lab W: VHDX reports
 no write-through support, although its Q: host reports support. Both report flush
 support; a shared bus type is insufficient to select a FUA optimization.
 The complete 18-case plan-189 cost comparison cut write-through-pair durable time
 by 42–54%, with no established improvement to the explicit file-flush workload.
-Both modes remain default off. The final release campaign was incomplete at a
-mode-zero pressure check; see the separate issue below and
-[exact cost results](PERFORMANCE.md#fast-ordering-13-write-through).
+Both modes remain default off. The plan-189 release attempt stopped at a mode-zero
+pressure check (see the separate issue below); the plan-192 release campaign then
+completed on the same native build with ordering off
+([exact cost and release results](PERFORMANCE.md#fast-ordering-13-write-through)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after experimental mode selection. The guard now serializes selection and
@@ -127,7 +131,7 @@ an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
 A RAM disk is empty after a crash, and an image in RAM is back at its last save.
 
-### High-watermark pressure check stopped the final release campaign
+### High-watermark pressure check stopped the plan-189 release campaign
 
 On native 0.4.851.1 with controller 0.4.852.1, plan 189's `release-performance`
 campaign stopped at `trigger/high-watermark: lower I/O started below the configured
@@ -152,7 +156,27 @@ standalone pressure runs on the same loaded native pair passed all 13 checks,
 including one after the policies suite. In the first, dirty/admitted file bytes
 were exactly 9,764,864 below a 9,804,186-byte threshold, with zero additional
 accepted bytes or lower drain attempts. This does not explain or fix the original
-failure; it remains open pending the complete campaign context.
+failure.
+
+**Complete release campaign, plan 192 (2026-10-25).** Published controller
+0.4.856.1 (`52ff318`) beside the same loaded native 0.4.851.1 pair (hashes
+checked) ran `release-performance` in
+`QueueCache-Campaign-20261025-163917-513dbdddc39a49798ef125787a8fb197`, with
+experimental ordering and Verifier off. It **COMPLETED 11/11 phases and 106/106
+outer cases in 1 h 46 min 25 s, every phase RESTORED**, and `verify-completion`
+accepted its durable terminal event. All 94 retained correctness sub-checks
+passed: partial-read accounting 22, paging coherence 9, policies 42, pressure 13
+and ordering/faults 8. The high-watermark checkpoint was exact again: 9,764,864
+dirty bytes below the 9,804,186-byte threshold, an accepted delta equal to the
+file payload, and unchanged drain-write (19,176) and lower-write (19,648)
+attempts. Crossing it produced one drain-write attempt and 262,144 drained bytes;
+persisted bytes matched after Disable. Speed results are in
+[performance](PERFORMANCE.md#release-192).
+
+The plan-189 failure has not recurred in three runs that record the separate
+conditions. Its cause stays unproven because that run did not record which
+condition fired; no driver, fixture or threshold change is claimed to fix it, and
+the strict conditions are unchanged. #30 stays open for that cause.
 
 Campaign `QueueCache-Campaign-20261025-134513-8fabb9dbe61e44cbac42f6b0f6092ffe`,
 pressure child `20261025-134703-32780205d17844d3b2acd79793fae664`;
@@ -171,6 +195,15 @@ separate, with a host evidence hash manifest. Q: was restored to its original
 Everything/service, Steam and tray running, and the existing R: definition stopped.
 No snapshot or crash test was made in this iteration. VM space after cleanup:
 C: 59.3 GB, Q: 183.5 GB, V: 8.56 GB, W: 8.51 GB free (decimal).
+
+The plan-192 release evidence archive contains 19,739 files; SHA-256
+`6DD7C4CE9E91BAD6AFFD05798B9B555469CCC66DC2656E80076C9E188B08826A`. Every
+entry was hash-verified on the host before the guest copy and this run's staging
+were removed. Restoration matched the same state: the original Q: profile with an
+unchanged saved profile, W: unconfigured, ordering mode 0, Verifier off,
+Everything/service, Steam and tray running, the R: definition stopped and the
+same loaded driver hashes. VM space afterwards: C: 59.3 GB, Q: 183.5 GB,
+V: 8.56 GB, W: 8.51 GB free (decimal).
 
 ### The driver is test-signed
 
@@ -475,6 +508,71 @@ a full save instead of the required reuse. That evidence remains separate. Plan
 and older records without the marker cannot be consumed, even with a generated-looking
 filename. General retention, background saving and a crash during commit remain
 separate work.
+
+**Issue #13 mode-2 follow-up, plans 191/192 (2026-10-25):** the loaded native
+pair remained 0.4.851.1, with the same signed-package hashes recorded in
+[the cost comparison](PERFORMANCE.md#fast-ordering-13-write-through). Published
+controller 0.4.856.1 (`52ff318`) ran all **26 ordering checks**, thirteen per mode,
+in 20.3 s; the complete campaign took 25.7 s and restored successfully. The new
+checks exercised an oversized 2 MiB direct write over a sealed predecessor in a
+1 MiB cache, and a deliberately unmappable paging write falling back to the
+ordered direct path. Both modes preserved the latest bytes and an untouched
+neighbor after cache release; the map fallback stayed healthy. The first
+plan-191 attempt stopped at a fixture handle-sharing violation. Plan 192 fixes
+that sharing and adds a real Windows host regression; it does not change the
+driver. These 26 checks ran with Verifier **off**; the earlier 22 checks under
+Verifier remain separate evidence.
+
+The three cuts used the official durability writer, a fresh owned directory per
+cut, Fast/Deferred with a 1 GiB budget, 1 s dirty age, 1024 KiB × 4 drains and an
+intentional 100 ms drain delay. Q:'s backing cache was paused. Each oracle recorded
+mode 2 and at least 256 observed write-through requests (258, 258 and 257).
+The first writer used controller 0.4.855.1; subsequent writers and independent
+guard checks used 0.4.856.1, with unchanged native code. These are correctness
+observations, not speed measurements.
+
+Each large file contains 65,536 checked 4 KiB chunks. An application flush in
+Fast mode only seals an ordering group; the first column below is not a completed
+QueueCache durability checkpoint.
+
+| Cut | Dirty / in-flight bytes at witness | Application-flushed file: new / old / other / missing chunks | Write-through file: new / old / other / missing chunks | New small files intact / damaged / missing | NTFS scan |
+|---|---:|---:|---:|---:|---|
+| Pending burst | 519,680,000 / 4,194,304 | 14,848 / 50,688 / 0 / 0 | 0 / 65,536 / 0 / 0 | 0 / 0 / 10,000 | Exit 0, no problems |
+| Advancing partial-drain boundary | 316,805,120 / 1,048,576 | 65,536 / 0 / 0 / 0 | 1,024 / 64,512 / 0 / 0 | 0 / 0 / 10,000 | Exit 0, no problems |
+| Completed filesystem + QueueCache checkpoint | 0 / 0 | 65,536 / 0 / 0 / 0 | 65,536 / 0 / 0 / 0 | 10,000 / 0 / 0 | Exit 0, no problems |
+
+The independently prepared, untouched durable guard (two 256 MiB files and 10,000
+small files) matched exactly after **every** cut, with clean scans. The boundary
+observer saw completed group flushes advance from 44 to 47 while data remained
+pending. Reset requests followed the final healthy witnesses by 0.81, 0.53 and
+0.40 s. The first two witnesses retained exactly two and four lifetime errors
+from the explicitly owned ordering-suite fault checks; LastError was zero and no
+additional error was accepted. The third witness had zero errors. No offline
+repair or snapshot rollback was used. A VM reset does not test loss of power to
+the physical storage, nor prove atomicity of a pending file update.
+
+Writer / post-cut verification IDs, respectively:
+`20261025-155934-25aca6727695430e8190104a568099cd` /
+`20261025-161604-6fe105984ef1438a880f522cccde88c6`;
+`20261025-161822-e03fedb6a2964fa8bc1ceaf8d8ade3cc` /
+`20261025-162052-edc39f0554914c32bfafd30c34955940`;
+`20261025-162157-186435c5776040b8ae38f0c611ba9993` /
+`20261025-162500-ab49224200af4a739049d72e643347da`.
+The 26-check campaign was
+`QueueCache-Campaign-20261025-161709-0f0e836b85724fe2826e1e0a37fad255`.
+UTC-aligned backend observations covered all writer, verification and cut
+intervals at the documented cadences: no backup, scrub, recovery/backfill or new
+health warning was observed, and serving-pool free space stayed above 256.047 GB.
+Shared guest traffic continued; unavailable/reset guest counters remained unknown.
+Both ordering modes stay default off; #13 remains open for its broader scope.
+
+The safety evidence archive contains 22,018 files, including the recovered
+payloads and failed fixture attempt; SHA-256
+`51CB85054D775C59B74D05E28842E50991A04A2F12A3B85C78C01A88B08B1B41`.
+Every archive entry was independently hash-verified after export. Only then were
+20,012 owned fixture files in five W: directories removed, restoring 8.512 GB
+free on W: and leaving 183.514 GB free on Q:. The temporary snapshot was deleted
+without rollback before performance testing.
 
 **Issue #13 follow-up, plans 186/187 (2026-10-25):** native 0.4.847.1
 included the late usage-registration guard; both loaded hashes matched its signed

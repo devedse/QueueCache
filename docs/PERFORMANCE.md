@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep both experiments default off.** Mode 2 removes only the extra pre-write-through boundary. In the complete 18-case plan-189 comparison, write-through-pair durable time fell **42–54%**, with about half as many lower writes/flushes. The explicit file-flush workload has no established speedup; its earlier mode-0/mode-1 cost remains about 5×. Eleven checks per mode passed under Verifier. Mode 2 has no crash qualification; the final release attempt stopped at an unresolved mode-zero pressure check ([#30](https://github.com/devedse/QueueCache/issues/30)). [New results](#fast-ordering-13-write-through); [earlier cost](#fast-ordering-13-cost). | A supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep both experiments default off.** Mode 2 removes only the extra pre-write-through boundary. In the complete 18-case plan-189 comparison, write-through-pair durable time fell **42–54%**, with about half as many lower writes/flushes. The explicit file-flush workload has no established speedup; its earlier mode-0/mode-1 cost remains about 5×. Eleven checks per mode passed under Verifier; the follow-up passed 26 expanded checks with Verifier off and three bounded mode-2 cuts with clean NTFS and exact durable guards. Broader crash/storage/system-volume scope remains unqualified. After the plan-189 release attempt stopped at a mode-zero pressure check that has not recurred ([#30](https://github.com/devedse/QueueCache/issues/30)), the [plan-192 release campaign](#release-192) completed 11/11 phases on the same native build. [New results](#fast-ordering-13-write-through); [earlier cost](#fast-ordering-13-cost). | A supported-scope/promotion decision, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -213,7 +213,13 @@ and explicit recovery, both write-through successor boundaries, TRIM, capacity,
 live selection refusal and lifecycle, with exact lower-device bytes. Campaign
 `QueueCache-Campaign-20261025-130038-c192d335a8b44656acc452beb129779f`, child
 `20261025-130046-2db054102d97428a8d48c9b48a0495c9`, restored. No new crash tests
-were run for mode 2; the earlier three follow-up cuts apply to mode 1.
+were run in that campaign; the earlier three follow-up cuts apply to mode 1.
+The subsequent plan-191/192 follow-up completed 26 checks and three bounded
+mode-2 cuts, including pending write-through data and an explicit durable
+checkpoint, with clean NTFS scans and exact independent guards
+([full correctness record](KNOWN_ISSUES.md#correctness-qualification)).
+The 26-check follow-up ran with Verifier off; it does not replace the earlier
+Verifier evidence or qualify physical-storage power loss and system volumes.
 
 Cost campaign
 `QueueCache-Campaign-20261025-133739-72983cdb58ac422f80bc4d244b3ccfa4`, child
@@ -226,15 +232,62 @@ retained separately; no incomplete repetitions were reused. Plan 189 closes writ
 handles before the filesystem/checkpoint tail while including closure in durable
 time. The checkpoint's health/new-write guards were not weakened.
 
-Final release qualification **did not complete**. Plan 189's release campaign
-`QueueCache-Campaign-20261025-134513-8fabb9dbe61e44cbac42f6b0f6092ffe` completed
-partial-read, paging-coherence and policies, then stopped at the mode-zero
-high-watermark pressure check; 3/11 phases completed, RESTORED. No release speed
-or correctness pass is claimed. Its ambiguous failure diagnostics and required
-follow-up are tracked separately in [#30](https://github.com/devedse/QueueCache/issues/30)
-and [known issues](KNOWN_ISSUES.md#high-watermark-pressure-check-stopped-the-final-release-campaign).
+Plan 189's release campaign
+`QueueCache-Campaign-20261025-134513-8fabb9dbe61e44cbac42f6b0f6092ffe` did not
+complete: it stopped at the mode-zero high-watermark pressure check after 3/11
+phases, RESTORED. Its diagnosis is tracked in
+[#30](https://github.com/devedse/QueueCache/issues/30) and
+[known issues](KNOWN_ISSUES.md#high-watermark-pressure-check-stopped-the-plan-189-release-campaign).
+
+<a id="release-192"></a>**Final release qualification (plan 192): completed.**
+Controller 0.4.856.1 (`52ff318`) beside the same loaded native 0.4.851.1 pair ran
+`release-performance` in
+`QueueCache-Campaign-20261025-163917-513dbdddc39a49798ef125787a8fb197`
+(16:39–18:25 UTC). Verifier and experimental ordering were off and Q:'s backing
+cache was paused. It used the same CrystalDiskMark-bundled DiskSpd and 2 GiB budget
+as plans 132 and 171. **COMPLETED 11/11 phases, 106/106 cases, RESTORED**;
+`verify-completion` accepted it. All 94 retained correctness sub-checks passed,
+including the high-watermark checkpoint
+([details](KNOWN_ISSUES.md#high-watermark-pressure-check-stopped-the-plan-189-release-campaign)).
+RAM reference medians, three windows each: Direct 1M Q1T1 21,472 MiB/s, Q8T1
+34,048, Q2T4 30,621; Direct 4K Q1T1 1,509.
+
+No speed verdict is drawn. Under [the comparison rule](TESTING.md#6-deciding-whether-a-change-is-faster),
+another day's run does not judge a change, and this campaign had no same-window
+control. The two previous completed release runs point in opposite directions:
+
+| Same 72-case matrix, medians of three | Plan 132 (Oct 14, 0.4.687.1) | Plan 171 (Oct 22, 0.4.776.1, host-bound) |
+|---|---|---|
+| Cached (Eager/Idle) write rows, plan 192 against | 14–35% lower; every range separated | 56–163% higher |
+| Same campaign's RAM-disk read reference, plan 192 against | 7–24% lower | 36–234% higher |
+
+Host memory state moves both rows. Against plan 132, though, cached writes fell
+further than the RAM reference, so a small write-path change since then cannot be
+excluded without a same-build or same-window comparison. Uncached (Off) rows follow
+the Ceph storage.
+
+UTC-aligned Ceph/guest observations covered the campaign at their cadences. No
+backup or restore task overlapped it, no new health warning appeared, and
+serving-pool free space stayed above 243.57 GB. Five global scrub samples (pool
+unknown) fell in three short episodes, at 17:54:14–19, 18:02:35–40 and
+18:14:30 UTC. Brackets to the adjacent clean samples overlap four write-case
+process windows: random Q1 Off r1 with timing (0002), random Q1 Eager r1 (0003,
+edge only), sequential Q8 Off r1 (0019) and sequential Q8 Off r2 with timing
+(0047). Treat those rows as possibly disturbed. Three other guests' counters were
+unavailable or reset.
+
 Keep #13 open and both experiments off by default: crash/bypass/special-file scope
-and a complete final release qualification remain open.
+remains open.
+
+A follow-up review retained the explicit-flush fallback. Adjacent writes inside
+one group are already gathered. Advancing a dependent group still requires the
+previous group's successful lower flush. Reusing the final barrier would require
+tracking every intervening lower-device effect, including direct writes, TRIM,
+media controls and concurrent lifecycle work; dirty/group counters alone do not
+prove that coverage. It could remove at most one final command from the measured
+258-group-flush file workload, without addressing its dominant cost. No such
+driver change or new performance gain is claimed, and the established 18-case
+comparison was not rerun for these runner-only additions.
 
 <a id="fast-ordering-13-cost"></a>**Experimental Fast ordering (#13, October 25).**
 Keep the runtime experiment off by default. Ordered groups preserved RAM-first

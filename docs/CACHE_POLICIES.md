@@ -333,15 +333,23 @@ guards exact; broader qualification remains open ([evidence](KNOWN_ISSUES.md)).
 Plan 188 on 0.4.851.1 passed eleven live checks per mode under Driver Verifier,
 including held and failed post-write-through successors, retained explicit
 predecessors, RAM admission, TRIM, capacity and lifecycle (22 total). The isolated
-write-through sealed two boundaries in mode 1 versus one in mode 2. Mode 2 remains
-an unqualified experiment; the earlier cuts apply to mode 1.
+write-through sealed two boundaries in mode 1 versus one in mode 2. The subsequent
+plan-192 suite passed thirteen checks per mode (26 total), adding oversized and
+unmappable direct fallbacks, with Verifier off and unchanged native code. Three
+bounded mode-2 write-through cuts kept NTFS clean and untouched durable guards
+exact; the explicit checkpoint preserved both large files and all 10,000 small
+files. The earlier cuts apply to mode 1. Mode 2 remains an experiment with broader
+crash/storage/system-volume qualification open
+([records and limits](KNOWN_ISSUES.md#correctness-qualification)).
 The complete plan-189 comparison reduced total durable time by 42–54% for 256
 ordinary/write-through pairs, with about half as many lower writes and flushes.
 Explicit file-flush boundaries were unchanged and had no established speedup.
-Keep mode 2 as an independently selectable lab experiment, off by default;
-the final release campaign stopped at an unresolved mode-zero pressure check
-([#30](https://github.com/devedse/QueueCache/issues/30)). Neither the timing result
-nor the focused checks establish release or crash qualification.
+Keep mode 2 as an independently selectable lab experiment, off by default.
+The plan-192 release campaign completed on the same native build with ordering
+off, after the plan-189 attempt had stopped at a mode-zero pressure check
+([#30](https://github.com/devedse/QueueCache/issues/30)); it covers the default
+path, not mode 2. Neither the timing result nor the focused checks establish
+mode-2 release or crash qualification.
 A short mode-0/mode-1 same-build screen measured about 5× the total durable time for 256
 flush-heavy files; sequential pairs disagreed and the read timing control was
 unqualified ([cost and limits](PERFORMANCE.md#fast-ordering-13-cost)). The lab
