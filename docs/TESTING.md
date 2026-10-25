@@ -191,6 +191,20 @@ conditions remain strict and are reported separately. Additional accepted bytes
 are distinguished from the planned file payload; missing/reset deltas stay unknown.
 The workload, timing windows and trigger thresholds are unchanged.
 
+Plan 191 gives `flush-order` the `flush-order-v191` case ID and thirteen checks per mode (26 total): an oversized
+write over sealed history must exercise its quota/direct and lower flush path,
+and an unmappable paging-marked write must exercise the direct fallback while
+preserving its predecessor. Both verify latest bytes and an untouched neighbor
+after release; unexpected faults are not retried.
+The standalone QueueCache `compare-durability-write --write-through-generation2`
+variant requests write-through for generation-2 unbuffered writes. It requires
+ordered Fast mode, records the actual ordering mode and observed write-through
+request delta, and refuses cut readiness unless at least one request per 1 MiB
+write was observed. Its volatile/durable oracles use schemas 4/5; historical
+ordinary-write schemas 1/3 remain distinct. Schema 5 requires the same exact-byte
+and clean-scan checkpoint proof as schema 3. This option cannot be used with
+campaigns, other suites or other products. It does not perform a power cut itself.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

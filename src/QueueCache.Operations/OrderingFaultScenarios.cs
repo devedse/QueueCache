@@ -536,7 +536,7 @@ public static class OrderingFaultScenarios
         return new(label, "PASS", evidence + " Retry drained it and the owned 1 MiB matched after release.");
     }
 
-    private static void MappedSave(string path, byte[] data)
+    internal static void MappedSave(string path, byte[] data)
     {
         using var map = MemoryMappedFile.CreateFromFile(path, FileMode.Open, null, 0, MemoryMappedFileAccess.ReadWrite);
         using var view = map.CreateViewAccessor(0, FileBytes, MemoryMappedFileAccess.ReadWrite);

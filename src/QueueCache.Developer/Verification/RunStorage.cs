@@ -9,7 +9,7 @@ public sealed record VerificationOptions(string Volume, string Suite = "quick", 
     string? OraclePath = null, string? DisposableInstance = null, long? DisposableBytes = null,
     string? ManagedOraclePath = null, ManagedLifecycleTransition? ManagedTransition = null, int? SoakSeconds = null,
     bool KeepWorkloads = false, string? TraceSymbols = null, string? Product = null,
-    ComparisonProvider? Provider = null, string? PrimoCli = null, bool DurableCheckpoint = false);
+    ComparisonProvider? Provider = null, string? PrimoCli = null, bool DurableCheckpoint = false, bool WriteThroughGeneration2 = false);
 public sealed record CaseResult(string Id, string Status, string Detail, DateTimeOffset Started,
     double Seconds, DiskSpdScore? Score = null);
 

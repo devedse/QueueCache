@@ -38,6 +38,9 @@ public sealed record DurabilityOracle(int SchemaVersion, ulong Nonce, string Dir
     DateTimeOffset Generation1Utc, DateTimeOffset CompletedUtc, double FlushedSetFlushSeconds, string Product)
 {
     public bool DurableCheckpoint { get; init; }
+    public bool WriteThroughGeneration2 { get; init; }
+    public ulong? WriteThroughRequestsObserved { get; init; }
+    public ulong? OrderingMode { get; init; }
 }
 
 public sealed record SectorCounts(long Expected, long New, long Old, long Other, long Missing);
@@ -207,7 +210,7 @@ internal static class ComparisonScenarios
                 return $"Rewrote and read back {step.Bytes >> 20} MiB; bytes identical.";
             }
             case "durability-write":
-                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix, job.DurableCheckpoint);
+                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix, job.DurableCheckpoint, job.WriteThroughGeneration2);
             case "durability-churn":
                 return DurabilityChurn(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
             case "durability-verify":
@@ -471,12 +474,12 @@ internal static class ComparisonScenarios
         }
     }
 
-    private static unsafe void WriteSet(string path, ulong nonce, int generation, int set, int mebibytes, bool unbuffered)
+    private static unsafe void WriteSet(string path, ulong nonce, int generation, int set, int mebibytes, bool unbuffered, bool writeThrough = false)
     {
         var sectors = (long)mebibytes << 8;
         if (unbuffered)
         {
-            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None, NoBuffering);
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None, NoBuffering | (writeThrough ? FileOptions.WriteThrough : FileOptions.None));
             var buffer = (byte*)NativeMemory.AlignedAlloc(Block, 4096);
             try
             {
@@ -499,7 +502,7 @@ internal static class ComparisonScenarios
         file.Flush(flushToDisk: generation == 1 || set == 1);
     }
 
-    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix, bool durableCheckpoint)
+    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix, bool durableCheckpoint, bool writeThroughGeneration2)
     {
         if (Directory.Exists(work)) throw new IOException("Durability writer refuses an existing directory; preserve its oracle and evidence.");
         Directory.CreateDirectory(work);
@@ -516,7 +519,21 @@ internal static class ComparisonScenarios
         var timer = Stopwatch.StartNew();
         WriteSet(flushed, nonce, 2, 1, ComparisonPlan.DurabilitySetMiB, unbuffered: false);
         var flushSeconds = timer.Elapsed.TotalSeconds;
-        WriteSet(unflushed, nonce, 2, 2, ComparisonPlan.DurabilitySetMiB, unbuffered: true);
+        using var observedCache = writeThroughGeneration2 ? new CacheDevice($"{target.Letter}:") : null;
+        var requestsBefore = observedCache?.GetDiagnostics();
+        var orderMode = requestsBefore?.FlushOrder?.Mode;
+        if (writeThroughGeneration2 && (orderMode is not (1 or 2) || !observedCache!.GetWriteCacheState().UnsafeDefer))
+            throw new IOException("Flagged-write cuts require experimental ordered Fast mode 1 or 2.");
+        WriteSet(unflushed, nonce, 2, 2, ComparisonPlan.DurabilitySetMiB, unbuffered: true, writeThrough: writeThroughGeneration2);
+        var requestsAfter = observedCache?.GetDiagnostics();
+        ulong? writeThroughRequests = null;
+        if (writeThroughGeneration2)
+        {
+            if (requestsAfter!.WriteThroughWrites < requestsBefore!.WriteThroughWrites || requestsAfter.FlushOrder?.Mode != orderMode)
+                throw new IOException("Write-through counters reset or ordering mode changed during the cut workload.");
+            writeThroughRequests = requestsAfter.WriteThroughWrites - requestsBefore.WriteThroughWrites;
+            RunStorage.AtomicJson(prefix + ".write-through.json", new { Before = requestsBefore, After = requestsAfter });
+        }
         Directory.CreateDirectory(small);
         var sector = new byte[4096];
         for (var i = 0; i < ComparisonPlan.DurabilitySmallFiles; i++)
@@ -530,8 +547,11 @@ internal static class ComparisonScenarios
             var checkpoint = DurableCheckpoint.Complete(target.Letter, cache, prefix + ".checkpoint.json");
             RunStorage.AtomicJson(prefix + ".checkpoint.json", checkpoint);
         }
-        var oracle = new DurabilityOracle(durableCheckpoint ? 3 : 1, nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
-            generation1, DateTimeOffset.UtcNow, flushSeconds, product) { DurableCheckpoint = durableCheckpoint };
+        var oracle = new DurabilityOracle(DurabilityOracleContract.Version(durableCheckpoint, writeThroughGeneration2), nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
+            generation1, DateTimeOffset.UtcNow, flushSeconds, product)
+        { DurableCheckpoint = durableCheckpoint, WriteThroughGeneration2 = writeThroughGeneration2,
+            WriteThroughRequestsObserved = writeThroughRequests, OrderingMode = orderMode };
+        DurabilityOracleContract.Validate(oracle);
         using (var file = new FileStream(oraclePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
         {
             file.Write(JsonSerializer.SerializeToUtf8Bytes(oracle, RunStorage.Json));
@@ -539,7 +559,8 @@ internal static class ComparisonScenarios
         }
         RunStorage.AtomicJson(prefix + ".settle.json", settle);
         return $"Generation 1 flushed and settled ({Describe(settle)}); generation 2 written: durable save (flush {flushSeconds:F3} s), " +
-            $"{ComparisonPlan.DurabilitySetMiB} MiB raw writes and {ComparisonPlan.DurabilitySmallFiles} small files. " +
+            $"{ComparisonPlan.DurabilitySetMiB} MiB " + (writeThroughGeneration2 ? "write-through-requested volatile writes" : "raw writes") +
+            $" and {ComparisonPlan.DurabilitySmallFiles} small files. " +
             (durableCheckpoint ? "Filesystem and QueueCache durability boundary completed; exact contents are required after reset."
                 : "The raw writes and small files were not explicitly checkpointed. Reset the VM now.");
     }
@@ -661,8 +682,7 @@ internal static class ComparisonScenarios
                 return await ChurnVerify(target, churn, prefix);
             }
         var oracle = JsonSerializer.Deserialize<DurabilityOracle>(oracleBytes) ?? throw new InvalidDataException("Missing durability oracle.");
-        if (oracle.SchemaVersion is not (1 or 3) || oracle.DurableCheckpoint != (oracle.SchemaVersion == 3))
-            throw new InvalidDataException("Unknown or inconsistent durability oracle version.");
+        DurabilityOracleContract.Validate(oracle);
         if (char.ToUpperInvariant(oracle.Directory[0]) != target.Letter) throw new IOException("The oracle belongs to another volume.");
         var boot = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(System.Environment.TickCount64);
         if (boot <= oracle.CompletedUtc) throw new IOException("Windows has not restarted since the write phase; reset the VM first.");

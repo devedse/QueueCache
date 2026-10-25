@@ -64,6 +64,16 @@ public static class FlushOrderScenario
             throw new InvalidDataException("Retained-version capacity pressure was not exercised or the cache faulted.");
     }
 
+    public static void ValidateOversizedFallback(CacheDiagnostics before, CacheDiagnostics after, WriteCacheState state)
+    {
+        var a = before.Attribution ?? throw new InvalidDataException("Missing direct-fallback attribution.");
+        var b = after.Attribution ?? throw new InvalidDataException("Missing direct-fallback attribution.");
+        if (before.FlushOrder?.Mode is not (1 or 2) || after.FlushOrder?.Mode != before.FlushOrder?.Mode ||
+            b.QuotaWriteBarriers <= a.QuotaWriteBarriers || b.LowerWriteAttempts <= a.LowerWriteAttempts ||
+            b.LowerFlushAttempts < a.LowerFlushAttempts + 2 || state.LastError != 0)
+            throw new InvalidDataException("The oversized write did not exercise its ordered direct fallback and lower durability boundaries.");
+    }
+
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice device,
         string workDirectory, string evidence)
     {
@@ -273,6 +283,8 @@ public static class FlushOrderScenario
                     checks.Add(new("flush-order/disable-release-reapply", "PASS",
                         "Disable drained sealed work, Release returned the allocation, and a new allocation preserved ordering and the newest on-disk version."));
                 }
+                checks.Add(CheckOversizedFallback(target, device, workDirectory, modeEvidence, testMode));
+                checks.Add(CheckMapFallback(target, device, workDirectory, modeEvidence, testMode));
                 for (var i = firstCheck; i < checks.Count; i++)
                     checks[i] = checks[i] with { Name = $"flush-order/mode{testMode}/" + checks[i].Name["flush-order/".Length..] };
             }
@@ -287,7 +299,7 @@ public static class FlushOrderScenario
             if (device.GetDiagnostics().FlushOrder?.Mode != mode)
                 throw new IOException("Original flush-order mode was not restored.");
         }
-        if (checks.Count != 22 || checks.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() != 22 ||
+        if (checks.Count != 26 || checks.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() != 26 ||
             checks.Any(c => c.Result != "PASS"))
             throw new InvalidDataException("The two-mode ordering dependency checks are incomplete or duplicated.");
         return checks;
@@ -350,6 +362,54 @@ public static class FlushOrderScenario
         }
         Reset(device);
         AssertRead(file, Offset, Pattern(15));
+    }
+
+    private static CheckResult CheckOversizedFallback(DiskTarget target, CacheDevice device,
+        string work, string evidence, ulong mode)
+    {
+        Reset(device);
+        var path = OrderingFaultScenarios.CreateOwned(work, $"mode{mode}-oversized.bin");
+        using var file = new AlignedFile(path, 2 * MiB, create: false, shareAll: true);
+        Apply(target, device, mode, budgetMiB: 1);
+        if (device.GetWriteCacheState().PayloadCapacity >= 2 * MiB)
+            throw new IOException("Oversized fallback requires a request larger than the cache payload.");
+        file.Write(Offset, Pattern(31)); file.Flush();
+        var before = device.GetDiagnostics();
+        var data = new byte[2 * MiB]; new Random(217 + (int)mode).NextBytes(data);
+        file.Write(Offset, data);
+        var after = device.GetDiagnostics(); var state = device.GetWriteCacheState();
+        RunStorage.AtomicJson(evidence + ".oversized.json", new { Before = before, After = after, State = state });
+        ValidateOversizedFallback(before, after, state);
+        Reset(device);
+        AssertRead(file, Offset, data); AssertRead(file, Offset + data.Length, new byte[Block]);
+        return new("flush-order/oversized-direct-write", "PASS",
+            "A 2 MiB write over a sealed predecessor exceeded a 1 MiB budget. Quota/direct and lower flush counters advanced; newest bytes and untouched neighbor matched after release.");
+    }
+
+    private static CheckResult CheckMapFallback(DiskTarget target, CacheDevice device,
+        string work, string evidence, ulong mode)
+    {
+        Reset(device);
+        var path = OrderingFaultScenarios.CreateOwned(work, $"mode{mode}-map-fallback.bin");
+        using var file = new AlignedFile(path, Block, create: false, shareAll: true);
+        Apply(target, device, mode);
+        file.Write(Offset, Pattern(41)); file.Flush();
+        var before = device.GetDiagnostics(); var originalErrors = device.GetWriteCacheState().Errors;
+        device.Control(WriteCacheAction.LabFault, value: 11);
+        try { OrderingFaultScenarios.MappedSave(path, Pattern(42)); }
+        finally { device.Control(WriteCacheAction.LabFault, value: 0); }
+        var after = device.GetDiagnostics(); var state = device.GetWriteCacheState();
+        RunStorage.AtomicJson(evidence + ".map-fallback.json", new { Before = before, After = after, State = state });
+        var detail = OrderingFaultScenarios.VerifyPagingMapFallback(true, state.LastError,
+            before.PagingProgress?.MapFailures, after.PagingProgress?.MapFailures,
+            before.LowerSources?.PagingForwardedWrites, after.LowerSources?.PagingForwardedWrites);
+        if (after.FlushOrder?.Mode != mode || after.FlushOrder!.Flushes <= before.FlushOrder!.Flushes ||
+            state.Errors != originalErrors)
+            throw new IOException("Map fallback lost its ordering mode, skipped the predecessor flush or faulted.");
+        Reset(device); // Unexpected faults are preserved; this path never retries them.
+        AssertRead(file, Offset, Pattern(42)); AssertRead(file, Offset + Block, new byte[Block]);
+        return new("flush-order/unmappable-direct-write", "PASS", detail +
+            " The sealed predecessor flushed; latest bytes and untouched neighbor matched after release.");
     }
 
     private static void Reset(CacheDevice device)

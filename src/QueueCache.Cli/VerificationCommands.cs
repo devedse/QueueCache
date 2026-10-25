@@ -63,7 +63,7 @@ internal static class VerificationCommands
                                  --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
-              flush-order        Eleven dependency/version/fault/capacity checks for each ordering mode on lab NTFS.
+              flush-order        Thirteen dependency/version/fault/capacity/direct-fallback checks for each ordering mode on lab NTFS.
                                  Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
               flush-order-cost   Original/post-write-through cost pairs, reversed order; full telemetry/byte oracle.
                                  --budget-mib 256 --repeats 2, Verifier off, 15-minute warm boot; no DiskSpd.
@@ -215,6 +215,7 @@ internal static class VerificationCommands
         var systemBytes = new Option<long?>("--system-bytes") { Description = "System suites: exact expected C: physical-disk byte size." };
         var recoverableVm = new Option<bool>("--recoverable-vm") { Description = "System suites: acknowledge a restorable disposable VM with external console access." };
         var oracle = new Option<string?>("--oracle") { Description = "system-post-restart: prior system-files oracle.json on a separate physical disk; compare-durability-verify: the write run's durability-oracle.json." };
+        var writeThroughGeneration2 = new Option<bool>("--write-through-generation2") { Description = "QueueCache compare-durability-write only: request write-through on generation-2 unbuffered writes; require ordered Fast mode and observed request counters. Creates distinct schema-4/5 oracles." };
         var durableCheckpoint = new Option<bool>("--durable-checkpoint") { Description = "QueueCache compare-durability-write only: flush filesystem and QueueCache before cut readiness; post-cut verification requires exact contents and a clean scan." };
         var disposableInstance = new Option<string?>("--disposable-instance") { Description = "disk-removal suites only: exact PnP instance of the disposable physical disk to eject." };
         var disposableBytes = new Option<long?>("--disposable-bytes") { Description = "disk-removal suites only: exact physical disk byte size. Results must be on another disk." };
@@ -227,7 +228,7 @@ internal static class VerificationCommands
         var keepWorkloads = new Option<bool>("--keep-workloads") { Description = "Keep the run's workload files on the tested volume after a completed run (failed runs always keep them)." };
         command.Arguments.Add(volume);
         foreach (var option in new Option[] { suite, campaign, labNtfs, labRefs, focusSuite, pauseBacking, output, disk, budget, repeats, duration, deadline, preparationFlush, caseFilter, soak,
-            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli, durableCheckpoint })
+            systemInstance, systemBytes, recoverableVm, oracle, disposableInstance, disposableBytes, managedOracle, managedTransition, keepWorkloads, traceSymbols, product, provider, primoCli, durableCheckpoint, writeThroughGeneration2 })
             command.Options.Add(option);
         command.SetAction((p, token) =>
         {
@@ -241,7 +242,7 @@ internal static class VerificationCommands
             p.GetValue(disk), p.GetValue(budget) ?? (selectedCampaign is null ? 1024 : 2048), p.GetValue(repeats), p.GetValue(duration), p.GetValue(deadline), p.GetValue(preparationFlush), p.GetValue(caseFilter),
             p.GetValue(systemInstance), p.GetValue(systemBytes), p.GetValue(recoverableVm), p.GetValue(oracle),
             p.GetValue(disposableInstance), p.GetValue(disposableBytes), p.GetValue(managedOracle), p.GetValue(managedTransition), p.GetValue(soak),
-            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli), p.GetValue(durableCheckpoint));
+            p.GetValue(keepWorkloads), p.GetValue(traceSymbols), p.GetValue(product), p.GetValue(provider), p.GetValue(primoCli), p.GetValue(durableCheckpoint), p.GetValue(writeThroughGeneration2));
             if (selectedCampaign is null) return Runner().RunAsync(selected, new ConsoleProgress(), token);
             var invocation = Invocation();
             return new VerificationCampaignRunner(new VerificationCampaignHost(invocation.Executable, invocation.Prefix))

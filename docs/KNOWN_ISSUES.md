@@ -146,6 +146,14 @@ the fixture or policy. Keep the acceptance conditions strict. A changed workload
 requires a new plan/immutable case contract. Track diagnosis and a complete final
 release run in [#30](https://github.com/devedse/QueueCache/issues/30).
 
+Plan 190 retains these exact checkpoint counters before restoration and reports
+the three conditions separately without changing the workload or guard. Two
+standalone pressure runs on the same loaded native pair passed all 13 checks,
+including one after the policies suite. In the first, dirty/admitted file bytes
+were exactly 9,764,864 below a 9,804,186-byte threshold, with zero additional
+accepted bytes or lower drain attempts. This does not explain or fix the original
+failure; it remains open pending the complete campaign context.
+
 Campaign `QueueCache-Campaign-20261025-134513-8fabb9dbe61e44cbac42f6b0f6092ffe`,
 pressure child `20261025-134703-32780205d17844d3b2acd79793fae664`;
 failure at 13:47:06 UTC on October 25. The exact worker reply/error, status,

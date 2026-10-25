@@ -309,8 +309,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     ?? throw new InvalidDataException("Missing comparison target.");
                 storage.Write("restoration.json", new { Required = ComparisonDrain.IsSuite(options.Suite), Reason = ComparisonDrain.IsSuite(options.Suite)
                     ? "Provider pause/resume journal; independent restoration after an owned worker failure."
-                    : options.DurableCheckpoint
-                        ? "QueueCache checkpoint variant: flushes the filesystem and cache; no configuration or hooks are changed."
+                    : options.DurableCheckpoint || options.WriteThroughGeneration2
+                        ? "QueueCache-only durability variant: optional checkpoint and read-only write-through evidence; no configuration or hooks are changed."
                         : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
             else if (IsSystemSuite(options.Suite))
@@ -418,7 +418,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
                             Provider = options.Provider, PrimoCli = options.PrimoCli, BudgetMiB = options.BudgetMiB,
-                            DurableCheckpoint = options.DurableCheckpoint,
+                            DurableCheckpoint = options.DurableCheckpoint, WriteThroughGeneration2 = options.WriteThroughGeneration2,
                             OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))

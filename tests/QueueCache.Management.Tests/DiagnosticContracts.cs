@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 190, "plan 190 retains exact high-watermark checkpoint evidence before restoration (#30)");
+        Check(VerificationPlan.Version == 191, "plan 191 adds ordered direct-fallback checks and witnessed write-through cut oracles");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -63,6 +63,27 @@ internal static class DiagnosticContracts
             "power-cut repetitions keep distinct target directories; verification uses its immutable oracle directory");
         var durableOracle = new DurabilityOracle(3, 42, "W:\\owned", 1, 17,
             DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(1), 0.1, "QueueCache fixture") { DurableCheckpoint = true };
+        var flaggedOracle = durableOracle with { SchemaVersion = 5, WriteThroughGeneration2 = true,
+            OrderingMode = 2, WriteThroughRequestsObserved = 1 };
+        DurabilityOracleContract.Validate(durableOracle);
+        DurabilityOracleContract.Validate(flaggedOracle);
+        DurabilityOracleContract.Validate(flaggedOracle with { SchemaVersion = 4, DurableCheckpoint = false });
+        Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { WriteThroughRequestsObserved = null }));
+        Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { WriteThroughRequestsObserved = 0 }));
+        Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { OrderingMode = 0 }));
+        Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { SchemaVersion = 3 }));
+        Reject(() => DurabilityOracleContract.Validate(durableOracle with { OrderingMode = 2 }));
+        VerificationPlan.Validate(new("W:", "compare-durability-write", Product: "QueueCache fixture", WriteThroughGeneration2: true));
+        foreach (var bad in new[]
+        {
+            new VerificationOptions("W:", "compare-durability-write", Product: "fixture", WriteThroughGeneration2: true),
+            new VerificationOptions("W:", "compare-durability-churn", Product: "QueueCache fixture", WriteThroughGeneration2: true),
+            new VerificationOptions("W:", "quick", WriteThroughGeneration2: true)
+        })
+        {
+            try { VerificationPlan.Validate(bad); throw new Exception("Invalid flagged-write option accepted."); }
+            catch (ArgumentException) { }
+        }
         var exactSectors = new SectorCounts(256, 256, 0, 0, 0);
         var durableResult = new DurabilityResult(DateTimeOffset.UnixEpoch.AddMinutes(2), exactSectors, exactSectors, 17, 17, 0, 0, 0);
         DurabilityCheckpointEvidence.Validate(durableOracle, durableResult);
@@ -89,11 +110,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v191", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v191"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -143,6 +164,14 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter with { FlushOrder = null }, pressureBefore, pressureAfter));
         Reject(() => FlushOrderScenario.ValidateCapacity(orderBefore, orderAfter, pressureBefore,
             pressureAfter with { LastError = unchecked((int)0xC0000185) }));
+        var directAfter = orderBefore with { Attribution = orderBefore.Attribution! with
+            { QuotaWriteBarriers = 1, LowerWriteAttempts = 2, LowerFlushAttempts = 2 } };
+        FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter, pressureBefore);
+        Reject(() => FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter with
+            { Attribution = directAfter.Attribution! with { QuotaWriteBarriers = 0 } }, pressureBefore));
+        Reject(() => FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter with
+            { Attribution = directAfter.Attribution! with { LowerFlushAttempts = 1 } }, pressureBefore));
+        Reject(() => FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter, faultState));
         var wtBefore = orderBefore with { FlushOrder = new(2, 1, 1, 0, 0, 0, 0, 0, 0) };
         var wtAfter = wtBefore with { WriteThroughWrites = 1, FlushOrder = new(2, 2, 1, 1, 0, 0, 0, 0, 0) };
         FlushOrderScenario.ValidateWriteThrough(wtBefore, wtAfter, sealedPredecessor: false);
