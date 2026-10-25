@@ -153,6 +153,12 @@ filesystem metadata. See [#28](https://github.com/devedse/QueueCache/issues/28) 
 qualification and measured scope. General automatic checkpoint retention and
 background saving without pausing writes remain separate features.
 
+Reuse reduces logical payload writes, but all saves still read and verify the
+whole image. A short VM check of a small change to half-filled 1 GiB images took
+21–22% less time; mostly empty images showed no consistent time saving. Image
+contents and host storage affect the benefit. These are limited observations,
+not a promised save rate; see the [measurements](PERFORMANCE.md#checkpoint-reuse-28).
+
 Supported activation scope is GPT with one unencrypted NTFS data partition and
 optional Microsoft reserved partitions, standalone VHDX, 512/4096-byte sectors,
 and local NTFS image/checkpoint hosts. Reparse, compressed/encrypted files,

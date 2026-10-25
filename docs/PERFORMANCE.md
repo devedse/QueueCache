@@ -21,6 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
+| Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
 | Large RAM-disk writes | **No speedup available on this VM**: four writers ≤ +5% over one; queued writes already exceed user-mode copy rates into cold memory. Split writes (September) and streaming stores (plan 120) both rejected. | Different hardware with a measured gap between `ram-write-reference` disk writes and its memory-copy rows. |
@@ -117,6 +118,66 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="checkpoint-reuse-28"></a>**Changed-region checkpoints (#28, October 24–25).**
+The save freezes RAM, compares SHA-256 fingerprints per MiB, writes changed runs
+into allocated payload of an older owned VHDX without mounting it read-write,
+and verifies the entire result through a read-only Windows VHDX view. Sparse
+regions must be unchanged before reuse; a change needing allocation, invalid hints
+or unsupported layout selects a new complete save. Current/original containers
+are protected; explicit generated-checkpoint provenance excludes committed user
+exports even when their filenames resemble automatic checkpoints.
+
+Short same-session observations, one fixture per type and size, Direct RAM access:
+
+| Plan / image host | Image | Last warm full save s | Small-change reuse s | Reuse payload / full logical MiB |
+|---|---|---:|---:|---:|
+| 180, NTFS W: lab VHDX (backing Q: paused) | 128 MiB dynamic / 512-byte sectors | 1.077 | 1.208 | 11 / 128 |
+| 180, same | 128 MiB fixed / 4096-byte sectors | 1.139 | 1.050 | 11 / 128 |
+| 181, direct NTFS Q:, its cache paused | 1024 MiB dynamic / 512-byte sectors | 5.947 | 7.461 | 9 / 1024 |
+| 181, same | 1024 MiB fixed / 4096-byte sectors | 5.820 | 5.866 | 9 / 1024 |
+| 182, direct NTFS Q:, its cache paused; 512 MiB existing data | 1024 MiB dynamic / 512-byte sectors | 9.613 | 7.519 | 9 / 1024 |
+| 182, same | 1024 MiB fixed / 4096-byte sectors | 9.972 | 7.903 | 9 / 1024 |
+
+Plans 180/181 contained only a 4 MiB payload file and a 1 MiB guard before reuse.
+The small change rewrites that payload with one changed byte. Logical writes fell
+91.4% / 99.1%, with 8192 header bytes, but full logical read-back remains necessary
+and sparse-region preflight adds source reads/hashing. Native full-copy logical
+bytes include zero regions that the VHDX provider can leave unallocated; physical
+host writes were not measured. A later corrupt-hint full fallback is a separate
+correctness check: in the dynamic fixture it follows 80 MiB growth, so its timing
+must not be substituted for the earlier warm full-save comparison.
+
+Plan 182 additionally seeded 512 MiB of deterministic nonzero existing data in
+each image. Reuse reduced elapsed time by 21.78% (dynamic) and 20.75% (fixed)
+against the preceding warm complete save, while still writing only 9 MiB of
+logical payload plus 8192 header bytes. Verification read 1,073,776,640 and
+1,073,790,976 logical bytes respectively, including the full 1 GiB image. Reloads
+matched the populated file's recorded SHA-256 as well as payload and guard bytes.
+All nine checks passed, restoration completed and owned workloads were removed;
+worker 258.8 s, total run about 261 s.
+
+Keep the optimization for eligible candidates, with a conditional benefit claim.
+These are single observations per fixture, not a repeated performance acceptance
+matrix or a prediction for large real disks. The two image sizes used different
+hosts. All three runs passed their nine correctness checks with restoration and
+full-read counters. Mostly empty images showed no consistent time benefit; a live
+crash during checkpoint commit remains an unrun qualification case.
+
+Backend 0.4.840.1, filter 0.4.839.1, RAM provider 0.4.840.1; the filter source was
+unchanged. Plan 180 used controller 0.4.840.1; plan 181 controller 0.4.841.1 with
+unchanged product code; plan 182 used controller 0.4.842.1, also with unchanged
+product code. Loaded hashes matched their respective signed packages.
+Verifier off, more than 15 minutes since restart, Steam/Everything/tray closed,
+Everything service stopped, last-access updates disabled, Defender/Search disabled
+and WdFilter absent. Exact runs:
+`QueueCache-Campaign-20261024-193633-267d9c1dcbe24a84b402ceb342e73c73`,
+`QueueCache-Verify-20261024-194714-d25ab524e7ea40248f0e19e75c264316` and
+`QueueCache-Verify-20261025-000011-ed9d80275808461ab30bfab008f8d87b`.
+Evidence archive SHA-256:
+`E773923E5111AB01974CD067B7F6BFD78C39BF335023594B7466FF89766EB8ED`,
+`942EDA082A726BA42DC69C60370F009039948C73CD172FCD67800893180FEBBC` and
+`A217DAC0D691D888A2640208FA1B64817B393AA4B549CE1415019F9E6C785D84`.
 
 <a id="reads-19"></a>**Page-ins of file data are kept (#19, plan 173, October 23).** Files read through
 Windows' file cache (Explorer copies, most programs) and mapped files reach the volume

@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): NTFS stayed clean in six power cuts on 0.4.810.1; write ordering is not yet guaranteed |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off ordering prototype passed six focused checks and one witnessed partial-drain cut, with intact durable guards. Broader crash/lifecycle qualification and performance remain open; ordinary Fast defaults are unchanged |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
@@ -28,7 +28,6 @@ still to do. Open items link to their details.
 | [A request only partly in RAM is read entirely from disk](#a-request-only-partly-in-ram-is-read-entirely-from-disk-performance) | ❌ | Not planned (under 1% of disk traffic) |
 | [An older build cannot be installed over a newer one](#an-older-build-cannot-be-installed-over-a-newer-one) | ❌ | By design (no migration) |
 | [Desktop telemetry is partial](#desktop-telemetry-is-partial) | ❌ | Open |
-| [Faster image-in-RAM saves](MANAGED_DISKS.md#saving-at-shutdown) | ❌ | [#28](https://github.com/devedse/QueueCache/issues/28), split from #22: direct updates of eligible older checkpoints and full read-back verification are implemented; Windows qualification and benefit measurement remain open. The rejected read-write attach approach is not used |
 | [Hibernate, Fast Startup and surprise removal](#not-yet-proven) | ❌ | Not in the maintained matrix; sleep (S3) passed on one real PC; the test VM's firmware offers no hibernation |
 | [Cached system disk (C:): full boot, paging and hibernation acceptance](#not-yet-proven) | ❌ | Restart soaks and a crash dump on the VM (0.4.810.1); restart, sleep and start-with-Windows checks on one real PC |
 | [Strict and foreground cost of the new drain default](#not-yet-proven) | ❌ | Not measured in isolation |
@@ -43,6 +42,7 @@ still to do. Open items link to their details.
 | A saved cache, or a RAM disk that starts with Windows, stayed off after a restart when RAM was briefly short ([#12](https://github.com/devedse/QueueCache/issues/12)) | ✅ | 0.4.803.1 (retried every 15 s for 10 minutes; the app and `qcache volume list` show a cache waiting for RAM or not restored) |
 | A large image in RAM on a slow disk was not saved at shutdown: the service stopped trying after 110 s, without telling anyone ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | 0.4.803.1 (no time limit while the save makes progress; the app shows the expected time before and the outcome after the restart); 0.4.825.1: Windows waits at most 1 hour |
 | Detailed Windows shutdown messages required a manual policy edit; VHDX creation did not recommend them ([#22](https://github.com/devedse/QueueCache/issues/22)) | ✅ | Settings and VHDX creation expose the actual Windows policy, refresh external edits, report suppression/errors and explain the limits. Dynamic percentages were investigated but are not a supported feature; faster saves moved to #28 |
+| Saving a small change always copied the whole image to a new checkpoint ([#28](https://github.com/devedse/QueueCache/issues/28), split from #22) | ✅ | 0.4.840.1: eligible older checkpoints receive direct payload updates, with full verification, safe fallback and export protection. Nine Windows checks passed. Half-filled 1 GiB images saved 21–22% elapsed time in a short observation; mostly empty images had no consistent time gain. [Measured scope](PERFORMANCE.md#checkpoint-reuse-28). A live crash during commit remains untested |
 | Every Windows shutdown waited for the virtual-disk service (Service Control Manager event 7043), and image-in-RAM saves at shutdown ran only in the short final phase: the service answered the wrong control code for Windows' early shutdown notice | ✅ | 0.4.796.1 ([#23](https://github.com/devedse/QueueCache/issues/23)) |
 | QueueCache's System log entry for a removed volume (`qcachelab` event 157) had no text, and was written for every removed volume, cached or not | ✅ | 0.4.796.1: only cached volumes; event 1 (writes were pending, with the byte count) or 2 (nothing pending), with text |
 | A refused image or evidence folder's error did not say how to fix it | ✅ | 0.4.796.1 (names the `icacls` command; never for a drive root) |
@@ -349,6 +349,36 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #28, plan 182, populated images (2026-10-25):**
+`QueueCache-Verify-20261025-000011-ed9d80275808461ab30bfab008f8d87b`
+completed all nine checks on direct NTFS Q: with its cache paused. Controller
+0.4.842.1 used the unchanged 0.4.840.1 save backend, loaded filter 0.4.839.1 and
+RAM provider 0.4.840.1; actual hashes were checked against signed packages.
+Both 1 GiB fixtures included 512 MiB of existing nonzero data, whose SHA-256 was
+retained and matched after committed reload. Each small-change reuse wrote 9 MiB
+plus 8192 header bytes and read the full logical image, with protected current,
+original and user-export hashes unchanged. Sparse-growth and invalid-map fallbacks
+passed. Worker 258.8 s; restoration completed, fixtures removed and the original
+Q: cache resumed. Verifier off; timing findings are in
+[performance](PERFORMANCE.md#checkpoint-reuse-28). Exact archive SHA-256:
+`A217DAC0D691D888A2640208FA1B64817B393AA4B549CE1415019F9E6C785D84`.
+
+**Issue #28, plan 180, final save backend 0.4.840.1 (2026-10-24):**
+`QueueCache-Campaign-20261024-193633-267d9c1dcbe24a84b402ceb342e73c73`
+passed all nine checks, restoration RESTORED, terminal event validated. This adds
+committed-export protection to the seven checks below: an export with an
+automatic-looking name remains byte-identical after pointer rotation and two
+later automatic saves. Both 128 MiB fixtures wrote 11 MiB of reuse payload plus
+8192 header bytes and read back the entire logical image. The loaded filter was
+0.4.839.1 and RAM provider 0.4.840.1, with hashes matched to their signed packages;
+the filter source was unchanged. Verifier was off. Campaign 48 s, worker 39.1 s.
+Exact archive SHA-256:
+`E773923E5111AB01974CD067B7F6BFD78C39BF335023594B7466FF89766EB8ED`.
+The plan-181 1 GiB follow-up also passed all nine checks; its mostly empty fixtures
+and times are recorded separately in [performance](PERFORMANCE.md#checkpoint-reuse-28).
+Host tests cover interrupted candidate writes and recovery metadata, invalid
+layouts and hints; a live VM crash during checkpoint commit has not been run.
 
 **Issue #28, plan 179, 0.4.839.1 (2026-10-24):**
 `QueueCache-Campaign-20261024-192341-fc96567ee45c40d18d5530321d8866d7`
