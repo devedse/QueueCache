@@ -19,6 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off original prototype passed nine checks and three follow-up cuts; plan 188 passed eleven targeted checks per ordering mode (22 total). Crash qualification of mode 2 and broader scope remain open; ordinary Fast defaults are unchanged |
+| [Final release campaign stopped at the high-watermark pressure check](#high-watermark-pressure-check-stopped-the-final-release-campaign) | ❌ | Unresolved verification failure, [#30](https://github.com/devedse/QueueCache/issues/30); 3/11 phases completed, restoration succeeded; no release qualification |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
 | [Strict: scattered writes run at the disk's speed](#strict-scattered-writes-run-at-the-disks-speed-by-design) | ❌ | By design since 0.4.825.1 ([#16](https://github.com/devedse/QueueCache/issues/16): a flush no longer stops writing for minutes) |
@@ -108,6 +109,11 @@ The three earlier crash checks apply to mode 1; mode 2 has no crash qualificatio
 The lower path still uses explicit flushes: the lab W: VHDX reports
 no write-through support, although its Q: host reports support. Both report flush
 support; a shared bus type is insufficient to select a FUA optimization.
+The complete 18-case plan-189 cost comparison cut write-through-pair durable time
+by 42–54%, with no established improvement to the explicit file-flush workload.
+Both modes remain default off. The final release campaign was incomplete at a
+mode-zero pressure check; see the separate issue below and
+[exact cost results](PERFORMANCE.md#fast-ordering-13-write-through).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after experimental mode selection. The guard now serializes selection and
@@ -120,6 +126,43 @@ Strict mode and explicit QueueCache Flush/Pause/Remove keep their disk boundary;
 an ordinary application flush in Fast mode does not provide that boundary.
 FAT32/exFAT have no journal and cannot inherit an NTFS-specific safety claim.
 A RAM disk is empty after a crash, and an image in RAM is back at its last save.
+
+### High-watermark pressure check stopped the final release campaign
+
+On native 0.4.851.1 with controller 0.4.852.1, plan 189's `release-performance`
+campaign stopped at `trigger/high-watermark: lower I/O started below the configured
+high watermark`. Experimental ordering was off. Partial-read accounting,
+paging coherence and policies completed; deferred-age and idle triggers passed
+inside pressure. The campaign completed 3/11 phases, and restoration succeeded.
+It is not a release pass. No automatic retry, repair or rollback was used.
+
+The assertion combines an already-crossed dirty-byte threshold, changed drained
+bytes and changed lower drain attempts. It does not record which condition fired;
+its restoration telemetry starts after the worker restores its state. Additional
+NTFS metadata crossing the fixture's narrow margin is plausible but unproven;
+a driver trigger problem remains possible. Capture the exact before/after state
+and attempts in the maintained standalone `pressure` suite before changing either
+the fixture or policy. Keep the acceptance conditions strict. A changed workload
+requires a new plan/immutable case contract. Track diagnosis and a complete final
+release run in [#30](https://github.com/devedse/QueueCache/issues/30).
+
+Campaign `QueueCache-Campaign-20261025-134513-8fabb9dbe61e44cbac42f6b0f6092ffe`,
+pressure child `20261025-134703-32780205d17844d3b2acd79793fae664`;
+failure at 13:47:06 UTC on October 25. The exact worker reply/error, status,
+results, summary, log, restoration trace and fixture are retained separately from
+the successful 22 ordering checks and 18-case cost matrix. No evidence establishes
+that this failure was caused by the mode-2 change.
+
+The exact Windows evidence archive contains 1,124 files, including the three
+failed-pressure fixture files and restoration receipt; SHA-256
+`D36B4AE59160B595FB578B9CA1FAD3B6A18621FAD2608810271F615CDD813D20`.
+Every entry was independently hash-checked after export before deleting only
+this run's fixtures and guest staging. External Ceph/guest observations remain
+separate, with a host evidence hash manifest. Q: was restored to its original
+2 GiB Fast/Idle 1024 KiB × 4 profile, W: unconfigured, ordering/Verifier off,
+Everything/service, Steam and tray running, and the existing R: definition stopped.
+No snapshot or crash test was made in this iteration. VM space after cleanup:
+C: 59.3 GB, Q: 183.5 GB, V: 8.56 GB, W: 8.51 GB free (decimal).
 
 ### The driver is test-signed
 

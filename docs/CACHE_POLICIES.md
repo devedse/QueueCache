@@ -335,6 +335,13 @@ including held and failed post-write-through successors, retained explicit
 predecessors, RAM admission, TRIM, capacity and lifecycle (22 total). The isolated
 write-through sealed two boundaries in mode 1 versus one in mode 2. Mode 2 remains
 an unqualified experiment; the earlier cuts apply to mode 1.
+The complete plan-189 comparison reduced total durable time by 42–54% for 256
+ordinary/write-through pairs, with about half as many lower writes and flushes.
+Explicit file-flush boundaries were unchanged and had no established speedup.
+Keep mode 2 as an independently selectable lab experiment, off by default;
+the final release campaign stopped at an unresolved mode-zero pressure check
+([#30](https://github.com/devedse/QueueCache/issues/30)). Neither the timing result
+nor the focused checks establish release or crash qualification.
 A short mode-0/mode-1 same-build screen measured about 5× the total durable time for 256
 flush-heavy files; sequential pairs disagreed and the read timing control was
 unqualified ([cost and limits](PERFORMANCE.md#fast-ordering-13-cost)). The lab
