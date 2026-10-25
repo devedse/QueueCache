@@ -821,7 +821,11 @@ disabled Defender/Search; their separate storage qualifications still apply.
 disk or cached volume the same way, without QueueCache's controls, hooks or
 telemetry, so QueueCache and its competitors get identical treatment. The focused
 `compare-drain` suite below uses explicit provider controls for drainage and read
-verification. Each needs
+verification. The opt-in QueueCache-only `--durable-checkpoint` variant of
+`compare-durability-write` also flushes the filesystem and QueueCache before its
+ready marker. Its schema-3 post-cut oracle requires exact bytes and a clean scan;
+this stronger boundary is separate from the identical cross-product workload.
+Each needs
 `--product "<name> <version> <mode>"`. QueueCache's drivers must be loaded
 exactly when the product is QueueCache, so one product never runs on top of
 another. Every run records the loaded third-party drivers, the storage filter

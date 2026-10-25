@@ -199,7 +199,9 @@ ones in use:
 
 **Comparisons with other products** (plan 121). The `compare-*` suites measure any RAM
 disk or cached volume the same way, without QueueCache's own controls, hooks or
-telemetry. Their workloads, provider options and rules are in
+telemetry. The opt-in QueueCache-only `--durable-checkpoint` variant additionally
+flushes the filesystem and QueueCache; it is a durability check, not an identical
+cross-product comparison. Their workloads, provider options and rules are in
 [comparison: running a comparison](COMPARISON.md#running-a-comparison).
 
 DiskSpd: Microsoft DiskSpd (`amd64\diskspd.exe`) or CrystalDiskMark's bundled

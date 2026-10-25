@@ -308,7 +308,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     ?? throw new InvalidDataException("Missing comparison target.");
                 storage.Write("restoration.json", new { Required = ComparisonDrain.IsSuite(options.Suite), Reason = ComparisonDrain.IsSuite(options.Suite)
                     ? "Provider pause/resume journal; independent restoration after an owned worker failure."
-                    : "External comparison: no QueueCache configuration, hooks or driver access." });
+                    : options.DurableCheckpoint
+                        ? "QueueCache checkpoint variant: flushes the filesystem and cache; no configuration or hooks are changed."
+                        : "External comparison: no QueueCache configuration, hooks or driver access." });
             }
             else if (IsSystemSuite(options.Suite))
             {
