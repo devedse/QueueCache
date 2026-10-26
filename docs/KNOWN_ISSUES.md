@@ -127,9 +127,14 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   also slowed the application itself (2.5× and 43× in plan 194) because every
   write woke all drain threads, which searched the whole backlog under the cache
   lock ([cause and fix](PERFORMANCE.md#fast-ordering-13-fix)).
-- **Lower path:** explicit flushes. The lab W: VHDX reports no write-through
-  support, although its Q: host reports support; both report flush support, and a
-  shared bus type is insufficient to select a FUA optimization.
+- **Lower path:** ordinary ordering uses explicit flushes. The lab W: VHDX
+  reports no write-through support, although Q: and the temporary virtual SCSI
+  disk T: report support. Lab mode 2 (#31) requires that report and uses forced
+  writes for eligible small groups. Its complete plan-203 cost comparison
+  shortened durable time 8.8% for files and 7.2% for write-through pairs, with
+  every pair improved and separated ranges ([B result](PERFORMANCE.md#fast-ordering-31-fua)).
+  Reported support and live byte checks do not qualify crash persistence;
+  shared bus type alone is insufficient to select the optimization.
 - **Releases:** the plan-189 release attempt stopped at a mode-zero pressure
   check (see the separate issue below); the plan-192 release campaign then
   completed with ordering off

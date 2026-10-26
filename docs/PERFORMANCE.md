@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off. It now has one mode (the former lab mode 3), which no longer slows applications.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,70 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-31-fua"></a>**B: force small groups instead of flushing them (#31, plans 200–203, October 26).**
+A modest improvement on the temporary virtual SCSI disk, rather than removal of
+ordering's write-out cost. Lab mode 2 writes every part of an eligible sealed
+group of at most 1 MiB with forced unit access (`SL_WRITE_THROUGH`) and advances
+only after all those writes complete. Groups that already sent an ordinary write
+or a TRIM still flush. Selection requires the actual lower device to report
+write-through support; W:'s VHDX does not, so this comparison used a temporary
+16 GiB Proxmox disk, NTFS T:, with the same pool/options as Q:.
+
+Same loaded driver in all arms, three repetitions with each arm once in each
+position. Times are medians, with ranges in brackets. Into the cache ends when
+the last application write returns; on disk also includes closing the handles,
+flushing the filesystem and the explicit cache checkpoint.
+
+| Workload | Into the cache: off / on / B | On disk, off | On disk, on | On disk, B |
+|---|---|---:|---:|---:|
+| One 1.5 GiB file, fits the cache | 0.196 / 0.180 / 0.157 s (overlapping ranges) | 8.53 s [8.13–8.60] | 8.21 s [8.14–8.29] | 8.31 s [8.21–8.36] |
+| 25,600 new 4 KiB files, each flushed | 7.23 / 7.64 / 7.43 s | 7.28 s [7.22–7.28] | 26.78 s [25.78–28.15] | 24.42 s [24.28–24.50] |
+| 25,600 ordinary + write-through 4 KiB pairs | 0.218 / 0.226 / 0.225 s (overlapping ranges) | 1.09 s [0.96–1.12] | 24.64 s [24.23–25.93] | 22.86 s [22.29–23.86] |
+
+Relative to ordinary ordering, B shortened durable time **5.26%, 8.52%, 13.73%**
+for files and **14.04%, 3.15%, 5.67%** for pairs (median reductions 8.80% and
+7.23%). Every paired repetition improved and the ranges separate. The sequential
+control changed +2.07%, −0.96%, +1.75% in elapsed time, with overlapping ranges
+and no repeated 3% loss. No application-time speedup is established. B still
+took 3.35 times off's durable time for files and 21.07 times for pairs (ratios of
+medians).
+
+The new counters answer why the gain is limited. Ordinary ordering used 25,623
+group flushes for files and 25,603 for pairs. B used only 12–17 and 0–1, with
+about 25,600 groups instead completed by forced writes. But the measured ordinary
+group-flush calls summed to only **1.45–1.50 s** for files and **1.24–1.26 s** for
+pairs, about 5–6% of their total durable time. Lower-write time remained large:
+41.8–45.7 thread-seconds for files and 22.6–24.3 for pairs, versus 41.4–42.0 and
+22.1–23.7 with B. These are summed request durations across workers, so they can
+exceed wall time and cannot be added as disjoint portions. Eliminating the
+separate flush cannot eliminate the time spent waiting for each forced write.
+
+Setup: native release 0.4.875.1 (`88331c0`), loaded filter
+`73281443FE5D00E5A0536D6F55C7CDFE3E34F012F364233D3E357196D049B4E0` and RAM driver
+`06723ACB5DC9E2B7BC1F5FD04217951903A3B4068D2038A6F345D417327030F5`, hashes
+verified. Controller published from `77c315c` (plan 203), Fast 2 GiB, Eager
+1024 KiB × 4, timing on in every arm, normal priority, Verifier off, Windows up
+35 minutes, last-access updates off; Everything/service, Steam and the tray
+closed, Defender/Search services stopped and disabled, WdFilter absent. The run
+`QueueCache-Verify-20261026-181141-62dc3314a87946559d9ed217b1030867`
+completed 27/27 inner cases, full telemetry coverage and every unbuffered
+post-release byte check, with restoration successful. Six checkpoints required
+two attempts; none needed a third. Plan 203 flushes filesystem metadata before
+each of the same three permitted cache flushes; the earlier plan-201 run stopped
+at its last checkpoint and remains a separate incomplete matrix. Backend
+monitoring covered the full rerun: no new health warning or overlapping backup
+or restore task, serving-pool available space at least 247.11 GB. Other guests
+continued I/O; three guests' counters were unavailable. The completed review
+bundle was independently hash-verified (SHA-256
+`942975F64D080B604FBAE127A78E63B83AD5D135A9CA4CC1458E3C533B4D96E6`).
+
+Under Verifier, ordinary ordering passed 14/14 checks on W: and B passed its
+11 non-TRIM checks on T:. T: refused file-level TRIM; W: supports it but reports
+no FUA support. There was no power cut with this variant, and reported FUA
+support is not end-to-end persistence qualification. The ordinary setting stays
+off by default; B remains an explicit lab control.
+
 
 <a id="fast-ordering-13-sustained"></a>**Does ordering's slower write-out matter in longer use? (#13, plan 197, October 26).**
 Only for nonstop flush-heavy writing. An application that flushes every small
