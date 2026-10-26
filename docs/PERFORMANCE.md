@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off. It now has one mode (the former lab mode 3), which no longer slows applications.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. [Single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, measuring whether the to-disk cost matters in real use (whether the cache fills), fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. It now has one mode (the former lab mode 3), which no longer slows applications.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,52 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-13-sustained"></a>**Does ordering's slower write-out matter in longer use? (#13, plan 197, October 26).**
+Only for nonstop flush-heavy writing. An application that flushes every small
+file for five minutes fills the 2 GiB cache after about 1.5 minutes with ordering
+on, and is then held to the rate at which bookmarks reach the disk: about 230
+files/s, against about 2,000 with ordering off. Windows' own `tar` and `robocopy`
+on a 16,000-file, 1,328 MiB tree showed no difference: they do not flush per
+file, and NTFS created only 22–189 bookmarks of its own per run. Release 0.4.868.1,
+same build in both arms, two repetitions with alternating order.
+
+| Workload | Off | On |
+|---|---:|---:|
+| Flushed 4 KiB files written in 5 minutes | 605,234 / 837,553 | 228,586 / 230,162 |
+| Files/s, first 30 s | 2,260 / 3,262 | 2,413 / 2,700 |
+| Files/s, last minute | 1,841 / 2,191 | 218 / 243 |
+| Cache 90% full after | never (peak 5 / 15 MiB) | 85 / 77 s |
+| Extra time after the 5 minutes until everything is on disk | 1.2 / 1.6 s | 463 / 534 s |
+| `tar` extract: into the cache / on disk | 3.23 / 3.69 s; 10.4 / 9.6 s | 3.29 / 3.57 s; 10.6 / 11.1 s |
+| `robocopy` copy: into the cache / on disk | 5.43 / 5.76 s; 10.3 / 11.1 s | 5.50 / 5.90 s; 10.9 / 11.2 s |
+| Bookmarks: files / `tar` / `robocopy` | 0 (off does not count them) | 228,780 and 230,371 / 189 and 172 / 22 and 27 |
+
+Values are repetition 1 / repetition 2; repetition 1 ran off first, repetition 2
+on first. With ordering on, the unwritten backlog grows from the start because the
+application flushes faster than bookmarks reach the disk; the first wait for cache
+space came at 93 / 86 s, and 147,791 / 158,739 writes waited in total. The off arm
+varied between repetitions (605,234 against 837,553 files) without any backlog;
+no storage-backend monitor ran. An earlier run of the same suite on 0.4.865.1
+measured 801,914 files off and 212,868 on in its first repetition before it stopped
+at a driver race (see [known issues](KNOWN_ISSUES.md#correctness-qualification));
+its other cases are not used.
+
+Setup: published release 0.4.868.1 (`be1ad24`, the race fix), loaded filter
+`94044F378A60F96E5178393CC362C05F001D6542FE9C4EA85585034A36FE9BE7` and RAM driver
+`97BD8FFB0E650FBD97B02BCB537F188F5BA96544CBD93E0C9206CD4379BB5D92` (hashes
+checked), installed controller from the same release. Disposable NTFS W: (8 GiB
+VHDX on Ceph-backed storage), backing Q: paused by the campaign, Fast 2 GiB,
+Eager 1024 KiB × 4, lock timing on in both arms, Verifier off, Windows up 20
+minutes, normal priority, Everything/service, Steam and the tray closed, Defender
+and Windows Search not running. Campaign
+`QueueCache-Campaign-20261026-132758-661ec8bb27664852967ccd1929264dd7`
+completed 1/1 phases and 1/1 outer cases in 2,739 s; all 12 inner cases passed
+their unbuffered byte checks (every tree file; every 64th flushed file and the
+last thousand); restoration `RESTORED` and `verify-completion` passed. Q:'s
+profile, the applications and the loaded driver were restored; W: is unconfigured
+with ordering off. Private evidence: 956 hash-verified files, archive SHA-256
+`98D1CE2F7AAF80421BB7D5990E54D4DB24EFED29DF373318DCD57EF239114B9B`.
 
 <a id="fast-ordering-13-single"></a>**One ordering mode, off versus on (#13, plan 196, October 26).**
 Plan 196 removed modes 1 and 2; ordering on is now the former lab mode 3. On

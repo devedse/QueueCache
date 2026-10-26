@@ -37,6 +37,7 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
+| Experimental ordering only: a TRIM arriving while ordering was selected on a disabled cache could leave drainer zero's group flush in flight across a cache release, which then reported the draining group past the open group (found by plan 197) | ✅ | 0.4.868.1 (release waits for the group flush; a finished group flush never moves past the open group). No lab hook forces the race; the sustained suite that hit it passed afterwards |
 | Strict stopped all writing for 100 s or more after a burst of random writes: every flush (NTFS sends them on its own) waited for the whole backlog ([#16](https://github.com/devedse/QueueCache/issues/16)) | ✅ | 0.4.825.1 (backlog limited to about 2 s of write-out; 0.4.810.1 sent write-through writes direct) |
 | Files read through Windows' file cache (Explorer copies, most programs) and mapped files never entered the read cache ([#19](https://github.com/devedse/QueueCache/issues/19)) | ✅ | 0.4.810.1 (page-ins of file data are kept from a driver-owned copy of the disk data; a 1 GiB re-read after Windows' standby memory is purged: 275 → 2,254 MiB/s) |
 | Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
@@ -111,7 +112,12 @@ drain thread for each write, were removed.
   it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600 write-through
   pairs, all ranges overlapping). Each bookmark needs its own disk flush, so
   reaching the disk took about 7× as long for the files and 54× for the pairs
-  ([single-mode result](PERFORMANCE.md#fast-ordering-13-single)). Mode 2 had
+  ([single-mode result](PERFORMANCE.md#fast-ordering-13-single)). That matters
+  only for nonstop flush-heavy writing: flushing every small file for five
+  minutes filled the 2 GiB cache after about 1.5 minutes, after which the
+  application ran at about 230 files/s instead of about 2,000. Windows' `tar` and
+  `robocopy` on a 16,000-file tree showed no difference
+  ([sustained result](PERFORMANCE.md#fast-ordering-13-sustained)). Mode 2 had
   also slowed the application itself (2.5× and 43× in plan 194) because every
   write woke all drain threads, which searched the whole backlog under the cache
   lock ([cause and fix](PERFORMANCE.md#fast-ordering-13-fix)).
@@ -528,6 +534,26 @@ a full save instead of the required reuse. That evidence remains separate. Plan
 and older records without the marker cannot be consumed, even with a generated-looking
 filename. General retention, background saving and a crash during commit remain
 separate work.
+
+**Issue #13 group-flush race fix, plan 197 (2026-10-26):** the first
+`flush-order-sustained` run on 0.4.865.1
+(`QueueCache-Campaign-20261026-122516-3327e5c4920a4f229e9a23819720b6bf`) stopped
+after three of twelve cases when the diagnostics decoder rejected a draining group
+past the open group. Telemetry showed the cause: right after the tar case deleted
+its 16,000-file source tree, ordering was selected on the disabled cache, a TRIM
+sealed a group, drainer zero began its lower flush with the cache lock dropped,
+and the following cache release reset both group counters underneath it.
+Restoration succeeded. Release 0.4.868.1 (`be1ad24`; loaded filter
+`94044F378A60F96E5178393CC362C05F001D6542FE9C4EA85585034A36FE9BE7`, RAM driver
+`97BD8FFB0E650FBD97B02BCB537F188F5BA96544CBD93E0C9206CD4379BB5D92`) makes release
+wait for the group flush and bounds the frontier by the open group. Under Driver
+Verifier `0x209bb`, `QueueCache-Campaign-20261026-130618-1873a3d813454f61b4b59ee95eb778a8`
+passed all 13 ordering checks in 26 s. A second attempt stopped before any case
+because run 1's retained 1.3 GiB payload left 5.89 GiB free (6 GiB required); that
+payload was recorded with its SHA-256 and removed. The complete rerun then passed
+all twelve cases with Verifier off
+([result](PERFORMANCE.md#fast-ordering-13-sustained)). **Gap:** no lab hook holds a
+group flush, so the race is not forced deterministically.
 
 **Issue #13 single ordering mode, plan 196 (2026-10-26):** published release
 0.4.865.1 (`f9ce425`), with modes 1 and 2 removed, was installed and its loaded
