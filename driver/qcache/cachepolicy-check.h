@@ -48,6 +48,10 @@ constexpr bool PolicyChecks()
         !QcWriteWakes(false, false, 5, 4) || !QcWriteWakes(true, false, 4, 4) ||
         QcWriteWakes(true, false, 5, 4) || !QcWriteWakes(true, true, 5, 4))
         return false;
+    // Next group, skipped empty groups, and a barrier (4/4) or Release (1/1) during the flush.
+    if (QcNextFrontier(3, 3, 5) != 4 || QcNextFrontier(3, 5, 6) != 5 || QcNextFrontier(3, 6, 6) != 6 ||
+        QcNextFrontier(4, 4, 4) != 4 || QcNextFrontier(1, 1, 1) != 1)
+        return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, true) != 1000 ||

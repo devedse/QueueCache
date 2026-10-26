@@ -1172,7 +1172,7 @@ static void Drainer(PVOID context)
                 auto next = c->Head == NoSlot ? c->WriteEpoch : c->Slots[c->Head].Epoch;
                 for (const auto& fence : c->TrimFences)
                     if (fence.Ranges) next = min(next, fence.Epoch);
-                c->DrainEpoch = max(c->DrainEpoch + 1, next);
+                c->DrainEpoch = QcNextFrontier(c->DrainEpoch, next, c->WriteEpoch);
             }
             else
             {
@@ -1887,6 +1887,15 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         if (!NT_SUCCESS(status))
             return status;
         AcquireCache(c);
+        // Freeing resets the group counters. A TRIM can seal a group while the cache is
+        // disabled, so drainer zero may still be flushing it; let that finish first (plan 197).
+        while (c->EpochFlushInFlight && !c->Gone)
+        {
+            KeClearEvent(&c->Changed);
+            ReleaseCache(c);
+            KeWaitForSingleObject(&c->Changed, Executive, KernelMode, FALSE, nullptr);
+            AcquireCache(c);
+        }
         FreeSlots(c);
         Publish(c);
         ReleaseCache(c);

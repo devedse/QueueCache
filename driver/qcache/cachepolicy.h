@@ -126,6 +126,14 @@ constexpr bool QcWriteWakes(bool ordered, bool forced, ULONGLONG version, ULONGL
 {
     return !ordered || forced || version == frontier;
 }
+// After a successful group flush the frontier moves to the next group that still has
+// work, never past the open group: drainer zero drops the cache lock during that flush,
+// and a barrier or Release may meanwhile advance or reset both counters (plan 197).
+constexpr ULONGLONG QcNextFrontier(ULONGLONG frontier, ULONGLONG nextWork, ULONGLONG open)
+{
+    const auto next = frontier + 1 > nextWork ? frontier + 1 : nextWork;
+    return next < open ? next : open;
+}
 constexpr bool QcMayRegisterUsage(LONG flushOrderMode)
 {
     return flushOrderMode == 0;
