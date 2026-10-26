@@ -12,11 +12,11 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 14, WriteThroughCheckCount = 13;
+    public const int CheckCount = 14, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
-    /// checks with forced-unit-access groups, named flush-order-fua/.</summary>
+    /// checks except TRIM with forced-unit-access groups, named flush-order-fua/.</summary>
     public static void ValidateChecks(IReadOnlyList<CheckResult> checks, ulong mode = On)
     {
         var count = mode == On ? CheckCount : WriteThroughCheckCount;
@@ -223,48 +223,53 @@ public static class FlushOrderScenario
             checks.Add(new("flush-order/write-through-failed-boundary", "PASS",
                 "A failed post-write-through flush retained its later overwrite and stopped advancement; explicit Retry recovered the deliberate fault and bytes matched after release."));
 
-            Apply(target, device, mode);
-            device.Control(WriteCacheAction.LabTrimMode, value: 3);
-            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+            // The TRIM checks need file-level TRIM, which the lab VHDX supports. The write-through-capable
+            // disk mode 2 needs (a plain virtual SCSI disk) refuses it, so mode 2 runs without them (plan 201).
+            if (mode == On)
             {
-                file.Write(Offset, Pattern(6));
-                file.Flush();
-                var before = device.GetDiagnostics();
-                file.Trim(Offset, Block);
-                var after = device.GetDiagnostics();
-                RunStorage.AtomicJson(evidence + ".trim-before.json", before);
-                RunStorage.AtomicJson(evidence + ".trim-after.json", after);
-                if (after.FlushOrder!.TrimWaits <= before.FlushOrder!.TrimWaits || !GroupCompleted(before, after, mode))
-                    throw new IOException("TRIM did not exercise waiting for a sealed predecessor and its lower flush.");
-                file.Write(Offset, Pattern(7));
-                device.Control(WriteCacheAction.Flush);
+                Apply(target, device, mode);
+                device.Control(WriteCacheAction.LabTrimMode, value: 3);
+                using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+                {
+                    file.Write(Offset, Pattern(6));
+                    file.Flush();
+                    var before = device.GetDiagnostics();
+                    file.Trim(Offset, Block);
+                    var after = device.GetDiagnostics();
+                    RunStorage.AtomicJson(evidence + ".trim-before.json", before);
+                    RunStorage.AtomicJson(evidence + ".trim-after.json", after);
+                    if (after.FlushOrder!.TrimWaits <= before.FlushOrder!.TrimWaits || !GroupCompleted(before, after, mode))
+                        throw new IOException("TRIM did not exercise waiting for a sealed predecessor and its lower flush.");
+                    file.Write(Offset, Pattern(7));
+                    device.Control(WriteCacheAction.Flush);
+                }
+                Reset(device);
+                using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+                {
+                    AssertRead(file, Offset, Pattern(7));
+                    AssertRead(file, Offset + Block, Pattern(3));
+                }
+                checks.Add(new("flush-order/trim-predecessor-and-rewrite", "PASS",
+                    "TRIM waited for the sealed predecessor and its lower flush; a later rewrite and its untouched neighbor matched after release. Trimmed bytes were not assumed to be zero."));
+                Apply(target, device, mode);
+                device.Control(WriteCacheAction.LabTrimMode, value: 0);
+                using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+                {
+                    file.Write(Offset, Pattern(10));
+                    file.Flush();
+                    file.Trim(Offset, Block);
+                    file.Write(Offset, Pattern(11));
+                    device.Control(WriteCacheAction.Flush);
+                }
+                Reset(device);
+                using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
+                {
+                    AssertRead(file, Offset, Pattern(11));
+                    AssertRead(file, Offset + Block, Pattern(3));
+                }
+                checks.Add(new("flush-order/synchronous-trim", "PASS",
+                    "The conservative synchronous TRIM path reconciled the sealed predecessor; a later rewrite and untouched neighbor matched after release."));
             }
-            Reset(device);
-            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
-            {
-                AssertRead(file, Offset, Pattern(7));
-                AssertRead(file, Offset + Block, Pattern(3));
-            }
-            checks.Add(new("flush-order/trim-predecessor-and-rewrite", "PASS",
-                "TRIM waited for the sealed predecessor and its lower flush; a later rewrite and its untouched neighbor matched after release. Trimmed bytes were not assumed to be zero."));
-            Apply(target, device, mode);
-            device.Control(WriteCacheAction.LabTrimMode, value: 0);
-            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
-            {
-                file.Write(Offset, Pattern(10));
-                file.Flush();
-                file.Trim(Offset, Block);
-                file.Write(Offset, Pattern(11));
-                device.Control(WriteCacheAction.Flush);
-            }
-            Reset(device);
-            using (var file = new AlignedFile(path, Block, create: false, shareAll: true))
-            {
-                AssertRead(file, Offset, Pattern(11));
-                AssertRead(file, Offset + Block, Pattern(3));
-            }
-            checks.Add(new("flush-order/synchronous-trim", "PASS",
-                "The conservative synchronous TRIM path reconciled the sealed predecessor; a later rewrite and untouched neighbor matched after release."));
             Reset(device);
             var pressurePath = OrderingFaultScenarios.CreateOwned(workDirectory, "capacity.bin");
             using (var file = new AlignedFile(pressurePath, 64 * 1024, create: false, shareAll: true))

@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 200, "plan 200 adds lab mode 2 (forced-unit-access small groups, #31) suites");
+        Check(VerificationPlan.Version == 201, "plan 201: lab mode 2 runs the eleven non-TRIM driver checks");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -238,7 +238,7 @@ internal static class DiagnosticContracts
             var fuaCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3),
                 "experiment", "T:", FocusSuite: suite, PauseBackingCache: true));
             Check(fuaCampaign.Count == 1 && fuaCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-                fuaCampaign[0].ExpectedCases.SequenceEqual([suite == "flush-order-fua" ? "flush-order-fua-v200" : "flush-order-fua-cost"]),
+                fuaCampaign[0].ExpectedCases.SequenceEqual([suite == "flush-order-fua" ? "flush-order-fua-v201" : "flush-order-fua-cost"]),
                 $"{suite} runs on the lab role with its own case");
         }
         Check(VerificationPlan.InjectsLabFaults("flush-order-fua"), "the mode-2 suite records its deliberate faults");
