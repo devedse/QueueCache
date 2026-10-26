@@ -63,7 +63,7 @@ internal static class VerificationCommands
                                  --repeats 1, --soak-seconds 60..3600 (default 240). Lab disk volumes only.
               pressure           Deferred-age, Idle, watermark and capacity/backpressure byte checks.
                                  Separate from full; no DiskSpd needed.
-              flush-order        Thirteen dependency/version/fault/capacity/direct-fallback checks with ordering on, on lab NTFS.
+              flush-order        Fourteen dependency/version/fault/capacity/direct-fallback/setting checks for write ordering, on lab NTFS.
                                  Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
               flush-order-cost   Ordering off and on, alternating order; full telemetry/byte oracle.
                                  --budget-mib 2048 --repeats 3 (about 15 min), Verifier off, 15-minute warm boot; no DiskSpd.

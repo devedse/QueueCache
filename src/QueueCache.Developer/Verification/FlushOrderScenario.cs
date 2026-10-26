@@ -12,7 +12,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 13;
+    public const int CheckCount = 14;
     private const ulong On = 1;
 
     public static void ValidateChecks(IReadOnlyList<CheckResult> checks)
@@ -291,6 +291,7 @@ public static class FlushOrderScenario
             }
             checks.Add(CheckOversizedFallback(target, device, workDirectory, evidence));
             checks.Add(CheckMapFallback(target, device, workDirectory, evidence));
+            checks.Add(await CheckSetting(target, device, evidence));
         }
         finally
         {
@@ -411,6 +412,50 @@ public static class FlushOrderScenario
         AssertRead(file, Offset, Pattern(42)); AssertRead(file, Offset + Block, new byte[Block]);
         return new("flush-order/unmappable-direct-write", "PASS", detail +
             " The sealed predecessor flushed; latest bytes and untouched neighbor matched after release.");
+    }
+
+    // The per-cache setting (plan 198), through the same management code as the app and CLI. It never
+    // saves a profile: pause/resume preserve the (absent) saved startup setting.
+    private static async Task<CheckResult> CheckSetting(DiskTarget target, CacheDevice device, string evidence)
+    {
+        Reset(device);
+        device.Control(WriteCacheAction.FlushOrder, value: 0);
+        var volume = target.Letter + ":";
+        var steps = new List<object>();
+        void Require(ulong mode, bool enabled, ulong budgetMiB, string step)
+        {
+            var state = device.GetWriteCacheState(); var order = device.GetDiagnostics().FlushOrder;
+            steps.Add(new { Step = step, State = state, FlushOrder = order });
+            if (order?.Mode != mode || state.Enabled != enabled || !state.UnsafeDefer || state.BudgetBytes != budgetMiB << 20)
+                throw new IOException($"The write-ordering setting was wrong after {step}.");
+        }
+        var configuration = new CacheConfiguration(64, CachePreset.Fast)
+        {
+            Options = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000, BatchKiB: 4, Parallelism: 2, RetainWrites: false),
+            WriteOrdering = true
+        };
+        try
+        {
+            ConfigurationManager.Apply(target, configuration, true);
+            Require(1, true, 64, "apply with ordering");
+            await CacheTasks.SetEnabledAsync(volume, false, persistent: false, preserveSaved: true);
+            Require(1, false, 64, "pause");
+            await CacheTasks.SetEnabledAsync(volume, true, persistent: false, preserveSaved: true);
+            Require(1, true, 64, "resume");
+            var refused = false;
+            try { ConfigurationManager.Apply(target, configuration with { Preset = CachePreset.Strict }, true); }
+            catch (ArgumentException) { refused = true; }
+            if (!refused) throw new IOException("Strict with write ordering was accepted.");
+            Require(1, true, 64, "refused Strict with ordering");
+            ConfigurationManager.Apply(target, configuration with { BudgetMiB = 32, WriteOrdering = null }, true);
+            Require(1, true, 32, "apply without an ordering choice");
+            ConfigurationManager.Apply(target, configuration with { WriteOrdering = false }, true);
+            Require(0, true, 64, "apply with ordering off");
+        }
+        finally { RunStorage.AtomicJson(evidence + ".setting.json", steps); }
+        Reset(device);
+        return new("flush-order/per-cache-setting", "PASS",
+            "Apply selected and verified write ordering; pause/resume kept it; Strict with ordering was refused unchanged; a configuration without a choice kept it; off cleared it.");
     }
 
     private static void Reset(CacheDevice device)
