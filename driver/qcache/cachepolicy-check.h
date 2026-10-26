@@ -40,9 +40,17 @@ constexpr bool PolicyChecks()
         return false;
     if (!QcMaySelectFlushOrder(0, 3) || !QcMaySelectFlushOrder(1, 0) ||
         QcMaySelectFlushOrder(1, 1) || QcMaySelectFlushOrder(1, -1) ||
-        !QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(2, 1) || QcMaySelectFlushOrder(3, 0) ||
-        !QcMayRegisterUsage(0) || QcMayRegisterUsage(1) || QcMayRegisterUsage(2) ||
-        !QcSealBeforeWriteThrough(1) || QcSealBeforeWriteThrough(0) || QcSealBeforeWriteThrough(2))
+        !QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(2, 1) || !QcMaySelectFlushOrder(3, 0) ||
+        QcMaySelectFlushOrder(3, 1) || QcMaySelectFlushOrder(4, 0) ||
+        !QcMayRegisterUsage(0) || QcMayRegisterUsage(1) || QcMayRegisterUsage(2) || QcMayRegisterUsage(3) ||
+        !QcSealBeforeWriteThrough(1) || QcSealBeforeWriteThrough(0) || QcSealBeforeWriteThrough(2) ||
+        QcSealBeforeWriteThrough(3))
+        return false;
+    // Lab mode 3 (#13): only frontier work wakes drainers; mode 2 keeps every wake-up.
+    if (!QcFrontierScheduling(3) || QcFrontierScheduling(2) || QcFrontierScheduling(0) ||
+        !QcSealWakes(false, 2, 9, 4096) || !QcSealWakes(true, 4, 5, 0) || QcSealWakes(true, 4, 5, 4096) ||
+        QcSealWakes(true, 3, 5, 0) || !QcWriteWakes(false, false, 5, 4) || !QcWriteWakes(true, false, 4, 4) ||
+        QcWriteWakes(true, false, 5, 4) || !QcWriteWakes(true, true, 5, 4))
         return false;
     if (QcAdmissionWriteLimit(1000, false, false) != 1000 ||
         QcAdmissionWriteLimit(1000, true, false) != 1000 ||

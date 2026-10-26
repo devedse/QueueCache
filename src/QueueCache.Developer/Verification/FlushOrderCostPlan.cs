@@ -2,19 +2,21 @@ namespace QueueCache.Developer.Verification;
 
 public sealed record FlushOrderCostCase(string Id, int Repeat, string Workload, ulong Mode);
 
-/// <summary>Equal work, opposite arm order on alternate repetitions; never combines unrelated runs.</summary>
+/// <summary>Equal work; each arm takes each position once over three repetitions; never combines unrelated runs.</summary>
 public static class FlushOrderCostPlan
 {
-    // Plan 194: work sized so the slower arm needs about a minute to reach the disk.
-    public const int BudgetMiB = 2048, SequentialMiB = 4096, SequentialPasses = 2, SmallFiles = 25_600, WriteThroughPairs = 25_600;
+    // Plan 195: ordering off, current mode 2 and lab mode 3. The sequential file fits in
+    // the cache, so its application time is RAM speed; the other two take about a minute.
+    public const int BudgetMiB = 2048, SequentialMiB = 1536, SmallFiles = 25_600, WriteThroughPairs = 25_600;
     public const int WriteThroughMiB = WriteThroughPairs * 2 * 4096 / (1 << 20);
+    private static readonly ulong[][] Orders = [[0, 2, 3], [2, 3, 0], [3, 0, 2]];
     public static IReadOnlyList<FlushOrderCostCase> Cases(int repeats)
     {
         if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats));
         return [.. Enumerable.Range(1, repeats).SelectMany(repeat =>
-            new[] { "sequential-write", "flush-heavy-files", "write-through-pairs" }.SelectMany(workload =>
-                (repeat % 2 == 1 ? new ulong[] { 0, 2 } : [2UL, 0UL]).Select(mode =>
-                    new FlushOrderCostCase($"flush-order-cost-v194-r{repeat}-{workload}-mode{mode}", repeat, workload, mode))))];
+            new[] { "sequential-fit", "flush-heavy-files", "write-through-pairs" }.SelectMany(workload =>
+                Orders[repeat - 1].Select(mode =>
+                    new FlushOrderCostCase($"flush-order-cost-v195-r{repeat}-{workload}-mode{mode}", repeat, workload, mode))))];
     }
     public static void ValidateChecks(IReadOnlyList<FlushOrderCostCase> expected, IReadOnlyList<QueueCache.Operations.CheckResult> actual)
     {

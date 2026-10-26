@@ -932,6 +932,10 @@ static bool FlushOrdering(QC_CACHE* c)
 {
     return c->UnsafeDefer && c->FlushOrderMode != 0;
 }
+static bool FrontierScheduling(QC_CACHE* c)
+{
+    return FlushOrdering(c) && QcFrontierScheduling(c->FlushOrderMode);
+}
 // Foreground owner, Mutex held. Repeated empty barriers share the same boundary.
 // An outstanding copy still owns its dirty versions, so sealing never waits for I/O.
 static bool SealEpoch(QC_CACHE* c)
@@ -946,7 +950,8 @@ static bool SealEpoch(QC_CACHE* c)
     ++c->WriteEpoch;
     c->EpochHasWrites = FALSE;
     ++c->Diagnostics.EpochSeals;
-    WakeDrainers(c);
+    if (QcSealWakes(FrontierScheduling(c), c->DrainEpoch, c->WriteEpoch, c->State.InFlightBytes))
+        WakeDrainers(c);
     return true;
 }
 static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLONG)
@@ -1009,17 +1014,20 @@ static bool FenceSplitsBatch(QC_CACHE* c, LONGLONG block, bool anchorOverlaps)
 // the fence must not make Deferred/Idle data drain early. Caller holds Mutex.
 static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
 {
+    // Mode 3: versions join the dirty FIFO in group order, so none after the
+    // first later-group version may drain before the next lower flush.
+    const auto last = FrontierScheduling(c) ? c->DrainEpoch : MAXULONGLONG;
     // Before forwarding the fenced write, choose its oldest eligible overlap
     // first, but keep unrelated policy-eligible work moving when that overlap is
     // already owned by another lower request. After forwarding, exclude the fence.
     if (c->RangeDrain && !c->RangeForward)
-        for (auto index = c->Head; index != NoSlot; index = c->Slots[index].QueueNext)
+        for (auto index = c->Head; index != NoSlot && c->Slots[index].Epoch <= last; index = c->Slots[index].QueueNext)
             if (DrainCandidate(c, index) &&
                 RangeOverlaps(c->RangeStart, c->RangeEnd, c->Slots[index].Offset.QuadPart))
                 return index;
     if (!policyDrain)
         return NoSlot;
-    for (auto index = c->Head; index != NoSlot; index = c->Slots[index].QueueNext)
+    for (auto index = c->Head; index != NoSlot && c->Slots[index].Epoch <= last; index = c->Slots[index].QueueNext)
         if (DrainCandidate(c, index))
             return index;
     return NoSlot;
@@ -1901,7 +1909,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     switch (command.Action)
     {
     case QcLabFlushOrder:
-        if (command.Value > 2 || command.BudgetBytes)
+        if (command.Value > 3 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
                  !NT_SUCCESS(c->State.LastError))
@@ -2621,6 +2629,7 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
 {
     const auto firstBlock = offset / Chunk * Chunk;
     const auto end = offset + length;
+    ULONGLONG epoch = 0; // Admission gave every version of this request the same group.
     for (auto block = firstBlock; block < end; block += Chunk)
     {
         auto slot = &c->Slots[slots ? slots[(block - firstBlock) / Chunk] : FindSlot(c, block)];
@@ -2630,6 +2639,7 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
         c->State.DirtyBytes += QcValidBytes(added & ~slot->ValidSectors);
         slot->ValidSectors |= added;
         slot->Filling = FALSE;
+        epoch = slot->Epoch;
     }
     c->State.AcceptedBytes += length;
     c->LastWriteTime = NowMs();
@@ -2641,9 +2651,11 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
     const auto ordinaryLimit = QcAdmissionWriteLimit(
         WriteLimit(c), QcCachePagingPathCount(c) > 0, false);
     const bool pagingReservePressure = pagingIo && c->DirtySlots > ordinaryLimit;
+    const bool forced = c->Barrier || c->WriterWaiting || c->EpochWaiters || pagingReservePressure;
     if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                               c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
-                              c->Barrier || c->WriterWaiting || c->EpochWaiters || pagingReservePressure, pressure))
+                              forced, pressure) &&
+        QcWriteWakes(FrontierScheduling(c), forced, epoch, c->DrainEpoch))
         WakeDrainers(c);
     c->Pressure = pressure;
     ReleaseCache(c);

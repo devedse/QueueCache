@@ -12,8 +12,8 @@ public sealed partial class VerificationRunner
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
         var telemetry = Worker(Job("telemetry") with
         {
-            Reply = prefix + ".telemetry.jsonl", StopFile = stop, ReadyFile = ready, Seconds = 3660
-        }, children.Token, 3670);
+            Reply = prefix + ".telemetry.jsonl", StopFile = stop, ReadyFile = ready, Seconds = 7260
+        }, children.Token, 7270);
         try
         {
             await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
@@ -23,7 +23,7 @@ public sealed partial class VerificationRunner
                 Reply = prefix + ".reply.json", WorkDirectory = workDirectory,
                 BudgetMiB = options.BudgetMiB, ReferenceRepeats = options.Repeats,
                 ProcessEvidence = prefix + ".process.json"
-            }, token, 3600);
+            }, token, 7200);
             var end = DateTimeOffset.UtcNow;
             File.WriteAllText(stop, "stop");
             await telemetry;

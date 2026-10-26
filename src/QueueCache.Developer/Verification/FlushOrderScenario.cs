@@ -19,7 +19,7 @@ public static class FlushOrderScenario
         var b = after.FlushOrder ?? throw new InvalidDataException("Missing post-write ordering evidence.");
         var lowerA = before.Attribution ?? throw new InvalidDataException("Missing lower-I/O evidence.");
         var lowerB = after.Attribution ?? throw new InvalidDataException("Missing lower-I/O evidence.");
-        if (a.Mode is not (1 or 2) || b.Mode != a.Mode || b.Seals <= a.Seals ||
+        if (a.Mode is not (1 or 2 or 3) || b.Mode != a.Mode || b.Seals <= a.Seals ||
             (requireVersion ? b.VersionCopies <= a.VersionCopies : b.VersionCopies != a.VersionCopies) ||
             lowerA.LowerWriteAttempts != lowerB.LowerWriteAttempts || lowerA.LowerReadAttempts != lowerB.LowerReadAttempts ||
             lowerA.LowerFlushAttempts != lowerB.LowerFlushAttempts)
@@ -40,7 +40,7 @@ public static class FlushOrderScenario
     public static void ValidateHeld(CacheDiagnostics held)
     {
         var order = held.FlushOrder ?? throw new InvalidDataException("Missing held ordering evidence.");
-        if (order.Mode is not (1 or 2) || order.DrainingEpoch >= order.CurrentEpoch ||
+        if (order.Mode is not (1 or 2 or 3) || order.DrainingEpoch >= order.CurrentEpoch ||
             order.MaxSubmittedEpoch != order.DrainingEpoch || held.LabGate is not { State: 2, Hits: 1, OldLowerDoneSeq: > 0 })
             throw new InvalidDataException("The older completed-but-held write did not fence all later groups.");
     }
@@ -59,7 +59,7 @@ public static class FlushOrderScenario
     {
         var a = before.FlushOrder ?? throw new InvalidDataException("Missing pre-pressure ordering evidence.");
         var b = after.FlushOrder ?? throw new InvalidDataException("Missing post-pressure ordering evidence.");
-        if (a.Mode is not (1 or 2) || b.Mode != a.Mode || b.VersionCopies <= a.VersionCopies ||
+        if (a.Mode is not (1 or 2 or 3) || b.Mode != a.Mode || b.VersionCopies <= a.VersionCopies ||
             stateAfter.ThrottleWaits <= stateBefore.ThrottleWaits || stateAfter.LastError != 0)
             throw new InvalidDataException("Retained-version capacity pressure was not exercised or the cache faulted.");
     }
@@ -68,7 +68,7 @@ public static class FlushOrderScenario
     {
         var a = before.Attribution ?? throw new InvalidDataException("Missing direct-fallback attribution.");
         var b = after.Attribution ?? throw new InvalidDataException("Missing direct-fallback attribution.");
-        if (before.FlushOrder?.Mode is not (1 or 2) || after.FlushOrder?.Mode != before.FlushOrder?.Mode ||
+        if (before.FlushOrder?.Mode is not (1 or 2 or 3) || after.FlushOrder?.Mode != before.FlushOrder?.Mode ||
             b.QuotaWriteBarriers <= a.QuotaWriteBarriers || b.LowerWriteAttempts <= a.LowerWriteAttempts ||
             b.LowerFlushAttempts < a.LowerFlushAttempts + 2 || state.LastError != 0)
             throw new InvalidDataException("The oversized write did not exercise its ordered direct fallback and lower durability boundaries.");
@@ -91,7 +91,7 @@ public static class FlushOrderScenario
         var checks = new List<CheckResult>();
         try
         {
-            foreach (var testMode in new ulong[] { 1, 2 })
+            foreach (var testMode in new ulong[] { 1, 2, 3 })
             {
                 var firstCheck = checks.Count;
                 var modeEvidence = evidence + $".mode{testMode}";

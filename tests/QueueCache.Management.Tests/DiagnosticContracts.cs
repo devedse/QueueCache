@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 194, "plan 194 sizes the ordering off/on comparison to about a minute per arm");
+        Check(VerificationPlan.Version == 195, "plan 195 compares ordering off, mode 2 and lab mode 3 with a cache-fitting file");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -110,11 +110,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v192", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v195", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v192"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v195"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -186,13 +186,18 @@ internal static class DiagnosticContracts
         FlushOrderScenario.ValidateWriteThrough(orderBefore,
             orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false);
         var costPlan = FlushOrderCostPlan.Cases(2);
-        Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
-            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 2UL]) &&
-            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([2UL, 0UL]) &&
-            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
-            costPlan.Any(c => c.Workload == "write-through-pairs") && costPlan.All(c => c.Id.Contains("v194", StringComparison.Ordinal)) &&
-            costPlan.All(c => c.Mode is 0 or 2),
-            "ordering cost compares off/current on with unique IDs, equal workload counts and reversed arm order");
+        var fullCostPlan = FlushOrderCostPlan.Cases(3);
+        Check(costPlan.Count == 18 && costPlan.Select(c => c.Id).Distinct().Count() == 18 &&
+            costPlan.Take(3).Select(c => c.Mode).SequenceEqual([0UL, 2UL, 3UL]) &&
+            costPlan.Skip(9).Take(3).Select(c => c.Mode).SequenceEqual([2UL, 3UL, 0UL]) &&
+            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 6) &&
+            costPlan.Select(c => c.Workload).Distinct().SequenceEqual(["sequential-fit", "flush-heavy-files", "write-through-pairs"]) &&
+            costPlan.All(c => c.Id.Contains("v195", StringComparison.Ordinal)) && costPlan.All(c => c.Mode is 0 or 2 or 3) &&
+            fullCostPlan.Count == 27 && fullCostPlan.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
+            fullCostPlan.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>
+                w.GroupBy(c => c.Repeat).Select(r => r.ElementAt(position).Mode).Order().SequenceEqual([0UL, 2UL, 3UL]))) &&
+            FlushOrderCostPlan.SequentialMiB < FlushOrderCostPlan.BudgetMiB,
+            "ordering cost compares off/mode 2/mode 3 with unique IDs, equal counts, rotated arm order and a fitting file");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));

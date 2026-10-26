@@ -9,7 +9,8 @@ namespace QueueCache.Developer.Verification;
 public sealed record FlushOrderCostMeasurement(FlushOrderCostCase Case, DateTimeOffset Start,
     DateTimeOffset ScoreEnd, DateTimeOffset DurableEnd, long Bytes, int Requests,
     double ApplicationSeconds, double DurableSeconds, WriteCacheState Before, WriteCacheState After,
-    CacheDiagnostics DiagnosticsBefore, CacheDiagnostics DiagnosticsAfter);
+    CacheDiagnostics DiagnosticsBefore, CacheDiagnostics DiagnosticsAfter,
+    CachePerformance PerformanceBefore, CachePerformance PerformanceApplication, CachePerformance PerformanceAfter);
 
 /// <summary>A small live-driver cost screen: RAM acknowledgement and complete durable tail are separate.
 /// This does not replace DiskSpd or the release-performance matrix.</summary>
@@ -38,11 +39,14 @@ public static class FlushOrderCostScenario
         if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Ordering performance requires normal process priority.");
         var original = device.GetDiagnostics().FlushOrder?.Mode ?? throw new NotSupportedException("Diagnostics V26 required.");
+        var originalTiming = device.GetPerformance().TimingEnabled;
         Directory.CreateDirectory(work);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);
         var checks = new List<CheckResult>();
         try
         {
+            // Every arm records lock, selection and wake-up costs (plan 195); the counters add a few QPC reads.
+            device.Control(WriteCacheAction.PerformanceTiming, value: 1);
             foreach (var item in plan)
             {
                 Console.WriteLine($"[{DateTimeOffset.UtcNow:O}] {item.Id}: preparing equal work");
@@ -71,23 +75,23 @@ public static class FlushOrderCostScenario
                         RetainWrites: true, PromoteOnRead: true)
                 }, true);
                 var smallData = data.AsSpan(0, 4096).ToArray();
-                WriteCacheState before; CacheDiagnostics diagBefore;
+                WriteCacheState before; CacheDiagnostics diagBefore; CachePerformance perfBefore, perfApplication;
                 DateTimeOffset started, scoreEnd; double applicationSeconds;
                 var timer = new Stopwatch(); long bytes = 0; var requests = 0;
                 using (var file = item.Workload == "flush-heavy-files" ? null : new AlignedFile(path, MiB, create: false, shareAll: true))
                 using (var writeThrough = isWriteThrough
                     ? new AlignedFile(path, 4096, create: false, shareAll: true, writeThrough: true) : null)
                 {
-                    before = device.GetWriteCacheState(); diagBefore = device.GetDiagnostics();
+                    before = device.GetWriteCacheState(); diagBefore = device.GetDiagnostics(); perfBefore = device.GetPerformance();
+                    if (perfBefore.TimingEnabled != 1) throw new IOException("Ordering cost timing was not enabled.");
                     started = DateTimeOffset.UtcNow; timer.Start();
-                    if (item.Workload == "sequential-write")
+                    if (item.Workload == "sequential-fit")
                     {
-                        for (var pass = 0; pass < FlushOrderCostPlan.SequentialPasses; pass++)
-                            for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                            {
-                                Stamp(data, pass * FlushOrderCostPlan.SequentialMiB + i);
-                                file!.Write((long)i * MiB, data); bytes += MiB; requests++;
-                            }
+                        for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
+                        {
+                            Stamp(data, i);
+                            file!.Write((long)i * MiB, data); bytes += MiB; requests++;
+                        }
                     }
                     else if (item.Workload == "flush-heavy-files")
                     {
@@ -108,12 +112,13 @@ public static class FlushOrderCostScenario
                         }
                     }
                     applicationSeconds = timer.Elapsed.TotalSeconds; scoreEnd = DateTimeOffset.UtcNow;
+                    perfApplication = device.GetPerformance();
                 } // Last-close metadata belongs to the running durable-tail timer.
                 // Include filesystem metadata that has not reached our volume
                 // cache yet; flushing only QueueCache would undercount the tail.
                 var checkpoint = DurableCheckpoint.Complete(target.Letter, device, evidence + "." + item.Id + ".checkpoint.json");
                 var durableSeconds = timer.Elapsed.TotalSeconds; var durableEnd = DateTimeOffset.UtcNow;
-                var after = checkpoint.Final.After; var diagAfter = checkpoint.Final.DiagnosticsAfter;
+                var after = checkpoint.Final.After; var diagAfter = checkpoint.Final.DiagnosticsAfter; var perfAfter = device.GetPerformance();
                 RunStorage.AtomicJson(evidence + "." + item.Id + ".checkpoint.json", checkpoint);
                 if (after.LastError != 0 || after.Errors != before.Errors || after.DirtyBytes != 0 || after.InFlightBytes != 0 ||
                     diagAfter.FlushOrder?.Mode != item.Mode || diagBefore.FlushOrder?.Mode != item.Mode)
@@ -121,7 +126,11 @@ public static class FlushOrderCostScenario
                 if (isWriteThrough && diagAfter.WriteThroughWrites < diagBefore.WriteThroughWrites + FlushOrderCostPlan.WriteThroughPairs)
                     throw new IOException("The paired workload did not exercise its write-through requests.");
                 RunStorage.AtomicJson(evidence + "." + item.Id + ".json", new FlushOrderCostMeasurement(item,
-                    started, scoreEnd, durableEnd, bytes, requests, applicationSeconds, durableSeconds, before, after, diagBefore, diagAfter));
+                    started, scoreEnd, durableEnd, bytes, requests, applicationSeconds, durableSeconds, before, after, diagBefore, diagAfter,
+                    perfBefore, perfApplication, perfAfter));
+                // Its application time is RAM admission only while the whole file fits.
+                if (item.Workload == "sequential-fit" && after.ThrottleWaits != before.ThrottleWaits)
+                    throw new IOException("The sequential file waited for cache space; it no longer fits the cache.");
                 Reset(device);
                 // Check the lower device with unbuffered reads after cache release.
                 if (item.Workload == "flush-heavy-files")
@@ -140,10 +149,7 @@ public static class FlushOrderCostScenario
                         { Stamp(smallData, i); Check(verify, (long)i * 4096, smallData); }
                     else
                         for (var i = 0; i < FlushOrderCostPlan.SequentialMiB; i++)
-                        {
-                            Stamp(data, (FlushOrderCostPlan.SequentialPasses - 1) * FlushOrderCostPlan.SequentialMiB + i);
-                            Check(verify, (long)i * MiB, data);
-                        }
+                        { Stamp(data, i); Check(verify, (long)i * MiB, data); }
                 }
                 // The lab volume holds one case's files at a time; the cache is released here.
                 Directory.Delete(directory, true);
@@ -155,7 +161,9 @@ public static class FlushOrderCostScenario
         finally
         {
             Reset(device); device.Control(WriteCacheAction.LabFlushOrder, value: original);
-            if (device.GetDiagnostics().FlushOrder?.Mode != original) throw new IOException("Ordering cost mode restoration failed.");
+            device.Control(WriteCacheAction.PerformanceTiming, value: originalTiming);
+            if (device.GetDiagnostics().FlushOrder?.Mode != original || device.GetPerformance().TimingEnabled != originalTiming)
+                throw new IOException("Ordering cost mode or timing restoration failed.");
         }
         FlushOrderCostPlan.ValidateChecks(plan, checks);
         return checks;
