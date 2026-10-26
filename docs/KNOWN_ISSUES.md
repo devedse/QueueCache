@@ -125,6 +125,16 @@ slowdown the short screen missed: 2.5× for 25,600 flushed files and 43× for
 25,600 write-through pairs, without the cache filling; reaching the disk took
 25× and 170× as long. Sequential writes were unchanged
 ([minute-scale result](PERFORMANCE.md#fast-ordering-13-minute)).
+Plan 195 found the cause and added lab mode 3 as the fix: mode 2 woke every
+drain thread on each write and bookmark, and each searched the whole backlog
+while holding the cache lock. Mode 3 keeps mode 2's groups but searches only the
+group it may write and wakes the threads only for it. On 0.4.862.1, all 39
+`flush-order` checks (thirteen each for modes 1, 2 and 3) passed under Driver
+Verifier. In the same-build comparison mode 3 matched ordering off into the cache
+(flushed files 8.3 s against 7.8 s and mode 2's 20.1 s; write-through pairs
+0.24 s against 0.23 s and 9.35 s). Reaching the disk still takes one disk flush
+per bookmark: about 7× and 60× as long as off, as in mode 2
+([fix result](PERFORMANCE.md#fast-ordering-13-fix)).
 Both modes remain default off. The plan-189 release attempt stopped at a mode-zero
 pressure check (see the separate issue below); the plan-192 release campaign then
 completed on the same native build with ordering off
@@ -532,6 +542,24 @@ a full save instead of the required reuse. That evidence remains separate. Plan
 and older records without the marker cannot be consumed, even with a generated-looking
 filename. General retention, background saving and a crash during commit remain
 separate work.
+
+**Issue #13 lab mode 3, plan 195 (2026-10-26):** published release 0.4.862.1
+(`b6ec0e1`) was installed and its loaded filter
+`1A19AFBD7FF2399A8E30504D5E7CE2EEF6EEF8A05A2637C08D7E11282660CAF3` and RAM driver
+`9DE0E2ABD088A7B86BF02A5E29FBFC4A8860F2EED88E841B7D62A312F5D821E7` hashes
+checked. Under Driver Verifier `0x209bb` on both drivers,
+`QueueCache-Campaign-20261026-030922-25102e15f9a14d688c852a62482b2ec2` ran all
+**39 ordering checks**, thirteen for each of modes 1, 2 and 3, in 34 s; the
+campaign completed, restored and passed `verify-completion`. Mode 3 passed the
+same held-predecessor, failed-flush/retry, write-through, TRIM, capacity,
+mode-change, disable/reapply and direct-write fallback checks as modes 1 and 2.
+The first attempt
+(`QueueCache-Campaign-20261026-030530-542dbcfbeb6c443dbb0f77bcd7af1e28`) ran all
+three modes, but the scenario's own completeness check still expected two modes
+(26 checks) and rejected the result; `b410142` derives the count from the mode
+list, with a host test, and the passing run used a controller published from it.
+The driver was unchanged between the attempts. This is targeted correctness
+evidence for mode 3, not crash or power-loss qualification.
 
 **Issue #13 mode-2 follow-up, plans 191/192 (2026-10-25):** the loaded native
 pair remained 0.4.851.1, with the same signed-package hashes recorded in
