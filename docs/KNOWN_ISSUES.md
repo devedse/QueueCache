@@ -97,7 +97,10 @@ sealed before each write-through, and mode 2, which woke every drain thread for 
 write, were removed. It is an advanced per-cache setting, off by default, in the
 app's Advanced tuning and as `qcache policy apply --write-ordering`; saved profiles
 keep it ([details](CACHE_POLICIES.md#experimental-fast-write-ordering-13)). It is
-refused on volumes that hold a paging, hibernation or crash dump file.
+refused on volumes that hold a paging, hibernation or crash dump file, and so on
+the Windows volume: on the test VM, Windows registered C: for paging at every boot
+even with the page file and crash dumps off. Moving the page file and dump file to
+Q: was refused by Windows there, because the VM's disks are hot-pluggable.
 
 - **Checks:** 13/13 targeted live-driver checks passed under Driver Verifier on
   0.4.865.1 (plan 196), on a disposable non-OS NTFS volume. The earlier variants

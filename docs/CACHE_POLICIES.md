@@ -295,7 +295,9 @@ that a crash or power cut can lose recent writes but should not damage NTFS, and
 is not yet qualified (see [known issues](KNOWN_ISSUES.md)). It applies to Fast only;
 Strict already waits for the disk, so Strict with ordering is refused. Apply refuses
 it, before draining anything, on a volume that holds a paging, hibernation or crash
-dump file, such as the Windows volume. Like the preset, it changes only while the
+dump file. That always includes the Windows volume: on the test VM, Windows' Session
+Manager (`smss.exe`) registered C: for paging at every boot even with the page file
+and crash dumps turned off (two registrations on each of two boots, October 26). Like the preset, it changes only while the
 cache is disabled and empty, which Apply arranges; a brief busy answer while a lower
 TRIM or group flush finishes is retried for up to 5 s. A saved profile keeps the
 choice and the startup restore reapplies it; pause/resume keeps it, and removing the
