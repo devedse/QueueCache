@@ -87,58 +87,44 @@ flushes, so clean cuts are evidence, not a guarantee. Another write-back cache t
 the same way also damaged NTFS when cut during its write-out.
 [Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
-An experimental, default-off ordering path is being qualified for #13. It retains
-old dirty versions across filesystem flush/write-through boundaries, writes groups
-in order with a real lower flush between them, and orders TRIM with those groups.
-The expanded `flush-order` suite passed nine changed-path checks under Driver
-Verifier on a disposable non-OS NTFS volume. Three October 25 cuts covered a burst,
-a partial-drain boundary and a completed explicit checkpoint; each kept NTFS clean
-and an untouched durable guard exact (see the records below). Broader power-loss,
-system-volume and dynamic usage-path qualification
-remain open. The default Fast behavior and the safety warning above remain in effect; this is not yet a qualified
-filesystem-safety fix.
+An experimental, default-off ordering path is being qualified for #13. With it
+on, writes after a filesystem flush or a write-through write stay in RAM until
+everything before that point and a real lower flush have completed; old dirty
+versions are kept across those boundaries, and TRIM is ordered with them. Since
+plan 196 there is one mode (`flush-order 1`, the former lab mode 3). The original
+mode 1, which also sealed before each write-through, and mode 2, which woke every
+drain thread for each write, were removed.
 
-Runtime mode 2 is a separate experiment that removes the extra boundary before a
-write-through request while retaining its post-boundary, explicit flush history
-and same-range ordering. On 0.4.851.1, plan 188 passed eleven targeted checks for
-each mode under Driver Verifier (22 total), including an explicitly sealed
-predecessor and held/failed post-write-through successors. The isolated write
-sealed two groups and retained one older version in mode 1, versus one group and
-no extra version in mode 2, with zero lower-I/O admission attempts in both.
-The three earlier crash checks apply to mode 1. The plan-191/192 follow-up below
-adds 26 checks and three bounded mode-2 cuts, including witnessed write-through
-requests and a completed explicit checkpoint. This does not qualify the full
-crash matrix, other storage or system-volume paths.
-The lower path still uses explicit flushes: the lab W: VHDX reports
-no write-through support, although its Q: host reports support. Both report flush
-support; a shared bus type is insufficient to select a FUA optimization.
-The complete 18-case plan-189 cost comparison cut write-through-pair durable time
-by 42–54%, with no established improvement to the explicit file-flush workload.
-A subsequent direct off/current-mode-2 comparison (plan 193) completed 18/18
-cases on the same loaded native build: total durable time was 4.06–4.91× longer
-for 256 explicit file flushes and 18.06–29.45× for 256 write-through pairs with
-ordering on. Sequential and application-time differences changed direction;
-all bytes verified and restoration completed
-([direct result and limits](PERFORMANCE.md#fast-ordering-13-toggle)).
-The minute-scale plan-194 comparison (2 GiB, 18/18 cases) found an application
-slowdown the short screen missed: 2.5× for 25,600 flushed files and 43× for
-25,600 write-through pairs, without the cache filling; reaching the disk took
-25× and 170× as long. Sequential writes were unchanged
-([minute-scale result](PERFORMANCE.md#fast-ordering-13-minute)).
-Plan 195 found the cause and added lab mode 3 as the fix: mode 2 woke every
-drain thread on each write and bookmark, and each searched the whole backlog
-while holding the cache lock. Mode 3 keeps mode 2's groups but searches only the
-group it may write and wakes the threads only for it. On 0.4.862.1, all 39
-`flush-order` checks (thirteen each for modes 1, 2 and 3) passed under Driver
-Verifier. In the same-build comparison mode 3 matched ordering off into the cache
-(flushed files 8.3 s against 7.8 s and mode 2's 20.1 s; write-through pairs
-0.24 s against 0.23 s and 9.35 s). Reaching the disk still takes one disk flush
-per bookmark: about 7× and 60× as long as off, as in mode 2
-([fix result](PERFORMANCE.md#fast-ordering-13-fix)).
-Both modes remain default off. The plan-189 release attempt stopped at a mode-zero
-pressure check (see the separate issue below); the plan-192 release campaign then
-completed on the same native build with ordering off
-([exact cost and release results](PERFORMANCE.md#fast-ordering-13-write-through)).
+- **Checks:** 13/13 targeted live-driver checks passed under Driver Verifier on
+  0.4.865.1 (plan 196), on a disposable non-OS NTFS volume. The earlier variants
+  passed 9 (mode 1), 22 (plan 188), 26 (plans 191/192, Verifier off) and 39
+  (plan 195, modes 1–3) checks.
+- **Crash cuts:** six bounded cuts kept NTFS clean and untouched durable guards
+  exact: three with mode 1 (a burst, a partial-drain boundary and a completed
+  explicit checkpoint) and three with mode-2 write-through workloads (see the
+  records below). The current mode keeps mode 2's groups and changes only drain
+  scheduling; it has not been cut itself.
+- **Open:** broader power-loss, system-volume and dynamic usage-path
+  qualification. The default Fast behavior and the safety warning above remain
+  in effect; this is not yet a qualified filesystem-safety fix.
+- **Cost:** with ordering on, writing into the cache takes the same time as with
+  it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600 write-through
+  pairs, all ranges overlapping). Each bookmark needs its own disk flush, so
+  reaching the disk took about 7× as long for the files and 54× for the pairs
+  ([single-mode result](PERFORMANCE.md#fast-ordering-13-single)). Mode 2 had
+  also slowed the application itself (2.5× and 43× in plan 194) because every
+  write woke all drain threads, which searched the whole backlog under the cache
+  lock ([cause and fix](PERFORMANCE.md#fast-ordering-13-fix)).
+- **Lower path:** explicit flushes. The lab W: VHDX reports no write-through
+  support, although its Q: host reports support; both report flush support, and a
+  shared bus type is insufficient to select a FUA optimization.
+- **Releases:** the plan-189 release attempt stopped at a mode-zero pressure
+  check (see the separate issue below); the plan-192 release campaign then
+  completed with ordering off
+  ([exact cost and release results](PERFORMANCE.md#fast-ordering-13-write-through)).
+  Older comparisons are under
+  [direct toggle](PERFORMANCE.md#fast-ordering-13-toggle) and
+  [minute scale](PERFORMANCE.md#fast-ordering-13-minute).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after experimental mode selection. The guard now serializes selection and
@@ -542,6 +528,17 @@ a full save instead of the required reuse. That evidence remains separate. Plan
 and older records without the marker cannot be consumed, even with a generated-looking
 filename. General retention, background saving and a crash during commit remain
 separate work.
+
+**Issue #13 single ordering mode, plan 196 (2026-10-26):** published release
+0.4.865.1 (`f9ce425`), with modes 1 and 2 removed, was installed and its loaded
+filter `BFC1994800A773C703963D178FC5E22D693B0154E2A9D33DDCF5B27B781C8902` and RAM
+driver `CD7128DDDF63EA9B0737C3184C1FC7486C2ED9011B01FF0025DF74123B443235` hashes
+checked. Under Driver Verifier `0x209bb` on both drivers,
+`QueueCache-Campaign-20261026-113739-c2f4c4d8c6af4a939a8c2b0076af5e19` ran all
+**13 ordering checks** with ordering on; the campaign completed in 26 s,
+restored and passed `verify-completion`. The isolated write-through sealed exactly
+one group. This is targeted correctness evidence for the single mode, not crash
+or power-loss qualification.
 
 **Issue #13 lab mode 3, plan 195 (2026-10-26):** published release 0.4.862.1
 (`b6ec0e1`) was installed and its loaded filter

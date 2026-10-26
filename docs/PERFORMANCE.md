@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off; lab mode 3 removes the application slowdown.** At a realistic size (plan 194, 2 GiB Fast) mode 2 made the application itself slower: flushed small files took **2.5×** as long to write into the cache and write-through pairs **43×**, without the cache filling. Plan 195 found the cause: every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock the application needs. Lab mode 3 searches only the group it may write now and wakes the threads only for that group. On one build, flushed files took **8.3 s** into the cache (off 7.8 s, mode 2 20.1 s) and pairs **0.24 s** (off 0.23 s, mode 2 9.35 s). A 1.5 GiB file that fits the cache went in at about **7–9 GiB/s** in every mode, with overlapping ranges. Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **60×** for pairs, in both modes. [Fix result](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). Targeted checks (39 under Verifier for modes 1–3) and bounded cuts passed, but broader crash/storage/system-volume scope remains unqualified. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | Making mode 3 the only ordering mode, a supported-scope/promotion decision, fewer disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. It now has one mode (the former lab mode 3), which no longer slows applications.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. [Single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, measuring whether the to-disk cost matters in real use (whether the cache fills), fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,53 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="fast-ordering-13-single"></a>**One ordering mode, off versus on (#13, plan 196, October 26).**
+Plan 196 removed modes 1 and 2; ordering on is now the former lab mode 3. On
+release 0.4.865.1 it again matched ordering off for time into the cache, and
+reaching the disk still takes one disk flush per bookmark. Both arms ran on the
+same loaded build, alternating which ran first. Times are the middle of three
+runs (range in brackets); "into the cache" and "on disk" are measured as in
+[plan 195](#fast-ordering-13-fix).
+
+| Workload | Into the cache, off | Into the cache, on | On disk, off | On disk, on |
+|---|---:|---:|---:|---:|
+| One new 1.5 GiB file, 1 MiB writes (fits the cache) | 0.297 s [0.151–0.593] | 0.183 s [0.153–0.222] | 7.8 s [7.7–7.8] | 7.9 s [7.8–8.0] |
+| 25,600 new 4 KiB files, each flushed | 8.96 s [8.90–10.82] | 9.60 s [8.31–9.64] | 9.0 s [8.9–10.9] | 61.0 s [57.3–61.4] |
+| 25,600 ordinary + write-through 4 KiB pairs | 0.248 s [0.227–0.291] | 0.267 s [0.231–0.623] | 1.0 s [0.9–2.0] | 54.2 s [51.7–118.6] |
+
+- **Into the cache:** every range overlaps; no difference between off and on is
+  established. The slowest 1.5 GiB value (0.59 s, off) was again the first
+  case after the warm boot.
+- **On disk:** ordering on took about 7× as long for files and 54× for pairs
+  (25,622–25,623 and 25,603–25,604 group flushes per run). The first pairs run
+  with ordering on took 118.6 s against 51.7 and 54.2 s for the others; no
+  storage-backend monitor ran, so its cause is unknown.
+- **Cache lock:** during the file phase threads waited 3.5 s in total for the
+  cache lock with ordering on (0.09 s off), the same level as mode 3 in plan 195
+  and a tenth of mode 2's 35 s.
+
+Per run (off / on, seconds into the cache; seconds on disk): sequential
+0.593/0.222, 0.151/0.183, 0.297/0.153; 7.8/7.9, 7.8/7.8, 7.7/8.0. Files
+10.82/8.31, 8.96/9.64, 8.90/9.60; 10.9/57.3, 9.0/61.4, 8.9/61.0. Pairs
+0.248/0.231, 0.227/0.623, 0.291/0.267; 2.0/118.6, 1.0/51.7, 0.9/54.2. Repeat 2
+ran on before off.
+
+Setup: published release 0.4.865.1 (`f9ce425`), loaded filter
+`BFC1994800A773C703963D178FC5E22D693B0154E2A9D33DDCF5B27B781C8902` and RAM
+driver `CD7128DDDF63EA9B0737C3184C1FC7486C2ED9011B01FF0025DF74123B443235`
+(hashes checked), installed controller from the same release. Disposable NTFS
+W: (8 GiB VHDX on Ceph-backed storage), backing Q: paused by the campaign, Fast
+2 GiB, Eager 1024 KiB × 4, lock timing on in both arms, Verifier off, Windows up
+19 minutes, normal priority, Everything/service, Steam and the tray closed,
+Defender and Windows Search not running, last-access updates off. Campaign
+`QueueCache-Campaign-20261026-115758-7c6cb355d6974ca3b39284611db45786`
+completed 1/1 phases and 1/1 outer cases in 766 s; all 18 inner cases passed
+their unbuffered byte checks; restoration `RESTORED` and `verify-completion`
+passed. No storage-backend monitor ran. Q:'s profile, the applications and the
+loaded driver were restored; W: is unconfigured with ordering off. Private
+evidence: 474 hash-verified files, archive SHA-256
+`BF3F92ED66BCC5D808AEA115FC0A1DD75D2B2F34FD74BEBFBDDAECDFB9BC60FE`.
 
 <a id="fast-ordering-13-fix"></a>**Ordering off, mode 2 and lab mode 3 (#13, plan 195, October 26).**
 Lab mode 3 removes the application slowdown that ordering caused in plan 194;
