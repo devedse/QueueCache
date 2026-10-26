@@ -5,25 +5,28 @@ namespace QueueCache.Developer.Verification;
 
 public sealed partial class VerificationRunner
 {
-    private async Task<IReadOnlyList<CheckResult>> MeasureFlushOrderCost(CancellationToken token)
+    // The ordering performance suites: the cost screen's worker allows two hours, the
+    // sustained runs (five-minute file runs and their write-out) three.
+    private async Task<IReadOnlyList<CheckResult>> MeasureFlushOrder(string operation, CancellationToken token)
     {
-        var prefix = storage.PathFor("flush-order-cost");
+        var seconds = operation == "flush-order-sustained" ? 10800 : 7200;
+        var prefix = storage.PathFor(operation);
         var stop = prefix + ".stop"; var ready = prefix + ".ready.json";
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
         var telemetry = Worker(Job("telemetry") with
         {
-            Reply = prefix + ".telemetry.jsonl", StopFile = stop, ReadyFile = ready, Seconds = 7260
-        }, children.Token, 7270);
+            Reply = prefix + ".telemetry.jsonl", StopFile = stop, ReadyFile = ready, Seconds = seconds + 60
+        }, children.Token, seconds + 70);
         try
         {
             await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
             var start = DateTimeOffset.UtcNow;
-            var reply = await Worker(Job("flush-order-cost") with
+            var reply = await Worker(Job(operation) with
             {
                 Reply = prefix + ".reply.json", WorkDirectory = workDirectory,
                 BudgetMiB = options.BudgetMiB, ReferenceRepeats = options.Repeats,
                 ProcessEvidence = prefix + ".process.json"
-            }, token, 7200);
+            }, token, seconds);
             var end = DateTimeOffset.UtcNow;
             File.WriteAllText(stop, "stop");
             await telemetry;
@@ -31,17 +34,20 @@ public sealed partial class VerificationRunner
             foreach (var line in File.ReadLines(prefix + ".telemetry.jsonl"))
             {
                 var sample = JsonSerializer.Deserialize<TelemetrySnapshot>(line)
-                    ?? throw new InvalidDataException("Missing ordering cost telemetry sample.");
+                    ?? throw new InvalidDataException("Missing ordering telemetry sample.");
                 stamps.Add(sample.Utc);
                 if (sample.State.Errors != original.State.Errors || sample.State.LastError != 0 ||
                     sample.State.Instance != original.State.Instance)
-                    throw new IOException("Driver error or instance change during ordering cost screen.");
+                    throw new IOException("Driver error or instance change during an ordering performance run.");
             }
             TelemetryCoverage.Validate(stamps, start, end);
             RunStorage.AtomicJson(prefix + ".coverage.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
             var checks = JsonSerializer.Deserialize<CheckResult[]>(File.ReadAllText(reply))
-                ?? throw new InvalidDataException("Missing ordering cost checks.");
-            FlushOrderCostPlan.ValidateChecks(FlushOrderCostPlan.Cases(options.Repeats), checks);
+                ?? throw new InvalidDataException("Missing ordering performance checks.");
+            if (operation == "flush-order-sustained")
+                FlushOrderSustainedPlan.ValidateChecks(FlushOrderSustainedPlan.Cases(options.Repeats), checks);
+            else
+                FlushOrderCostPlan.ValidateChecks(FlushOrderCostPlan.Cases(options.Repeats), checks);
             return checks;
         }
         finally

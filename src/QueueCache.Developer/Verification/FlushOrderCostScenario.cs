@@ -22,22 +22,10 @@ public static class FlushOrderCostScenario
         string work, string evidence, int repeats, int budgetMiB)
     {
         var plan = FlushOrderCostPlan.Cases(repeats);
-        target.ValidateCurrent();
-        if (budgetMiB != FlushOrderCostPlan.BudgetMiB || target.IsBoot || target.IsSystem || target.IsPaging ||
-            !new DriveInfo(target.Root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase) ||
-            device.GetStatistics().PagingPathCount != 0 || Directory.Exists(work) ||
-            !string.Equals(Path.GetDirectoryName(Path.GetFullPath(work)), target.Root, StringComparison.OrdinalIgnoreCase))
-            throw new IOException($"Ordering cost requires a fresh owned non-OS NTFS directory and --budget-mib {FlushOrderCostPlan.BudgetMiB}.");
-        if (new DriveInfo(target.Root).AvailableFreeSpace < (FlushOrderCostPlan.SequentialMiB + 1024L) * MiB)
-            throw new IOException("Ordering cost needs room for its sequential file plus 1 GiB on the lab volume.");
-        var verifier = await OwnedProcess.RunAsync(Path.Combine(Environment.SystemDirectory, "verifier.exe"),
-            ["/query"], evidence + ".verifier", TimeSpan.FromSeconds(30), CancellationToken.None);
-        if (!(verifier.Output + verifier.Error).Contains("No drivers are currently verified.", StringComparison.Ordinal))
-            throw new IOException("Could not establish that Driver Verifier is off; inspect the retained /query output.");
-        if (Environment.TickCount64 < TimeSpan.FromMinutes(15).TotalMilliseconds)
-            throw new IOException("Ordering performance requires at least 15 minutes after Windows startup.");
-        if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
-            throw new IOException("Ordering performance requires normal process priority.");
+        if (budgetMiB != FlushOrderCostPlan.BudgetMiB)
+            throw new IOException($"Ordering cost requires --budget-mib {FlushOrderCostPlan.BudgetMiB}.");
+        // Room for the sequential file plus 1 GiB.
+        await RequireMeasurementConditions(target, device, work, evidence, (FlushOrderCostPlan.SequentialMiB + 1024L) * MiB);
         var original = device.GetDiagnostics().FlushOrder?.Mode ?? throw new NotSupportedException("Diagnostics V26 required.");
         var originalTiming = device.GetPerformance().TimingEnabled;
         Directory.CreateDirectory(work);
@@ -168,7 +156,29 @@ public static class FlushOrderCostScenario
         FlushOrderCostPlan.ValidateChecks(plan, checks);
         return checks;
     }
-    private static void Reset(CacheDevice device)
+    // Shared by the ordering performance suites: a fresh owned directory on a non-OS NTFS
+    // volume with room for the work, Verifier off, 15 minutes after startup, normal priority.
+    internal static async Task RequireMeasurementConditions(DiskTarget target, CacheDevice device,
+        string work, string evidence, long freeBytes)
+    {
+        target.ValidateCurrent();
+        if (target.IsBoot || target.IsSystem || target.IsPaging ||
+            !new DriveInfo(target.Root).DriveFormat.Equals("NTFS", StringComparison.OrdinalIgnoreCase) ||
+            device.GetStatistics().PagingPathCount != 0 || Directory.Exists(work) ||
+            !string.Equals(Path.GetDirectoryName(Path.GetFullPath(work)), target.Root, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("Ordering performance requires a fresh owned non-OS NTFS directory.");
+        if (new DriveInfo(target.Root).AvailableFreeSpace < freeBytes)
+            throw new IOException($"Ordering performance needs {freeBytes / MiB} MiB free on the lab volume.");
+        var verifier = await OwnedProcess.RunAsync(Path.Combine(Environment.SystemDirectory, "verifier.exe"),
+            ["/query"], evidence + ".verifier", TimeSpan.FromSeconds(30), CancellationToken.None);
+        if (!(verifier.Output + verifier.Error).Contains("No drivers are currently verified.", StringComparison.Ordinal))
+            throw new IOException("Could not establish that Driver Verifier is off; inspect the retained /query output.");
+        if (Environment.TickCount64 < TimeSpan.FromMinutes(15).TotalMilliseconds)
+            throw new IOException("Ordering performance requires at least 15 minutes after Windows startup.");
+        if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
+            throw new IOException("Ordering performance requires normal process priority.");
+    }
+    internal static void Reset(CacheDevice device)
     { device.Control(WriteCacheAction.Disable); device.Control(WriteCacheAction.Release); }
     private static void Stamp(byte[] bytes, int index) => BinaryPrimitives.WriteInt64LittleEndian(bytes, index);
     private static void Check(AlignedFile file, long offset, byte[] expected)

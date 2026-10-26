@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 196, "plan 196 keeps one ordering mode and compares it with ordering off");
+        Check(VerificationPlan.Version == 197, "plan 197 adds sustained ordering runs (five-minute flushed files, tar, robocopy)");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -221,6 +221,33 @@ internal static class DiagnosticContracts
         Check(costCampaign.Count == 1 && costCampaign[0].Role == CampaignTargetRole.NtfsLab &&
             costCampaign[0].ExpectedCases.SequenceEqual(["flush-order-cost"]),
             "ordering cost uses the maintained lab role and restores the backing cache");
+        var sustained = FlushOrderSustainedPlan.Cases(2);
+        Check(sustained.Count == 12 && sustained.Select(c => c.Id).Distinct().Count() == 12 &&
+            sustained.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 1UL]) &&
+            sustained.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
+            sustained.Select(c => c.Workload).Distinct().SequenceEqual(["files-5min", "tar-extract", "robocopy-tree"]) &&
+            sustained.All(c => c.Id.StartsWith("flush-order-sustained-v197-r", StringComparison.Ordinal) &&
+                c.Id.EndsWith(c.Mode == 0 ? "-off" : "-on", StringComparison.Ordinal)) &&
+            FlushOrderSustainedPlan.Cases(1).Count == 6 && FlushOrderSustainedPlan.TreeBytes == 1_392_640_000 &&
+            FlushOrderSustainedPlan.FileSeconds == 300,
+            "sustained ordering compares off/on per workload with unique IDs and alternating order");
+        var sustainedChecks = sustained.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
+        FlushOrderSustainedPlan.ValidateChecks(sustained, sustainedChecks);
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(sustained, sustainedChecks[..^1]));
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(sustained, sustainedChecks.Reverse().ToArray()));
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(sustained, [.. sustainedChecks[..^1], sustainedChecks[^1] with { Result = "FAIL" }]));
+        VerificationPlan.Validate(new("W:", "flush-order-sustained", BudgetMiB: 2048, Repeats: 2));
+        foreach (var invalid in new[] { new VerificationOptions("W:", "flush-order-sustained", BudgetMiB: 1024, Repeats: 1),
+            new VerificationOptions("W:", "flush-order-sustained", BudgetMiB: 2048, Repeats: 3) })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Invalid sustained ordering options accepted."); }
+            catch (ArgumentException) { }
+        }
+        var sustainedCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 2),
+            "experiment", "W:", FocusSuite: "flush-order-sustained", PauseBackingCache: true));
+        Check(sustainedCampaign.Count == 1 && sustainedCampaign[0].Role == CampaignTargetRole.NtfsLab &&
+            sustainedCampaign[0].ExpectedCases.SequenceEqual(["flush-order-sustained"]),
+            "sustained ordering uses the lab role and restores the backing cache");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);
