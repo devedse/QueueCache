@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
@@ -27,9 +28,9 @@ public static class FlushOrderSustainedScenario
     private static readonly byte[] TreeBase = ConcurrentCacheOracle.Pattern(220, 1, FlushOrderSustainedPlan.TreeFileKiB.Max() * KiB);
 
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice device,
-        string work, string evidence, int repeats, int budgetMiB)
+        string work, string evidence, int repeats, int budgetMiB, bool writeThroughArm = false)
     {
-        var plan = FlushOrderSustainedPlan.Cases(repeats);
+        var plan = FlushOrderSustainedPlan.Cases(repeats, writeThroughArm);
         if (budgetMiB != FlushOrderSustainedPlan.BudgetMiB)
             throw new IOException($"Sustained ordering requires --budget-mib {FlushOrderSustainedPlan.BudgetMiB}.");
         var tar = Path.Combine(Environment.SystemDirectory, "tar.exe");
@@ -39,6 +40,20 @@ public static class FlushOrderSustainedScenario
         // The nonstop file run can create about a million 4 KiB files before the case deletes them.
         await FlushOrderCostScenario.RequireMeasurementConditions(target, device, work, evidence, 6L << 30);
         var original = device.GetDiagnostics().FlushOrder?.Mode ?? throw new NotSupportedException("Diagnostics V26 required.");
+        if (writeThroughArm)
+        {
+            FlushOrderCostScenario.Reset(device);
+            var available = false;
+            try
+            {
+                try { device.Control(WriteCacheAction.FlushOrder, value: 2); }
+                catch (Win32Exception) { }
+                available = device.GetDiagnostics().WriteThroughGroups?.Available == 1;
+            }
+            finally { device.Control(WriteCacheAction.FlushOrder, value: original); }
+            if (!available)
+                throw new NotSupportedException("The sustained write-through arm needs a lab volume whose disk reports FUA support.");
+        }
         var originalTiming = device.GetPerformance().TimingEnabled;
         Directory.CreateDirectory(work);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);

@@ -1116,9 +1116,9 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, costChecks);
                 ReportFailures(costChecks, Console.Error);
                 return costChecks.Count > 0 && costChecks.All(c => c.Result == "PASS") ? 0 : 1;
-            case "flush-order-sustained":
+            case "flush-order-sustained" or "flush-order-fua-sustained":
                 var sustainedChecks = await FlushOrderSustainedScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply,
-                    job.ReferenceRepeats, job.BudgetMiB);
+                    job.ReferenceRepeats, job.BudgetMiB, writeThroughArm: job.Operation == "flush-order-fua-sustained");
                 RunStorage.AtomicJson(job.Reply, sustainedChecks);
                 ReportFailures(sustainedChecks, Console.Error);
                 return sustainedChecks.Count > 0 && sustainedChecks.All(c => c.Result == "PASS") ? 0 : 1;

@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 201, "plan 201: lab mode 2 runs the eleven non-TRIM driver checks");
+        Check(VerificationPlan.Version == 202, "plan 202 adds the sustained off/on/FUA comparison");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -282,6 +282,38 @@ internal static class DiagnosticContracts
         Check(sustainedCampaign.Count == 1 && sustainedCampaign[0].Role == CampaignTargetRole.NtfsLab &&
             sustainedCampaign[0].ExpectedCases.SequenceEqual(["flush-order-sustained"]),
             "sustained ordering uses the lab role and restores the backing cache");
+        var fuaSustained = FlushOrderSustainedPlan.Cases(3, writeThroughArm: true);
+        Check(fuaSustained.Count == 27 && fuaSustained.Select(c => c.Id).Distinct().Count() == 27 &&
+            fuaSustained.All(c => c.Id.StartsWith("flush-order-fua-sustained-v202-r", StringComparison.Ordinal) &&
+                c.Id.EndsWith(c.Mode switch { 0 => "-off", 1 => "-on", _ => "-fua" }, StringComparison.Ordinal)) &&
+            fuaSustained.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
+            fuaSustained.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>
+                w.GroupBy(c => c.Repeat).Select(r => r.ElementAt(position).Mode).Order().SequenceEqual([0UL, 1UL, 2UL]))),
+            "sustained FUA cases are immutable and rotate every arm through each position");
+        var fuaSustainedChecks = fuaSustained.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
+        FlushOrderSustainedPlan.ValidateChecks(fuaSustained, fuaSustainedChecks);
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(fuaSustained, fuaSustainedChecks[..^1]));
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(fuaSustained, [.. fuaSustainedChecks[..^1], fuaSustainedChecks[0]]));
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(fuaSustained, fuaSustainedChecks.Reverse().ToArray()));
+        Reject(() => FlushOrderSustainedPlan.ValidateChecks(fuaSustained, [.. fuaSustainedChecks[..^1], fuaSustainedChecks[^1] with { Result = "FAIL" }]));
+        foreach (var repeats in new[] { 0, 4 })
+        {
+            try { FlushOrderSustainedPlan.Cases(repeats, writeThroughArm: true); throw new Exception("Invalid repetition count accepted."); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+        VerificationPlan.Validate(new("T:", "flush-order-fua-sustained", BudgetMiB: 2048, Repeats: 3));
+        foreach (var invalid in new[] { new VerificationOptions("T:", "flush-order-fua-sustained", BudgetMiB: 1024, Repeats: 3),
+            new VerificationOptions("T:", "flush-order-fua-sustained", BudgetMiB: 2048, Repeats: 4),
+            new VerificationOptions("T:", "flush-order-fua-sustained", BudgetMiB: 2048, Repeats: 3, CaseFilter: "files-5min") })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Invalid sustained FUA options accepted."); }
+            catch (ArgumentException) { }
+        }
+        var fuaSustainedCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3),
+            "experiment", "T:", FocusSuite: "flush-order-fua-sustained", PauseBackingCache: true));
+        Check(fuaSustainedCampaign.Count == 1 && fuaSustainedCampaign[0].Role == CampaignTargetRole.NtfsLab &&
+            fuaSustainedCampaign[0].ExpectedCases.SequenceEqual(["flush-order-fua-sustained"]),
+            "sustained FUA campaign retains the explicit NTFS lab role");
         RunPlan120Contracts(Check, Reject);
         ReadMissContracts(Check, Reject);
         RunComparisonContracts(Check, Reject);

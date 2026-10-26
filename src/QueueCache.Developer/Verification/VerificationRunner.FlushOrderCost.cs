@@ -9,7 +9,7 @@ public sealed partial class VerificationRunner
     // sustained runs (five-minute file runs and their write-out) three.
     private async Task<IReadOnlyList<CheckResult>> MeasureFlushOrder(string operation, CancellationToken token)
     {
-        var seconds = operation == "flush-order-sustained" ? 10800 : 7200;
+        var seconds = operation is "flush-order-sustained" or "flush-order-fua-sustained" ? 10800 : 7200;
         var prefix = storage.PathFor(operation);
         var stop = prefix + ".stop"; var ready = prefix + ".ready.json";
         using var children = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -44,8 +44,8 @@ public sealed partial class VerificationRunner
             RunStorage.AtomicJson(prefix + ".coverage.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
             var checks = JsonSerializer.Deserialize<CheckResult[]>(File.ReadAllText(reply))
                 ?? throw new InvalidDataException("Missing ordering performance checks.");
-            if (operation == "flush-order-sustained")
-                FlushOrderSustainedPlan.ValidateChecks(FlushOrderSustainedPlan.Cases(options.Repeats), checks);
+            if (operation is "flush-order-sustained" or "flush-order-fua-sustained")
+                FlushOrderSustainedPlan.ValidateChecks(FlushOrderSustainedPlan.Cases(options.Repeats, operation == "flush-order-fua-sustained"), checks);
             else
                 FlushOrderCostPlan.ValidateChecks(FlushOrderCostPlan.Cases(options.Repeats, operation == "flush-order-fua-cost"), checks);
             return checks;

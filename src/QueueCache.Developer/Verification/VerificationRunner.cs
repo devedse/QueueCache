@@ -560,7 +560,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                             ?? throw new InvalidDataException("Missing managed lifecycle check results.");
                         return null;
                     }
-                    if (test.Operation is "flush-order-cost" or "flush-order-sustained" or "flush-order-fua-cost")
+                    if (test.Operation is "flush-order-cost" or "flush-order-sustained" or "flush-order-fua-cost" or "flush-order-fua-sustained")
                     {
                         caseChecks = await MeasureFlushOrder(test.Operation, deadline.Token);
                         return null;

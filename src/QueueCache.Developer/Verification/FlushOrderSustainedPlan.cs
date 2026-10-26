@@ -16,13 +16,15 @@ public static class FlushOrderSustainedPlan
     public static long TreeBytes => (long)TreeFiles / TreeFileKiB.Length * TreeFileKiB.Sum() * 1024;
     public static readonly string[] Workloads = ["files-5min", "tar-extract", "robocopy-tree"];
     private static readonly ulong[][] Orders = [[0, 1], [1, 0]];
+    private static readonly ulong[][] WriteThroughOrders = [[0, 1, 2], [1, 2, 0], [2, 0, 1]];
 
-    public static IReadOnlyList<FlushOrderSustainedCase> Cases(int repeats)
+    public static IReadOnlyList<FlushOrderSustainedCase> Cases(int repeats, bool writeThroughArm = false)
     {
-        if (repeats is < 1 or > 2) throw new ArgumentOutOfRangeException(nameof(repeats));
+        if (repeats < 1 || repeats > (writeThroughArm ? 3 : 2)) throw new ArgumentOutOfRangeException(nameof(repeats));
+        var prefix = writeThroughArm ? "flush-order-fua-sustained-v202" : "flush-order-sustained-v197";
         return [.. Enumerable.Range(1, repeats).SelectMany(repeat => Workloads.SelectMany(workload =>
-            Orders[repeat - 1].Select(mode => new FlushOrderSustainedCase(
-                $"flush-order-sustained-v197-r{repeat}-{workload}-{(mode == 0 ? "off" : "on")}", repeat, workload, mode))))];
+            (writeThroughArm ? WriteThroughOrders : Orders)[repeat - 1].Select(mode => new FlushOrderSustainedCase(
+                $"{prefix}-r{repeat}-{workload}-{mode switch { 0 => "off", 1 => "on", _ => "fua" }}", repeat, workload, mode))))];
     }
 
     public static void ValidateChecks(IReadOnlyList<FlushOrderSustainedCase> expected, IReadOnlyList<QueueCache.Operations.CheckResult> actual)
