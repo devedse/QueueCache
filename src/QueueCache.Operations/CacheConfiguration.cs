@@ -200,7 +200,7 @@ public static class ConfigurationManager
     }
 
     // The driver refuses briefly (ERROR_BUSY) while a lower TRIM or group flush it already sent finishes.
-    private static void SelectWriteOrdering(ICacheControl device, bool ordering)
+    internal static void SelectWriteOrdering(ICacheControl device, bool ordering)
     {
         for (var attempt = 1; ; attempt++)
         {

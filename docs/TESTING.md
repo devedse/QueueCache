@@ -266,7 +266,9 @@ the same management code as the app and CLI it applies a Fast cache with orderin
 on, pauses and resumes it, tries Strict with ordering (must be refused with nothing
 changed), applies a configuration without an ordering choice (must keep it) and
 turns it off, checking the driver's mode after each step. It never saves a
-profile.
+profile. Plan 199 (`flush-order-v199`) adds a last step: removing the cache must
+also turn ordering off, so a later configuration without a choice does not
+inherit it.
 
 ## 4. Suites
 

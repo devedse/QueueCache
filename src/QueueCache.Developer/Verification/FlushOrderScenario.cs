@@ -451,11 +451,18 @@ public static class FlushOrderScenario
             Require(1, true, 32, "apply without an ordering choice");
             ConfigurationManager.Apply(target, configuration with { WriteOrdering = false }, true);
             Require(0, true, 64, "apply with ordering off");
+            ConfigurationManager.Apply(target, configuration, true);
+            Require(1, true, 64, "apply with ordering again");
+            await CacheTasks.RemoveAsync(volume, preserveSaved: true);
+            var removed = device.GetWriteCacheState(); var removedOrder = device.GetDiagnostics().FlushOrder;
+            steps.Add(new { Step = "remove", State = removed, FlushOrder = removedOrder });
+            if (removedOrder?.Mode != 0 || removed.Enabled || removed.BudgetBytes != 0)
+                throw new IOException("Removing the cache left write ordering selected.");
         }
         finally { RunStorage.AtomicJson(evidence + ".setting.json", steps); }
         Reset(device);
         return new("flush-order/per-cache-setting", "PASS",
-            "Apply selected and verified write ordering; pause/resume kept it; Strict with ordering was refused unchanged; a configuration without a choice kept it; off cleared it.");
+            "Apply selected and verified write ordering; pause/resume kept it; Strict with ordering was refused unchanged; a configuration without a choice kept it; off cleared it; removing the cache cleared it.");
     }
 
     private static void Reset(CacheDevice device)

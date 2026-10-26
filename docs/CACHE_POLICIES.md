@@ -298,7 +298,8 @@ it, before draining anything, on a volume that holds a paging, hibernation or cr
 dump file, such as the Windows volume. Like the preset, it changes only while the
 cache is disabled and empty, which Apply arranges; a brief busy answer while a lower
 TRIM or group flush finishes is retried for up to 5 s. A saved profile keeps the
-choice and the startup restore reapplies it; pause/resume keeps it. A configuration
+choice and the startup restore reapplies it; pause/resume keeps it, and removing the
+cache turns it off. A configuration
 that does not name a choice (an older saved profile, or one rebuilt from driver
 state) leaves the current mode unchanged. The low-level
 `qcache developer driver flush-order <device> <0|1>` hook remains for the lab, and
