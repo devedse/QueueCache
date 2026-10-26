@@ -46,12 +46,12 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 199;
+    public const int Version = 200;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
     /// Retry. Restoration accepts that count only for them, only while the cache is healthy, and records it.</summary>
-    public static bool InjectsLabFaults(string suite) => suite is "ordering-faults" or "stress-races" or "flush-order";
+    public static bool InjectsLabFaults(string suite) => suite is "ordering-faults" or "stress-races" or "flush-order" or "flush-order-fua";
     public static bool IsRamReadSuite(string suite) => suite is "ram-read-reference" or "ram-read-scheduling" or "ram-read-attribution" or "ram-read-coordination" or "ram-read-async" or "ram-read-async-lifecycle" or "ram-write-reference";
     public static bool IsLayoutSuite(string suite) =>
         suite is "cache-layout" or "cache-layout-reset" or "cache-layout-steady" or "cache-layout-full";
@@ -87,6 +87,8 @@ public static class VerificationPlan
         "flush-order",
         "flush-order-cost",
         "flush-order-sustained",
+        "flush-order-fua",
+        "flush-order-fua-cost",
         "stress-races",
         "app-write-profile",
         "pressure",
@@ -226,6 +228,8 @@ public static class VerificationPlan
         "flush-order" => [new("flush-order-v199", "flush-order")],
         "flush-order-cost" => [new("flush-order-cost", "flush-order-cost")],
         "flush-order-sustained" => [new("flush-order-sustained", "flush-order-sustained")],
+        "flush-order-fua" => [new("flush-order-fua-v200", "flush-order-fua")],
+        "flush-order-fua-cost" => [new("flush-order-fua-cost", "flush-order-fua-cost")],
         "ordering-faults" => [new("ordering-faults", "ordering-faults")],
         "stress-races" => [new("stress-races", "stress-races")],
         "app-write-profile" => [new("app-write-profile", "app-write-profile")],
@@ -527,9 +531,9 @@ public static class VerificationPlan
             return;
         }
         if (options.Product is not null) throw new ArgumentException("--product applies only to comparison suites.");
-        if (options.Suite == "flush-order-cost" && (options.BudgetMiB != FlushOrderCostPlan.BudgetMiB ||
+        if (options.Suite is "flush-order-cost" or "flush-order-fua-cost" && (options.BudgetMiB != FlushOrderCostPlan.BudgetMiB ||
             options.Repeats is < 1 or > 3 || options.DiskSpd is not null || options.CaseFilter is not null))
-            throw new ArgumentException($"flush-order-cost requires --budget-mib {FlushOrderCostPlan.BudgetMiB}, --repeats 1..3 and no DiskSpd/case filter.");
+            throw new ArgumentException($"{options.Suite} requires --budget-mib {FlushOrderCostPlan.BudgetMiB}, --repeats 1..3 and no DiskSpd/case filter.");
         if (options.Suite == "flush-order-sustained" && (options.BudgetMiB != FlushOrderSustainedPlan.BudgetMiB ||
             options.Repeats is < 1 or > 2 || options.DiskSpd is not null || options.CaseFilter is not null))
             throw new ArgumentException($"flush-order-sustained requires --budget-mib {FlushOrderSustainedPlan.BudgetMiB}, --repeats 1..2 and no DiskSpd/case filter.");

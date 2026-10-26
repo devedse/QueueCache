@@ -530,7 +530,7 @@ LONG QcCachePagingPathCount(QC_CACHE* cache)
 {
     return InterlockedCompareExchange(&cache->PagingPathCount, 0, 0);
 }
-static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG inject = 0)
+static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG inject = 0, bool writeThrough = false)
 {
     KEVENT completed;
     KeInitializeEvent(&completed, NotificationEvent, FALSE);
@@ -560,6 +560,8 @@ static NTSTATUS LowerIo(QC_CACHE* c, ULONG major, QC_SLOT* slot = nullptr, ULONG
     }
     if (major == IRP_MJ_WRITE)
         irp->Flags |= IRP_WRITE_OPERATION | IRP_NOCACHE;
+    if (major == IRP_MJ_WRITE && writeThrough)
+        IoGetNextIrpStackLocation(irp)->Flags |= SL_WRITE_THROUGH; // Forced unit access (lab mode 2, #31).
     if (inject == 4 || inject == 5)
         IoSetCompletionRoutine(
             irp, InjectLowerCompletion, reinterpret_cast<PVOID>(static_cast<ULONG_PTR>(inject)), TRUE, TRUE, TRUE);
@@ -948,6 +950,26 @@ static bool SealEpoch(QC_CACHE* c)
         WakeDrainers(c);
     return true;
 }
+// Mutex held. Remaining bytes of the frontier group, counted up to just past limit. Its
+// versions lead the dirty FIFO, so this walks at most limit / Chunk + 1 slots.
+static ULONGLONG FrontierGroupBytes(QC_CACHE* c, ULONGLONG limit)
+{
+    ULONGLONG bytes = 0;
+    for (auto index = c->Head; index != NoSlot && c->Slots[index].Epoch == c->DrainEpoch && bytes <= limit;
+         index = c->Slots[index].QueueNext)
+        bytes += QcValidBytes(c->Slots[index].ValidSectors);
+    return bytes;
+}
+// Mutex held, frontier group complete: move to the next group that has work. Empty groups
+// have no lower effects left to order; a pending TRIM is an effect even when the dirty FIFO is empty.
+static void AdvanceFrontier(QC_CACHE* c)
+{
+    auto next = c->Head == NoSlot ? c->WriteEpoch : c->Slots[c->Head].Epoch;
+    for (const auto& fence : c->TrimFences)
+        if (fence.Ranges) next = min(next, fence.Epoch);
+    c->DrainEpoch = QcNextFrontier(c->DrainEpoch, next, c->WriteEpoch);
+    c->EpochNeedsFlush = FALSE;
+}
 // Mutex held. True when block lies inside a TRIM whose lower request is still
 // outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
 static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLONG)
@@ -1156,23 +1178,32 @@ static void Drainer(PVOID context)
             (c->Head == NoSlot || c->Slots[c->Head].Epoch > c->DrainEpoch) &&
             NT_SUCCESS(c->State.LastError) && !c->Gone)
         {
+            if (c->FlushOrderMode == 2 && !c->EpochNeedsFlush)
+            {
+                // Every write of this group was forced to stable media and has completed.
+                ++c->Diagnostics.EpochWriteThroughGroups;
+                AdvanceFrontier(c);
+                Publish(c);
+                KeSetEvent(&c->Changed, IO_NO_INCREMENT, FALSE);
+                WakeDrainers(c);
+                ReleaseCache(c);
+                continue;
+            }
             c->EpochFlushInFlight = TRUE;
             const bool inject = c->InjectFault == 3;
             if (inject) c->InjectFault = 0;
             Publish(c);
             ReleaseCache(c);
+            const auto flushStart = c->Timing ? Tick() : 0;
             const auto status = inject ? STATUS_IO_DEVICE_ERROR : LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
+            const auto flushTicks = flushStart ? Tick() - flushStart : 0;
             AcquireCache(c);
             c->EpochFlushInFlight = FALSE;
+            c->Diagnostics.EpochFlushTicks += flushTicks;
             if (NT_SUCCESS(status))
             {
                 ++c->Diagnostics.EpochFlushes;
-                // Empty groups have no lower effects left to order. A pending
-                // TRIM is an effect even when the dirty FIFO is empty.
-                auto next = c->Head == NoSlot ? c->WriteEpoch : c->Slots[c->Head].Epoch;
-                for (const auto& fence : c->TrimFences)
-                    if (fence.Ranges) next = min(next, fence.Epoch);
-                c->DrainEpoch = QcNextFrontier(c->DrainEpoch, next, c->WriteEpoch);
+                AdvanceFrontier(c);
             }
             else
             {
@@ -1318,8 +1349,18 @@ static void Drainer(PVOID context)
         else ++c->Performance.DrainSizeLarge;
         if (!c->State.InFlightBytes)
             c->DrainBusySince = KeQueryInterruptTime(); // The disk starts writing (MeasurePieceRate).
+        bool writeThrough = false;
         if (FlushOrdering(c))
+        {
             c->Diagnostics.EpochMaxSubmitted = max(c->Diagnostics.EpochMaxSubmitted, c->Slots[selected[0]].Epoch);
+            const bool sealed = c->DrainEpoch < c->WriteEpoch;
+            writeThrough = QcWriteThroughGroup(c->FlushOrderMode, c->LowerWriteThrough != FALSE, sealed, c->EpochNeedsFlush != FALSE,
+                                               sealed ? FrontierGroupBytes(c, QcWriteThroughGroupBytes) : MAXULONGLONG);
+            if (writeThrough)
+                ++c->Diagnostics.EpochWriteThroughWrites;
+            else
+                c->EpochNeedsFlush = TRUE;
+        }
         c->State.InFlightBytes += transferBytes;
         worker->InFlightStart = io.Offset.QuadPart;
         worker->InFlightEnd = io.Offset.QuadPart + io.Length;
@@ -1371,7 +1412,7 @@ static void Drainer(PVOID context)
         if (NT_SUCCESS(status))
         {
             if (io.ValidSectors == 255)
-                status = LowerIo(c, IRP_MJ_WRITE, &io, inject ? inject : gateInject);
+                status = LowerIo(c, IRP_MJ_WRITE, &io, inject ? inject : gateInject, writeThrough);
             else
             {
                 // Sparse writes own only these sectors. Issue contiguous valid runs;
@@ -1389,7 +1430,7 @@ static void Drainer(PVOID context)
                     part.Buffer += firstSector * 512;
                     part.Length = (sector - firstSector) * 512;
                     const bool lastRun = sector == 8 || !(io.ValidSectors >> sector);
-                    status = LowerIo(c, IRP_MJ_WRITE, &part, inject ? inject : lastRun ? gateInject : 0);
+                    status = LowerIo(c, IRP_MJ_WRITE, &part, inject ? inject : lastRun ? gateInject : 0, writeThrough);
                     inject = 0;
                 }
             }
@@ -1569,7 +1610,7 @@ static void FreeSlots(QC_CACHE* c)
     c->DirtySlots = c->StrictPieces = 0;
     c->WriteEpoch = c->DrainEpoch = 1;
     c->Diagnostics.EpochMaxSubmitted = 0;
-    c->EpochHasWrites = c->EpochFlushInFlight = FALSE;
+    c->EpochHasWrites = c->EpochFlushInFlight = c->EpochNeedsFlush = FALSE;
     c->EpochWaiters = 0;
     c->CleanValidBytes[0] = c->CleanValidBytes[1] = 0;
     c->CleanHead[0] = c->CleanHead[1] = c->CleanTail[0] = c->CleanTail[1] = NoSlot;
@@ -1653,6 +1694,7 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
             {
                 c->DrainEpoch = ++c->WriteEpoch;
                 c->EpochHasWrites = FALSE;
+                c->EpochNeedsFlush = FALSE;
             }
         }
     }
@@ -1864,6 +1906,31 @@ static NTSTATUS Configure(QC_CACHE* c, ULONGLONG budget)
     ReleaseCache(c);
     return STATUS_SUCCESS;
 }
+// PASSIVE_LEVEL, cache lock not held. Lab mode 2 (#31): whether the lower device honours
+// forced unit access, from its write-cache property.
+static bool LowerSupportsWriteThrough(QC_CACHE* c)
+{
+    STORAGE_PROPERTY_QUERY query = {};
+    query.PropertyId = StorageDeviceWriteCacheProperty;
+    query.QueryType = PropertyStandardQuery;
+    STORAGE_WRITE_CACHE_PROPERTY property = {};
+    KEVENT completed;
+    KeInitializeEvent(&completed, NotificationEvent, FALSE);
+    IO_STATUS_BLOCK iosb = {};
+    auto irp = IoBuildDeviceIoControlRequest(IOCTL_STORAGE_QUERY_PROPERTY, c->Lower, &query, sizeof(query),
+                                             &property, sizeof(property), FALSE, &completed, &iosb);
+    if (!irp)
+        return false;
+    auto status = IoCallDriver(c->Lower, irp);
+    if (status == STATUS_PENDING)
+    {
+        KeWaitForSingleObject(&completed, Executive, KernelMode, FALSE, nullptr);
+        status = iosb.Status;
+    }
+    return NT_SUCCESS(status) &&
+           iosb.Information >= RTL_SIZEOF_THROUGH_FIELD(STORAGE_WRITE_CACHE_PROPERTY, WriteThroughSupported) &&
+           property.WriteThroughSupported == WriteThroughSupported;
+}
 static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
 {
     auto stack = IoGetCurrentIrpStackLocation(irp);
@@ -1909,16 +1976,22 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
         ReleaseCache(c);
         return QcCacheBarrier(c, command.Action == QcDisable, QcControlBarrier, irp, command.Action);
     }
+    // Lab mode 2 needs the lower device's write-through support: asked without the cache lock,
+    // and only on a volume without paging/hibernation/dump paths (mode 2 refuses those anyway).
+    const bool lowerWriteThrough = command.Action == QcLabFlushOrder && command.Value == 2 &&
+                                   QcCachePagingPathCount(c) == 0 && LowerSupportsWriteThrough(c);
     AcquireCache(c);
     NTSTATUS status = STATUS_SUCCESS;
     switch (command.Action)
     {
     case QcLabFlushOrder:
-        if (command.Value > 1 || command.BudgetBytes)
+        if (command.Value > 2 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
                  !NT_SUCCESS(c->State.LastError))
             status = STATUS_DEVICE_BUSY;
+        else if (command.Value == 2 && !lowerWriteThrough)
+            status = STATUS_NOT_SUPPORTED;
         else
         {
             KIRQL irql;
@@ -1930,7 +2003,9 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
                 c->FlushOrderMode = static_cast<LONG>(command.Value);
                 c->WriteEpoch = c->DrainEpoch = 1;
                 c->Diagnostics.EpochMaxSubmitted = 0;
-                c->EpochHasWrites = FALSE;
+                c->EpochHasWrites = c->EpochNeedsFlush = FALSE;
+                c->LowerWriteThrough = lowerWriteThrough;
+                c->Diagnostics.EpochWriteThroughAvailable = lowerWriteThrough;
                 ++c->Generation;
             }
             KeReleaseSpinLock(c->RoutingLock, irql);
@@ -3477,7 +3552,10 @@ static void FinishAsyncTrim(QC_CACHE* c, ULONG fence, NTSTATUS status)
     auto& entry = c->TrimFences[fence];
     auto ranges = entry.Ranges;
     if (FlushOrdering(c))
+    {
         TrimCached(c, ranges, entry.Count, true, true); // Older dirty versions may now be retained clean.
+        c->EpochNeedsFlush = TRUE; // Only a lower flush makes the TRIM durable before later groups.
+    }
     entry.Ranges = nullptr;
     entry.Count = 0;
     --c->TrimFenceCount;

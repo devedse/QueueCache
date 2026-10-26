@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 199, "plan 199: removing a cache also turns write ordering off");
+        Check(VerificationPlan.Version == 200, "plan 200 adds lab mode 2 (forced-unit-access small groups, #31) suites");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -196,6 +196,19 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[0]]));
         Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Result = "FAIL" }]));
         Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Name = "other/check" }]));
+        var fuaChecks = Enumerable.Range(0, FlushOrderScenario.WriteThroughCheckCount)
+            .Select(i => new CheckResult($"flush-order-fua/check{i}", "PASS", "fixture")).ToArray();
+        FlushOrderScenario.ValidateChecks(fuaChecks, FlushOrderScenario.WriteThrough);
+        Reject(() => FlushOrderScenario.ValidateChecks(orderChecks[..^1], FlushOrderScenario.WriteThrough));
+        Reject(() => FlushOrderScenario.ValidateChecks(fuaChecks));
+        Reject(() => FlushOrderScenario.ValidateChecks([.. fuaChecks[..^1], fuaChecks[0]], FlushOrderScenario.WriteThrough));
+        // Mode 2 fails a group's forced write, not its flush: the flush-failure count must stay unchanged.
+        var fuaHeld = heldOrder with { FlushOrder = heldOrder.FlushOrder! with { Mode = 2 } };
+        FlushOrderScenario.ValidateFailed(fuaHeld, fuaHeld, faultState, true, FlushOrderScenario.WriteThrough);
+        Reject(() => FlushOrderScenario.ValidateFailed(fuaHeld, fuaHeld with { FlushOrder = fuaHeld.FlushOrder! with { FlushFailures = 1 } },
+            faultState, true, FlushOrderScenario.WriteThrough));
+        FlushOrderScenario.ValidateHeld(fuaHeld, FlushOrderScenario.WriteThrough);
+        Reject(() => FlushOrderScenario.ValidateHeld(fuaHeld));
         var costPlan = FlushOrderCostPlan.Cases(2);
         var fullCostPlan = FlushOrderCostPlan.Cases(3);
         Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
@@ -208,6 +221,27 @@ internal static class DiagnosticContracts
             fullCostPlan.Count == 18 && fullCostPlan.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
             FlushOrderCostPlan.SequentialMiB < FlushOrderCostPlan.BudgetMiB,
             "ordering cost compares off/on with unique IDs, equal counts, alternating arm order and a fitting file");
+        var fuaCost = FlushOrderCostPlan.Cases(3, writeThroughArm: true);
+        Check(fuaCost.Count == 27 && fuaCost.Select(c => c.Id).Distinct().Count() == 27 &&
+            fuaCost.All(c => c.Id.StartsWith("flush-order-fua-cost-v200-r", StringComparison.Ordinal) &&
+                c.Id.EndsWith(c.Mode switch { 0 => "-off", 1 => "-on", _ => "-fua" }, StringComparison.Ordinal)) &&
+            fuaCost.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
+            fuaCost.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>
+                w.GroupBy(c => c.Repeat).Select(r => r.ElementAt(position).Mode).Order().SequenceEqual([0UL, 1UL, 2UL]))) &&
+            FlushOrderCostPlan.Cases(3).All(c => c.Mode is 0 or 1),
+            "the write-through cost arm adds lab mode 2 with unique IDs and each arm once in every position");
+        VerificationPlan.Validate(new("W:", "flush-order-fua-cost", BudgetMiB: 2048, Repeats: 3));
+        try { VerificationPlan.Validate(new("W:", "flush-order-fua-cost", BudgetMiB: 256, Repeats: 3)); throw new Exception("Wrong write-through cost budget accepted."); }
+        catch (ArgumentException) { }
+        foreach (var suite in new[] { "flush-order-fua", "flush-order-fua-cost" })
+        {
+            var fuaCampaign = VerificationCampaignPlan.Create(new(new("Q:", BudgetMiB: 2048, Repeats: 3),
+                "experiment", "T:", FocusSuite: suite, PauseBackingCache: true));
+            Check(fuaCampaign.Count == 1 && fuaCampaign[0].Role == CampaignTargetRole.NtfsLab &&
+                fuaCampaign[0].ExpectedCases.SequenceEqual([suite == "flush-order-fua" ? "flush-order-fua-v200" : "flush-order-fua-cost"]),
+                $"{suite} runs on the lab role with its own case");
+        }
+        Check(VerificationPlan.InjectsLabFaults("flush-order-fua"), "the mode-2 suite records its deliberate faults");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));

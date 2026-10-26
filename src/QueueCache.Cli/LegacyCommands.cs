@@ -33,7 +33,7 @@ internal static class LegacyCommands
           qcache lab-read-recall <device> <1 keep a re-read miss as recent when it was used more recently than the oldest cached block (default) | 0 earlier bimodal insertion>
           qcache lab-read-aware <device> <0 off | 1..8 most drain batches outstanding while foreground disk reads wait; default 2>
           qcache lab-trim-mode <device> <0..7: 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM asynchronously with a range fence | 4 lab: hold that TRIM for 2 s; default 3>
-          qcache lab-flush-order <device> <0 off | 1 experimental Fast write ordering (#13); clean disabled cache only>
+          qcache lab-flush-order <device> <0 off | 1 experimental Fast write ordering (#13) | 2 lab: 1 with forced-unit-access small groups (#31); clean disabled cache only>
           qcache lab-fault <device> <0=clear|1=write error|2=short write|3=flush error|4=completion error|5=short completion|6=descriptor allocation|7=partial allocation|8=transient IRP allocation|9=IRP allocation exhausted|10=direct paging write error|11=paging write map failure>
         Write-cache controls require the explicit lab write-cache build and elevation.
         Configure only while disabled and clean. Abrupt failure loses volatile dirty data.
@@ -96,7 +96,7 @@ internal static class LegacyCommands
                 if (configure && (amount < 1 || amount > 131072))
                     throw new ArgumentException("Budget must be 1..131072 MiB; the driver also enforces a shared RAM limit.");
                 if (args[0] == "lab-delay" && amount > 2000 || args[0] == "lab-fault" && amount > 11 || args[0] == "lab-copy-flags" && amount > 15 || args[0] == "lab-read-recall" && amount > 1 ||
-                    args[0] == "lab-read-aware" && amount > 8 || args[0] == "lab-trim-mode" && amount > 7 || args[0] == "lab-flush-order" && amount > 1)
+                    args[0] == "lab-read-aware" && amount > 8 || args[0] == "lab-trim-mode" && amount > 7 || args[0] == "lab-flush-order" && amount > 2)
                     throw new ArgumentException("Lab hook value is outside its range.");
                 var state = await CacheTasks.ControlAsync(args[1],
                     configure ? WriteCacheAction.Configure : args[0] == "lab-delay" ? WriteCacheAction.LabDelay :

@@ -60,7 +60,7 @@ public static class CacheTasks
             device.Control(WriteCacheAction.Release);
             // Without a cache the volume returns to its defaults, write ordering included; otherwise a
             // later configuration without an ordering choice would inherit it.
-            if (device.GetDiagnostics().FlushOrder?.Mode == 1)
+            if (device.GetDiagnostics().FlushOrder?.Mode is > 0)
                 ConfigurationManager.SelectWriteOrdering(new CacheDeviceControl(device), false);
             if (!preserveSaved)
                 SavedConfigurations.Remove(target);

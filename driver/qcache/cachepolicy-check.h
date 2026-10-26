@@ -40,13 +40,19 @@ constexpr bool PolicyChecks()
         return false;
     if (!QcMaySelectFlushOrder(0, 3) || !QcMaySelectFlushOrder(1, 0) ||
         QcMaySelectFlushOrder(1, 1) || QcMaySelectFlushOrder(1, -1) ||
-        QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(3, 0) ||
+        !QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(2, 1) || QcMaySelectFlushOrder(3, 0) ||
         !QcMayRegisterUsage(0) || QcMayRegisterUsage(1))
         return false;
     // #13: only frontier work wakes ordered drainers; unordered writes keep their policy wake-up.
     if (!QcSealWakes(4, 5, 0) || QcSealWakes(4, 5, 4096) || QcSealWakes(3, 5, 0) ||
         !QcWriteWakes(false, false, 5, 4) || !QcWriteWakes(true, false, 4, 4) ||
         QcWriteWakes(true, false, 5, 4) || !QcWriteWakes(true, true, 5, 4))
+        return false;
+    // Lab mode 2 (#31): only a small sealed group that sent no ordinary write, on a FUA-capable disk.
+    if (!QcWriteThroughGroup(2, true, true, false, 4096) || !QcWriteThroughGroup(2, true, true, false, 1 << 20) ||
+        QcWriteThroughGroup(2, true, true, false, (1 << 20) + 4096) || QcWriteThroughGroup(1, true, true, false, 4096) ||
+        QcWriteThroughGroup(2, false, true, false, 4096) || QcWriteThroughGroup(2, true, false, false, 4096) ||
+        QcWriteThroughGroup(2, true, true, true, 4096))
         return false;
     // Next group, skipped empty groups, and a barrier (4/4) or Release (1/1) during the flush.
     if (QcNextFrontier(3, 3, 5) != 4 || QcNextFrontier(3, 5, 6) != 5 || QcNextFrontier(3, 6, 6) != 6 ||

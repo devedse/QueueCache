@@ -686,7 +686,7 @@ BinaryPrimitives.WriteUInt32LittleEndian(strictBytes.AsSpan(4), CacheDiagnostics
 foreach (var (offset, value) in new[] { (0, 300UL), (8, 4000UL), (16, 17UL) })
     BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + offset), value);
 Check(CacheDiagnostics.Decode(strictBytes).StrictBacklog == new CacheStrictBacklog(300, 4000, 17) &&
-    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1280,
+    CacheDiagnostics.Decode(drainPriorityBytes).StrictBacklog is null && CacheDiagnostics.CurrentWireSize == 1312,
     "V25 diagnostics report Strict's backlog pieces, limit and waits (#16); V24 reports none");
 BinaryPrimitives.WriteUInt64LittleEndian(strictBytes.AsSpan(CacheDiagnostics.DrainPriorityWireSize + 8), 100);
 Reject(() => CacheDiagnostics.Decode(strictBytes), "Strict backlog limit below its 256-piece floor rejected");
@@ -711,13 +711,33 @@ Reject(() => CacheDiagnostics.Decode(orderedBytes.AsSpan(0, orderedBytes.Length 
 BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 25);
 Reject(() => CacheDiagnostics.Decode(orderedBytes), "ordering size requires V26 version");
 BinaryPrimitives.WriteUInt32LittleEndian(orderedBytes, 26);
-foreach (var (offset, value) in new[] { (0, 2UL), (0, 3UL), (8, 0UL), (16, 0UL), (16, 8UL) })
+BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize), 2);
+Check(CacheDiagnostics.Decode(orderedBytes).FlushOrder?.Mode == 2 && CacheDiagnostics.Decode(orderedBytes).WriteThroughGroups is null,
+    "V26 reports lab mode 2 without inventing V27 write-through counters");
+BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize), 1);
+foreach (var (offset, value) in new[] { (0, 3UL), (0, 4UL), (8, 0UL), (16, 0UL), (16, 8UL) })
 {
     var original = BinaryPrimitives.ReadUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset));
     BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset), value);
     Reject(() => CacheDiagnostics.Decode(orderedBytes), "invalid ordering mode or frontier rejected");
     BinaryPrimitives.WriteUInt64LittleEndian(orderedBytes.AsSpan(CacheDiagnostics.StrictBacklogWireSize + offset), original);
 }
+// V27 (#31) appends lab mode 2's forced-unit-access group counters and group-flush time.
+var throughBytes = new byte[CacheDiagnostics.WriteThroughGroupsWireSize];
+orderedBytes.CopyTo(throughBytes, 0);
+BinaryPrimitives.WriteUInt32LittleEndian(throughBytes, 27);
+BinaryPrimitives.WriteUInt32LittleEndian(throughBytes.AsSpan(4), CacheDiagnostics.WriteThroughGroupsWireSize);
+ulong[] throughValues = [40, 41, 1, 123456];
+for (var i = 0; i < throughValues.Length; i++)
+    BinaryPrimitives.WriteUInt64LittleEndian(throughBytes.AsSpan(CacheDiagnostics.FlushOrderWireSize + 8 * i), throughValues[i]);
+Check(CacheDiagnostics.Decode(throughBytes).WriteThroughGroups == new CacheWriteThroughGroups(40, 41, 1, 123456) &&
+    CacheDiagnostics.Decode(orderedBytes).WriteThroughGroups is null, "V27 decodes write-through groups only when present");
+BinaryPrimitives.WriteUInt64LittleEndian(throughBytes.AsSpan(CacheDiagnostics.FlushOrderWireSize + 16), 0);
+Check(CacheDiagnostics.Decode(throughBytes).WriteThroughGroups?.Groups == 40, "lifetime counts survive a later mode without write-through");
+BinaryPrimitives.WriteUInt64LittleEndian(throughBytes.AsSpan(CacheDiagnostics.FlushOrderWireSize + 16), 2);
+Reject(() => CacheDiagnostics.Decode(throughBytes), "invalid write-through availability rejected");
+BinaryPrimitives.WriteUInt32LittleEndian(throughBytes, 26);
+Reject(() => CacheDiagnostics.Decode(throughBytes), "write-through size requires V27 version");
 // The buffer offered to the driver must be the newest size: 0.4.469.1 asked for V19 and got no V20 fields.
 Check(CacheDiagnostics.CurrentWireSize == typeof(CacheDiagnostics).GetFields()
         .Where(f => f.IsLiteral && f.Name.EndsWith("WireSize") && f.Name != nameof(CacheDiagnostics.CurrentWireSize))

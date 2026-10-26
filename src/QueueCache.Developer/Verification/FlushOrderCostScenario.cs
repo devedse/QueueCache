@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using QueueCache.Management;
@@ -19,14 +20,25 @@ public static class FlushOrderCostScenario
 {
     private const int MiB = 1 << 20;
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, CacheDevice device,
-        string work, string evidence, int repeats, int budgetMiB)
+        string work, string evidence, int repeats, int budgetMiB, bool writeThroughArm = false)
     {
-        var plan = FlushOrderCostPlan.Cases(repeats);
+        var plan = FlushOrderCostPlan.Cases(repeats, writeThroughArm);
         if (budgetMiB != FlushOrderCostPlan.BudgetMiB)
             throw new IOException($"Ordering cost requires --budget-mib {FlushOrderCostPlan.BudgetMiB}.");
         // Room for the sequential file plus 1 GiB.
         await RequireMeasurementConditions(target, device, work, evidence, (FlushOrderCostPlan.SequentialMiB + 1024L) * MiB);
         var original = device.GetDiagnostics().FlushOrder?.Mode ?? throw new NotSupportedException("Diagnostics V26 required.");
+        if (writeThroughArm)
+        {
+            // Lab mode 2 is refused unless the lab disk reports write-through (FUA) support: find out before measuring.
+            Reset(device);
+            try { device.Control(WriteCacheAction.FlushOrder, value: 2); }
+            catch (Win32Exception) { }
+            var available = device.GetDiagnostics().WriteThroughGroups?.Available == 1;
+            device.Control(WriteCacheAction.FlushOrder, value: original);
+            if (!available)
+                throw new NotSupportedException("The write-through arm needs a lab volume whose disk reports write-through (FUA) support.");
+        }
         var originalTiming = device.GetPerformance().TimingEnabled;
         Directory.CreateDirectory(work);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);

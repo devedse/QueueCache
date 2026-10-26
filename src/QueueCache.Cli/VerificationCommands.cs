@@ -67,6 +67,8 @@ internal static class VerificationCommands
                                  Injects deliberate faults, restores mode; no power-cut claim or DiskSpd.
               flush-order-cost   Ordering off and on, alternating order; full telemetry/byte oracle.
                                  --budget-mib 2048 --repeats 3 (about 15 min), Verifier off, 15-minute warm boot; no DiskSpd.
+              flush-order-fua    Lab mode 2 (#31): the driver checks with forced-unit-access small groups; FUA-capable lab disk.
+              flush-order-fua-cost  Off, on and lab mode 2 in rotated order, flush-order-cost workloads; FUA-capable lab disk.
               flush-order-sustained  Ordering off and on: five minutes of flushed small files, tar and robocopy of a tree.
                                  --budget-mib 2048 --repeats 1..2 (about 25 min each), Verifier off, warm boot; no DiskSpd.
               drain-decision     Seeded drain versus no-drain controls for fitting writes and cold reads; drain batch

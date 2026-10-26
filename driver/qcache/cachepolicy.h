@@ -108,7 +108,16 @@ static constexpr LONG QcDefaultFlushOrder = 0;
 // RoutingLock so a reservation and the selection cannot pass each other.
 constexpr bool QcMaySelectFlushOrder(ULONGLONG mode, LONG usagePaths)
 {
-    return mode == 0 || (mode == 1 && usagePaths == 0);
+    return mode == 0 || (mode <= 2 && usagePaths == 0);
+}
+// Lab mode 2 (#31): mode 1, but a sealed frontier group of at most this many bytes is
+// written with forced unit access (FUA) and needs no lower flush once those writes
+// completed. Only where the lower device reports write-through support; a group that
+// already sent an ordinary write (while it was still open) or a TRIM still flushes.
+constexpr ULONGLONG QcWriteThroughGroupBytes = 1ULL << 20;
+constexpr bool QcWriteThroughGroup(LONG mode, bool lowerWriteThrough, bool sealed, bool needsFlush, ULONGLONG groupBytes)
+{
+    return mode == 2 && lowerWriteThrough && sealed && !needsFlush && groupBytes <= QcWriteThroughGroupBytes;
 }
 // Ordered drainers wake only for work they may start now: the dirty FIFO is in
 // group order, so selection stops at the first later version. Waking every drainer

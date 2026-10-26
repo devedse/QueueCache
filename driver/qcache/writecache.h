@@ -170,6 +170,10 @@ struct QC_DIAGNOSTICS
     // V26: experimental volatile write ordering (#13), sealed flush groups and lower flushes.
     ULONGLONG FlushOrderMode, WriteEpoch, DrainEpoch, EpochSeals, EpochFlushes;
     ULONGLONG EpochVersionCopies, EpochTrimWaits, EpochFlushFailures, EpochMaxSubmitted;
+    // V27 (#31): lab mode 2's groups finished by forced-unit-access writes without a lower flush,
+    // those writes, whether the lower device reported write-through support when mode 2 was
+    // selected (0 for other modes), and performance-counter ticks in group flushes (timing on only).
+    ULONGLONG EpochWriteThroughGroups, EpochWriteThroughWrites, EpochWriteThroughAvailable, EpochFlushTicks;
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -196,7 +200,9 @@ static constexpr ULONG QcDiagnosticsV22Size = 1064;
 static constexpr ULONG QcDiagnosticsV23Size = 1136;
 static constexpr ULONG QcDiagnosticsV24Size = 1184;
 static constexpr ULONG QcDiagnosticsV25Size = 1208;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1280);
+static constexpr ULONG QcDiagnosticsV26Size = 1280;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1312);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, EpochWriteThroughGroups) == QcDiagnosticsV26Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, FlushOrderMode) == QcDiagnosticsV25Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StrictPieces) == QcDiagnosticsV24Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, ReadAware) == QcDiagnosticsV23Size);
@@ -456,6 +462,9 @@ struct QC_CACHE
     LONG FlushOrderMode; // Writes hold Mutex and RoutingLock; dispatch reads under RoutingLock.
     ULONGLONG WriteEpoch, DrainEpoch;
     BOOLEAN EpochHasWrites, EpochFlushInFlight;
+    // Mutex. Lab mode 2 (#31): the frontier group sent a write without FUA, or a TRIM, so it
+    // needs a lower flush; and whether the lower device reported write-through support.
+    BOOLEAN EpochNeedsFlush, LowerWriteThrough;
     ULONG EpochWaiters;
     ULONGLONG CleanValidBytes[2];
     ULONGLONG ReadHitBytes, ReadMissBytes, Evictions, Generation, Instance, LastWriteTime;

@@ -58,7 +58,7 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
     {
         ValidateVolume(volume);
         using var device = new CacheDevice(volume.Volume);
-        return device.GetDiagnostics().FlushOrder?.Mode == 1;
+        return device.GetDiagnostics().FlushOrder?.Mode is > 0;
     });
     public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.Run<CacheLayoutMap?>(() =>
     {

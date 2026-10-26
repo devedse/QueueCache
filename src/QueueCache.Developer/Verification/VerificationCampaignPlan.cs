@@ -12,9 +12,9 @@ public sealed record VerificationCampaignPhase(string Id, CampaignTargetRole Rol
 public static class VerificationCampaignPlan
 {
     public static readonly string[] Profiles = ["smoke", "focused", "experiment", "performance", "release-performance"];
-    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "cache-read-misses", "stress-races", "flush-order", "flush-order-cost", "flush-order-sustained", "checkpoint-reuse"];
+    public static readonly string[] ExperimentSuites = ["ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle", "ram-write-reference", "cache-read-reference", "cache-read-bookkeeping", "cache-read-misses", "stress-races", "flush-order", "flush-order-cost", "flush-order-sustained", "flush-order-fua", "flush-order-fua-cost", "checkpoint-reuse"];
     public static readonly string[] FocusSuites =
-    ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults", "stress-races", "flush-order", "flush-order-cost", "flush-order-sustained", "checkpoint-reuse",
+    ["partial-read-accounting", "paging-coherence", "policies", "pressure", "ordering-faults", "stress-races", "flush-order", "flush-order-cost", "flush-order-sustained", "flush-order-fua", "flush-order-fua-cost", "checkpoint-reuse",
      "sequential-resident", "cache-layout", "cache-read-reference", "cache-read-bookkeeping", "cache-read-misses", "ram-read-reference", "ram-write-reference", "ram-read-scheduling", "ram-read-attribution", "ram-read-coordination", "ram-read-async", "ram-read-async-lifecycle",
      "caller-backoff", "priority-cost", "priority-affinity", "cache-concurrency", "cache-map-cost", "cache-recall",
      "cache-sustained", "write-performance"];
@@ -87,7 +87,7 @@ public static class VerificationCampaignPlan
         }
 
         if (options.Profile == "experiment")
-            Add(options.FocusSuite!, options.FocusSuite is "stress-races" or "flush-order" or "flush-order-cost" or "flush-order-sustained" or "checkpoint-reuse" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
+            Add(options.FocusSuite!, options.FocusSuite is "stress-races" or "flush-order" or "flush-order-cost" or "flush-order-sustained" or "flush-order-fua" or "flush-order-fua-cost" or "checkpoint-reuse" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
         else if (options.Profile == "smoke")
         {
             Add("quick", CampaignTargetRole.NtfsLab);
@@ -100,7 +100,7 @@ public static class VerificationCampaignPlan
             if (options.Profile == "focused")
             {
                 if (!phases.Any(p => p.Options.Suite == options.FocusSuite) && options.FocusSuite != "ordering-faults")
-                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" or "priority-affinity" or "stress-races" or "flush-order" or "flush-order-cost" or "flush-order-sustained" or "checkpoint-reuse" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
+                    Add(options.FocusSuite!, options.FocusSuite is "caller-backoff" or "priority-cost" or "priority-affinity" or "stress-races" or "flush-order" or "flush-order-cost" or "flush-order-sustained" or "flush-order-fua" or "flush-order-fua-cost" or "checkpoint-reuse" ? CampaignTargetRole.NtfsLab : CampaignTargetRole.Performance);
                 if (options.FocusSuite == "caller-backoff" && options.LabRefs is not null)
                     Add("caller-backoff", CampaignTargetRole.RefsLab);
             }

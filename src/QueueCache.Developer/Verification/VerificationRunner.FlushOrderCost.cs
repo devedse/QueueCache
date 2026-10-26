@@ -47,7 +47,7 @@ public sealed partial class VerificationRunner
             if (operation == "flush-order-sustained")
                 FlushOrderSustainedPlan.ValidateChecks(FlushOrderSustainedPlan.Cases(options.Repeats), checks);
             else
-                FlushOrderCostPlan.ValidateChecks(FlushOrderCostPlan.Cases(options.Repeats), checks);
+                FlushOrderCostPlan.ValidateChecks(FlushOrderCostPlan.Cases(options.Repeats, operation == "flush-order-fua-cost"), checks);
             return checks;
         }
         finally

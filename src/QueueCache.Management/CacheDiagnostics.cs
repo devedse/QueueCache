@@ -75,8 +75,9 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int DrainPriorityWireSize = 1184;
     public const int StrictBacklogWireSize = 1208;
     public const int FlushOrderWireSize = 1280;
+    public const int WriteThroughGroupsWireSize = 1312;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = FlushOrderWireSize;
+    public const int CurrentWireSize = WriteThroughGroupsWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -125,6 +126,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheStrictBacklog? StrictBacklog { get; init; }
     /// <summary>V26: experimental Fast flush-group ordering and its lower-flush/version counters.</summary>
     public CacheFlushOrder? FlushOrder { get; init; }
+    /// <summary>V27 (#31): lab ordering mode 2's forced-unit-access groups and the time spent in group flushes.</summary>
+    public CacheWriteThroughGroups? WriteThroughGroups { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -155,6 +158,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             DrainPriorityWireSize => 24u,
             StrictBacklogWireSize => 25u,
             FlushOrderWireSize => 26u,
+            WriteThroughGroupsWireSize => 27u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -354,7 +358,15 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 56)..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(StrictBacklogWireSize + 64)..]))
             : null;
-        if (flushOrder is { Mode: > 1 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
+        var writeThroughGroups = bytes.Length >= WriteThroughGroupsWireSize
+            ? new CacheWriteThroughGroups(BinaryPrimitives.ReadUInt64LittleEndian(bytes[FlushOrderWireSize..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(FlushOrderWireSize + 8)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(FlushOrderWireSize + 16)..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(bytes[(FlushOrderWireSize + 24)..]))
+            : null;
+        if (writeThroughGroups is { Available: > 1 })
+            throw new InvalidDataException("Invalid write-through availability.");
+        if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
             flushOrder is not null && flushOrder.DrainingEpoch > flushOrder.CurrentEpoch)
             throw new InvalidDataException("Invalid Fast flush-group ordering state.");
         return new(values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8])
@@ -386,7 +398,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             CallerRouting = callerRouting,
             DrainPriority = drainPriority,
             StrictBacklog = strictBacklog,
-            FlushOrder = flushOrder
+            FlushOrder = flushOrder,
+            WriteThroughGroups = writeThroughGroups
         };
     }
 }
@@ -414,7 +427,12 @@ public sealed record CacheRamReadQueue(ulong Mode, ulong Queued, ulong Completed
 /// limit), and how often a write waited for it (each wait counts, like capacity waits). Pieces may exceed the limit by
 /// the writes admitted before it was reached.</summary>
 public sealed record CacheStrictBacklog(ulong Pieces, ulong Limit, ulong Waits);
-/// <summary>V26: experimental Fast groups; MaxSubmittedEpoch resets with the allocation or mode. Other counters are lifetime counts.</summary>
+/// <summary>V27 (#31): lab ordering mode 2. Groups finished by forced-unit-access writes without a lower flush and those
+/// writes (lifetime counts), whether the lower device reported write-through support when mode 2 was selected (1; 0 for other
+/// modes), and performance-counter ticks spent in group flushes while timing was on.</summary>
+public sealed record CacheWriteThroughGroups(ulong Groups, ulong Writes, ulong Available, ulong FlushTicks);
+/// <summary>V26: experimental Fast groups; Mode 1 is ordering, lab mode 2 adds forced-unit-access small groups (#31).
+/// MaxSubmittedEpoch resets with the allocation or mode. Other counters are lifetime counts.</summary>
 public sealed record CacheFlushOrder(ulong Mode, ulong CurrentEpoch, ulong DrainingEpoch, ulong Seals,
     ulong Flushes, ulong VersionCopies, ulong TrimWaits, ulong FlushFailures, ulong MaxSubmittedEpoch);
 /// <summary>V24: read-aware drain limit and waits, TRIM flags, indexed drops, async sends and fallback sends.</summary>

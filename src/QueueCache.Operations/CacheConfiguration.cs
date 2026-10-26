@@ -21,7 +21,7 @@ public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset
         new((int)(state.BudgetBytes >> 20), state.UnsafeDefer ? CachePreset.Fast : CachePreset.Strict, state.Enabled)
         {
             Options = state.Options ?? new(),
-            WriteOrdering = diagnostics?.FlushOrder is { } order ? order.Mode == 1 : null
+            WriteOrdering = diagnostics?.FlushOrder is { } order ? order.Mode != 0 : null
         };
 
     /// <summary>
@@ -71,7 +71,7 @@ internal sealed class CacheDeviceControl(CacheDevice device) : ICacheControl
     public void Control(WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0) =>
         device.Control(action, budgetBytes, value);
     public void SetOptions(CacheOptions options) => device.SetOptions(options);
-    public bool? ReadWriteOrdering() => device.GetDiagnostics().FlushOrder is { } order ? order.Mode == 1 : null;
+    public bool? ReadWriteOrdering() => device.GetDiagnostics().FlushOrder is { } order ? order.Mode != 0 : null;
 }
 
 /// <summary>A settings change failed; the previous settings were restored (or, if not, why).</summary>
