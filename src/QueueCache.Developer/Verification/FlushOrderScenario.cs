@@ -11,7 +11,16 @@ namespace QueueCache.Developer.Verification;
 [SupportedOSPlatform("windows")]
 public static class FlushOrderScenario
 {
-    private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
+    private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB, ChecksPerMode = 13;
+    public static readonly ulong[] Modes = [1, 2, 3];
+
+    public static void ValidateChecks(IReadOnlyList<CheckResult> checks)
+    {
+        if (checks.Count != ChecksPerMode * Modes.Length || checks.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() != checks.Count ||
+            Modes.Any(m => checks.Count(c => c.Name.StartsWith($"flush-order/mode{m}/", StringComparison.Ordinal)) != ChecksPerMode) ||
+            checks.Any(c => c.Result != "PASS"))
+            throw new InvalidDataException("The per-mode ordering dependency checks are incomplete or duplicated.");
+    }
 
     public static void ValidateRamAdmission(CacheDiagnostics before, CacheDiagnostics after, bool requireVersion = true)
     {
@@ -91,7 +100,7 @@ public static class FlushOrderScenario
         var checks = new List<CheckResult>();
         try
         {
-            foreach (var testMode in new ulong[] { 1, 2, 3 })
+            foreach (var testMode in Modes)
             {
                 var firstCheck = checks.Count;
                 var modeEvidence = evidence + $".mode{testMode}";
@@ -299,9 +308,7 @@ public static class FlushOrderScenario
             if (device.GetDiagnostics().FlushOrder?.Mode != mode)
                 throw new IOException("Original flush-order mode was not restored.");
         }
-        if (checks.Count != 26 || checks.Select(c => c.Name).Distinct(StringComparer.Ordinal).Count() != 26 ||
-            checks.Any(c => c.Result != "PASS"))
-            throw new InvalidDataException("The two-mode ordering dependency checks are incomplete or duplicated.");
+        ValidateChecks(checks);
         return checks;
     }
 

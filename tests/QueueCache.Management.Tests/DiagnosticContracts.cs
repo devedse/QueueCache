@@ -185,6 +185,13 @@ internal static class DiagnosticContracts
         FlushOrderScenario.ValidateWriteThrough(wtSealedBefore, wtSealedAfter, sealedPredecessor: true);
         FlushOrderScenario.ValidateWriteThrough(orderBefore,
             orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false);
+        var orderChecks = FlushOrderScenario.Modes.SelectMany(m => Enumerable.Range(0, 13)
+            .Select(i => new CheckResult($"flush-order/mode{m}/check{i}", "PASS", "fixture"))).ToArray();
+        FlushOrderScenario.ValidateChecks(orderChecks);
+        Reject(() => FlushOrderScenario.ValidateChecks(orderChecks[..26]));
+        Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[0]]));
+        Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Result = "FAIL" }]));
+        Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Name = "flush-order/mode1/extra" }]));
         var costPlan = FlushOrderCostPlan.Cases(2);
         var fullCostPlan = FlushOrderCostPlan.Cases(3);
         Check(costPlan.Count == 18 && costPlan.Select(c => c.Id).Distinct().Count() == 18 &&
