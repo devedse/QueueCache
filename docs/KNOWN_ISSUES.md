@@ -538,6 +538,23 @@ and older records without the marker cannot be consumed, even with a generated-l
 filename. General retention, background saving and a crash during commit remain
 separate work.
 
+**Issue #13 per-cache write-ordering setting, plans 198/199 (2026-10-26):**
+write ordering became an advanced per-cache setting (app, `qcache policy apply
+--write-ordering`, saved profiles), with no driver change. On 0.4.871.1 (`6b78d8a`)
+under Driver Verifier `0x209bb`, `flush-order` passed 14/14, including the new
+`flush-order/per-cache-setting` (apply with ordering, pause/resume, Strict with
+ordering refused unchanged, a configuration without a choice keeps it, off clears
+it). A CLI check refused ordering on C: with nothing changed, refused Strict with
+ordering, and turned it on for W:, but `qcache policy remove W:` left the driver's
+mode on for a volume without a cache. 0.4.872.1 (`0afffea`; loaded filter
+`A8C18E0A717787C45C88ECEDCCE9B30679572B476958228B53E3168699ACEC4E`, RAM driver
+`0D142C8F371B16DA8832AF0F99F983DE8185688F1D5E40A7E02A4C039E3E5581`) turns ordering
+off when a cache is removed; under Verifier
+`QueueCache-Campaign-20261026-154902-951a86e3365b4019824e24f97d38711c` passed 14/14
+with that extra step, restored and passed `verify-completion`, and the same CLI
+check ended with mode 0 after removal. Saved-profile restore at startup was not
+exercised on the VM; host tests cover the profile's JSON and Apply's rollback.
+
 **Issue #13 group-flush race fix, plan 197 (2026-10-26):** the first
 `flush-order-sustained` run on 0.4.865.1
 (`QueueCache-Campaign-20261026-122516-3327e5c4920a4f229e9a23819720b6bf`) stopped
