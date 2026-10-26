@@ -128,6 +128,10 @@ Reject(() => new CacheConfiguration(0).Validate(true), "zero configuration budge
 new CacheConfiguration(8192).Validate(true);
 Reject(() => new CacheConfiguration(131073).Validate(true), "oversized configuration budget");
 Reject(() => new CacheConfiguration(64, (CachePreset)99).Validate(true), "unknown preset");
+new CacheConfiguration(64) { WriteOrdering = true }.Validate(true);
+new CacheConfiguration(64, CachePreset.Strict) { WriteOrdering = false }.Validate(false);
+Reject(() => new CacheConfiguration(64, CachePreset.Strict) { WriteOrdering = true }.Validate(false), "write ordering is Fast-only");
+Check(CacheConfiguration.FromState(confirmed).WriteOrdering is null, "a configuration rebuilt from state alone keeps the driver's ordering");
 Check(MemoryBudget.RequiredSystemHeadroom(8UL << 30) == 2UL << 30, "8 GiB host keeps 2 GiB application/OS headroom");
 Check(MemoryBudget.RequiredSystemHeadroom(32UL << 30) == 8UL << 30, "larger host keeps 25% application/OS headroom");
 const string volumeGuid = "{0e0c7f9e-1c1b-4c7e-8d7a-1f9f2a3b4c5d}";
@@ -142,6 +146,12 @@ var existingRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfigu
 existingRoundTrip.Validate();
 Check(existingRoundTrip == existingProfile && existingRoundTrip.Configuration.Options.Drain == DrainAlgorithm.Eager,
     "saved Strict/Eager profile survives new defaults exactly");
+var orderedProfile = profile with { Configuration = new CacheConfiguration(2048) { WriteOrdering = true } };
+var orderedRoundTrip = System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(System.Text.Json.JsonSerializer.Serialize(orderedProfile))!;
+orderedRoundTrip.Validate();
+Check(orderedRoundTrip == orderedProfile && orderedRoundTrip.Configuration.WriteOrdering == true &&
+    System.Text.Json.JsonSerializer.Deserialize<SavedConfiguration>(existingJson)!.Configuration.WriteOrdering is null,
+    "a saved profile keeps write ordering; an older profile without it leaves the mode unchanged");
 var diskLabel = new DiskDescription(1, "Test disk", 200L << 30, "test", ["Q:"], false, false).Display;
 var ejectableDisk = new DiskDescription(3, "Removable", 8L << 30, "test-removable", ["R:"], false, false, PartitionCount: 1);
 Check(DiskEjection.SafetyReason(ejectableDisk) is null, "one unprotected lettered partition is eligible for an eject capability check");

@@ -434,7 +434,8 @@ public sealed partial class DashboardMonitor : ObservableObject
         available = Math.Min(MemoryBudget.MaximumMiB, available);
         if (available < 1)
             throw new IOException("No RAM is free for a cache right now. Make another cache smaller or free some memory first.");
-        var editor = new CacheSettingsViewModel(volume.Volume, current, volume.Persistent, (int)available);
+        var ordering = current.BudgetBytes != 0 && await Caches.ReadWriteOrderingAsync(volume.Volume);
+        var editor = new CacheSettingsViewModel(volume.Volume, current, volume.Persistent, (int)available, writeOrdering: ordering);
         var result = await Dialogs.EditCacheAsync(editor);
         if (result is null)
             return null;

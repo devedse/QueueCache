@@ -56,7 +56,7 @@ public static class FlushOrderCostScenario
                     }
                     prepare.Flush();
                 }
-                device.Control(WriteCacheAction.LabFlushOrder, value: item.Mode);
+                device.Control(WriteCacheAction.FlushOrder, value: item.Mode);
                 ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast)
                 {
                     Options = new(Drain: DrainAlgorithm.Eager, BatchKiB: 1024, Parallelism: 4,
@@ -148,7 +148,7 @@ public static class FlushOrderCostScenario
         }
         finally
         {
-            Reset(device); device.Control(WriteCacheAction.LabFlushOrder, value: original);
+            Reset(device); device.Control(WriteCacheAction.FlushOrder, value: original);
             device.Control(WriteCacheAction.PerformanceTiming, value: originalTiming);
             if (device.GetDiagnostics().FlushOrder?.Mode != original || device.GetPerformance().TimingEnabled != originalTiming)
                 throw new IOException("Ordering cost mode or timing restoration failed.");

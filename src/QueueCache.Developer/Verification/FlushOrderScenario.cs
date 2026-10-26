@@ -264,7 +264,7 @@ public static class FlushOrderScenario
                 for (var offset = 0; offset < 4 * MiB; offset += latest.Length) AssertRead(file, offset, latest);
 
                 var rejected = false;
-                try { device.Control(WriteCacheAction.LabFlushOrder, value: 0); }
+                try { device.Control(WriteCacheAction.FlushOrder, value: 0); }
                 catch (Win32Exception ex) when (ex.NativeErrorCode == 170 /* ERROR_BUSY */) { rejected = true; }
                 if (!rejected || device.GetDiagnostics().FlushOrder?.Mode != On || !device.GetWriteCacheState().Enabled)
                     throw new IOException("A live ordering-mode change was accepted or disturbed the cache.");
@@ -298,7 +298,7 @@ public static class FlushOrderScenario
             device.Control(WriteCacheAction.LabFault, value: 0);
             device.Control(WriteCacheAction.LabTrimMode, value: trimMode);
             Reset(device); // A real unexpected fault is preserved and fails restoration.
-            device.Control(WriteCacheAction.LabFlushOrder, value: originalMode);
+            device.Control(WriteCacheAction.FlushOrder, value: originalMode);
             if (device.GetDiagnostics().FlushOrder?.Mode != originalMode)
                 throw new IOException("Original flush-order mode was not restored.");
         }
@@ -420,7 +420,7 @@ public static class FlushOrderScenario
     }
     private static void Apply(DiskTarget target, CacheDevice device, int budgetMiB = 64)
     {
-        device.Control(WriteCacheAction.LabFlushOrder, value: On);
+        device.Control(WriteCacheAction.FlushOrder, value: On);
         ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast)
         {
             Options = new CacheOptions(Drain: DrainAlgorithm.Deferred, MaxDirtyAgeMs: 3600000,

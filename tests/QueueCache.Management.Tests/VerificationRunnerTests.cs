@@ -1200,7 +1200,7 @@ internal static class VerificationRunnerTests
             (uint)QueueCache.Management.WriteCacheAction.LabDrainGather == 21 &&
             (uint)QueueCache.Management.WriteCacheAction.LabReadAware == 22 &&
             (uint)QueueCache.Management.WriteCacheAction.LabTrimMode == 23 &&
-            (uint)QueueCache.Management.WriteCacheAction.LabFlushOrder == 24, "diagnostic actions extend the existing ABI");
+            (uint)QueueCache.Management.WriteCacheAction.FlushOrder == 24, "diagnostic actions extend the existing ABI");
         Reject(() => VerificationPlan.Validate(options with { Suite = "cache-layout-patterns", BudgetMiB = 2048, DiskSpd = Environment.ProcessPath }));
         Check(new[] { CacheLayoutStage.ResetAfterSequential, CacheLayoutStage.ResetAfterRandom, CacheLayoutStage.ResetAscending }.All(CacheLayoutEvidence.Resets) &&
             !new[] { CacheLayoutStage.Fresh, CacheLayoutStage.Churned, CacheLayoutStage.ChurnedFull }.Any(CacheLayoutEvidence.Resets),
@@ -2244,7 +2244,10 @@ internal static class VerificationRunnerTests
         public QueueCache.Management.WriteCacheState State = state;
         public readonly List<string> Calls = [];
         public Func<QueueCache.Management.WriteCacheAction, ulong, bool> Fails = (_, _) => false;
+        public bool? Ordering = false;
+        public int OrderingBusy; // ERROR_BUSY refusals before an ordering change succeeds.
         public QueueCache.Management.WriteCacheState GetWriteCacheState() => State;
+        public bool? ReadWriteOrdering() => Ordering;
         public void SetOptions(QueueCache.Management.CacheOptions options)
         {
             Calls.Add("Options");
@@ -2257,6 +2260,12 @@ internal static class VerificationRunnerTests
                 State = State with { BudgetBytes = 0, ReservedBytes = 0, PayloadCapacity = 0 }; // Old memory freed first.
             if (Fails(action, budgetBytes))
                 throw new IOException($"{action} failed");
+            if (action == QueueCache.Management.WriteCacheAction.FlushOrder)
+            {
+                if (State.Enabled) throw new System.ComponentModel.Win32Exception(170);
+                if (OrderingBusy > 0) { OrderingBusy--; throw new System.ComponentModel.Win32Exception(170); }
+                Ordering = value == 1;
+            }
             State = action switch
             {
                 QueueCache.Management.WriteCacheAction.Disable => State with { Flags = State.Flags & ~1u },
@@ -2336,5 +2345,30 @@ internal static class VerificationRunnerTests
             Check(failure.PreviousSettingsRestored && fake.State.BudgetBytes == 0 && !fake.State.Enabled &&
                 fake.Calls.Contains("Release"), "rolling back to 'never configured' releases the new memory");
         }
+
+        // Write ordering (#13): set while disabled, verified, retried while briefly busy, restored on rollback.
+        var ordered = new QueueCache.Operations.CacheConfiguration(1024) { Options = active.Options, WriteOrdering = true };
+        fake = new FakeCacheControl(active) { OrderingBusy = 2 };
+        applied = QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, ordered, settleTimeout: TimeSpan.Zero);
+        Check(fake.Ordering == true && applied.Enabled && fake.Calls.Count(c => c == "FlushOrder") == 3 &&
+            fake.Calls.IndexOf("FlushOrder") > fake.Calls.IndexOf("Disable") && fake.Calls.IndexOf("FlushOrder") < fake.Calls.IndexOf("Enable"),
+            "write ordering is selected on the disabled cache, after brief busy refusals");
+        fake = new FakeCacheControl(active) { Ordering = true };
+        QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, ordered with { WriteOrdering = null, BudgetMiB = 2048 }, settleTimeout: TimeSpan.Zero);
+        Check(fake.Ordering == true && !fake.Calls.Contains("FlushOrder"), "a configuration without an ordering choice keeps the driver's mode");
+        fake = new FakeCacheControl(active) { Fails = (action, budget) => action == QueueCache.Management.WriteCacheAction.Configure && budget == 2048 * MiB };
+        try
+        {
+            QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, ordered with { BudgetMiB = 2048 }, settleTimeout: TimeSpan.Zero);
+            throw new Exception("A failed resize with ordering was reported as applied.");
+        }
+        catch (QueueCache.Operations.ConfigurationNotAppliedException failure)
+        {
+            Check(failure.PreviousSettingsRestored && fake.Ordering == false && fake.State.BudgetBytes == 1024 * MiB,
+                "a failed change restores the previous write ordering");
+        }
+        fake = new FakeCacheControl(active) { Ordering = null };
+        applied = QueueCache.Operations.ConfigurationManager.ApplySteps(fake, active, ordered with { WriteOrdering = false, BudgetMiB = 2048 }, settleTimeout: TimeSpan.Zero);
+        Check(applied.BudgetBytes == 2048 * MiB && !fake.Calls.Contains("FlushOrder"), "a driver without ordering counts as off and gets no ordering command");
     }
 }

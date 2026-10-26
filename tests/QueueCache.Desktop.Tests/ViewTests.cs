@@ -185,6 +185,11 @@ internal static class ViewTests
         Check(Named<Control>(settings, "IdleInterval").IsEffectivelyVisible && !Named<Control>(settings, "WriteShare").IsEffectivelyVisible,
             $"{theme}: advanced tuning shows only what the chosen drain uses");
         Save(settings, output, $"cache-settings-advanced-{theme}");
+        Named<Control>(settings, "OrderingBox").BringIntoView();
+        Dispatcher.UIThread.RunJobs();
+        Check(Named<CheckBox>(settings, "OrderingBox") is { IsEnabled: true, IsChecked: false, IsEffectivelyVisible: true },
+            $"{theme}: advanced tuning offers write ordering, off, for a Fast cache");
+        Save(settings, output, $"cache-settings-ordering-{theme}");
         settings.Close();
 
         var status = new WindowsStatusViewModel(new StatusPolicyFixture());

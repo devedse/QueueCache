@@ -37,8 +37,22 @@ internal static class EditorTests
         edit.Drain = 3;
         Check(edit.DrainText.StartsWith("Deferred:") && !edit.ShowWatermarks && edit.ShowAge && !edit.ShowIdle && edit.MaximumAgeMs == 3600000,
             "Deferred uses only the age, up to one hour on a capable driver");
+        Check(edit.CanOrderWrites && !edit.WriteOrdering && edit.Result()?.Configuration.WriteOrdering == false,
+            "write ordering is offered for Fast and off unless chosen");
+        edit.WriteOrdering = true;
+        Check(edit.Result()?.Configuration.WriteOrdering == true && edit.OrderingText.StartsWith("Experimental, not yet proven"),
+            "choosing write ordering applies it and says it is experimental");
         edit.IsStrict = true;
         Check(!edit.IsFast && edit.Result()?.Configuration.Preset == CachePreset.Strict, "choosing Strict applies Strict");
+        Check(!edit.CanOrderWrites && edit.Result()?.Configuration.WriteOrdering == false && edit.OrderingText.StartsWith("Fast only"),
+            "Strict turns write ordering off and explains why");
+        var current = new CacheSettingsViewModel(volumes.Volumes[1], volumes.State, true, 8192, writeOrdering: true);
+        Check(current.WriteOrdering && current.Result()?.Configuration.WriteOrdering == true, "the editor shows a cache's current write ordering");
+        var windows = new CacheSettingsViewModel(volumes.Volumes[1] with { IsBoot = true, IsPaging = true }, volumes.State, true, 8192, writeOrdering: true);
+        Check(!windows.CanOrderWrites && !windows.WriteOrdering && windows.Result()?.Configuration.WriteOrdering == false &&
+            windows.OrderingText.StartsWith("Not available on this volume"), "the Windows volume cannot use write ordering");
+        var remembered = new CacheSettingsViewModel(stick, new CacheConfiguration(64) { WriteOrdering = true });
+        Check(remembered.WriteOrdering, "a disk image's remembered cache keeps its write ordering");
 
         // New disk
         var service = new DiskFixture();

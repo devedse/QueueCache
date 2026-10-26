@@ -92,9 +92,12 @@ An experimental, default-off ordering path is being qualified for #13. With it
 on, writes after a filesystem flush or a write-through write stay in RAM until
 everything before that point and a real lower flush have completed; old dirty
 versions are kept across those boundaries, and TRIM is ordered with them. Since
-plan 196 there is one mode (`flush-order 1`, the former lab mode 3). The original
-mode 1, which also sealed before each write-through, and mode 2, which woke every
-drain thread for each write, were removed.
+plan 196 there is one mode (the former lab mode 3); the original mode 1, which also
+sealed before each write-through, and mode 2, which woke every drain thread for each
+write, were removed. It is an advanced per-cache setting, off by default, in the
+app's Advanced tuning and as `qcache policy apply --write-ordering`; saved profiles
+keep it ([details](CACHE_POLICIES.md#experimental-fast-write-ordering-13)). It is
+refused on volumes that hold a paging, hibernation or crash dump file.
 
 - **Checks:** 13/13 targeted live-driver checks passed under Driver Verifier on
   0.4.865.1 (plan 196), on a disposable non-OS NTFS volume. The earlier variants

@@ -853,7 +853,7 @@ public static class VerificationWorker
                 }, device.GetWriteCacheState,
                     (phase, snapshot) => RunStorage.AtomicJson(job.Reply + "." + phase + ".json", snapshot));
                 if (original.FlushOrderMode is { } flushOrderMode)
-                    device.Control(WriteCacheAction.LabFlushOrder, value: flushOrderMode);
+                    device.Control(WriteCacheAction.FlushOrder, value: flushOrderMode);
                 if (original.State.BudgetBytes == 0)
                 {
                     device.Control(WriteCacheAction.Release);

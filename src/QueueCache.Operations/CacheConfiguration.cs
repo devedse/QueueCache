@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using QueueCache.Management;
@@ -12,11 +13,16 @@ public sealed class CacheDrainingException() : IOException("Cache is busy draini
 public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset = CachePreset.Fast, bool Enabled = true)
 {
     public CacheOptions Options { get; init; } = new();
-    public static CacheConfiguration FromState(WriteCacheState state) => new((int)(state.BudgetBytes >> 20),
-        state.UnsafeDefer ? CachePreset.Fast : CachePreset.Strict, state.Enabled)
-    {
-        Options = state.Options ?? new()
-    };
+    /// <summary>Experimental Fast write ordering (#13, advanced, not yet crash-qualified): later writes stay in
+    /// RAM until everything before an application flush is on the disk, to keep NTFS undamaged after a crash.
+    /// Null keeps the driver's current mode, which <see cref="WriteCacheState"/> does not report.</summary>
+    public bool? WriteOrdering { get; init; }
+    public static CacheConfiguration FromState(WriteCacheState state, CacheDiagnostics? diagnostics = null) =>
+        new((int)(state.BudgetBytes >> 20), state.UnsafeDefer ? CachePreset.Fast : CachePreset.Strict, state.Enabled)
+        {
+            Options = state.Options ?? new(),
+            WriteOrdering = diagnostics?.FlushOrder is { } order ? order.Mode == 1 : null
+        };
 
     /// <summary>
     /// Validates a requested configuration before any driver state changes. RAM
@@ -34,6 +40,8 @@ public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset
             throw new ArgumentException("Unknown cache preset.");
         if (Preset == CachePreset.Fast && !acceptVolatileFlush)
             throw new ArgumentException("Fast mode acknowledges writes/flushes in volatile RAM. Explicitly accept volatile flushes first.");
+        if (WriteOrdering == true && Preset != CachePreset.Fast)
+            throw new ArgumentException("Write ordering applies to Fast mode only; Strict already waits for the disk.");
     }
 }
 
@@ -52,6 +60,8 @@ internal interface ICacheControl
     WriteCacheState GetWriteCacheState();
     void Control(WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0);
     void SetOptions(CacheOptions options);
+    /// <summary>The driver's write ordering, or null when it does not report it (before Diagnostics V26).</summary>
+    bool? ReadWriteOrdering();
 }
 
 [SupportedOSPlatform("windows")]
@@ -61,6 +71,7 @@ internal sealed class CacheDeviceControl(CacheDevice device) : ICacheControl
     public void Control(WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0) =>
         device.Control(action, budgetBytes, value);
     public void SetOptions(CacheOptions options) => device.SetOptions(options);
+    public bool? ReadWriteOrdering() => device.GetDiagnostics().FlushOrder is { } order ? order.Mode == 1 : null;
 }
 
 /// <summary>A settings change failed; the previous settings were restored (or, if not, why).</summary>
@@ -96,7 +107,15 @@ public static class ConfigurationManager
         var state = WaitForHealthyState(device.GetWriteCacheState, initial, progress);
         if (!state.SupportsReadWrite)
             throw new NotSupportedException("Install the matching read/write-cache driver and restart Windows before applying settings.");
-        ActivationSafety.ValidateTarget(device.GetStatistics().PagingPathCount);
+        var usagePaths = device.GetStatistics().PagingPathCount;
+        ActivationSafety.ValidateTarget(usagePaths);
+        var control = new CacheDeviceControl(device);
+        var ordering = control.ReadWriteOrdering();
+        if (configuration.WriteOrdering == true && ordering is null)
+            throw new NotSupportedException("The loaded driver does not support write ordering. Install the newer driver and restart Windows first.");
+        // The driver refuses ordering on these volumes; say why before draining anything.
+        if (configuration.WriteOrdering == true && usagePaths > 0)
+            throw new NotSupportedException("Write ordering is not available on a volume that holds a paging, hibernation or crash dump file (such as the Windows volume).");
         // Reject an unsupported new policy before disabling/draining the existing cache.
         if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
             throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");
@@ -105,10 +124,11 @@ public static class ConfigurationManager
         var budget = (ulong)configuration.BudgetMiB << 20;
         if (state.Enabled == configuration.Enabled && state.BudgetBytes == budget &&
             state.UnsafeDefer == (configuration.Preset == CachePreset.Fast) && state.Options == configuration.Options &&
+            (configuration.WriteOrdering is not { } wanted || wanted == (ordering ?? false)) &&
             (!configuration.Enabled || state.Operational))
             return state;
         MemoryBudget.ValidateIncrease(state.BudgetBytes, budget);
-        return ApplySteps(new CacheDeviceControl(device), state, configuration, progress);
+        return ApplySteps(control, state, configuration, progress);
     }
 
     internal static WriteCacheState ApplySteps(ICacheControl device, WriteCacheState state,
@@ -125,7 +145,7 @@ public static class ConfigurationManager
             throw new ConfigurationNotAppliedException("The new settings were not applied: the cache could not be " +
                 $"emptied first ({exception.Message}). Its existing settings are unchanged.", exception, true);
         }
-        var previous = CacheConfiguration.FromState(state);
+        var previous = CacheConfiguration.FromState(state) with { WriteOrdering = device.ReadWriteOrdering() };
         try
         {
             progress?.Report("Applying preset and RAM budget.");
@@ -157,6 +177,10 @@ public static class ConfigurationManager
     {
         var budget = (ulong)target.BudgetMiB << 20;
         device.Control(WriteCacheAction.FlushPolicy, value: target.Preset == CachePreset.Fast ? 1UL : 0UL);
+        // Like the preset, ordering changes only on a disabled, empty cache; unchanged, it is left alone.
+        // A driver that does not report ordering has none.
+        if (target.WriteOrdering is { } ordering && device.ReadWriteOrdering() is { } selected && selected != ordering)
+            SelectWriteOrdering(device, ordering);
         device.SetOptions(target.Options);
         var current = device.GetWriteCacheState().BudgetBytes;
         if (current != budget)
@@ -168,10 +192,28 @@ public static class ConfigurationManager
         var result = WaitForHealthyState(device.GetWriteCacheState, baseline, progress, settleTimeout);
         if (result.Enabled != target.Enabled || result.BudgetBytes != budget ||
             result.UnsafeDefer != (target.Preset == CachePreset.Fast) || result.Options != target.Options ||
-            result.Instance != baseline.Instance || (target.Enabled && !result.Operational))
+            result.Instance != baseline.Instance || (target.Enabled && !result.Operational) ||
+            (target.WriteOrdering is { } requested && (device.ReadWriteOrdering() ?? false) != requested))
             throw new IOException("Driver state does not match the requested configuration.");
         progress?.Report("Configuration applied and verified.");
         return result;
+    }
+
+    // The driver refuses briefly (ERROR_BUSY) while a lower TRIM or group flush it already sent finishes.
+    private static void SelectWriteOrdering(ICacheControl device, bool ordering)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                device.Control(WriteCacheAction.FlushOrder, value: ordering ? 1UL : 0UL);
+                return;
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 170 && attempt < 50)
+            {
+                Thread.Sleep(100);
+            }
+        }
     }
 
     private static string Describe(ICacheControl device)
@@ -180,7 +222,7 @@ public static class ConfigurationManager
         {
             var state = device.GetWriteCacheState();
             return $"{(state.Enabled ? "enabled" : "disabled")}, {state.BudgetBytes >> 20} MiB, " +
-                $"{(state.UnsafeDefer ? "Fast" : "Strict")}, error 0x{state.LastError:X8}";
+                $"{(state.UnsafeDefer ? "Fast" : "Strict")}{(device.ReadWriteOrdering() == true ? " with write ordering" : "")}, error 0x{state.LastError:X8}";
         }
         catch (Exception exception)
         {

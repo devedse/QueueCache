@@ -17,6 +17,8 @@ public interface ICacheTaskService
     Task<WriteCacheState> ReadAsync(VolumeDescription volume);
     /// <summary>How the cache's RAM is used, per 256 KiB chunk; null when the driver cannot report it.</summary>
     Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.FromResult<CacheLayoutMap?>(null);
+    /// <summary>Whether the cache's experimental write ordering is on; false when the driver cannot report it.</summary>
+    Task<bool> ReadWriteOrderingAsync(VolumeDescription volume) => Task.FromResult(false);
     bool IsPersistent(VolumeDescription volume);
     Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
     Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent);
@@ -51,6 +53,12 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
         } : state;
         ValidateVolume(volume);
         return sampled;
+    });
+    public Task<bool> ReadWriteOrderingAsync(VolumeDescription volume) => Task.Run(() =>
+    {
+        ValidateVolume(volume);
+        using var device = new CacheDevice(volume.Volume);
+        return device.GetDiagnostics().FlushOrder?.Mode == 1;
     });
     public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.Run<CacheLayoutMap?>(() =>
     {

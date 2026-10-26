@@ -104,7 +104,7 @@ internal static class LegacyCommands
                     args[0] == "lab-read-recall" ? WriteCacheAction.LabReadRecall :
                     args[0] == "lab-read-aware" ? WriteCacheAction.LabReadAware :
                     args[0] == "lab-trim-mode" ? WriteCacheAction.LabTrimMode :
-                    args[0] == "lab-flush-order" ? WriteCacheAction.LabFlushOrder : WriteCacheAction.LabFault,
+                    args[0] == "lab-flush-order" ? WriteCacheAction.FlushOrder : WriteCacheAction.LabFault,
                     configure ? amount * 1048576 : 0, configure ? 0 : amount, enableAfter: args[0] == "start", token: stop.Token);
                 Console.WriteLine(RenderCache(state));
                 return 0;

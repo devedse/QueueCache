@@ -90,14 +90,16 @@ internal static class Commands
         var idle = new Option<int>("--idle-ms") { DefaultValueFactory = _ => 250, Description = "Idle only: drain after this long without a newly cached write." };
         var batch = new Option<int>("--batch-kib") { DefaultValueFactory = _ => 2048, Description = "All algorithms: maximum adjacent-write gather size per lower write, 4..2048." };
         var parallel = new Option<int>("--drain-parallelism") { DefaultValueFactory = _ => 8, Description = "All algorithms: maximum simultaneous lower writes, 1..8; fewer while foreground disk reads wait." };
-        foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel })
+        var ordering = new Option<bool>("--write-ordering") { Description = "Fast only, experimental and not yet proven in power-cut tests (#13): keep later writes in RAM until everything before an application flush is on the disk, to keep NTFS undamaged after a crash. Programs that flush very often slow down once the cache is full. Not available on a volume with a paging, hibernation or crash dump file." };
+        foreach (Option option in new Option[] { allocation, writePercent, drain, discard, noPromotion, low, high, age, idle, batch, parallel, ordering })
             apply.Options.Add(option);
         apply.SetAction(async (p, token) =>
         {
             var configuration = new CacheConfiguration(p.GetValue(budget), p.GetValue(preset), !p.GetValue(disabled))
             {
                 Options = new(p.GetValue(allocation), p.GetValue(writePercent), !p.GetValue(discard), !p.GetValue(noPromotion),
-                    p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel))
+                    p.GetValue(drain), p.GetValue(low), p.GetValue(high), p.GetValue(age), p.GetValue(idle), p.GetValue(batch), p.GetValue(parallel)),
+                WriteOrdering = p.GetValue(ordering)
             };
             var accepted = p.GetValue(accept);
             configuration.Validate(accepted); // Validate before opening a disk. Fast requires explicit CLI acknowledgement.

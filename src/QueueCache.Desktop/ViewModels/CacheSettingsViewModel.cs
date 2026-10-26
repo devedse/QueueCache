@@ -16,8 +16,11 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
     private readonly int[] sizes;
     private readonly bool newCache;
     private readonly bool enabled;
+    // The driver refuses ordering where Windows keeps its paging, hibernation or crash dump file.
+    private readonly bool orderingBlocked;
 
-    public CacheSettingsViewModel(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096, bool showStartup = true)
+    public CacheSettingsViewModel(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096,
+        bool showStartup = true, bool writeOrdering = false)
     {
         if (availableMiB is < 1 or > MemoryBudget.MaximumMiB)
             throw new ArgumentOutOfRangeException(nameof(availableMiB));
@@ -53,11 +56,14 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
         selectedBatch = Array.IndexOf(Batches, options.BatchKiB) is var batch and >= 0 ? batch : Batches.Length; // Keeps CLI batch sizes not in the list.
         customBatchKiB = options.BatchKiB;
         parallelism = options.Parallelism;
+        orderingBlocked = volume.IsPaging || volume.IsBoot || volume.IsSystem;
+        this.writeOrdering = writeOrdering && !orderingBlocked;
     }
 
     /// <summary>A remembered configuration (a disk image's cache); it has no live counters and no startup switch.</summary>
     public CacheSettingsViewModel(VolumeDescription volume, CacheConfiguration configuration, int availableMiB = 4096)
-        : this(volume, EditorInput(configuration, (ulong)volume.Bytes), false, availableMiB, showStartup: false) { }
+        : this(volume, EditorInput(configuration, (ulong)volume.Bytes), false, availableMiB, showStartup: false,
+            writeOrdering: configuration.WriteOrdering == true) { }
 
     private static WriteCacheState EditorInput(CacheConfiguration configuration, ulong bytes) =>
         new((configuration.Enabled ? 1U : 0U) | (configuration.Preset == CachePreset.Fast ? 32U : 0U) | 4096U,
@@ -77,7 +83,7 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
 
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsCustomMemory))] private int selectedMemory;
     [ObservableProperty] private int customMiB;
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsStrict))] private bool isFast;
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsStrict), nameof(CanOrderWrites), nameof(OrderingText))] private bool isFast;
     [ObservableProperty] private bool startWithWindows;
     [ObservableProperty] private bool isAdvancedOpen;
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsFixedAllocation), nameof(AllocationText))] private int allocation;
@@ -92,6 +98,7 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsCustomBatch))] private int selectedBatch;
     [ObservableProperty] private int customBatchKiB;
     [ObservableProperty] private int parallelism;
+    [ObservableProperty] private bool writeOrdering;
     [ObservableProperty] private string? error;
 
     public bool IsCustomMemory => SelectedMemory == sizes.Length;
@@ -100,6 +107,14 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
         get => !IsFast;
         set => IsFast = !value;
     }
+    public bool CanOrderWrites => IsFast && !orderingBlocked;
+    public string OrderingText => orderingBlocked
+        ? "Not available on this volume: Windows keeps its paging, hibernation or crash dump file here."
+        : !IsFast
+            ? "Fast only. Strict already waits until each save is on the disk."
+            : "Experimental, not yet proven in power-cut tests. Writes reach the disk in the order programs saved them, to keep NTFS " +
+              "undamaged after a crash or power cut; the newest changes can still be lost. Programs that save very often (some databases " +
+              "and installers) slow down once the cache is full.";
     public bool IsFixedAllocation => Allocation == 1;
     public bool IsCustomBatch => SelectedBatch == Batches.Length;
     public string AllocationText => Allocation == 0
@@ -127,7 +142,8 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
                 IsFast ? CachePreset.Fast : CachePreset.Strict, enabled)
             {
                 Options = new((CacheAllocation)Allocation, WritePercent, RetainWrites, PromoteOnRead, (DrainAlgorithm)Drain,
-                    LowPercent, HighPercent, MaxDirtyAgeMs, IdleMs, IsCustomBatch ? CustomBatchKiB : Batches[SelectedBatch], Parallelism)
+                    LowPercent, HighPercent, MaxDirtyAgeMs, IdleMs, IsCustomBatch ? CustomBatchKiB : Batches[SelectedBatch], Parallelism),
+                WriteOrdering = CanOrderWrites && WriteOrdering
             };
             config.Validate(true);
             Error = null;

@@ -92,7 +92,8 @@ public static class CacheTasks
             using var gate = ConfigurationGate.Enter(target.Instance);
             target.ValidateCurrent(token);
             using var device = new CacheDevice(target.Device);
-            var configuration = CacheConfiguration.FromState(device.GetWriteCacheState()) with
+            // Includes write ordering, which a saved profile must keep across pause/resume.
+            var configuration = CacheConfiguration.FromState(device.GetWriteCacheState(), device.GetDiagnostics()) with
             {
                 Enabled = enabled
             };

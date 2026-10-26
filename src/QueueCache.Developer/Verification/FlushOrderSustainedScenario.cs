@@ -67,7 +67,7 @@ public static class FlushOrderSustainedScenario
                 }
                 // Preparation reaches the disk before the cache is enabled for the measured phase.
                 ComparisonScenarios.FlushVolume(target.Letter);
-                device.Control(WriteCacheAction.LabFlushOrder, value: item.Mode);
+                device.Control(WriteCacheAction.FlushOrder, value: item.Mode);
                 ConfigurationManager.Apply(target, new CacheConfiguration(budgetMiB, CachePreset.Fast)
                 {
                     Options = new(Drain: DrainAlgorithm.Eager, BatchKiB: 1024, Parallelism: 4,
@@ -133,7 +133,7 @@ public static class FlushOrderSustainedScenario
         }
         finally
         {
-            FlushOrderCostScenario.Reset(device); device.Control(WriteCacheAction.LabFlushOrder, value: original);
+            FlushOrderCostScenario.Reset(device); device.Control(WriteCacheAction.FlushOrder, value: original);
             device.Control(WriteCacheAction.PerformanceTiming, value: originalTiming);
             if (device.GetDiagnostics().FlushOrder?.Mode != original || device.GetPerformance().TimingEnabled != originalTiming)
                 throw new IOException("Sustained ordering mode or timing restoration failed.");

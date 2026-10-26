@@ -59,7 +59,7 @@
             <Expander.Header>
               <StackPanel>
                 <TextBlock Text="Advanced tuning" />
-                <TextBlock Classes="caption secondary" Text="Memory sharing, when to write to disk, batch size, parallel writes" />
+                <TextBlock Classes="caption secondary" Text="Memory sharing, when to write to disk, batch size, parallel writes, write ordering" />
               </StackPanel>
             </Expander.Header>
             <StackPanel Spacing="16">
@@ -123,6 +123,13 @@
                 </StackPanel>
               </WrapPanel>
               <TextBlock Classes="caption secondary" Text="Neighboring pending blocks are combined into one disk write up to the largest size. More parallel writes help random writing on fast disks; while programs read from the disk, fewer run at once so reads stay quick." />
+
+              <StackPanel Spacing="4">
+                <CheckBox Name="OrderingBox" IsChecked="{Binding WriteOrdering}" IsEnabled="{Binding CanOrderWrites}">
+                  <TextBlock TextWrapping="Wrap" Text="Write to disk in save order to protect the file system in a crash" />
+                </CheckBox>
+                <TextBlock Classes="caption secondary" Margin="28,0,0,0" Text="{Binding OrderingText}" />
+              </StackPanel>
             </StackPanel>
           </Expander>
           <TextBlock Name="ErrorText" Classes="error" Text="{Binding Error}" IsVisible="{Binding Error, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />

@@ -235,6 +235,7 @@ qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --save
 qcache policy apply Q: --budget-mib 8192 --allocation Fixed --write-percent 50 --save
 qcache policy apply Q: --budget-mib 4096 --drain Balanced --low-percent 40 --high-percent 80 --max-dirty-age-ms 5000 --batch-kib 1024 --drain-parallelism 2 --save
 qcache policy apply Q: --budget-mib 2048 --allocation Fixed --write-percent 0 --preset Strict
+qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --write-ordering --save   # experimental (#13)
 qcache policy status PhysicalDrive1 --json
 qcache developer cache-scenarios Q:
 ```
@@ -287,10 +288,21 @@ Uncached/partial writes invalidate only intersecting clean blocks. Known geometr
 
 ## Experimental Fast write ordering (#13)
 
-The runtime-only `qcache developer driver flush-order <device> <0|1>` switch is off
-(0) by default and accepted only on a clean disabled non-paging volume. It is intended
-for disposable-volume qualification, not a filesystem-safety claim. The matching
-`flush-order` verification suite sets and restores it itself.
+Write ordering is an advanced per-cache setting, off by default: **Write to disk in
+save order to protect the file system in a crash** under Advanced tuning in the
+app, or `--write-ordering` on `qcache policy apply`. It is experimental: the goal is
+that a crash or power cut can lose recent writes but should not damage NTFS, and that
+is not yet qualified (see [known issues](KNOWN_ISSUES.md)). It applies to Fast only;
+Strict already waits for the disk, so Strict with ordering is refused. Apply refuses
+it, before draining anything, on a volume that holds a paging, hibernation or crash
+dump file, such as the Windows volume. Like the preset, it changes only while the
+cache is disabled and empty, which Apply arranges; a brief busy answer while a lower
+TRIM or group flush finishes is retried for up to 5 s. A saved profile keeps the
+choice and the startup restore reapplies it; pause/resume keeps it. A configuration
+that does not name a choice (an older saved profile, or one rebuilt from driver
+state) leaves the current mode unchanged. The low-level
+`qcache developer driver flush-order <device> <0|1>` hook remains for the lab, and
+the `flush-order` verification suites set and restore it themselves.
 
 With ordering on (1), a filesystem flush seals a group of RAM writes without waiting
 for disk. A write-through write joins the open group and seals it after itself;
