@@ -298,6 +298,16 @@ it as a single suite on the temporary disk; campaign lab roles still require
 a VHDX. Telemetry readiness, full coverage, durable checkpoints, post-release
 byte checks and exact mode/timing restoration are unchanged.
 
+Plan 203 flushes the filesystem before **each** bounded checkpoint attempt.
+NTFS can generate more metadata during a long cache drain; flushing only before
+the first attempt left the following two cache-only retries racing its lazy
+writer. The three-attempt cap, refusal of faults or pending data without new
+admission, telemetry and byte checks remain unchanged. Both ordering cost suites
+and both sustained suites use new `v203` inner case IDs. Earlier `v200`/`v202`
+and `v196`/`v197` run identities remain historical; never join their cases with
+plan 203. The initial B cost run stopped at the final mode-1 checkpoint and
+restored successfully; its 26 measurements are an incomplete matrix.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

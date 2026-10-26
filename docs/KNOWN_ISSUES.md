@@ -541,6 +541,29 @@ and older records without the marker cannot be consumed, even with a generated-l
 filename. General retention, background saving and a crash during commit remain
 separate work.
 
+**Issues #13/#31 forced-write lab variant and checkpoint metadata (2026-10-26):**
+on native 0.4.875.1 (`88331c0`; loaded filter
+`73281443FE5D00E5A0536D6F55C7CDFE3E34F012F364233D3E357196D049B4E0`, RAM driver
+`06723ACB5DC9E2B7BC1F5FD04217951903A3B4068D2038A6F345D417327030F5`),
+with the plan-201 controller from `e35eefc`, mode 1 passed 14/14 on the lab W:
+VHDX and the new lab mode 2 passed 11/11 on a temporary 16 GiB virtual SCSI disk
+T:, under Verifier `0x209bb`. Both restored. Mode 2 forces every write in an
+eligible small sealed group to the lower device before advancing without a
+separate flush; the disk must report write-through support. The T: suite omits
+file-level TRIM, which this VM's virtual SCSI disk refused, and the per-cache
+setting check. This is no power-cut or broader storage qualification.
+
+The first three-arm cost run
+`QueueCache-Verify-20261026-175505-1bf4e36e3fb44506b83945aa3787e8c6`
+stopped at its final mode-1 checkpoint: Windows' System process admitted 56 KiB
+of metadata during the long drain, then 4 KiB in each of two rapid retries.
+The cache stayed healthy and restoration succeeded. Its 26 measurements remain
+an incomplete matrix. Plan 203 flushes the filesystem before each of the same
+three permitted cache flushes; previously only the first attempt did that.
+Host contracts cover retry order, the unchanged cap, retained failure evidence
+and immediate fault refusal. The ordering performance cases have new IDs;
+results belong in [performance](PERFORMANCE.md).
+
 **Issue #13 per-cache write-ordering setting, plans 198/199 (2026-10-26):**
 write ordering became an advanced per-cache setting (app, `qcache policy apply
 --write-ordering`, saved profiles), with no driver change. On 0.4.871.1 (`6b78d8a`)

@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 202, "plan 202 adds the sustained off/on/FUA comparison");
+        Check(VerificationPlan.Version == 203, "plan 203 flushes filesystem metadata before each checkpoint attempt");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -156,6 +156,42 @@ internal static class DiagnosticContracts
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { LastError = -1 }));
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { Instance = 10 }));
         Reject(() => DurabilityCheckpointEvidence.NeedsAnotherFlush(checkpointBefore, checkpointNewWrite with { AcceptedBytes = 1 }));
+        var checkpointDirectory = Directory.CreateTempSubdirectory("QueueCache-checkpoint-contract-").FullName;
+        try
+        {
+            var operations = new List<string>();
+            var calls = 0;
+            DurableCheckpointAttempt Observation(WriteCacheState before, WriteCacheState after) => new(
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, before, after, orderBefore, orderBefore with { ControlBarriers = 1 });
+            var completedCheckpoint = DurableCheckpoint.Complete(() => operations.Add("filesystem"), () =>
+            {
+                operations.Add("cache"); calls++;
+                return calls == 1 ? Observation(checkpointBefore, checkpointNewWrite)
+                    : Observation(checkpointNewWrite, checkpointNewWrite with { DirtyBytes = 0, InFlightBytes = 0 });
+            }, Path.Combine(checkpointDirectory, "unexpected-failure.json"));
+            Check(calls == 2 && completedCheckpoint.Attempts.Count == 2 &&
+                operations.SequenceEqual(["filesystem", "cache", "filesystem", "cache"]),
+                "late filesystem metadata is flushed before each bounded cache retry");
+            operations.Clear(); calls = 0;
+            var persistentTail = Path.Combine(checkpointDirectory, "persistent-tail.json");
+            Reject(() => DurableCheckpoint.Complete(() => operations.Add("filesystem"), () =>
+            {
+                operations.Add("cache"); calls++;
+                return Observation(checkpointBefore, checkpointNewWrite);
+            }, persistentTail));
+            using (var retained = JsonDocument.Parse(File.ReadAllText(persistentTail)))
+                Check(calls == 3 && operations.SequenceEqual(Enumerable.Range(0, 3).SelectMany(_ => new[] { "filesystem", "cache" })) &&
+                    retained.RootElement.GetProperty("Attempts").GetArrayLength() == 3 &&
+                    retained.RootElement.GetProperty("Failure").GetString()!.Contains("three flushes", StringComparison.Ordinal),
+                    "re-flushing the filesystem never extends the three-attempt cap and retains failure evidence");
+            calls = 0;
+            Reject(() => DurableCheckpoint.Complete(() => { }, () =>
+            {
+                calls++; return Observation(checkpointBefore, checkpointNewWrite with { LastError = -1 });
+            }, Path.Combine(checkpointDirectory, "fault.json")));
+            Check(calls == 1, "a driver fault still stops the checkpoint immediately without a retry");
+        }
+        finally { Directory.Delete(checkpointDirectory, recursive: true); }
         FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, true);
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder, faultState, false));
         Reject(() => FlushOrderScenario.ValidateFailed(heldOrder, faultOrder with
@@ -216,14 +252,14 @@ internal static class DiagnosticContracts
             costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
             costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
             costPlan.Select(c => c.Workload).Distinct().SequenceEqual(["sequential-fit", "flush-heavy-files", "write-through-pairs"]) &&
-            costPlan.All(c => c.Id.Contains("v196", StringComparison.Ordinal)) && costPlan.All(c => c.Mode is 0 or 1) &&
+            costPlan.All(c => c.Id.Contains("v203", StringComparison.Ordinal)) && costPlan.All(c => c.Mode is 0 or 1) &&
             costPlan.All(c => c.Id.EndsWith(c.Mode == 0 ? "-off" : "-on", StringComparison.Ordinal)) &&
             fullCostPlan.Count == 18 && fullCostPlan.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
             FlushOrderCostPlan.SequentialMiB < FlushOrderCostPlan.BudgetMiB,
             "ordering cost compares off/on with unique IDs, equal counts, alternating arm order and a fitting file");
         var fuaCost = FlushOrderCostPlan.Cases(3, writeThroughArm: true);
         Check(fuaCost.Count == 27 && fuaCost.Select(c => c.Id).Distinct().Count() == 27 &&
-            fuaCost.All(c => c.Id.StartsWith("flush-order-fua-cost-v200-r", StringComparison.Ordinal) &&
+            fuaCost.All(c => c.Id.StartsWith("flush-order-fua-cost-v203-r", StringComparison.Ordinal) &&
                 c.Id.EndsWith(c.Mode switch { 0 => "-off", 1 => "-on", _ => "-fua" }, StringComparison.Ordinal)) &&
             fuaCost.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
             fuaCost.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>
@@ -260,7 +296,7 @@ internal static class DiagnosticContracts
             sustained.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 1UL]) &&
             sustained.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
             sustained.Select(c => c.Workload).Distinct().SequenceEqual(["files-5min", "tar-extract", "robocopy-tree"]) &&
-            sustained.All(c => c.Id.StartsWith("flush-order-sustained-v197-r", StringComparison.Ordinal) &&
+            sustained.All(c => c.Id.StartsWith("flush-order-sustained-v203-r", StringComparison.Ordinal) &&
                 c.Id.EndsWith(c.Mode == 0 ? "-off" : "-on", StringComparison.Ordinal)) &&
             FlushOrderSustainedPlan.Cases(1).Count == 6 && FlushOrderSustainedPlan.TreeBytes == 1_392_640_000 &&
             FlushOrderSustainedPlan.FileSeconds == 300,
@@ -284,7 +320,7 @@ internal static class DiagnosticContracts
             "sustained ordering uses the lab role and restores the backing cache");
         var fuaSustained = FlushOrderSustainedPlan.Cases(3, writeThroughArm: true);
         Check(fuaSustained.Count == 27 && fuaSustained.Select(c => c.Id).Distinct().Count() == 27 &&
-            fuaSustained.All(c => c.Id.StartsWith("flush-order-fua-sustained-v202-r", StringComparison.Ordinal) &&
+            fuaSustained.All(c => c.Id.StartsWith("flush-order-fua-sustained-v203-r", StringComparison.Ordinal) &&
                 c.Id.EndsWith(c.Mode switch { 0 => "-off", 1 => "-on", _ => "-fua" }, StringComparison.Ordinal)) &&
             fuaSustained.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
             fuaSustained.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>

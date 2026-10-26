@@ -21,7 +21,7 @@ public static class FlushOrderSustainedPlan
     public static IReadOnlyList<FlushOrderSustainedCase> Cases(int repeats, bool writeThroughArm = false)
     {
         if (repeats < 1 || repeats > (writeThroughArm ? 3 : 2)) throw new ArgumentOutOfRangeException(nameof(repeats));
-        var prefix = writeThroughArm ? "flush-order-fua-sustained-v202" : "flush-order-sustained-v197";
+        var prefix = writeThroughArm ? "flush-order-fua-sustained-v203" : "flush-order-sustained-v203";
         return [.. Enumerable.Range(1, repeats).SelectMany(repeat => Workloads.SelectMany(workload =>
             (writeThroughArm ? WriteThroughOrders : Orders)[repeat - 1].Select(mode => new FlushOrderSustainedCase(
                 $"{prefix}-r{repeat}-{workload}-{mode switch { 0 => "off", 1 => "on", _ => "fua" }}", repeat, workload, mode))))];
