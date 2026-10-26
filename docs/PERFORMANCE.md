@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -120,6 +120,80 @@ effect are unknown; the warnings cleared after restoration. Controls and exact r
 
 ## Results, newest first
 
+<a id="fast-ordering-31-fua-sustained"></a>**B under sustained use (#31, plan 203, October 26).**
+The forced-write variant does not resolve the sustained flush-heavy bottleneck.
+In three five-minute file runs, B changed application throughput by **−0.33%,
++3.62%, +2.59%** against ordinary ordering. Both filled the usable 2 GiB cache
+and waited for space; neither approaches ordering off. B's final drain was
+shorter in all three repetitions, but the arms completed different file counts,
+so that is not an equal-work drain-speed comparison. Keep B as a lab control and
+ordering default off. The [short equal-work comparison](#fast-ordering-31-fua)
+establishes its limited durable-completion benefit.
+
+This is a complete three-arm, three-repetition comparison on the same native
+0.4.875.1 and plan-203 controller as the short run below. Every arm takes each
+position once. Values separated by slashes are repetitions 1 / 2 / 3, not samples
+combined from different runs. Off still has Fast caching enabled.
+
+| Five-minute flushed 4 KiB file workload | Off | Ordinary ordering | B |
+|---|---:|---:|---:|
+| Files completed | 1,076,109 / 973,289 / 978,349 | 322,527 / 301,809 / 301,543 | 321,462 / 312,686 / 309,366 |
+| Files/s, first 30 s | 3,559 / 3,579 / 3,493 | 3,017 / 2,896 / 2,911 | 3,002 / 2,927 / 2,904 |
+| Files/s, last minute | 3,556 / 2,273 / 2,213 | 528 / 445 / 458 | 554 / 489 / 543 |
+| 90% of configured cache budget dirty after | never | 86 / 102 / 84 s | 98 / 79 / 79 s |
+| Peak dirty data | 7.5 / 7.4 / 10.3 MiB | 1,988.5 MiB each | 1,988.5 MiB each |
+| Waits for cache space | 0 each | 189,210 / 156,447 / 169,995 | 127,180 / 136,928 / 141,182 |
+| Extra time after application completion until on disk | 1.62 / 1.37 / 1.44 s | 218.66 / 239.05 / 270.94 s | 202.22 / 236.85 / 230.41 s |
+| Group flushes | 0 each | 322,708 / 301,982 / 301,710 | 124 / 113 / 110 |
+
+B completed 309,434–321,533 groups by forced writes instead, but retained
+631,565–656,545 forced lower writes. Eliminating almost every group flush did
+not eliminate the many small ordered writes. Ordinary group-flush durations
+summed to 18.08–18.97 s; B's summed to 0.0090–0.0097 s. These request durations
+are not disjoint portions of elapsed time. The last-minute application rate was
+higher with B in every repetition, but the whole five-minute throughput did not
+improve consistently, and B did not consistently delay cache saturation.
+
+The unflushed tree controls also establish no application benefit. Each copies
+or extracts the same 16,000-file, 1,328 MiB tree, verifies every file after cache
+release and records no waits for space. Times are medians [minimum–maximum].
+
+| Tree workload and timing | Off | Ordinary ordering | B |
+|---|---:|---:|---:|
+| `tar`, application | 2.83 s [2.68–3.22] | 2.90 s [2.74–3.16] | 2.89 s [2.78–2.89] |
+| `tar`, until on disk | 10.49 s [10.47–10.66] | 10.74 s [10.23–12.93] | 10.34 s [10.04–10.50] |
+| `robocopy`, application | 4.96 s [4.84–5.29] | 4.98 s [4.86–5.10] | 5.11 s [5.10–5.34] |
+| `robocopy`, until on disk | 9.23 s [9.13–10.43] | 9.72 s [9.66–10.45] | 9.72 s [9.59–10.70] |
+
+`tar` durable time improved in all B pairs (1.85–18.82%), with overlapping
+ranges. `robocopy` application time increased 0.007%, 9.82% and 2.64%; durable
+time changed +2.37%, +0.63% and −1.33%. There is no repeated application loss
+of 3% or more, but this is not evidence of a general application speedup.
+
+Run `QueueCache-Verify-20261026-182453-0e6a1dfeebe4442cb582f7430705bb12`
+completed all 27 inner cases, its full telemetry interval and restoration,
+18:24:53–19:52:48 UTC. Every tree file and the prescribed sample of flushed
+files (every 64th plus the final thousand) matched unbuffered after release;
+there were no driver errors. The evidence includes the exact `FINISHED.txt`,
+status, summary, results, worker replies, samples, checkpoints and run log.
+Backend sampling bracketed the whole run with a maximum 5.001 s gap, no sampling
+errors, new health checks or overlapping backup/restore tasks; serving-pool
+available space stayed above 244.70 GB. Other guests continued I/O and three
+guests' counters were unavailable. A deep scrub was observed. The pre-existing
+health warning for unrelated offline pools remained; this was shared storage,
+not an exclusive or wholly healthy cluster.
+
+All 966 evidence files, including the separate incomplete attempts, were archived
+and independently checked against their length/SHA-256 manifest before removal
+of T:. Archive SHA-256:
+`B77093EE459F4FB2F15112022781CCE5DF446C122212BEA4751C2535266F6468`.
+The temporary disk was taken offline, detached and its backing volume deleted;
+guest, live block-device, current/pending configuration and storage checks agree.
+Original disks, Q:'s settings, stopped managed RAM disk and the closed applications
+were restored on the tested driver. The final guest receipt SHA-256 is
+`46CADE32B1F6431118BE67806251FDCEC333B1D188D6D1EBC69C2153790634F3`.
+The TRIM and power-cut qualification gaps below remain.
+
 <a id="fast-ordering-31-fua"></a>**B: force small groups instead of flushing them (#31, plans 200–203, October 26).**
 A modest improvement on the temporary virtual SCSI disk, rather than removal of
 ordering's write-out cost. Lab mode 2 writes every part of an eligible sealed
@@ -157,6 +231,11 @@ pairs, about 5–6% of their total durable time. Lower-write time remained large
 22.1–23.7 with B. These are summed request durations across workers, so they can
 exceed wall time and cannot be added as disjoint portions. Eliminating the
 separate flush cannot eliminate the time spent waiting for each forced write.
+For write-through pairs, ordering off submitted only **211–241 lower writes**,
+where ordinary ordering submitted **25,606–25,618** and B **25,605–25,606**.
+For flushed files the counts were 23,398–24,823 off and about 52,300 with either
+ordering mode. B preserves the groups and their small ordered writes, so it
+retains that request-count cost even when nearly all separate flushes disappear.
 
 Setup: native release 0.4.875.1 (`88331c0`), loaded filter
 `73281443FE5D00E5A0536D6F55C7CDFE3E34F012F364233D3E357196D049B4E0` and RAM driver

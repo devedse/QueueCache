@@ -133,6 +133,11 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   writes for eligible small groups. Its complete plan-203 cost comparison
   shortened durable time 8.8% for files and 7.2% for write-through pairs, with
   every pair improved and separated ranges ([B result](PERFORMANCE.md#fast-ordering-31-fua)).
+  Its complete three-repetition sustained comparison still filled the cache and
+  throttled in every flushed-file run: five-minute application throughput changed
+  −0.33%, +3.62% and +2.59% against ordinary ordering. The final drain shortened,
+  but the file counts differ. Tree controls established no application benefit
+  ([sustained B result](PERFORMANCE.md#fast-ordering-31-fua-sustained)).
   Reported support and live byte checks do not qualify crash persistence;
   shared bus type alone is insufficient to select the optimization.
 - **Releases:** the plan-189 release attempt stopped at a mode-zero pressure
@@ -567,7 +572,15 @@ an incomplete matrix. Plan 203 flushes the filesystem before each of the same
 three permitted cache flushes; previously only the first attempt did that.
 Host contracts cover retry order, the unchanged cap, retained failure evidence
 and immediate fault refusal. The ordering performance cases have new IDs;
-results belong in [performance](PERFORMANCE.md).
+the completed plan-203 cost and sustained runs each collected all 27 inner cases,
+passed their prescribed post-release byte checks with no driver errors and
+restored successfully. Their evidence and the incomplete attempts were archived;
+all 966 files were independently hash-verified before the temporary disk was
+detached and its backing volume deleted. Final guest and Proxmox checks confirmed
+its absence, the original disks and cache settings, stopped managed RAM disk,
+restored applications and matching tested driver hashes. This does not add TRIM
+or power-cut coverage. Results and evidence identities are in
+[performance](PERFORMANCE.md#fast-ordering-31-fua-sustained).
 
 **Issue #13 per-cache write-ordering setting, plans 198/199 (2026-10-26):**
 write ordering became an advanced per-cache setting (app, `qcache policy apply
