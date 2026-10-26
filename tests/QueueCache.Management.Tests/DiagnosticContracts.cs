@@ -20,7 +20,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 195, "plan 195 compares ordering off, mode 2 and lab mode 3 with a cache-fitting file");
+        Check(VerificationPlan.Version == 196, "plan 196 keeps one ordering mode and compares it with ordering off");
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);
@@ -64,15 +64,16 @@ internal static class DiagnosticContracts
         var durableOracle = new DurabilityOracle(3, 42, "W:\\owned", 1, 17,
             DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddMinutes(1), 0.1, "QueueCache fixture") { DurableCheckpoint = true };
         var flaggedOracle = durableOracle with { SchemaVersion = 5, WriteThroughGeneration2 = true,
-            OrderingMode = 2, WriteThroughRequestsObserved = 1 };
+            OrderingMode = 1, WriteThroughRequestsObserved = 1 };
         DurabilityOracleContract.Validate(durableOracle);
         DurabilityOracleContract.Validate(flaggedOracle);
         DurabilityOracleContract.Validate(flaggedOracle with { SchemaVersion = 4, DurableCheckpoint = false });
         Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { WriteThroughRequestsObserved = null }));
         Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { WriteThroughRequestsObserved = 0 }));
         Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { OrderingMode = 0 }));
+        Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { OrderingMode = 2 }));
         Reject(() => DurabilityOracleContract.Validate(flaggedOracle with { SchemaVersion = 3 }));
-        Reject(() => DurabilityOracleContract.Validate(durableOracle with { OrderingMode = 2 }));
+        Reject(() => DurabilityOracleContract.Validate(durableOracle with { OrderingMode = 1 }));
         VerificationPlan.Validate(new("W:", "compare-durability-write", Product: "QueueCache fixture", WriteThroughGeneration2: true));
         foreach (var bad in new[]
         {
@@ -110,11 +111,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v195", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v196", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v195"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v196"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,
@@ -133,6 +134,8 @@ internal static class DiagnosticContracts
             { Attribution = orderAfter.Attribution! with { LowerFlushAttempts = 1 } }));
         Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore, orderAfter with
             { FlushOrder = orderAfter.FlushOrder! with { VersionCopies = 0 } }));
+        Reject(() => FlushOrderScenario.ValidateRamAdmission(orderBefore with { FlushOrder = orderBefore.FlushOrder! with { Mode = 2 } },
+            orderAfter with { FlushOrder = orderAfter.FlushOrder! with { Mode = 2 } }));
         var heldOrder = orderAfter with
         {
             FlushOrder = orderAfter.FlushOrder! with { MaxSubmittedEpoch = 1 },
@@ -172,39 +175,39 @@ internal static class DiagnosticContracts
         Reject(() => FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter with
             { Attribution = directAfter.Attribution! with { LowerFlushAttempts = 1 } }, pressureBefore));
         Reject(() => FlushOrderScenario.ValidateOversizedFallback(orderBefore, directAfter, faultState));
-        var wtBefore = orderBefore with { FlushOrder = new(2, 1, 1, 0, 0, 0, 0, 0, 0) };
-        var wtAfter = wtBefore with { WriteThroughWrites = 1, FlushOrder = new(2, 2, 1, 1, 0, 0, 0, 0, 0) };
+        var wtBefore = orderBefore with { FlushOrder = new(1, 1, 1, 0, 0, 0, 0, 0, 0) };
+        var wtAfter = wtBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 2, 1, 1, 0, 0, 0, 0, 0) };
         FlushOrderScenario.ValidateWriteThrough(wtBefore, wtAfter, sealedPredecessor: false);
         Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore,
             wtAfter with { FlushOrder = wtAfter.FlushOrder! with { Seals = 0 } }, false));
         Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore,
             wtAfter with { Attribution = wtAfter.Attribution! with { LowerWriteAttempts = 1 } }, false));
         Reject(() => FlushOrderScenario.ValidateWriteThrough(wtBefore, wtAfter, sealedPredecessor: true));
-        var wtSealedBefore = wtBefore with { FlushOrder = new(2, 2, 1, 1, 0, 0, 0, 0, 0) };
-        var wtSealedAfter = wtAfter with { FlushOrder = new(2, 3, 1, 2, 0, 1, 0, 0, 0) };
+        var wtSealedBefore = wtBefore with { FlushOrder = new(1, 2, 1, 1, 0, 0, 0, 0, 0) };
+        var wtSealedAfter = wtAfter with { FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) };
         FlushOrderScenario.ValidateWriteThrough(wtSealedBefore, wtSealedAfter, sealedPredecessor: true);
-        FlushOrderScenario.ValidateWriteThrough(orderBefore,
-            orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false);
-        var orderChecks = FlushOrderScenario.Modes.SelectMany(m => Enumerable.Range(0, 13)
-            .Select(i => new CheckResult($"flush-order/mode{m}/check{i}", "PASS", "fixture"))).ToArray();
+        // The removed original mode also sealed before a write-through: two boundaries are now a failure.
+        Reject(() => FlushOrderScenario.ValidateWriteThrough(orderBefore,
+            orderBefore with { WriteThroughWrites = 1, FlushOrder = new(1, 3, 1, 2, 0, 1, 0, 0, 0) }, false));
+        var orderChecks = Enumerable.Range(0, FlushOrderScenario.CheckCount)
+            .Select(i => new CheckResult($"flush-order/check{i}", "PASS", "fixture")).ToArray();
         FlushOrderScenario.ValidateChecks(orderChecks);
-        Reject(() => FlushOrderScenario.ValidateChecks(orderChecks[..26]));
+        Reject(() => FlushOrderScenario.ValidateChecks(orderChecks[..^1]));
         Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[0]]));
         Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Result = "FAIL" }]));
-        Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Name = "flush-order/mode1/extra" }]));
+        Reject(() => FlushOrderScenario.ValidateChecks([.. orderChecks[..^1], orderChecks[^1] with { Name = "other/check" }]));
         var costPlan = FlushOrderCostPlan.Cases(2);
         var fullCostPlan = FlushOrderCostPlan.Cases(3);
-        Check(costPlan.Count == 18 && costPlan.Select(c => c.Id).Distinct().Count() == 18 &&
-            costPlan.Take(3).Select(c => c.Mode).SequenceEqual([0UL, 2UL, 3UL]) &&
-            costPlan.Skip(9).Take(3).Select(c => c.Mode).SequenceEqual([2UL, 3UL, 0UL]) &&
-            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 6) &&
+        Check(costPlan.Count == 12 && costPlan.Select(c => c.Id).Distinct().Count() == 12 &&
+            costPlan.Take(2).Select(c => c.Mode).SequenceEqual([0UL, 1UL]) &&
+            costPlan.Skip(6).Take(2).Select(c => c.Mode).SequenceEqual([1UL, 0UL]) &&
+            costPlan.GroupBy(c => c.Workload).All(g => g.Count() == 4) &&
             costPlan.Select(c => c.Workload).Distinct().SequenceEqual(["sequential-fit", "flush-heavy-files", "write-through-pairs"]) &&
-            costPlan.All(c => c.Id.Contains("v195", StringComparison.Ordinal)) && costPlan.All(c => c.Mode is 0 or 2 or 3) &&
-            fullCostPlan.Count == 27 && fullCostPlan.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
-            fullCostPlan.GroupBy(c => c.Workload).All(w => Enumerable.Range(0, 3).All(position =>
-                w.GroupBy(c => c.Repeat).Select(r => r.ElementAt(position).Mode).Order().SequenceEqual([0UL, 2UL, 3UL]))) &&
+            costPlan.All(c => c.Id.Contains("v196", StringComparison.Ordinal)) && costPlan.All(c => c.Mode is 0 or 1) &&
+            costPlan.All(c => c.Id.EndsWith(c.Mode == 0 ? "-off" : "-on", StringComparison.Ordinal)) &&
+            fullCostPlan.Count == 18 && fullCostPlan.GroupBy(c => (c.Workload, c.Mode)).All(g => g.Count() == 3) &&
             FlushOrderCostPlan.SequentialMiB < FlushOrderCostPlan.BudgetMiB,
-            "ordering cost compares off/mode 2/mode 3 with unique IDs, equal counts, rotated arm order and a fitting file");
+            "ordering cost compares off/on with unique IDs, equal counts, alternating arm order and a fitting file");
         var costChecks = costPlan.Select(c => new CheckResult(c.Id, "PASS", "fixture")).ToArray();
         FlushOrderCostPlan.ValidateChecks(costPlan, costChecks);
         Reject(() => FlushOrderCostPlan.ValidateChecks(costPlan, costChecks[..^1]));

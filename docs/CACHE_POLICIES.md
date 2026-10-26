@@ -287,27 +287,33 @@ Uncached/partial writes invalidate only intersecting clean blocks. Known geometr
 
 ## Experimental Fast write ordering (#13)
 
-The runtime-only `qcache developer driver flush-order <device> <mode>` switch is off by
-default and accepted only on a clean disabled non-paging volume. It is intended
+The runtime-only `qcache developer driver flush-order <device> <0|1>` switch is off
+(0) by default and accepted only on a clean disabled non-paging volume. It is intended
 for disposable-volume qualification, not a filesystem-safety claim. The matching
 `flush-order` verification suite sets and restores it itself.
 
-In this prototype, a filesystem flush seals a group of RAM writes without waiting
-for disk. Mode 1 is the original prototype: Fast write-through seals both before
-and after its write. Experimental mode 2 retains the boundary after write-through
-without adding a boundary before unrelated predecessors. Existing explicit flush
-boundaries and same-range ordering remain intact. This follows the per-request
+With ordering on (1), a filesystem flush seals a group of RAM writes without waiting
+for disk. A write-through write joins the open group and seals it after itself;
+unrelated earlier writes are not ordered before it. This follows the per-request
 [Windows write-through contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/ns-wdm-_io_stack_location):
 an unrelated ordinary write need not become durable before the write-through
 request. A successful group flush still makes the write-through and its group
-durable before any later group can submit. Both modes remain off by default.
-Overwriting a
-sealed dirty block retains the older payload as a separate version. Drainers may
-write only the oldest group; a real lower flush must succeed before any later group
-is submitted. TRIM is also an ordered effect: sealed dirty history drains before
-the lower discard, and newer writes cannot drain ahead of it. Empty boundaries
-coalesce. A failed ordering flush faults the cache and retains its boundary for
-explicit Retry.
+durable before any later group can submit. Overwriting a sealed dirty block retains
+the older payload as a separate version. Drainers may write only the oldest group;
+a real lower flush must succeed before any later group is submitted. Because
+versions join the dirty list in group order, drain selection stops at the first
+version of a later group, and drainers wake only for work they may start: a write
+into the oldest group, the seal of that group with none of its writes in flight,
+or the lower flush that moves on to the next group. TRIM is also an ordered effect:
+sealed dirty history drains before the lower discard, and newer writes cannot drain
+ahead of it. Empty boundaries coalesce. A failed ordering flush faults the cache and
+retains its boundary for explicit Retry.
+
+Plan 196 removed two earlier variants. The original mode 1 also sealed before every
+write-through. Mode 2 had today's groups but woke every drainer for each write and
+seal, and each searched the whole dirty list under the cache lock; that made
+applications 2.6–40× slower ([plan 195](PERFORMANCE.md#fast-ordering-13-fix)).
+Value 1 now selects the former lab mode 3.
 
 Supported fitting writes still enter RAM without lower I/O for admission. Retained
 versions consume the existing budget and can cause capacity backpressure. An
@@ -318,6 +324,13 @@ QueueCache Flush/Pause/Remove retain their durable boundary. This does not make 
 application flushes durable or promise that recently acknowledged data survives a
 crash.
 
+Each group needs its own lower flush, and the next group waits for it, so every
+application flush or write-through costs one disk round trip before later data can
+reach the disk. With ordering on, 25,600 flushed 4 KiB files took about 7× and
+25,600 write-through pairs about 60× as long to reach the disk as with it off,
+while their time into the cache matched ordering off
+([plan 195](PERFORMANCE.md#fast-ordering-13-fix)).
+
 Diagnostics V26 appends the mode, current/draining group, seal and successful/failed
 ordering-flush counts, retained-version and TRIM-wait counts, and the highest group
 selected for a drain in this allocation. A lower group flush must be supported and
@@ -327,39 +340,14 @@ A read-only October 25 capability query reported write-through support on the VM
 Q: device but **not** on its W: VHDX lab device; both reported flush support.
 Their shared SCSI interface therefore does not justify assuming FUA support.
 No FUA optimization is enabled or qualified by that capability report.
-The original mode-1 suite passed nine focused live-driver checks under Verifier on a
-non-OS NTFS lab volume. Three bounded follow-up cuts kept NTFS clean and durable
-guards exact; broader qualification remains open ([evidence](KNOWN_ISSUES.md)).
-Plan 188 on 0.4.851.1 passed eleven live checks per mode under Driver Verifier,
-including held and failed post-write-through successors, retained explicit
-predecessors, RAM admission, TRIM, capacity and lifecycle (22 total). The isolated
-write-through sealed two boundaries in mode 1 versus one in mode 2. The subsequent
-plan-192 suite passed thirteen checks per mode (26 total), adding oversized and
-unmappable direct fallbacks, with Verifier off and unchanged native code. Three
-bounded mode-2 write-through cuts kept NTFS clean and untouched durable guards
-exact; the explicit checkpoint preserved both large files and all 10,000 small
-files. The earlier cuts apply to mode 1. Mode 2 remains an experiment with broader
-crash/storage/system-volume qualification open
-([records and limits](KNOWN_ISSUES.md#correctness-qualification)).
-The complete plan-189 comparison reduced total durable time by 42–54% for 256
-ordinary/write-through pairs, with about half as many lower writes and flushes.
-Explicit file-flush boundaries were unchanged and had no established speedup.
-Keep mode 2 as an independently selectable lab experiment, off by default.
-The plan-192 release campaign completed on the same native build with ordering
-off, after the plan-189 attempt had stopped at a mode-zero pressure check
-([#30](https://github.com/devedse/QueueCache/issues/30)); it covers the default
-path, not mode 2. Neither the timing result nor the focused checks establish
-mode-2 release or crash qualification.
-The direct plan-193 off/current-mode-2 comparison measured 4.06–4.91× the total
-durable time for 256 flush-heavy files and 18.06–29.45× for 256 write-through
-pairs with ordering on. Sequential and application-time pairs changed direction;
-these are short equal-work durable costs, not universal application slowdowns
-([direct toggle result](PERFORMANCE.md#fast-ordering-13-toggle)). At minute
-scale (plan 194, 2 GiB) ordering on also slowed the application: 2.5× for
-25,600 flushed files and 43× for 25,600 write-through pairs, with no waits for
-cache space, and 25× / 170× longer until everything was on disk; sequential
-writes were unchanged ([minute-scale result](PERFORMANCE.md#fast-ordering-13-minute)). The lab
-switch rejects currently registered paging/hibernation/dump paths. Mode selection,
+Targeted live-driver checks passed under Driver Verifier, and bounded crash cuts
+with the earlier variants kept NTFS clean and durable guards exact. The current
+mode keeps mode 2's groups and changes only drain scheduling, but it has not been
+cut itself; broader crash/storage/system-volume qualification remains open
+([records and limits](KNOWN_ISSUES.md#correctness-qualification)). The plan-192
+release campaign covers the default path with ordering off.
+
+The lab switch rejects currently registered paging/hibernation/dump paths. Mode selection,
 cache activation and usage reservation share the routing lock; a new registration
 is refused while experimental ordering is selected, including after the cache is
 disabled. This closes the late-registration race without waiting for I/O in the

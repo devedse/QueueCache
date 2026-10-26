@@ -522,8 +522,8 @@ internal static class ComparisonScenarios
         using var observedCache = writeThroughGeneration2 ? new CacheDevice($"{target.Letter}:") : null;
         var requestsBefore = observedCache?.GetDiagnostics();
         var orderMode = requestsBefore?.FlushOrder?.Mode;
-        if (writeThroughGeneration2 && (orderMode is not (1 or 2) || !observedCache!.GetWriteCacheState().UnsafeDefer))
-            throw new IOException("Flagged-write cuts require experimental ordered Fast mode 1 or 2.");
+        if (writeThroughGeneration2 && (orderMode != 1 || !observedCache!.GetWriteCacheState().UnsafeDefer))
+            throw new IOException("Flagged-write cuts require experimental ordered Fast mode.");
         WriteSet(unflushed, nonce, 2, 2, ComparisonPlan.DurabilitySetMiB, unbuffered: true, writeThrough: writeThroughGeneration2);
         var requestsAfter = observedCache?.GetDiagnostics();
         ulong? writeThroughRequests = null;

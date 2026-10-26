@@ -926,15 +926,9 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
     KeReleaseSpinLock(&c->RangeLock, irql);
     return STATUS_SUCCESS;
 }
-// Mutex held. True when block lies inside a TRIM whose lower request is still
-// outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
 static bool FlushOrdering(QC_CACHE* c)
 {
     return c->UnsafeDefer && c->FlushOrderMode != 0;
-}
-static bool FrontierScheduling(QC_CACHE* c)
-{
-    return FlushOrdering(c) && QcFrontierScheduling(c->FlushOrderMode);
 }
 // Foreground owner, Mutex held. Repeated empty barriers share the same boundary.
 // An outstanding copy still owns its dirty versions, so sealing never waits for I/O.
@@ -950,10 +944,12 @@ static bool SealEpoch(QC_CACHE* c)
     ++c->WriteEpoch;
     c->EpochHasWrites = FALSE;
     ++c->Diagnostics.EpochSeals;
-    if (QcSealWakes(FrontierScheduling(c), c->DrainEpoch, c->WriteEpoch, c->State.InFlightBytes))
+    if (QcSealWakes(c->DrainEpoch, c->WriteEpoch, c->State.InFlightBytes))
         WakeDrainers(c);
     return true;
 }
+// Mutex held. True when block lies inside a TRIM whose lower request is still
+// outstanding (QcTrimAsync): written first, that TRIM could then erase the newer data.
 static bool TrimFenced(QC_CACHE* c, LONGLONG block, ULONGLONG epoch = MAXULONGLONG)
 {
     if (!c->TrimFenceCount)
@@ -1014,9 +1010,9 @@ static bool FenceSplitsBatch(QC_CACHE* c, LONGLONG block, bool anchorOverlaps)
 // the fence must not make Deferred/Idle data drain early. Caller holds Mutex.
 static ULONG SelectDrainCandidate(QC_CACHE* c, bool policyDrain)
 {
-    // Mode 3: versions join the dirty FIFO in group order, so none after the
+    // Ordered versions join the dirty FIFO in group order, so none after the
     // first later-group version may drain before the next lower flush.
-    const auto last = FrontierScheduling(c) ? c->DrainEpoch : MAXULONGLONG;
+    const auto last = FlushOrdering(c) ? c->DrainEpoch : MAXULONGLONG;
     // Before forwarding the fenced write, choose its oldest eligible overlap
     // first, but keep unrelated policy-eligible work moving when that overlap is
     // already owned by another lower request. After forwarding, exclude the fence.
@@ -1909,7 +1905,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
     switch (command.Action)
     {
     case QcLabFlushOrder:
-        if (command.Value > 3 || command.BudgetBytes)
+        if (command.Value > 1 || command.BudgetBytes)
             status = STATUS_INVALID_PARAMETER;
         else if (c->Enabled || c->Count || c->TrimFenceCount || c->EpochFlushInFlight ||
                  !NT_SUCCESS(c->State.LastError))
@@ -2392,7 +2388,6 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
                 ReleaseCache(c);
                 return STATUS_INTEGER_OVERFLOW;
             }
-            if (writeThrough && QcSealBeforeWriteThrough(c->FlushOrderMode) && c->EpochHasWrites) ++writeEpoch;
         }
         needed = 0;
         ULONG newDirty = 0, newWriteOccupancy = 0;
@@ -2491,16 +2486,8 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
         ReleaseCache(c);
         return error;
     }
-    // The original prototype orders every predecessor before a write-through.
-    // Mode 2 keeps unrelated ordinary writes in this group: the post-boundary
-    // below still makes the entire group durable before any later group submits.
-    // Explicitly sealed history and in-flight same-range versions remain intact.
-    if (FlushOrdering(c) && writeThrough && QcSealBeforeWriteThrough(c->FlushOrderMode) && !SealEpoch(c))
-    {
-        const auto error = c->State.LastError;
-        ReleaseCache(c);
-        return error;
-    }
+    // A write-through joins the open group with its unrelated predecessors: the seal
+    // below makes the entire group durable before any later group submits.
     NT_ASSERT(!FlushOrdering(c) || writeEpoch == c->WriteEpoch);
     ULONG admittedSlot = NoSlot;
     for (auto block = firstBlock; block < end; block += Chunk)
@@ -2655,7 +2642,7 @@ static NTSTATUS FinishWrite(QC_CACHE* c, PIRP irp, LONGLONG offset, ULONG length
     if (QcShouldWakeAfterWrite(c->Options, c->State.DirtyBytes, static_cast<ULONGLONG>(WriteLimit(c)) * Chunk,
                               c->LastWriteTime - c->Slots[c->Head].DirtySince, c->State.InFlightBytes,
                               forced, pressure) &&
-        QcWriteWakes(FrontierScheduling(c), forced, epoch, c->DrainEpoch))
+        QcWriteWakes(FlushOrdering(c), forced, epoch, c->DrainEpoch))
         WakeDrainers(c);
     c->Pressure = pressure;
     ReleaseCache(c);

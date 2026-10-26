@@ -99,42 +99,32 @@ constexpr bool QcShouldCacheDataIo(bool pagingIo, bool applicationPaging)
 {
     return !pagingIo || applicationPaging;
 }
-// #13: keep later versions in RAM until the earlier group's lower flush completed.
-// The lab mode remains off until its real-driver qualification is complete.
+// #13 (experimental Fast ordering, mode 1; 0 is off): a filesystem flush ends a
+// group, and so does a write-through write after itself. Later groups stay in RAM
+// until the earlier group and a lower flush completed. Off until qualified.
 static constexpr LONG QcDefaultFlushOrder = 0;
-// Experimental ordering excludes paging/hibernation/dump paths for its entire
-// lifetime, including registrations arriving after mode selection. Both checks
-// run under RoutingLock so a reservation and mode selection cannot pass each other.
+// Ordering excludes paging/hibernation/dump paths for its entire lifetime,
+// including registrations arriving after it was selected. Both checks run under
+// RoutingLock so a reservation and the selection cannot pass each other.
 constexpr bool QcMaySelectFlushOrder(ULONGLONG mode, LONG usagePaths)
 {
-    return mode == 0 || (mode >= 1 && mode <= 3 && usagePaths == 0);
+    return mode == 0 || (mode == 1 && usagePaths == 0);
 }
-// Mode 1 is the original conservative prototype. Mode 2 preserves the
-// post-write-through boundary without ordering unrelated predecessors before it.
-constexpr bool QcSealBeforeWriteThrough(LONG mode)
-{
-    return mode == 1;
-}
-// Lab mode 3 keeps mode 2's groups. The dirty FIFO is in group order, so drain
-// selection stops at the first later version, and drainers wake only for work they
-// may start now. Mode 2 searched the whole FIFO on every wake-up, which writes and
-// seals of later groups caused while the frontier waited for its lower flush.
-constexpr bool QcFrontierScheduling(LONG mode)
-{
-    return mode == 3;
-}
+// Ordered drainers wake only for work they may start now: the dirty FIFO is in
+// group order, so selection stops at the first later version. Waking every drainer
+// for each write and seal made applications 2.6-40x slower (plan 195).
 // A seal makes no version drainable. It lets drainer zero flush the frontier only
 // when that was the open group and none of its writes are in flight; completions
 // wake drainer zero otherwise.
-constexpr bool QcSealWakes(bool frontierScheduling, ULONGLONG frontier, ULONGLONG nextGroup, ULONGLONG inFlightBytes)
+constexpr bool QcSealWakes(ULONGLONG frontier, ULONGLONG nextGroup, ULONGLONG inFlightBytes)
 {
-    return !frontierScheduling || (frontier + 1 == nextGroup && inFlightBytes == 0);
+    return frontier + 1 == nextGroup && inFlightBytes == 0;
 }
 // A written version is drainable only in the frontier group; the lower flush that
 // advances the frontier wakes the drainers for later groups.
-constexpr bool QcWriteWakes(bool frontierScheduling, bool forced, ULONGLONG version, ULONGLONG frontier)
+constexpr bool QcWriteWakes(bool ordered, bool forced, ULONGLONG version, ULONGLONG frontier)
 {
-    return !frontierScheduling || forced || version == frontier;
+    return !ordered || forced || version == frontier;
 }
 constexpr bool QcMayRegisterUsage(LONG flushOrderMode)
 {

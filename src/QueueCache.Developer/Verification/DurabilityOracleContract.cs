@@ -10,7 +10,7 @@ public static class DurabilityOracleContract
         if (oracle.SetMiB <= 0 || oracle.SmallFiles <= 0 || oracle.SchemaVersion != Version(oracle.DurableCheckpoint, oracle.WriteThroughGeneration2) ||
             (oracle.WriteThroughGeneration2
                 ? oracle.Product?.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase) != true ||
-                  oracle.OrderingMode is not (1 or 2) ||
+                  oracle.OrderingMode != 1 ||
                   oracle.WriteThroughRequestsObserved is not { } requests || requests < (ulong)oracle.SetMiB
                 : oracle.OrderingMode is not null || oracle.WriteThroughRequestsObserved is not null))
             throw new InvalidDataException("Unknown/inconsistent durability oracle or unexercised write-through workload.");
