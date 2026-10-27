@@ -143,7 +143,8 @@
                           <TextBlock TextWrapping="Wrap" Text="On: each application flush or write-through write ends a group in RAM. QueueCache writes each group and flushes it to disk before allowing a later group to reach the disk." />
                           <TextBlock TextWrapping="Wrap" Text="Saves still finish in RAM when space is available. A crash or power cut can lose recent changes. The aim is to reduce NTFS damage, but crash safety is not yet proven or guaranteed." />
                           <TextBlock TextWrapping="Wrap" Text="Each group adds a disk wait. Programs that flush very often, such as some databases and installers, can become much slower once the cache fills. Ordinary file copies may see little difference." />
-                          <TextBlock TextWrapping="Wrap" Text="Fast only. Strict already waits for the disk. Unavailable on the Windows volume or volumes used for paging, hibernation or crash dumps." />
+                          <TextBlock TextWrapping="Wrap" Text="Fast only. Strict already waits for the disk." />
+                          <TextBlock TextWrapping="Wrap" Text="Unavailable on the Windows drive (normally C:). Windows can register it for paging even with the page file disabled. This experimental mode has not been qualified for paging, hibernation or crash-dump I/O, so QueueCache blocks it on those volumes." />
                           <TextBlock TextWrapping="Wrap" Text="Save applies the change after draining pending writes. Start with Windows remembers the choice; pause and resume keep it. Flush now always writes pending data to disk, with this setting on or off." />
                         </StackPanel>
                       </ToolTip>

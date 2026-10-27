@@ -300,7 +300,11 @@ Strict already waits for the disk, so Strict with ordering is refused. Apply ref
 it, before draining anything, on a volume that holds a paging, hibernation or crash
 dump file. That always includes the Windows volume: on the test VM, Windows' Session
 Manager (`smss.exe`) registered C: for paging at every boot even with the page file
-and crash dumps turned off (two registrations on each of two boots, October 26). Like the preset, it changes only while the
+and crash dumps turned off (two registrations on each of two boots, October 26).
+These system-critical I/O paths are outside experimental ordering's qualified
+scope, so the Windows drive (normally C:) stays unavailable even when the page
+file is disabled. The question-mark help states this restriction and its reason.
+Like the preset, it changes only while the
 cache is disabled and empty, which Apply arranges; a brief busy answer while a lower
 TRIM or group flush finishes is retried for up to 5 s. A saved profile keeps the
 choice and the startup restore reapplies it; pause/resume keeps it, and removing the
