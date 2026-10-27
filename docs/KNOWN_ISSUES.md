@@ -138,6 +138,10 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   −0.33%, +3.62% and +2.59% against ordinary ordering. The final drain shortened,
   but the file counts differ. Tree controls established no application benefit
   ([sustained B result](PERFORMANCE.md#fast-ordering-31-fua-sustained)).
+  The [#31 investigation](https://github.com/devedse/QueueCache/issues/31) is
+  complete: the forced-write variant remains a developer-only experiment; the
+  app's checkbox selects ordinary ordering. Its question-mark help explains the
+  behavior and limits. No default or crash-safety qualification changed.
   Reported support and live byte checks do not qualify crash persistence;
   shared bus type alone is insufficient to select the optimization.
 - **Releases:** the plan-189 release attempt stopped at a mode-zero pressure

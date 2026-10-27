@@ -112,9 +112,8 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
         ? "Not available on this volume: Windows keeps its paging, hibernation or crash dump file here."
         : !IsFast
             ? "Fast only. Strict already waits until each save is on the disk."
-            : "Experimental, not yet proven in power-cut tests. Writes reach the disk in the order programs saved them, to keep NTFS " +
-              "undamaged after a crash or power cut; the newest changes can still be lost. Programs that save very often (some databases " +
-              "and installers) slow down once the cache is full.";
+            : "Experimental, not yet proven in power-cut tests. Recent writes can still be lost, and file-system safety is not guaranteed. " +
+              "Frequent saves can slow down once the cache fills.";
     public bool IsFixedAllocation => Allocation == 1;
     public bool IsCustomBatch => SelectedBatch == Batches.Length;
     public string AllocationText => Allocation == 0

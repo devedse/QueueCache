@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Media.Imaging;
@@ -185,11 +186,51 @@ internal static class ViewTests
         Check(Named<Control>(settings, "IdleInterval").IsEffectivelyVisible && !Named<Control>(settings, "WriteShare").IsEffectivelyVisible,
             $"{theme}: advanced tuning shows only what the chosen drain uses");
         Save(settings, output, $"cache-settings-advanced-{theme}");
-        Named<Control>(settings, "OrderingBox").BringIntoView();
+        Named<Control>(settings, "OrderingSection").BringIntoView();
         Dispatcher.UIThread.RunJobs();
         Check(Named<CheckBox>(settings, "OrderingBox") is { IsEnabled: true, IsChecked: false, IsEffectivelyVisible: true },
             $"{theme}: advanced tuning offers write ordering, off, for a Fast cache");
         Save(settings, output, $"cache-settings-ordering-{theme}");
+        var orderingHelp = Named<Button>(settings, "OrderingHelpButton");
+        Check(orderingHelp.IsEffectivelyVisible && orderingHelp.IsEnabled && orderingHelp.Focusable &&
+              orderingHelp.Content is PathIcon && AutomationProperties.GetName(orderingHelp) == "About experimental write ordering",
+            $"{theme}: write ordering has a visible, named, keyboard-accessible question-mark button");
+        // Use an immediate hover in the headless host, which does not run the desktop timer loop.
+        // Render the real popup inside the window so it is included in the capture.
+        ToolTip.SetShouldUseOverlayLayer(orderingHelp, true);
+        ToolTip.SetShowDelay(orderingHelp, 0);
+        var helpPoint = orderingHelp.TranslatePoint(new Point(orderingHelp.Bounds.Width / 2, orderingHelp.Bounds.Height / 2), settings)!.Value;
+        settings.MouseMove(new Point(0, 0));
+        settings.MouseMove(helpPoint);
+        Dispatcher.UIThread.RunJobs();
+        Check(ToolTip.GetIsOpen(orderingHelp), $"{theme}: hovering over the question mark opens its explanation");
+        Save(settings, output, $"cache-settings-ordering-help-{theme}");
+        var helpContent = (Control)((ToolTip)ToolTip.GetTip(orderingHelp)!).Content!;
+        Check(helpContent.IsEffectivelyVisible && helpContent.Bounds.Height > 0,
+            $"{theme}: the ordering explanation is rendered");
+        var tip = (ToolTip)ToolTip.GetTip(orderingHelp)!;
+        Check(tip.TranslatePoint(new Point(0, tip.Bounds.Height), settings)!.Value.Y <=
+              orderingHelp.TranslatePoint(default, settings)!.Value.Y,
+            $"{theme}: the explanation leaves its question-mark button visible");
+        settings.MouseMove(new Point(0, 0));
+        Dispatcher.UIThread.RunJobs();
+        Check(!ToolTip.GetIsOpen(orderingHelp), $"{theme}: moving away dismisses the hover explanation");
+        // Help remains available when Strict makes the setting unavailable.
+        ((CacheSettingsViewModel)settings.DataContext!).IsStrict = true;
+        Dispatcher.UIThread.RunJobs();
+        Check(!Named<CheckBox>(settings, "OrderingBox").IsEnabled && orderingHelp.IsEnabled,
+            $"{theme}: disabling ordering leaves its help available");
+        orderingHelp.Focus();
+        Dispatcher.UIThread.RunJobs();
+        Check(ToolTip.GetIsOpen(orderingHelp), $"{theme}: keyboard focus also opens the ordering explanation");
+        Named<Button>(settings, "CancelButton").Focus();
+        Dispatcher.UIThread.RunJobs();
+        Check(!ToolTip.GetIsOpen(orderingHelp), $"{theme}: leaving the help button dismisses its explanation");
+        settings.MouseMove(helpPoint);
+        settings.MouseDown(helpPoint, Avalonia.Input.MouseButton.Left);
+        settings.MouseUp(helpPoint, Avalonia.Input.MouseButton.Left);
+        Check(ToolTip.GetIsOpen(orderingHelp) && !((CacheSettingsViewModel)settings.DataContext!).Result()!.Configuration.WriteOrdering!.Value,
+            $"{theme}: pressing the question mark opens help without enabling write ordering");
         settings.Close();
 
         var status = new WindowsStatusViewModel(new StatusPolicyFixture());

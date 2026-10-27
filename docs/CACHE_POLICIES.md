@@ -289,8 +289,11 @@ Uncached/partial writes invalidate only intersecting clean blocks. Known geometr
 ## Experimental Fast write ordering (#13)
 
 Write ordering is an advanced per-cache setting, off by default: **Write to disk in
-save order to protect the file system in a crash** under Advanced tuning in the
-app, or `--write-ordering` on `qcache policy apply`. It is experimental: the goal is
+save order (experimental)** under Advanced tuning in the app, or `--write-ordering`
+on `qcache policy apply`. The question-mark button beside the checkbox explains
+the on/off behavior, RAM-only saves, crash-safety limits, performance cost and
+restrictions. Hover over it, focus it with the keyboard or press it to read the
+explanation, including when the checkbox is unavailable. It is experimental: the goal is
 that a crash or power cut can lose recent writes but should not damage NTFS, and that
 is not yet qualified (see [known issues](KNOWN_ISSUES.md)). It applies to Fast only;
 Strict already waits for the disk, so Strict with ordering is refused. Apply refuses

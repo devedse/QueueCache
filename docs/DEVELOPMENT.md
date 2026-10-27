@@ -277,6 +277,14 @@ intervals, with a minimum of three seconds.
   driver does not report it, so the monitor assumes the default for a new cache
   instance and sends the setting only when it differs.
 
+The cache editor's **Advanced tuning** also offers **Write to disk in save order
+(experimental)** for an individual Fast cache. Its question-mark button opens
+help on hover, keyboard focus or activation, including when ordering is
+unavailable. The help explains the save boundaries, volatility and unqualified
+crash-safety goal, slower flush-heavy writing, volume restrictions and persistence.
+This selects ordinary ordering; the forced-write variant from #31 remains a
+developer-only experiment. See [cache policies](CACHE_POLICIES.md#experimental-fast-write-ordering-13).
+
 Lab delay and fault hooks are deliberately not settings: they stall or fail real
 writes and belong to `qcache developer verify`.
 

@@ -20,4 +20,16 @@ public sealed partial class CacheSettingsWindow : Window
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(null);
+
+    private void OnOrderingHelp(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control control)
+            ToolTip.SetIsOpen(control, true);
+    }
+
+    private void OnOrderingHelpLostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control control)
+            ToolTip.SetIsOpen(control, false);
+    }
 }
