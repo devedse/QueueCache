@@ -163,8 +163,13 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   Short standalone probes did not reproduce them. Plan 204's filesystem flush
   was insufficient in a focused regression; its traced repeat identified two
   4 KiB System writes to NTFS `$LogFile` during the read. Plan 205 requires a
-  longer recorded quiet observation without relaxing the score guard. Final
-  release qualification remains pending
+  longer recorded quiet observation without relaxing the score guard; its
+  focused run passed all 11 cases and 94 retained checks. The full plan-205
+  attempt restored INCOMPLETE after a 1.809-second Windows clock adjustment
+  made a 0.207-second actual sample interval appear as 2.016 seconds in UTC.
+  Plan 206 records common monotonic sample/process clocks for cache exercises,
+  retaining UTC and the strict two-second coverage limit. Validation and final
+  release qualification remain pending
   ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could

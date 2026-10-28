@@ -20,7 +20,41 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 205, "plan 205 records longer fresh-read quiet observations without accepting lower I/O");
+        Check(VerificationPlan.Version == 206, "plan 206 retains UTC and requires monotonic cache-exercise coverage");
+        var clockStart = new TelemetryClock(10_000_000, 1_000_000);
+        var clockEnd = clockStart with { Timestamp = 12_000_000 };
+        TelemetryClock?[] coveredClocks = [clockStart, clockStart with { Timestamp = 11_000_000 }, clockEnd];
+        TelemetryCoverage.Validate(coveredClocks, clockStart, clockEnd);
+        // Windows advanced UTC by 1.809 s in the failed run while sampling continued.
+        // Wall-clock changes must not replace actual monotonic process/sample boundaries.
+        var adjustedRows = new[]
+        {
+            new { Utc = DateTimeOffset.UnixEpoch, Clock = clockStart },
+            new { Utc = DateTimeOffset.UnixEpoch.AddSeconds(3), Clock = coveredClocks[1]! },
+            new { Utc = DateTimeOffset.UnixEpoch.AddSeconds(-1), Clock = clockEnd }
+        };
+        TelemetryCoverage.Validate(adjustedRows.Select(r => r.Clock).ToArray(), clockStart, clockEnd);
+        Reject(() => TelemetryCoverage.Validate(coveredClocks[1..], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate(coveredClocks[..^1], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate([clockStart, null, clockEnd], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate([clockStart, new(0, 1_000_000), clockEnd], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate([clockStart, new(11_000_000, 0), clockEnd], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate([clockStart, new(11_000_000, 10_000_000), clockEnd], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate(coveredClocks, clockStart, clockEnd with { Frequency = 0 }));
+        Reject(() => TelemetryCoverage.Validate(coveredClocks, clockEnd, clockStart));
+        Reject(() => TelemetryCoverage.Validate([clockStart, clockStart, clockEnd], clockStart, clockEnd));
+        Reject(() => TelemetryCoverage.Validate([clockStart, clockEnd, coveredClocks[1], clockEnd], clockStart, clockEnd));
+        TelemetryCoverage.Validate([clockStart, clockEnd], clockStart, clockEnd); // Exactly 2 s is allowed.
+        var beyondLimit = clockEnd with { Timestamp = clockEnd.Timestamp + 1 };
+        Reject(() => TelemetryCoverage.Validate([clockStart, beyondLimit], clockStart, beyondLimit));
+        var missingClock = JsonSerializer.Deserialize<TelemetrySnapshot>("{\"Utc\":\"2026-10-28T00:00:00Z\"}")!;
+        Reject(() => TelemetryCoverage.Validate([clockStart, missingClock.Clock, clockEnd], clockStart, clockEnd));
+        var capturedClock = JsonSerializer.Deserialize<TelemetryClock>(JsonSerializer.Serialize(TelemetryClock.Capture()))!;
+        Check(capturedClock.Timestamp > 0 && capturedClock.Frequency == System.Diagnostics.Stopwatch.Frequency,
+            "persisted clock retains actual system stopwatch ticks and frequency");
+        foreach (var suite in new[] { "cache-concurrency", "cache-sustained", "cache-map-cost", "caller-backoff", "priority-cost", "priority-affinity" })
+            Check(CacheExercisePlan.Cases(new("Q:", suite)).All(c => c.Id.Contains("v206-", StringComparison.Ordinal)),
+                "changed cache-exercise coverage has new immutable IDs: " + suite);
         var watermarkBefore = new PressureWatermarkCounters(0, 0, 100, 20, 4, 9, 2, 1, 0, 0, 0, 0);
         var watermarkBelow = watermarkBefore with { DirtyBytes = 8, AcceptedBytes = 108 };
         var watermarkEvidence = new PressureWatermarkEvidence(10, 8, watermarkBefore, watermarkBelow);

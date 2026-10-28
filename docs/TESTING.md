@@ -327,6 +327,17 @@ and its result. The five-attempt cap, strict score checks and other two-second
 quiet observations are unchanged. Sustained case IDs contain `sustained-v205`;
 plan-203/204 failures remain separate and do not qualify the release.
 
+Plan 206 uses recorded system-wide Stopwatch ticks and frequency for coverage
+of cache-exercise telemetry and map polls, including fresh/churned rereads.
+The coordinator records `StartClock`/`EndClock` in each interval; every sample
+retains its `Clock` alongside UTC. The same two-second telemetry gap limit and
+map cadence plus two seconds apply. Missing/invalid clocks, unequal frequencies,
+reversed samples and incomplete process coverage fail without a UTC fallback.
+UTC is retained for backend correlation, including any observed clock changes.
+Sustained IDs contain `sustained-v206`; other affected exercise IDs contain
+`exercise-v206`. Recall and other suites keep their existing coverage contracts.
+Do not reinterpret old incomplete runs using inferred monotonic boundaries.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

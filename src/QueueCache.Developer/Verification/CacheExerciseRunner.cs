@@ -139,6 +139,7 @@ public sealed partial class VerificationRunner
                 }, children.Token, scenario.Seconds + 130);
             if (polling is not null)
                 await TelemetryCoverage.WaitReadyAsync(pollReady, polling, TimeSpan.FromSeconds(45), token);
+            var startClock = TelemetryClock.Capture();
             var start = DateTimeOffset.UtcNow;
             if (sustained)
                 oracle = Worker(Job("concurrent-oracle") with
@@ -164,7 +165,9 @@ public sealed partial class VerificationRunner
                 arguments.ToArray(), children.Token, scheduling);
             var score = await CacheExerciseTasks.CompleteWorkload(workload, oracle);
             var end = DateTimeOffset.UtcNow;
-            storage.Write(scenario.Id + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
+            var endClock = TelemetryClock.Capture();
+            storage.Write(scenario.Id + "-interval.json", new { Start = start, End = end,
+                StartClock = startClock, EndClock = endClock, MaximumSampleGapSeconds = 2 });
             File.WriteAllText(stop, "stop");
             await telemetry;
             if (polling is not null)
@@ -172,16 +175,15 @@ public sealed partial class VerificationRunner
                 await polling;
                 var polls = File.ReadAllLines(storage.PathFor(scenario.Id + "-poll.jsonl"))
                     .Select(line => JsonSerializer.Deserialize<ExercisePoll>(line) ?? throw new InvalidDataException("Missing map poll.")).ToArray();
-                if (polls.Length < 2 || polls[0].Utc > start || polls[^1].Utc < end ||
-                    polls.Any(p => p.Generation != before.State.Generation || p.Instance != before.State.Instance || p.Chunks != p.TotalChunks ||
-                                   p.Errors != before.State.Errors || p.LastError != 0) ||
-                    polls.Zip(polls.Skip(1)).Any(p => p.Second.Utc <= p.First.Utc ||
-                        (p.Second.Utc - p.First.Utc).TotalMilliseconds > scenario.MapIntervalMs + 2000))
+                TelemetryCoverage.Validate(polls.Select(p => p.Clock).ToArray(), startClock, endClock,
+                    scenario.MapIntervalMs / 1000.0 + 2);
+                if (polls.Any(p => p.Generation != before.State.Generation || p.Instance != before.State.Instance || p.Chunks != p.TotalChunks ||
+                                  p.Errors != before.State.Errors || p.LastError != 0))
                     throw new InvalidDataException("Map polling did not cover the workload with a stable, complete cache allocation.");
             }
             var samples = File.ReadAllLines(storage.PathFor(scenario.Id + "-telemetry.jsonl"))
                 .Select(line => JsonSerializer.Deserialize<ExerciseSample>(line) ?? throw new InvalidDataException("Missing telemetry sample.")).ToArray();
-            TelemetryCoverage.Validate(samples.Select(s => s.Utc).ToArray(), start, end);
+            TelemetryCoverage.Validate(samples.Select(s => s.Clock).ToArray(), startClock, endClock);
             if (samples.Any(s => s.State.Instance != before.State.Instance || s.State.Generation != before.State.Generation ||
                                  s.State.Errors != before.State.Errors || s.State.LastError != 0))
                 throw new IOException("Cache identity or error state changed during the exercise.");
@@ -288,16 +290,19 @@ public sealed partial class VerificationRunner
         try
         {
             await TelemetryCoverage.WaitReadyAsync(ready, telemetry, TimeSpan.FromSeconds(45), token);
+            var startClock = TelemetryClock.Capture();
             var start = DateTimeOffset.UtcNow;
             var score = await DiskTargets(id, files,
                 ["-b1M", $"-o{depth}", "-t1", "-w0", $"-f{options.BudgetMiB / 2}M", "-d10", "-W0"], child.Token);
             var end = DateTimeOffset.UtcNow;
-            storage.Write(id + "-interval.json", new { Start = start, End = end, MaximumSampleGapSeconds = 2 });
+            var endClock = TelemetryClock.Capture();
+            storage.Write(id + "-interval.json", new { Start = start, End = end,
+                StartClock = startClock, EndClock = endClock, MaximumSampleGapSeconds = 2 });
             File.WriteAllText(stop, "stop");
             await telemetry;
             var samples = File.ReadAllLines(storage.PathFor(id + "-telemetry.jsonl"))
                 .Select(line => JsonSerializer.Deserialize<ExerciseSample>(line) ?? throw new InvalidDataException("Missing reread telemetry.")).ToArray();
-            TelemetryCoverage.Validate(samples.Select(s => s.Utc).ToArray(), start, end);
+            TelemetryCoverage.Validate(samples.Select(s => s.Clock).ToArray(), startClock, endClock);
             if (samples.Any(s => s.State.Instance != before.State.Instance || s.State.Generation != before.State.Generation ||
                                  !s.State.Operational || s.State.Errors != before.State.Errors || s.State.LastError != 0))
                 throw new IOException("Cache identity, lifecycle or error state changed during the reread.");
@@ -311,7 +316,8 @@ public sealed partial class VerificationRunner
         }
     }
 
-    private sealed record ExercisePoll(DateTimeOffset Utc, ulong Generation, ulong Instance, int Chunks, int TotalChunks, ulong Errors, int LastError);
+    private sealed record ExercisePoll(DateTimeOffset Utc, ulong Generation, ulong Instance, int Chunks, int TotalChunks,
+        ulong Errors, int LastError, TelemetryClock? Clock);
 
-    private sealed record ExerciseSample(DateTimeOffset Utc, WriteCacheState State);
+    private sealed record ExerciseSample(DateTimeOffset Utc, WriteCacheState State, TelemetryClock? Clock);
 }

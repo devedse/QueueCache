@@ -35,7 +35,7 @@ public sealed record TelemetryStageTiming(double StopFileMilliseconds, double St
     double? PreviousPersistenceMilliseconds, double? PreviousDelayMilliseconds);
 public sealed record TelemetrySnapshot(DateTimeOffset Utc, double ElapsedSeconds,
     WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics,
-    TelemetryStageTiming StageTiming);
+    TelemetryStageTiming StageTiming, TelemetryClock? Clock = null);
 
 /// <summary>Runs inside a child of the same CLI. A blocking driver call cannot trap the coordinator.</summary>
 [SupportedOSPlatform("windows")]
@@ -956,7 +956,8 @@ public static class VerificationWorker
                         var polled = device.GetLayoutMap(checked((int)(pollState.PayloadCapacity / (256 * 1024))));
                         await pollWriter.WriteLineAsync(JsonSerializer.Serialize(new
                         {
-                            Utc = DateTimeOffset.UtcNow, polled.Generation, polled.TotalChunks, polled.Chunks,
+                            Utc = DateTimeOffset.UtcNow, Clock = TelemetryClock.Capture(),
+                            polled.Generation, polled.TotalChunks, polled.Chunks,
                             pollState.Instance, pollState.Errors, pollState.LastError,
                             CpuMilliseconds = (pollProcess.TotalProcessorTime - pollCpuStart).TotalMilliseconds,
                             polled.InOrder, polled.FreeChunks, UsedSlots = polled.Used.Sum(x => (long)x),
@@ -1226,7 +1227,8 @@ public static class VerificationWorker
                         var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
                         return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
                             observedPerformance, observedDiagnostics, new(stopMilliseconds, stateMilliseconds,
-                                performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds)), stopping);
+                                performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds),
+                            TelemetryClock.Capture()), stopping);
                     }
                     async Task Persist(TelemetrySnapshot sample, CancellationToken token)
                     {

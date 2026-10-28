@@ -168,8 +168,34 @@ Plan 205 requires a ten-second quiet observation for the fresh resident read,
 retaining the five-attempt cap and strict scored checks. Interval evidence records
 UTC boundaries and monotonic elapsed time; completed metadata writes still refuse
 quiescence even when both snapshots have no pending bytes. Other quiet waits stay
-at two seconds. Sustained IDs are `sustained-v205`; no driver code changes. VM and
-final release validation remain pending. No speed improvement is claimed.
+at two seconds. Sustained IDs are `sustained-v205`; no driver code changes.
+Controller 0.4.884.1 (`a4395db`) passed both Windows CI configurations and the
+focused campaign `20261028-130747-9a70e2ad8db4426bb4746847efdd86a2`:
+6/6 phases, 11/11 cases, all 94 retained checks and six persisted byte oracles,
+RESTORED. The first ten-second quiet observation caught two writes / 8 KiB and
+was refused; the next was quiet. Both fresh scored reads had zero lower I/O.
+
+The full plan-205 release attempt
+`20261028-132426-b201fc84d09f438fa9448b9ddd94cd23` stopped INCOMPLETE at
+7/11 phases and 22/106 recorded cases, RESTORED. Sustained case 4's churned Q8
+reread had a UTC gap of 2.016181 s but a monotonic gap of only 0.2073548 s.
+Windows Kernel-General event 1 records a 1.809-second wall-clock advance at
+14:16:25.866621 UTC, matching the discrepancy. Capture stages remained below
+one millisecond at the boundary. This was a clock adjustment, not an actual
+sampling pause; the existing UTC guard correctly prevented acceptance under
+that measurement contract. No aggregate is formed from the incomplete run.
+
+Plan 206 records system-wide Stopwatch ticks/frequency in cache-exercise samples
+and both coordinator process boundaries. Coverage uses that common monotonic
+time base, retaining the same strict two-second limit and all UTC observations.
+Map polling uses the same clock with its existing cadence allowance. Missing
+clocks never fall back to UTC. Microsoft's [QPC guidance](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)
+documents its common time base across processes on the same Windows boot.
+Affected IDs are versioned `sustained-v206` / `exercise-v206`; other suites keep
+their coverage contracts. Linux host-safe tests passed, including missing clocks,
+incomplete coverage, frequency mismatches, reversed samples and the unchanged
+two-second boundary. Windows CI/VM validation and final release qualification
+remain pending. No speed improvement is claimed.
 
 <a id="fast-ordering-31-fua-sustained"></a>**B under sustained use (#31, plan 203, October 26).**
 The forced-write variant does not resolve the sustained flush-heavy bottleneck.

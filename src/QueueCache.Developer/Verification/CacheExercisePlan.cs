@@ -43,7 +43,7 @@ public static class CacheExercisePlan
     public static IReadOnlyList<CacheExerciseCase> Cases(VerificationOptions options)
     {
         var cases = new List<CacheExerciseCase>();
-        var contract = options.Suite == "cache-sustained" ? "sustained-v205-" : "";
+        var contract = options.Suite == "cache-sustained" ? "sustained-v206-" : "exercise-v206-";
         void Add(string work, int streams, int depth, bool drain, int polling, int seconds, int repeat) =>
             cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-s{streams}-q{depth}-drain{drain}-map{polling}",
                 work, streams, depth, drain, polling, seconds, repeat));
@@ -53,7 +53,7 @@ public static class CacheExercisePlan
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
             foreach (var backoff in repeat % 2 == 1 ? new[] { 256, 0 } : [0, 256])
-                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-backoff{backoff}",
+                cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-q{depth}-backoff{backoff}",
                     work, 1, depth, false, 0, options.DurationSeconds, repeat, CallerBackoff: backoff));
             return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
         }
@@ -65,7 +65,7 @@ public static class CacheExercisePlan
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
             foreach (var (priority, unbound) in repeat % 2 == 1 ? variants : variants.Reverse())
-                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-priority{priority}-affinity{!unbound}",
+                cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-q{depth}-priority{priority}-affinity{!unbound}",
                     work, 1, depth, false, 0, options.DurationSeconds, repeat,
                     Priority: priority, DisableAffinity: unbound));
             return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
@@ -77,7 +77,7 @@ public static class CacheExercisePlan
             for (var repeat = 1; repeat <= options.Repeats; repeat++)
             foreach (var (work, depth) in repeat % 2 == 1 ? shapes : shapes.Reverse())
             foreach (var priority in repeat % 2 == 1 ? priorities : priorities.Reverse())
-                cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-q{depth}-priority{priority}",
+                cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-q{depth}-priority{priority}",
                     work, 1, depth, false, 0, options.DurationSeconds, repeat, Priority: priority));
             return options.CaseFilter is null ? cases : cases.Where(c => c.Id.Contains(options.CaseFilter, StringComparison.Ordinal)).ToList();
         }
