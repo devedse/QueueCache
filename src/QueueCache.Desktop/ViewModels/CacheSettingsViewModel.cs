@@ -109,11 +109,11 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
     }
     public bool CanOrderWrites => IsFast && !orderingBlocked;
     public string OrderingText => orderingBlocked
-        ? "Not available on this volume: experimental ordering is not qualified for Windows paging, hibernation or crash-dump I/O. " +
+        ? "Not available on this volume: ordering has not been tested with Windows paging, hibernation or crash-dump I/O. " +
           "This also excludes the Windows drive (normally C:), even with the page file disabled."
         : !IsFast
             ? "Fast only. Strict already waits until each save is on the disk."
-            : "Experimental, not yet proven in power-cut tests. Recent writes can still be lost, and file-system safety is not guaranteed. " +
+            : "Passed every power-cut test without NTFS damage. Recent writes can still be lost. " +
               "Frequent saves can slow down once the cache fills.";
     public bool IsFixedAllocation => Allocation == 1;
     public bool IsCustomBatch => SelectedBatch == Batches.Length;

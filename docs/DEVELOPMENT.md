@@ -26,12 +26,10 @@ Product decisions that still hold: Fast mode is the default and the optimized
 mode; Strict is supported for correctness but not tuned for speed. C: is a normal
 target with the same activation path as other disks. Fast mode's volatility
 (loss of acknowledged writes still in RAM) is accepted and must be explained.
-Filesystem damage after a crash remains a current risk; the desired state is
-loss of pending writes with a healthy filesystem, tracked in
-[#13](https://github.com/devedse/QueueCache/issues/13). Experimental ordering has
-passed bounded VM-reset checks on an NTFS non-system volume and the final
-release regression; broader storage/system-volume qualification remains open
-([scope](PERFORMANCE.md#release-206)). Silent corruption, stale reads and wrong
+With write ordering off (the default), filesystem damage after a crash remains
+a risk. Write ordering keeps NTFS healthy instead: it passed power-cut tests on
+NTFS data volumes, which closed [#13](https://github.com/devedse/QueueCache/issues/13)
+([scope](PERFORMANCE.md#release-206)); it is not available on the Windows volume. Silent corruption, stale reads and wrong
 write ordering during normal operation are defects.
 
 ## Product model
@@ -279,13 +277,13 @@ intervals, with a minimum of three seconds.
   driver does not report it, so the monitor assumes the default for a new cache
   instance and sends the setting only when it differs.
 
-The cache editor's **Advanced tuning** also offers **Write to disk in save order
-(experimental)** for an individual Fast cache. Its question-mark button opens
+The cache editor's **Advanced tuning** also offers **Write to disk in save order**
+for an individual Fast cache. Its question-mark button opens
 help on hover, keyboard focus or activation, including when ordering is
-unavailable. The help explains the save boundaries, volatility and unqualified
-crash-safety goal, slower flush-heavy writing, volume restrictions and persistence.
+unavailable. The help explains the save boundaries, volatility, the tested
+crash-safety scope, slower flush-heavy writing, volume restrictions and persistence.
 This selects ordinary ordering; the forced-write variant from #31 remains a
-developer-only experiment. See [cache policies](CACHE_POLICIES.md#experimental-fast-write-ordering-13).
+developer-only experiment. See [cache policies](CACHE_POLICIES.md#fast-write-ordering-13).
 
 Lab delay and fault hooks are deliberately not settings: they stall or fail real
 writes and belong to `qcache developer verify`.

@@ -202,7 +202,7 @@ Each algorithm reads only some tuning settings; the desktop editor shows the rel
 
 All algorithms yield to explicit flushes, shutdown barriers and writers waiting for capacity. Maximum age is a scheduling trigger, not a promise that slow/failing storage will finish by a deadline. No mandatory 30-second delay is imposed.
 
-Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours them. In Strict, a flush writes out every dirty block before it completes; a write-through write (NTFS writes its journal this way) goes straight to the disk after only the older versions of its own blocks. Strict also holds at most about two seconds of separate pieces of unwritten data, measured as pieces the drain completes per second (at least 256; 1,024 before the first measurement): a write that would add dirty data beyond that waits for the drain, so scattered small writes slow down to the disk's speed and a flush finishes in seconds. A contiguous run counts as one piece, so long sequential writes are not slowed; `policy diagnostics` shows the pieces, the limit and the waits as `StrictBacklog` (#16). `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and corrupt filesystems. The desired safety goal is loss of pending writes with a healthy filesystem, tracked in [#13](https://github.com/devedse/QueueCache/issues/13); experimental ordering has passed bounded NTFS data-volume VM-reset checks and the final release regression, while broader storage scope remains unqualified. Ordering stays off by default, so the current warning still applies.
+Fast versus Strict is independent: Fast permits application flushes/write-through writes to complete in volatile RAM; Strict honours them. In Strict, a flush writes out every dirty block before it completes; a write-through write (NTFS writes its journal this way) goes straight to the disk after only the older versions of its own blocks. Strict also holds at most about two seconds of separate pieces of unwritten data, measured as pieces the drain completes per second (at least 256; 1,024 before the first measurement): a write that would add dirty data beyond that waits for the drain, so scattered small writes slow down to the disk's speed and a flush finishes in seconds. A contiguous run counts as one piece, so long sequential writes are not slowed; `policy diagnostics` shows the pieces, the limit and the waits as `StrictBacklog` (#16). `qcache policy flush`, Pause and Remove always drain. Abrupt failure can lose Fast-mode data and, with write ordering off (the default), corrupt filesystems. [Write ordering](#fast-write-ordering-13) keeps NTFS healthy instead: it passed every power-cut test on NTFS data volumes, which closed [#13](https://github.com/devedse/QueueCache/issues/13). It stays off by default because programs that flush very often slow down once the cache fills.
 
 Adjacent 4 KiB blocks are gathered into configurable 4..2048 KiB lower writes
 (default 2048 since plan 164; 1024 from plan 125, 256 before). `--drain-parallelism 1..8`
@@ -235,7 +235,7 @@ qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --save
 qcache policy apply Q: --budget-mib 8192 --allocation Fixed --write-percent 50 --save
 qcache policy apply Q: --budget-mib 4096 --drain Balanced --low-percent 40 --high-percent 80 --max-dirty-age-ms 5000 --batch-kib 1024 --drain-parallelism 2 --save
 qcache policy apply Q: --budget-mib 2048 --allocation Fixed --write-percent 0 --preset Strict
-qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --write-ordering --save   # experimental (#13)
+qcache policy apply Q: --budget-mib 4096 --accept-volatile-flush --write-ordering --save   # keeps NTFS healthy after a crash (#13)
 qcache policy status PhysicalDrive1 --json
 qcache developer cache-scenarios Q:
 ```
@@ -286,24 +286,26 @@ Each volume has one independent in-flight telemetry request. Slow inventory disc
 
 Uncached/partial writes invalidate only intersecting clean blocks. Known geometry and descriptor queries preserve cached payload; unknown media-changing operations still drain and invalidate conservatively. Descriptor query semantics follow [Microsoft's storage-property contract](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-storage_property_query).
 
-## Experimental Fast write ordering (#13)
+## Fast write ordering (#13)
 
 Write ordering is an advanced per-cache setting, off by default: **Write to disk in
-save order (experimental)** under Advanced tuning in the app, or `--write-ordering`
+save order** under Advanced tuning in the app, or `--write-ordering`
 on `qcache policy apply`. The question-mark button beside the checkbox explains
 the on/off behavior, RAM-only saves, crash-safety limits, performance cost and
 restrictions. Hover over it, focus it with the keyboard or press it to read the
-explanation, including when the checkbox is unavailable. It is experimental: the goal is
-that a crash or power cut can lose recent writes but should not damage NTFS.
-The current mode passed bounded VM-reset checks on an NTFS non-system volume
-and the final release regression; broader physical-power-loss/storage scope
-remains unqualified (see [known issues](KNOWN_ISSUES.md)). It applies to Fast only;
+explanation, including when the checkbox is unavailable. With it on, a crash or
+power cut can lose recent writes but should not damage NTFS. It passed every
+power-cut test on an NTFS data volume (seven VM resets on 0.4.882.1; the same
+test with ordering off damaged NTFS), which closed #13 on 2026-10-28. Physical
+power loss, other file systems and other storage are not tested (see
+[known issues](KNOWN_ISSUES.md)). It stays off by default because programs that
+flush very often slow down once the cache fills. It applies to Fast only;
 Strict already waits for the disk, so Strict with ordering is refused. Apply refuses
 it, before draining anything, on a volume that holds a paging, hibernation or crash
 dump file. That always includes the Windows volume: on the test VM, Windows' Session
 Manager (`smss.exe`) registered C: for paging at every boot even with the page file
 and crash dumps turned off (two registrations on each of two boots, October 26).
-These system-critical I/O paths are outside experimental ordering's qualified
+These system-critical I/O paths are outside ordering's tested
 scope, so the Windows drive (normally C:) stays unavailable even when the page
 file is disabled. The question-mark help states this restriction and its reason.
 Like the preset, it changes only while the
@@ -369,13 +371,13 @@ six NTFS data-volume VM-reset scenarios and an extra middle-drain repeat on
 native 0.4.882.1. All scans were clean and durable guards exact; the ordering-off
 early-churn control damaged NTFS. The final plan-206 release campaign completed
 all 11 phases, 106 cases and 94 retained checks with ordering off. These bounded
-checks cover this non-system NTFS/storage setup; broader physical-power-loss,
-other-file-system and system-volume qualification remains open
+checks cover this non-system NTFS/storage setup; physical power loss,
+other file systems and system volumes are not covered
 ([records and limits](KNOWN_ISSUES.md#correctness-qualification)).
 
 The lab switch rejects currently registered paging/hibernation/dump paths. Mode selection,
 cache activation and usage reservation share the routing lock; a new registration
-is refused while experimental ordering is selected, including after the cache is
+is refused while ordering is selected, including after the cache is
 disabled. This closes the late-registration race without waiting for I/O in the
 dispatch path. Resetting the mode to zero remains possible at a clean disabled
 boundary. System volumes and dynamic special-file growth are not qualified.

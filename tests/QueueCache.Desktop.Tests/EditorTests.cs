@@ -40,8 +40,8 @@ internal static class EditorTests
         Check(edit.CanOrderWrites && !edit.WriteOrdering && edit.Result()?.Configuration.WriteOrdering == false,
             "write ordering is offered for Fast and off unless chosen");
         edit.WriteOrdering = true;
-        Check(edit.Result()?.Configuration.WriteOrdering == true && edit.OrderingText.StartsWith("Experimental, not yet proven"),
-            "choosing write ordering applies it and says it is experimental");
+        Check(edit.Result()?.Configuration.WriteOrdering == true && edit.OrderingText.StartsWith("Passed every power-cut test"),
+            "choosing write ordering applies it and states its tested crash safety");
         edit.IsStrict = true;
         Check(!edit.IsFast && edit.Result()?.Configuration.Preset == CachePreset.Strict, "choosing Strict applies Strict");
         Check(!edit.CanOrderWrites && edit.Result()?.Configuration.WriteOrdering == false && edit.OrderingText.StartsWith("Fast only"),

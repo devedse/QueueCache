@@ -13,9 +13,9 @@ same-window PrimoCache on completed new-file writes including the drain: 292.4
 against 261.0 MB/s for one 1 GiB file and 90.7 against 52.5 MB/s for 4,096 64 KiB
 files, at matched backend speed
 ([details](COMPARISON.md#the-new-default-against-primocache-2026-10-21), #15).
-The tables below keep their original dates. Power-loss filesystem
-safety also remains open ([#13](https://github.com/devedse/QueueCache/issues/13));
-both Fast mode and PrimoCache Defer-Write damaged NTFS in historical cuts.
+The tables below keep their original dates. Fast mode without
+write ordering and PrimoCache Defer-Write both damaged NTFS in power cuts; QueueCache's
+write ordering (off by default) kept NTFS clean in all seven of its cuts ([#13](https://github.com/devedse/QueueCache/issues/13)).
 
 Contents: [RAM disks: CrystalDiskMark](#ram-disks-crystaldiskmark) ·
 [RAM caches: CrystalDiskMark](#ram-caches-crystaldiskmark) ·
@@ -141,8 +141,8 @@ Two tests reset the virtual machine while a cache still holds unwritten work, th
 every file and run `chkdsk /scan`. QueueCache 0.4.810.1 (October 23) left NTFS clean in all
 six cuts and lost only files written in the last seconds without a flush. On 0.4.604.1 the
 burst test left NTFS needing offline repair. Clean cuts do not establish a crash-safety
-guarantee: QueueCache does not yet order its writes around the file system's flushes, which
-[#13](https://github.com/devedse/QueueCache/issues/13) keeps open. Damage includes zero,
+guarantee: without write ordering, QueueCache does not order its writes around the file system's
+flushes. Write ordering ([#13](https://github.com/devedse/QueueCache/issues/13), off by default) kept NTFS clean in seven later cuts on 0.4.882.1. Damage includes zero,
 partial or foreign contents. A dash means unavailable, not zero.
 
 **Burst** (`compare-durability-write`): an application-style durable save (buffered writes,
@@ -209,8 +209,8 @@ keeping NTFS healthy, without damage to untouched, durably checkpointed files.
 This supersedes the earlier acceptance of filesystem damage as merely expected
 Fast-mode behavior; it does not change QueueCache's Fast-mode warning or make
 ordinary Fast-mode application flushes durable.
-[Issue #13](https://github.com/devedse/QueueCache/issues/13) defines the scope,
-remaining design work and acceptance checks. PrimoCache is a useful performance
+[Issue #13](https://github.com/devedse/QueueCache/issues/13) defined the scope
+and acceptance checks; write ordering (off by default) met them for NTFS data volumes on 2026-10-28. PrimoCache is a useful performance
 reference, but its vendor also documents that deferred writes can damage a
 filesystem after power loss
 ([Romex: Defer-Write](https://www.romexsoftware.com/en-us/primo-cache/term-defer-write.html)).
@@ -286,9 +286,8 @@ On the drain-batch branch, the plan-164 default (Eager 2 MiB × 8 with read-awar
 limit 2 and asynchronous TRIM) **beats a same-window PrimoCache on both new-file
 workloads** at matched backend speed
 ([#15](https://github.com/devedse/QueueCache/issues/15)); see the first section below. Filesystem safety after a
-Fast-mode power cut is a separate open goal
-([#13](https://github.com/devedse/QueueCache/issues/13)); the desired behavior is
-loss of pending writes with a healthy filesystem. The results below do not certify
+Fast-mode power cut needs write ordering, which is off by default
+([#13](https://github.com/devedse/QueueCache/issues/13)); the results below ran with it off and do not certify
 that behavior. Strict-mode backlog stalls remain tracked in
 [#16](https://github.com/devedse/QueueCache/issues/16).
 

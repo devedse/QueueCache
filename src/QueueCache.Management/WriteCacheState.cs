@@ -203,7 +203,7 @@ public enum WriteCacheAction : uint
     /// <summary>Lab: value = 1 drop cached data of small TRIMs by index lookup | 2 send the lower TRIM
     /// asynchronously with a range fence | 4 lab: hold that TRIM for 2 s (default 3 since plan 164; 0: full slot scan, ordered lower TRIM).</summary>
     LabTrimMode,
-    /// <summary>Experimental Fast write ordering (#13), 0 off / 1 on, only on a disabled, empty cache. Runtime only;
+    /// <summary>Fast write ordering (#13), 0 off / 1 on, only on a disabled, empty cache. Runtime only;
     /// a saved profile's <c>WriteOrdering</c> reapplies it (driver name QcLabFlushOrder).</summary>
     FlushOrder
 }

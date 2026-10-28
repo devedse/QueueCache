@@ -124,7 +124,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     /// <summary>V25: Strict's backlog of separate pieces of unwritten data, its limit and the writes that waited (#16);
     /// null on older drivers.</summary>
     public CacheStrictBacklog? StrictBacklog { get; init; }
-    /// <summary>V26: experimental Fast flush-group ordering and its lower-flush/version counters.</summary>
+    /// <summary>V26: Fast flush-group ordering and its lower-flush/version counters.</summary>
     public CacheFlushOrder? FlushOrder { get; init; }
     /// <summary>V27 (#31): lab ordering mode 2's forced-unit-access groups and the time spent in group flushes.</summary>
     public CacheWriteThroughGroups? WriteThroughGroups { get; init; }
@@ -431,7 +431,7 @@ public sealed record CacheStrictBacklog(ulong Pieces, ulong Limit, ulong Waits);
 /// writes (lifetime counts), whether the lower device reported write-through support when mode 2 was selected (1; 0 for other
 /// modes), and performance-counter ticks spent in group flushes while timing was on.</summary>
 public sealed record CacheWriteThroughGroups(ulong Groups, ulong Writes, ulong Available, ulong FlushTicks);
-/// <summary>V26: experimental Fast groups; Mode 1 is ordering, lab mode 2 adds forced-unit-access small groups (#31).
+/// <summary>V26: Fast write-ordering groups; Mode 1 is ordering, lab mode 2 adds forced-unit-access small groups (#31).
 /// MaxSubmittedEpoch resets with the allocation or mode. Other counters are lifetime counts.</summary>
 public sealed record CacheFlushOrder(ulong Mode, ulong CurrentEpoch, ulong DrainingEpoch, ulong Seals,
     ulong Flushes, ulong VersionCopies, ulong TrimWaits, ulong FlushFailures, ulong MaxSubmittedEpoch);

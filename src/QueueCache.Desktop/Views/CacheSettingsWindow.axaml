@@ -127,24 +127,24 @@
               <StackPanel Name="OrderingSection" Spacing="4">
                 <Grid ColumnDefinitions="*,Auto">
                   <CheckBox Name="OrderingBox" IsChecked="{Binding WriteOrdering}" IsEnabled="{Binding CanOrderWrites}">
-                    <TextBlock TextWrapping="Wrap" Text="Write to disk in save order (experimental)" />
+                    <TextBlock TextWrapping="Wrap" Text="Write to disk in save order" />
                   </CheckBox>
                   <Button Grid.Column="1" Name="OrderingHelpButton" Width="32" Height="32" Padding="4" Margin="8,0,0,0"
                           VerticalAlignment="Center" ToolTip.ShowDelay="250" ToolTip.Placement="TopEdgeAlignedRight" ToolTip.VerticalOffset="-8"
-                          AutomationProperties.Name="About experimental write ordering"
+                          AutomationProperties.Name="About write ordering"
                           AutomationProperties.HelpText="Hover, focus or press to read how write ordering works and its limits."
                           Click="OnOrderingHelp" GotFocus="OnOrderingHelp" LostFocus="OnOrderingHelpLostFocus">
                     <PathIcon Width="20" Height="20" Data="{StaticResource IconHealthUnknown}" />
                     <ToolTip.Tip>
                       <ToolTip MaxWidth="440">
                         <StackPanel Width="400" Spacing="10">
-                          <TextBlock Classes="strong" Text="Experimental write ordering" />
-                          <TextBlock TextWrapping="Wrap" Text="Off by default, for this cache only. Off lets Fast mode write pending data to disk without preserving save boundaries." />
+                          <TextBlock Classes="strong" Text="Write ordering" />
+                          <TextBlock TextWrapping="Wrap" Text="Off by default, for this cache only. Off lets Fast mode write pending data to disk in any order, so a crash or power cut can also damage the file system." />
                           <TextBlock TextWrapping="Wrap" Text="On: each application flush or write-through write ends a group in RAM. QueueCache writes each group and flushes it to disk before allowing a later group to reach the disk." />
-                          <TextBlock TextWrapping="Wrap" Text="Saves still finish in RAM when space is available. A crash or power cut can lose recent changes. The aim is to reduce NTFS damage, but crash safety is not yet proven or guaranteed." />
+                          <TextBlock TextWrapping="Wrap" Text="Saves still finish in RAM when space is available, so a crash or power cut can still lose recent changes. With ordering on, NTFS stayed undamaged in every power-cut test; with it off, a test cut damaged NTFS. Tested on NTFS data drives with simulated power cuts, not on every disk or file system." />
                           <TextBlock TextWrapping="Wrap" Text="Each group adds a disk wait. Programs that flush very often, such as some databases and installers, can become much slower once the cache fills. Ordinary file copies may see little difference." />
                           <TextBlock TextWrapping="Wrap" Text="Fast only. Strict already waits for the disk." />
-                          <TextBlock TextWrapping="Wrap" Text="Unavailable on the Windows drive (normally C:). Windows can register it for paging even with the page file disabled. This experimental mode has not been qualified for paging, hibernation or crash-dump I/O, so QueueCache blocks it on those volumes." />
+                          <TextBlock TextWrapping="Wrap" Text="Unavailable on the Windows drive (normally C:). Windows can register it for paging even with the page file disabled. Ordering has not been tested with paging, hibernation or crash-dump I/O, so QueueCache blocks it on those volumes." />
                           <TextBlock TextWrapping="Wrap" Text="Save applies the change after draining pending writes. Start with Windows remembers the choice; pause and resume keep it. Flush now always writes pending data to disk, with this setting on or off." />
                         </StackPanel>
                       </ToolTip>

@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the current ordinary mode passed 14 checks under Verifier and six NTFS data-volume VM-reset scenarios plus a middle repeat on 0.4.882.1; an ordering-off control damaged NTFS. The final plan-206 regression completed/restored 11 phases, 106 cases and 94 retained checks. Recommend closing #13 for the tested scope; broader physical-power-loss/system-volume scope and ordinary Fast defaults are unchanged |
+| [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Turn it on per cache (not available on C:) to keep NTFS healthy; see the fixed #13 row below |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -37,7 +37,8 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
-| Experimental ordering only: a TRIM arriving while ordering was selected on a disabled cache could leave drainer zero's group flush in flight across a cache release, which then reported the draining group past the open group (found by plan 197) | ✅ | 0.4.868.1 (release waits for the group flush; a finished group flush never moves past the open group). No lab hook forces the race; the sustained suite that hit it passed afterwards |
+| A crash in Fast mode could damage NTFS, with no setting to prevent it ([#13](https://github.com/devedse/QueueCache/issues/13)) | ✅ | 0.4.882.1 with write ordering on (off by default; not on C:): seven VM power cuts on an NTFS data volume left NTFS clean, while the same test with ordering off damaged it. Physical power loss and other file systems are not tested |
+| Write ordering only: a TRIM arriving while ordering was selected on a disabled cache could leave drainer zero's group flush in flight across a cache release, which then reported the draining group past the open group (found by plan 197) | ✅ | 0.4.868.1 (release waits for the group flush; a finished group flush never moves past the open group). No lab hook forces the race; the sustained suite that hit it passed afterwards |
 | Strict stopped all writing for 100 s or more after a burst of random writes: every flush (NTFS sends them on its own) waited for the whole backlog ([#16](https://github.com/devedse/QueueCache/issues/16)) | ✅ | 0.4.825.1 (backlog limited to about 2 s of write-out; 0.4.810.1 sent write-through writes direct) |
 | Files read through Windows' file cache (Explorer copies, most programs) and mapped files never entered the read cache ([#19](https://github.com/devedse/QueueCache/issues/19)) | ✅ | 0.4.810.1 (page-ins of file data are kept from a driver-owned copy of the disk data; a 1 GiB re-read after Windows' standby memory is purged: 275 → 2,254 MiB/s) |
 | Detaching a virtual disk (VHD/VHDX) lost a Fast cache's pending writes: Windows removes the volume without asking first ([#21](https://github.com/devedse/QueueCache/issues/21)) | ✅ | 0.4.803.1 (written out when the file system releases the volume; `volumes/volume-detach`, plan 172) |
@@ -71,25 +72,23 @@ still to do. Open items link to their details.
 
 ## Open issues
 
-### Fast mode loses pending writes; filesystem damage remains an open safety issue
+### Fast mode without write ordering can damage the file system in a crash
 
 In Fast mode a save can finish when the data is in RAM, including application
 flushes and write-through requests; QueueCache writes it to disk later. A crash
-can lose those writes and damage the filesystem. The requested goal in
-[#13](https://github.com/devedse/QueueCache/issues/13) is to allow loss of pending
-writes while keeping NTFS healthy and untouched, durably checkpointed files
-intact. Filesystem damage is an unresolved safety issue, not the desired
-volatile-cache contract. On 0.4.810.1, with the default drain, six power cuts (three
+can lose those writes; that is Fast mode's accepted volatility. With write
+ordering off, the default, a crash can also damage the file system, because
+pending writes reach the disk in any order. On 0.4.810.1, with the default drain, six power cuts (three
 right after 10,000 new unflushed files, three during a churn's write-out) left NTFS
 clean and every file older than about 10 seconds intact; up to 9,994 of the newest
 unflushed files were lost or damaged. On 0.4.604.1 the same burst left NTFS needing
-offline repair. With ordering off, Fast mode does not order its writes around the
-file system's flushes, so clean cuts are evidence, not a guarantee. Another write-back cache tested
+offline repair, and on 0.4.882.1 an early-churn cut damaged NTFS (below). Clean
+cuts are therefore evidence, not a guarantee. Another write-back cache tested
 the same way also damaged NTFS when cut during its write-out.
 [Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
-An experimental, default-off ordering path passed the bounded NTFS data-volume
-qualification for #13 described below. With it on, writes after a filesystem
+**Write ordering** prevents that damage; it closed
+[#13](https://github.com/devedse/QueueCache/issues/13) on 2026-10-28 for NTFS data volumes. With it on, writes after a filesystem
 flush or a write-through write stay in RAM until
 everything before that point and a real lower flush have completed; old dirty
 versions are kept across those boundaries, and TRIM is ordered with them. Since
@@ -97,7 +96,7 @@ plan 196 there is one mode (the former lab mode 3); the original mode 1, which a
 sealed before each write-through, and mode 2, which woke every drain thread for each
 write, were removed. It is an advanced per-cache setting, off by default, in the
 app's Advanced tuning and as `qcache policy apply --write-ordering`; saved profiles
-keep it ([details](CACHE_POLICIES.md#experimental-fast-write-ordering-13)). It is
+keep it ([details](CACHE_POLICIES.md#fast-write-ordering-13)). It is
 refused on volumes that hold a paging, hibernation or crash dump file, and so on
 the Windows volume: on the test VM, Windows registered C: for paging at every boot
 even with the page file and crash dumps off. Moving the page file and dump file to
@@ -119,12 +118,10 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   Its preserved image is post-scan because the official scan repaired part of
   the bitmap online before still requiring offline index repair. This does not
   establish physical power-loss or Windows-volume safety.
-- **Open:** broader power-loss, system-volume and dynamic usage-path
-  qualification. The default Fast behavior and the safety warning above remain
-  in effect when ordering is off. The completed screen covers these bounded VM
-  resets on one NTFS non-system volume/storage setup, not physical power loss,
-  every drain configuration or other file systems. Recommend closing #13 for
-  that tested scope; the issue remains open for the scope decision.
+- **Not covered:** physical power loss, other storage stacks, other file
+  systems, every drain configuration, and system, paging, hibernation and dump
+  volumes. Ordering stays off by default (see Cost); the warning above applies
+  whenever it is off.
 - **Cost:** with ordering on, writing into the cache takes the same time as with
   it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600 write-through
   pairs, all ranges overlapping). Each bookmark needs its own disk flush, so
@@ -182,11 +179,11 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
-arrive after experimental mode selection. The guard now serializes selection and
+arrive after ordering was selected. The guard now serializes selection and
 registration under the routing lock and refuses the new registration, preserving
 the non-special-file scope. Ordinary mode-zero behavior is unchanged. Compile-time
 policy contracts cover either reservation order; a real new special-file
-registration under experimental mode has not yet been exercised on Windows.
+registration with ordering on has not yet been exercised on Windows.
 
 **Decided 2026-10-25: no separate QueueCache journal.** A write-ahead journal on
 the disk was considered as a way to speed up ordered write-out and rejected.
@@ -542,7 +539,7 @@ oracles passed after cache release. `verify-completion`, exact loaded-module
 hashes, raw score/sample audits and the final state were checked. Q:'s original
 profile, the original stopped R: definition and apps/services were restored;
 the healthy lab image detached normally. The failed post-scan image and recovery
-snapshot remain preserved. [Result, hashes and limits](PERFORMANCE.md#release-206).
+snapshot were deleted after review. [Result, hashes and limits](PERFORMANCE.md#release-206).
 
 **Issue #28, plan 182, populated images (2026-10-25):**
 `QueueCache-Verify-20261025-000011-ed9d80275808461ab30bfab008f8d87b`

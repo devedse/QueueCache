@@ -13,7 +13,7 @@ public sealed class CacheDrainingException() : IOException("Cache is busy draini
 public sealed record CacheConfiguration(int BudgetMiB = 4096, CachePreset Preset = CachePreset.Fast, bool Enabled = true)
 {
     public CacheOptions Options { get; init; } = new();
-    /// <summary>Experimental Fast write ordering (#13, advanced, not yet crash-qualified): later writes stay in
+    /// <summary>Fast write ordering (#13, advanced, off by default): later writes stay in
     /// RAM until everything before an application flush is on the disk, to keep NTFS undamaged after a crash.
     /// Null keeps the driver's current mode, which <see cref="WriteCacheState"/> does not report.</summary>
     public bool? WriteOrdering { get; init; }

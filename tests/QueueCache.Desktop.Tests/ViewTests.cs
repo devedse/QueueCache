@@ -193,7 +193,7 @@ internal static class ViewTests
         Save(settings, output, $"cache-settings-ordering-{theme}");
         var orderingHelp = Named<Button>(settings, "OrderingHelpButton");
         Check(orderingHelp.IsEffectivelyVisible && orderingHelp.IsEnabled && orderingHelp.Focusable &&
-              orderingHelp.Content is PathIcon && AutomationProperties.GetName(orderingHelp) == "About experimental write ordering",
+              orderingHelp.Content is PathIcon && AutomationProperties.GetName(orderingHelp) == "About write ordering",
             $"{theme}: write ordering has a visible, named, keyboard-accessible question-mark button");
         // Use an immediate hover in the headless host, which does not run the desktop timer loop.
         // Render the real popup inside the window so it is included in the capture.
