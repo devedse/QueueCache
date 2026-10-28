@@ -48,7 +48,9 @@ qcache developer lab-disk attach C:\QueueCache-Lab\VolumeLab.vhdx   # Windows do
 qcache developer lab-disk detach C:\QueueCache-Lab\VolumeLab.vhdx
 ```
 
-**Installing a build.** Run the CI installer, restart, then confirm the loaded
+**Installing a build.** Run the CI installer (unattended on the VM:
+`setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TRUSTTESTCERTIFICATE`, because nobody
+can answer Windows' question about the RAM disk driver there), restart, then confirm the loaded
 drivers are the intended ones: `qcache developer driver loaded` lists their file
 hashes. A version string or the registered path is not proof of what is loaded.
 Run correctness checks of new driver code under Driver Verifier

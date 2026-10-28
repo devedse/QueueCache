@@ -1,6 +1,6 @@
 #Requires -RunAsAdministrator
 [CmdletBinding()]
-param([switch]$Uninstall)
+param([switch]$Uninstall, [switch]$TrustTestCertificate)
 $ErrorActionPreference = 'Stop'
 $package = Split-Path $PSScriptRoot -Parent
 $controller = Join-Path $package 'controller\qcache.exe'
@@ -303,9 +303,16 @@ public static class QueueCacheSetupNative {
     # Windows booting exactly as before. Installing the RAM provider starts its root adapter
     # immediately; with no new boot filter registered yet, a crash there cannot leave a boot-start
     # driver behind that points at an unflushed file.
-    # The test certificate is not added to Windows' trusted stores: in test mode Windows loads the
-    # test-signed drivers without it. Its publisher is therefore not trusted, so Windows asks once
-    # to confirm installing the RAM provider's driver.
+    # In test mode Windows loads the test-signed drivers without trusting their certificate, so
+    # setup leaves Windows' trusted certificate lists alone and Windows asks once to confirm
+    # installing the RAM provider's driver. An unattended install cannot answer that question:
+    # setup /TRUSTTESTCERTIFICATE trusts this build's certificate first.
+    if ($TrustTestCertificate)
+    {
+        Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+        Import-Certificate -FilePath "$package\QueueCacheLab.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+        Write-Output 'Test certificate trusted (/TRUSTTESTCERTIFICATE).'
+    }
     UpdatePath $false
     & $controller --managed-provider-install "$package\ramdisk\qcramdisk.inf"
     if ($LASTEXITCODE -notin @(0, 3010)) { throw "RAM provider installation failed: $LASTEXITCODE" }

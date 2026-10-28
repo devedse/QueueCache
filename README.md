@@ -116,7 +116,8 @@ turn off Secure Boot in the PC's firmware settings, run `bcdedit /set testsignin
 in an administrator terminal and restart. Windows then shows "Test Mode" on the desktop.
 
 1. Download the installer from the [latest release](https://github.com/devedse/QueueCache/releases)
-   and run it.
+   and run it. Windows asks once whether to install the RAM disk driver ("Windows can't
+   verify the publisher of this driver software"): choose **Install this driver software anyway**.
 2. Restart Windows.
 3. QueueCache starts in the notification area. Open it, then:
    - **Caches** → choose a drive → **Add cache**, or

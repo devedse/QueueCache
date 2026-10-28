@@ -35,6 +35,13 @@ if ($installer -match '\bRead-Host\b|SnapshotConfirmed|AllowFormattedDisk')
     throw 'Product installation must not prompt for a disk or lab confirmations.'
 }
 $setup = Get-Content "$root/packaging/QueueCache.iss" -Raw
+# Trusting the per-build test certificate is opt-in, for unattended installs only.
+$trust = [regex]::Match($installer, '(?s)if \(\$TrustTestCertificate\)\s*\{(.*?)\}').Groups[1].Value
+if ($installer -notmatch '\[switch\]\$TrustTestCertificate' -or ([regex]::Matches($installer, 'Import-Certificate')).Count -ne ([regex]::Matches($trust, 'Import-Certificate')).Count -or
+    $setup -notmatch "'/TRUSTTESTCERTIFICATE'")
+{
+    throw 'Setup may trust the test certificate only when /TRUSTTESTCERTIFICATE asks for it.'
+}
 if ($setup -match '\bSW_SHOW\b' -or $setup -notmatch '\{commondesktop\}\\QueueCache')
 {
     throw 'Installer must hide its helper and create the UI desktop shortcut.'

@@ -154,6 +154,12 @@ release version numbers; do not bump them manually.
 editions. The private signing key stays outside packages. Production signing and
 trust are out of scope.
 
+Every build signs with a new self-signed test certificate. Setup does not add it to
+Windows' trusted certificate lists: in test mode Windows loads the drivers without it, and
+Windows asks once to confirm installing the RAM disk driver. An unattended install (the
+test VM) cannot answer that question, so it runs setup with `/TRUSTTESTCERTIFICATE`, which
+trusts this build's certificate in `LocalMachine\Root` and `TrustedPublisher` first.
+
 The installer stages an immutable version/hash-named driver and retains the
 `qcachelab` service identity across upgrades. A reboot loads a changed driver.
 Setup does not reboot automatically or silently configure a cache. Recovery and

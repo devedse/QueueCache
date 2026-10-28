@@ -108,13 +108,25 @@ begin
   Result := not FileExists(ExpandConstant('{commondesktop}\QueueCache.lnk'));
 end;
 
+// /TRUSTTESTCERTIFICATE: an unattended install cannot answer Windows' question about the RAM
+// provider's driver, so Install-Driver.ps1 trusts this build's test certificate first.
+function TrustTestCertificateRequested(): Boolean;
+var I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/TRUSTTESTCERTIFICATE') = 0 then
+      Result := True;
+end;
+
 // Install-Driver.ps1 exit codes: 0/3010 done; 1 failed with the driver registration unchanged or
 // restored; 5 failed and could not restore it.
 function RunDriverSetup(Uninstall: Boolean): Integer;
 var Code: Integer; Parameters: String;
 begin
   Parameters := '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\setup\Install-Driver.ps1') + '"';
-  if Uninstall then Parameters := Parameters + ' -Uninstall';
+  if Uninstall then Parameters := Parameters + ' -Uninstall'
+  else if TrustTestCertificateRequested() then Parameters := Parameters + ' -TrustTestCertificate';
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters, '', SW_HIDE, ewWaitUntilTerminated, Code) then
     Code := -1;
   Result := Code;
