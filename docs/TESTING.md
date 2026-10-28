@@ -308,6 +308,14 @@ and `v196`/`v197` run identities remain historical; never join their cases with
 plan 203. The initial B cost run stopped at the final mode-1 checkpoint and
 restored successfully; its 26 measurements are an incomplete matrix.
 
+Plan 204 flushes the filesystem after the sustained suite's fresh resident-read
+warm-up handles close, before the existing cache flush and two-second quiet wait.
+A clean cache does not prove that NTFS has submitted all of its metadata. The
+fresh Q1/Q8 windows still require zero lower read/write/flush attempts, misses and
+drained bytes; no noisy window or fault is retried. Later churned rereads and the
+six mixed workloads are unchanged. Sustained case IDs contain `sustained-v204`;
+keep earlier attempts separate. This changes preparation, not driver behavior.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

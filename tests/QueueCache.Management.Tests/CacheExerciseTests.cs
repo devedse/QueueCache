@@ -62,6 +62,10 @@ internal static class CacheExerciseTests
         var sustained = options with { Suite = "cache-sustained", Repeats = 1 };
         VerificationPlan.Validate(sustained);
         Check(CacheExercisePlan.Cases(sustained).Sum(c => c.Seconds) == 1800, "Sustained default contains thirty minutes of mixed I/O.");
+        var sustainedCases = CacheExercisePlan.Cases(sustained);
+        Check(sustainedCases.Count == 6 && sustainedCases.Select(c => c.Id).Distinct().Count() == 6 &&
+              sustainedCases.All(c => c.Id.Contains("-sustained-v204-", StringComparison.Ordinal)),
+            "Filesystem-checkpointed fresh-read preparation has six immutable versioned sustained cases.");
         Reject(() => VerificationPlan.Validate(sustained with { Repeats = 3 }));
         Reject(() => VerificationPlan.Validate(sustained with { SoakSeconds = 121 }));
         Reject(() => VerificationPlan.Validate(sustained with { CaseFilter = "mixed" }));

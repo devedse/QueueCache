@@ -42,8 +42,9 @@ public static class CacheExercisePlan
     public static IReadOnlyList<CacheExerciseCase> Cases(VerificationOptions options)
     {
         var cases = new List<CacheExerciseCase>();
+        var contract = options.Suite == "cache-sustained" ? "sustained-v204-" : "";
         void Add(string work, int streams, int depth, bool drain, int polling, int seconds, int repeat) =>
-            cases.Add(new($"{cases.Count + 1:D4}-r{repeat}-{work}-s{streams}-q{depth}-drain{drain}-map{polling}",
+            cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-s{streams}-q{depth}-drain{drain}-map{polling}",
                 work, streams, depth, drain, polling, seconds, repeat));
         if (options.Suite == "caller-backoff")
         {

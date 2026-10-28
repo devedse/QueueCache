@@ -241,6 +241,9 @@ public sealed partial class VerificationRunner
     {
         var files = new[] { Path.Combine(workDirectory, "resident.dat") };
         await WarmExercise(id, files, options.BudgetMiB / 2, token);
+        // Warm-up handles have closed. Submit their deferred filesystem metadata
+        // before flushing the cache; a quiet cache alone cannot flush NTFS buffers.
+        await Worker(Job("flush-volume"), token, 180);
         await WaitForQuiet(id, token);
         await ExerciseMap(id, token);
         foreach (var depth in new[] { 1, 8 })

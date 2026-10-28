@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). Targeted checks (13/13 under Verifier) and bounded cuts with the earlier variants passed, but broader crash/storage/system-volume scope remains unqualified, and the current mode has not been cut. The [plan-192 release campaign](#release-192) qualified the default path with ordering off. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The two [plan-203 final-build attempts](#release-203-read-preparation) stopped at a strict RAM-only precheck and restored; the [plan-192 release campaign](#release-192) remains the latest complete default-path qualification. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +119,36 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+<a id="release-203-read-preparation"></a>**Release preparation, plans 203/204 (2026-10-28).**
+Two `release-performance` attempts on unchanged native 0.4.882.1 stopped at the
+first sustained fresh Q1 resident-read guard. Campaigns
+`20261028-095958-b6d5944ae53141e797c212b5afa66cf9` and
+`20261028-104214-41dcd9ce2de94b0cbb060c544354deeb` each finished **INCOMPLETE,
+7/11 phases, 19/106 recorded cases, RESTORED**. The enclosing snapshots recorded
+two lower writes / 8 KiB in the first attempt and four / 16 KiB in the second;
+lower reads/flushes, misses and driver errors did not advance. In the first,
+the writes preceded the first telemetry sample; in the second they arrived
+during the read. Neither rejected window is a RAM-only score or a complete
+release result.
+
+The unchanged short standalone sustained probe completed 6/6 cases, with zero
+lower read/write/flush attempts in both fresh-read windows and all six persisted
+byte oracles passing. A selected final recall case followed by a traced short
+sustained probe also completed without reproducing the guard failure. These
+separate runs do not complete either campaign or identify the failed writes'
+source. Driver Verifier was off; loaded native hashes, the same DiskSpd,
+15-minute boot wait, normal priority and the disabled Defender/Search baseline
+were checked. Background apps remained closed after the second failure.
+
+Plan 204 submits filesystem metadata after the fresh-read warm-up handles close,
+before the existing cache flush and quiet wait. The old preparation could prove
+a quiet cache without proving that NTFS had submitted its metadata. This is a
+stronger preparation boundary, not an established attribution of the failed
+writes or a driver change. The zero-lower-I/O, telemetry, identity and byte checks
+remain strict. Sustained cases have new `sustained-v204` IDs; later churned
+rereads and the six mixed workloads are unchanged. Linux host-safe tests passed;
+Windows and final release validation are pending. No speed improvement is claimed.
 
 <a id="fast-ordering-31-fua-sustained"></a>**B under sustained use (#31, plan 203, October 26).**
 The forced-write variant does not resolve the sustained flush-heavy bottleneck.

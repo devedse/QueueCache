@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the default-off prototypes passed 22 checks under Verifier, then 26 expanded checks with Verifier off. Three bounded mode-2 cuts kept NTFS clean and untouched durable guards exact; broader crash/storage/system-volume scope remains open. Ordinary Fast defaults are unchanged |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the current ordinary mode passed 14 checks under Verifier and six NTFS data-volume VM-reset scenarios plus a middle repeat on 0.4.882.1; an ordering-off control damaged NTFS. Final release qualification and broader power-loss/system-volume scope remain open. Ordinary Fast defaults are unchanged |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -102,15 +102,22 @@ the Windows volume: on the test VM, Windows registered C: for paging at every bo
 even with the page file and crash dumps off. Moving the page file and dump file to
 Q: was refused by Windows there, because the VM's disks are hot-pluggable.
 
-- **Checks:** 13/13 targeted live-driver checks passed under Driver Verifier on
-  0.4.865.1 (plan 196), on a disposable non-OS NTFS volume. The earlier variants
+- **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
+  0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
+  0.4.865.1 (plan 196). The earlier variants
   passed 9 (mode 1), 22 (plan 188), 26 (plans 191/192, Verifier off) and 39
   (plan 195, modes 1–3) checks.
 - **Crash cuts:** six bounded cuts kept NTFS clean and untouched durable guards
   exact: three with mode 1 (a burst, a partial-drain boundary and a completed
   explicit checkpoint) and three with mode-2 write-through workloads (see the
-  records below). The current mode keeps mode 2's groups and changes only drain
-  scheduling; it has not been cut itself.
+  records below). On 2026-10-28, the current ordinary mode on 0.4.882.1 passed
+  six NTFS data-volume VM-reset scenarios plus an extra middle-drain repeat:
+  burst, write-through boundary, early/middle/late churn and explicit checkpoint.
+  Every scan was clean and untouched durable guards matched exactly. The
+  ordering-off early-churn control damaged NTFS; the two later controls stopped.
+  Its preserved image is post-scan because the official scan repaired part of
+  the bitmap online before still requiring offline index repair. This does not
+  establish physical power-loss or Windows-volume safety.
 - **Open:** broader power-loss, system-volume and dynamic usage-path
   qualification. The default Fast behavior and the safety warning above remain
   in effect; this is not yet a qualified filesystem-safety fix.
@@ -151,6 +158,12 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   Older comparisons are under
   [direct toggle](PERFORMANCE.md#fast-ordering-13-toggle) and
   [minute scale](PERFORMANCE.md#fast-ordering-13-minute).
+  Two plan-203 final-build attempts stopped at the sustained fresh-read
+  RAM-only guard (8/16 KiB of lower writes), both with restoration complete.
+  The writes' source is unproven; short standalone probes did not reproduce
+  them. Plan 204 strengthens filesystem preparation without relaxing the guard;
+  final release qualification remains pending
+  ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after experimental mode selection. The guard now serializes selection and
