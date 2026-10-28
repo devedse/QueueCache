@@ -1123,17 +1123,28 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             ?? throw new InvalidDataException("Missing cache layout snapshot.");
     }
 
-    /// <summary>Flush and wait until the cache stays clean for 2 s (up to 5 attempts, each recorded), so a
+    /// <summary>Flush and observe a quiet interval (2 s by default, up to 5 recorded attempts), so a
     /// stray filesystem metadata write is not already pending when a strictly checked window starts.
     /// The checks that follow stay strict; this only waits, it never accepts a dirty window.</summary>
-    private async Task WaitForQuiet(string name, CancellationToken token)
+    private async Task WaitForQuiet(string name, CancellationToken token, int quietSeconds = 2)
     {
         for (var attempt = 1; attempt <= 5; attempt++)
         {
             await Control(WriteCacheAction.Flush, token);
             var first = await LayoutSnapshot($"{name}-quiet{attempt}a.json", token);
-            await Task.Delay(TimeSpan.FromSeconds(2), token);
-            if (CacheLayoutEvidence.IsQuiet(first, await LayoutSnapshot($"{name}-quiet{attempt}b.json", token)))
+            var started = DateTimeOffset.UtcNow;
+            var timestamp = Stopwatch.GetTimestamp();
+            await Task.Delay(TimeSpan.FromSeconds(quietSeconds), token);
+            var ended = DateTimeOffset.UtcNow;
+            var elapsed = Stopwatch.GetElapsedTime(timestamp).TotalSeconds;
+            var last = await LayoutSnapshot($"{name}-quiet{attempt}b.json", token);
+            var quiet = CacheLayoutEvidence.IsQuiet(first, last);
+            storage.Write($"{name}-quiet{attempt}-interval.json", new
+            {
+                WaitStarted = started, WaitEnded = ended, MinimumSeconds = quietSeconds,
+                ElapsedSeconds = elapsed, Quiet = quiet
+            });
+            if (quiet)
                 return;
         }
         throw new IOException("The cache did not stay quiet after five recorded attempts.");

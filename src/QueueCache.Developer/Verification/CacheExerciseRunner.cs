@@ -244,7 +244,7 @@ public sealed partial class VerificationRunner
         // Warm-up handles have closed. Submit their deferred filesystem metadata
         // before flushing the cache; a quiet cache alone cannot flush NTFS buffers.
         await Worker(Job("flush-volume"), token, 180);
-        await WaitForQuiet(id, token);
+        await WaitForQuiet(id, token, CacheExercisePlan.FreshReadQuietSeconds);
         await ExerciseMap(id, token);
         foreach (var depth in new[] { 1, 8 })
         {

@@ -316,6 +316,17 @@ drained bytes; no noisy window or fault is retried. Later churned rereads and th
 six mixed workloads are unchanged. Sustained case IDs contain `sustained-v204`;
 keep earlier attempts separate. This changes preparation, not driver behavior.
 
+Plan 205 extends only the sustained fresh-read quiet observation to ten seconds.
+The plan-204 focused regression still rejected 8 KiB of lower writes after its
+filesystem flush; the traced repeat identified two 4 KiB System writes to Q:'s
+NTFS `$LogFile` during the read window, about four seconds after preparation's
+metadata writes. A cache that is clean at both ends is still refused if its
+lower-I/O or drained-byte counters advanced. Every quiet attempt now records
+`*-quietN-interval.json` with UTC boundaries, minimum/monotonic elapsed seconds
+and its result. The five-attempt cap, strict score checks and other two-second
+quiet observations are unchanged. Sustained case IDs contain `sustained-v205`;
+plan-203/204 failures remain separate and do not qualify the release.
+
 ## 4. Suites
 
 `qcache developer verify --help` lists every suite with its requirements. The

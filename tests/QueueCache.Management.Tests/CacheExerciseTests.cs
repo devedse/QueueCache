@@ -64,8 +64,9 @@ internal static class CacheExerciseTests
         Check(CacheExercisePlan.Cases(sustained).Sum(c => c.Seconds) == 1800, "Sustained default contains thirty minutes of mixed I/O.");
         var sustainedCases = CacheExercisePlan.Cases(sustained);
         Check(sustainedCases.Count == 6 && sustainedCases.Select(c => c.Id).Distinct().Count() == 6 &&
-              sustainedCases.All(c => c.Id.Contains("-sustained-v204-", StringComparison.Ordinal)),
-            "Filesystem-checkpointed fresh-read preparation has six immutable versioned sustained cases.");
+              sustainedCases.All(c => c.Id.Contains("-sustained-v205-", StringComparison.Ordinal)) &&
+              CacheExercisePlan.FreshReadQuietSeconds == 10,
+            "Fresh-read preparation has a ten-second quiet observation and six immutable versioned sustained cases.");
         Reject(() => VerificationPlan.Validate(sustained with { Repeats = 3 }));
         Reject(() => VerificationPlan.Validate(sustained with { SoakSeconds = 121 }));
         Reject(() => VerificationPlan.Validate(sustained with { CaseFilter = "mixed" }));
@@ -202,6 +203,16 @@ internal static class CacheExerciseTests
         Reject(() => CacheExerciseEvidence.Validate(before, after with { State = after.State with { AcceptedBytes = 0 } }, 4096, "write", false));
         var io = after with { Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerWriteAttempts = 1 } } };
         Reject(() => CacheExerciseEvidence.Validate(before, io, 4096, "write", false));
+        var completedMetadata = after with
+        {
+            State = after.State with { DirtyBytes = 0, InFlightBytes = 0,
+                AcceptedBytes = before.State.AcceptedBytes + 8192, DrainedBytes = before.State.DrainedBytes + 8192 },
+            Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with
+                { LowerWriteAttempts = diagnostics.Attribution!.LowerWriteAttempts + 2 } }
+        };
+        Check(!CacheLayoutEvidence.IsQuiet(before, completedMetadata),
+            "Completed metadata writes are not quiet even when both snapshots have no pending bytes.");
+        Reject(() => CacheExerciseEvidence.Validate(before, completedMetadata, 4096, "read", false));
         var metadataRead = after with { State = after.State with { ReadMissBytes = 24576 },
             Diagnostics = diagnostics with { Attribution = diagnostics.Attribution! with { LowerReadAttempts = 3 } } };
         Reject(() => CacheExerciseEvidence.Validate(before, metadataRead, 4096, "write", false));

@@ -120,7 +120,7 @@ effect are unknown; the warnings cleared after restoration. Controls and exact r
 
 ## Results, newest first
 
-<a id="release-203-read-preparation"></a>**Release preparation, plans 203/204 (2026-10-28).**
+<a id="release-203-read-preparation"></a>**Release preparation, plans 203–205 (2026-10-28).**
 Two `release-performance` attempts on unchanged native 0.4.882.1 stopped at the
 first sustained fresh Q1 resident-read guard. Campaigns
 `20261028-095958-b6d5944ae53141e797c212b5afa66cf9` and
@@ -147,8 +147,29 @@ a quiet cache without proving that NTFS had submitted its metadata. This is a
 stronger preparation boundary, not an established attribution of the failed
 writes or a driver change. The zero-lower-I/O, telemetry, identity and byte checks
 remain strict. Sustained cases have new `sustained-v204` IDs; later churned
-rereads and the six mixed workloads are unchanged. Linux host-safe tests passed;
-Windows and final release validation are pending. No speed improvement is claimed.
+rereads and the six mixed workloads are unchanged. Linux host-safe tests and both
+Windows CI configurations passed on controller 0.4.883.1 (`1053d51`), but its
+focused regression still failed: `20261028-120343-3d773484311f488d867c643ba535746c`
+and the traced repeat `20261028-121717-86e3978e580a49e3bb8514e2d5424249` each ended
+INCOMPLETE, 4/6 phases, 5/11 cases, RESTORED. The filesystem flush was insufficient.
+
+The reproduced read interval was 12:20:32.597300–12:20:42.651706 UTC. File-I/O
+records identify System (PID 4) writing two 4 KiB blocks to Q:'s NTFS `$LogFile`
+at 12:20:33.120877/33.120973, matching the two lower attempts and 8 KiB admitted
+and drained by QueueCache. Preparation had written `$LogFile` and `$Mft` at
+12:20:28.843. Both WPR collectors reported zero lost events. The raw v3 payloads
+were decoded using Microsoft's [file-key/name correlation](https://learn.microsoft.com/en-us/windows/win32/etw/fileio-readwrite)
+and [PerfView field layout](https://github.com/microsoft/perfview/blob/main/src/TraceEvent/Parsers/KernelTraceEventParser.cs#L5886);
+the raw FILETIME header aligned the converter's inconsistent
+timezone text. This attributes the traced repeat, not the earlier untraced runs.
+Raw ETL SHA-256: `5304B8DDBDC33DDC3DE0AAC09160D163BAF8CB6B6E2D4F96813AAA720CAD4746`.
+
+Plan 205 requires a ten-second quiet observation for the fresh resident read,
+retaining the five-attempt cap and strict scored checks. Interval evidence records
+UTC boundaries and monotonic elapsed time; completed metadata writes still refuse
+quiescence even when both snapshots have no pending bytes. Other quiet waits stay
+at two seconds. Sustained IDs are `sustained-v205`; no driver code changes. VM and
+final release validation remain pending. No speed improvement is claimed.
 
 <a id="fast-ordering-31-fua-sustained"></a>**B under sustained use (#31, plan 203, October 26).**
 The forced-write variant does not resolve the sustained flush-heavy bottleneck.

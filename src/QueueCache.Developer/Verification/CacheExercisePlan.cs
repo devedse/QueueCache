@@ -9,6 +9,7 @@ public enum ReadPriority { Normal, CpuBelowNormal, IoLow, MemoryLow }
 /// <summary>Focused workloads; the existing write-performance matrix remains unchanged.</summary>
 public static class CacheExercisePlan
 {
+    public const int FreshReadQuietSeconds = 10;
     public static bool Contains(string suite) => suite is "cache-concurrency" or "cache-sustained" or "cache-map-cost" or "cache-recall" or "caller-backoff" or "priority-cost" or "priority-affinity";
 
     /// <summary>cache-recall files: stale data larger than the cache, a fitting file that is read again,
@@ -42,7 +43,7 @@ public static class CacheExercisePlan
     public static IReadOnlyList<CacheExerciseCase> Cases(VerificationOptions options)
     {
         var cases = new List<CacheExerciseCase>();
-        var contract = options.Suite == "cache-sustained" ? "sustained-v204-" : "";
+        var contract = options.Suite == "cache-sustained" ? "sustained-v205-" : "";
         void Add(string work, int streams, int depth, bool drain, int polling, int seconds, int repeat) =>
             cases.Add(new($"{cases.Count + 1:D4}-{contract}r{repeat}-{work}-s{streams}-q{depth}-drain{drain}-map{polling}",
                 work, streams, depth, drain, polling, seconds, repeat));

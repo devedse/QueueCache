@@ -160,9 +160,11 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   [minute scale](PERFORMANCE.md#fast-ordering-13-minute).
   Two plan-203 final-build attempts stopped at the sustained fresh-read
   RAM-only guard (8/16 KiB of lower writes), both with restoration complete.
-  The writes' source is unproven; short standalone probes did not reproduce
-  them. Plan 204 strengthens filesystem preparation without relaxing the guard;
-  final release qualification remains pending
+  Short standalone probes did not reproduce them. Plan 204's filesystem flush
+  was insufficient in a focused regression; its traced repeat identified two
+  4 KiB System writes to NTFS `$LogFile` during the read. Plan 205 requires a
+  longer recorded quiet observation without relaxing the score guard. Final
+  release qualification remains pending
   ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
