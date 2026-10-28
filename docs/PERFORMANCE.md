@@ -21,7 +21,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 
 | Topic | Decision | Reopen when |
 |---|---|---|
-| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The two [plan-203 final-build attempts](#release-203-read-preparation) stopped at a strict RAM-only precheck and restored; the [plan-192 release campaign](#release-192) remains the latest complete default-path qualification. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Experimental Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The [final plan-206 release campaign](#release-206) completed/restored all 11 phases, 106 cases and 94 retained checks on the unchanged 0.4.882.1 native pair. Earlier [preparation/clock failures](#release-203-read-preparation) remain separate. Recommend closing #13 for the tested NTFS data-volume VM-reset scope; keep the experimental default and broader limits unchanged. | A promotion decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -120,7 +120,72 @@ effect are unknown; the warnings cleared after restoration. Controls and exact r
 
 ## Results, newest first
 
-<a id="release-203-read-preparation"></a>**Release preparation, plans 203–205 (2026-10-28).**
+<a id="release-206"></a>**Final release qualification and #13 scope, plan 206 (2026-10-28).**
+The current ordering mode meets the planned NTFS data-volume VM-reset screen:
+six ordering-on scenarios plus a middle-drain repeat passed on native 0.4.882.1;
+the ordering-off early-churn control damaged NTFS. All completed cuts preserved
+the independent durable guard's bytes and lengths. The failed control's image
+was preserved before an explicitly approved snapshot rollback. The image is
+post-scan: the official scan repaired part of the bitmap online, then still
+required offline directory-index repair. No offline repair or format was run.
+The two later ordering-off controls were not run after that damage stop.
+
+The final `release-performance` campaign
+`20261028-152119-c71f832ab68c4eca94fdc350401519bb` ran 15:21:19–17:02:47 UTC:
+**COMPLETED, 11/11 phases, 106/106 cases, RESTORED**. `verify-completion`
+accepted its terminal event. Controller 0.4.885.1, clean source `033127a`, used
+the unchanged loaded native 0.4.882.1 pair and the same recorded DiskSpd binary.
+Both Windows CI configurations and Linux host-safe contracts passed. Verifier
+was off; normal priority, the 15-minute boot wait, strict registration,
+closed background apps and the disabled Defender/Search baseline were checked.
+The ordering-on crash/correctness checks had used Verifier `0x209bb`.
+
+| Final campaign component | Completed |
+|---|---:|
+| Retained correctness subchecks | 94/94: 22 partial reads, 9 paging, 42 policies, 13 pressure, 8 ordering/faults |
+| RAM reference / asynchronous lifecycle | 36 windows / 1 check |
+| Recall / sustained / map cost | 12 / 6 / 9 cases |
+| Full write matrix | 72/72 cases |
+| Sustained file oracles after cache release | 6/6 |
+
+All 186 raw DiskSpd XML scores agree with their saved bytes, operations, elapsed
+time and latency fields; none had zero completions. All 65 paired score
+intervals had complete telemetry (largest gap 1.030869 s). The 29 intervals
+using plan-206 monotonic clocks had a largest gap of 0.2244281 s, and all six
+map-poll intervals passed their cadence allowance. Fresh Q1/Q8 reads had zero
+lower read/write/flush attempts, drained bytes, misses and errors. Preparation's
+first ten-second quiet observation caught two writes / 8 KiB and was refused;
+the next was quiet. No scored guard was relaxed. The earlier incomplete
+attempts below remain separate.
+
+This completes the planned collection/correctness regression, not a speed
+comparison. UTC-aligned backend samples recorded at least **235.89 GB** serving
+pool headroom, no observation errors, no new health warnings, and no overlapping
+backup/restore/snapshot tasks. Standing unavailable pools 11/15 were separate
+from serving pool 8. Global deep-scrub samples at 15:45:58–15:47:23 UTC (pool
+unknown) bracket recall cases `0009-r3-reread-recall0`,
+`0010-r3-reread-recall1` and `0011-r3-scan-recall0`; their timings may be
+disturbed. Other guests wrote/read 8.63/5.67 GB; three guests lacked endpoint
+counters and remain unknown. Up NVMe OSD apply/commit latency reached 13 ms.
+No cross-day speed verdict is drawn from this shared-backend run.
+
+The final export contains 45,596 independently hash-verified files, 69,411,849
+bytes; SHA-256 `4381A99EB5C2BDE033153206782808DE9A62ACB2F0CE83F7695BC2D9250188D8`.
+Loaded filter/provider SHA-256:
+`50BCAF7D0F9DDAEC0F16A49207D0B657D8E07B73EDD7305FB2CCFBA27D69BA41` /
+`06EDCA2D66158D0FC17EC0083A7DD550CA1DC462E8D0F7C24543BBCDDCF6AD54`.
+The original Q: profile, stopped managed-disk definition and normal apps/services
+were restored; the healthy lab image detached normally. Verifier stays off,
+Defender/Search retain the dedicated baseline, and the recovery snapshot and
+failed-image copy remain preserved.
+
+Recommend closing #13 for this tested scope; the issue was left open for that
+decision. Keep ordering experimental and default off. The evidence covers these
+bounded resets on one NTFS non-system volume/storage setup, not physical power
+loss, every drain configuration, other file systems or system/special-file
+paths. The ordinary Fast warning still applies when ordering is off.
+
+<a id="release-203-read-preparation"></a>**Release preparation, plans 203–206 (2026-10-28).**
 Two `release-performance` attempts on unchanged native 0.4.882.1 stopped at the
 first sustained fresh Q1 resident-read guard. Campaigns
 `20261028-095958-b6d5944ae53141e797c212b5afa66cf9` and
@@ -194,8 +259,12 @@ documents its common time base across processes on the same Windows boot.
 Affected IDs are versioned `sustained-v206` / `exercise-v206`; other suites keep
 their coverage contracts. Linux host-safe tests passed, including missing clocks,
 incomplete coverage, frequency mismatches, reversed samples and the unchanged
-two-second boundary. Windows CI/VM validation and final release qualification
-remain pending. No speed improvement is claimed.
+two-second boundary. Both Windows CI configurations passed on controller
+0.4.885.1. Focused campaign `20261028-150511-18712248b62849efa81ff59208eb1812`
+completed 6/6 phases, 11/11 cases, all 94 retained checks and six persisted
+oracles, RESTORED; a selected map250 probe also completed/restored. Independent
+raw audits passed before the complete [final release campaign](#release-206).
+No speed improvement is claimed.
 
 <a id="fast-ordering-31-fua-sustained"></a>**B under sustained use (#31, plan 203, October 26).**
 The forced-write variant does not resolve the sustained flush-heavy bottleneck.

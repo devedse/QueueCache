@@ -28,9 +28,11 @@ target with the same activation path as other disks. Fast mode's volatility
 (loss of acknowledged writes still in RAM) is accepted and must be explained.
 Filesystem damage after a crash remains a current risk; the desired state is
 loss of pending writes with a healthy filesystem, tracked in
-[#13](https://github.com/devedse/QueueCache/issues/13). That goal is not yet
-qualified. Silent corruption, stale reads and wrong write ordering during normal
-operation are defects.
+[#13](https://github.com/devedse/QueueCache/issues/13). Experimental ordering has
+passed bounded VM-reset checks on an NTFS non-system volume and the final
+release regression; broader storage/system-volume qualification remains open
+([scope](PERFORMANCE.md#release-206)). Silent corruption, stale reads and wrong
+write ordering during normal operation are defects.
 
 ## Product model
 

@@ -18,7 +18,7 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the current ordinary mode passed 14 checks under Verifier and six NTFS data-volume VM-reset scenarios plus a middle repeat on 0.4.882.1; an ordering-off control damaged NTFS. Final release qualification and broader power-loss/system-volume scope remain open. Ordinary Fast defaults are unchanged |
+| [Fast mode: a crash loses pending writes and can damage the file system](#fast-mode-loses-pending-writes-filesystem-damage-remains-an-open-safety-issue) | ❌ | Open safety issue, [#13](https://github.com/devedse/QueueCache/issues/13): the current ordinary mode passed 14 checks under Verifier and six NTFS data-volume VM-reset scenarios plus a middle repeat on 0.4.882.1; an ordering-off control damaged NTFS. The final plan-206 regression completed/restored 11 phases, 106 cases and 94 retained checks. Recommend closing #13 for the tested scope; broader physical-power-loss/system-volume scope and ordinary Fast defaults are unchanged |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -83,13 +83,14 @@ volatile-cache contract. On 0.4.810.1, with the default drain, six power cuts (t
 right after 10,000 new unflushed files, three during a churn's write-out) left NTFS
 clean and every file older than about 10 seconds intact; up to 9,994 of the newest
 unflushed files were lost or damaged. On 0.4.604.1 the same burst left NTFS needing
-offline repair. Fast mode still does not order its writes around the file system's
-flushes, so clean cuts are evidence, not a guarantee. Another write-back cache tested
+offline repair. With ordering off, Fast mode does not order its writes around the
+file system's flushes, so clean cuts are evidence, not a guarantee. Another write-back cache tested
 the same way also damaged NTFS when cut during its write-out.
 [Evidence and scope](COMPARISON.md#power-cut-while-the-cache-is-writing).
 
-An experimental, default-off ordering path is being qualified for #13. With it
-on, writes after a filesystem flush or a write-through write stay in RAM until
+An experimental, default-off ordering path passed the bounded NTFS data-volume
+qualification for #13 described below. With it on, writes after a filesystem
+flush or a write-through write stay in RAM until
 everything before that point and a real lower flush have completed; old dirty
 versions are kept across those boundaries, and TRIM is ordered with them. Since
 plan 196 there is one mode (the former lab mode 3); the original mode 1, which also
@@ -120,7 +121,10 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   establish physical power-loss or Windows-volume safety.
 - **Open:** broader power-loss, system-volume and dynamic usage-path
   qualification. The default Fast behavior and the safety warning above remain
-  in effect; this is not yet a qualified filesystem-safety fix.
+  in effect when ordering is off. The completed screen covers these bounded VM
+  resets on one NTFS non-system volume/storage setup, not physical power loss,
+  every drain configuration or other file systems. Recommend closing #13 for
+  that tested scope; the issue remains open for the scope decision.
 - **Cost:** with ordering on, writing into the cache takes the same time as with
   it off (plan 196: a 1.5 GiB file, 25,600 flushed files and 25,600 write-through
   pairs, all ranges overlapping). Each bookmark needs its own disk flush, so
@@ -168,8 +172,13 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   attempt restored INCOMPLETE after a 1.809-second Windows clock adjustment
   made a 0.207-second actual sample interval appear as 2.016 seconds in UTC.
   Plan 206 records common monotonic sample/process clocks for cache exercises,
-  retaining UTC and the strict two-second coverage limit. Validation and final
-  release qualification remain pending
+  retaining UTC and the strict two-second coverage limit. Its final campaign
+  `20261028-152119-c71f832ab68c4eca94fdc350401519bb` completed **11/11 phases,
+  106/106 cases, all 94 retained checks and six persisted oracles, RESTORED**.
+  Controller 0.4.885.1 (`033127a`) used the unchanged loaded 0.4.882.1 drivers;
+  both Windows CI configurations and Linux host contracts passed. The raw
+  score/telemetry audits passed. These are complete checks and collection,
+  without a cross-day performance verdict
   ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
@@ -519,6 +528,21 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #13, current ordering and final regression (2026-10-28):** native
+0.4.882.1 passed 14/14 targeted checks under Verifier `0x209bb`, six ordering-on
+NTFS data-volume reset scenarios and an extra middle-drain repeat. The
+ordering-off early-churn control damaged NTFS; later controls stopped. Every
+completed cut retained the durable guard's exact bytes and file lengths.
+After failed-image preservation and approved snapshot recovery, plan-206
+`release-performance` campaign
+`20261028-152119-c71f832ab68c4eca94fdc350401519bb` completed/restored all 11 phases,
+106 cases and 94 retained checks with Verifier off. All six sustained file
+oracles passed after cache release. `verify-completion`, exact loaded-module
+hashes, raw score/sample audits and the final state were checked. Q:'s original
+profile, the original stopped R: definition and apps/services were restored;
+the healthy lab image detached normally. The failed post-scan image and recovery
+snapshot remain preserved. [Result, hashes and limits](PERFORMANCE.md#release-206).
 
 **Issue #28, plan 182, populated images (2026-10-25):**
 `QueueCache-Verify-20261025-000011-ed9d80275808461ab30bfab008f8d87b`
