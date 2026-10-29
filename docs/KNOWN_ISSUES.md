@@ -163,6 +163,9 @@ accepted cost comparison. The pressure heartbeat was below 0.27 s in both arms
 but did not cover the later gap. Disk progress and zero retained I/O errors do
 not prove responsiveness during that missing interval. Original settings/apps
 were restored and evidence hash-verified; no C: power-cut test followed.
+The maintained plan-213 `system-ordering-drain` diagnostic keeps a separate
+heartbeat and queue telemetry through the final flush/cleanup. Its result is
+still pending; adding observation does not resolve the pause.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

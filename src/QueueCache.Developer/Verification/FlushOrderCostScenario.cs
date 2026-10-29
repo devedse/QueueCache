@@ -181,6 +181,11 @@ public static class FlushOrderCostScenario
             throw new IOException("Ordering performance requires a fresh owned non-OS NTFS directory.");
         if (new DriveInfo(target.Root).AvailableFreeSpace < freeBytes)
             throw new IOException($"Ordering performance needs {freeBytes / MiB} MiB free on the lab volume.");
+        await RequireRuntimeConditions(evidence);
+    }
+
+    internal static async Task RequireRuntimeConditions(string evidence)
+    {
         var verifier = await OwnedProcess.RunAsync(Path.Combine(Environment.SystemDirectory, "verifier.exe"),
             ["/query"], evidence + ".verifier", TimeSpan.FromSeconds(30), CancellationToken.None);
         if (!(verifier.Output + verifier.Error).Contains("No drivers are currently verified.", StringComparison.Ordinal))

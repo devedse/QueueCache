@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 212, "plan 212 records bounded observer residency without relaxing coverage or byte checks");
+        Check(VerificationPlan.Version == 213, "plan 213 diagnoses final write-out with full telemetry and independent heartbeat");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -74,6 +74,27 @@ internal static class DiagnosticContracts
             SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(guardedPaging);
         Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v212", "unique guarded paging measurement identity");
+        var guardedDrain = guardedPaging with { Suite = "system-ordering-drain" };
+        VerificationPlan.Validate(guardedDrain);
+        Check(VerificationPlan.Integrity(guardedDrain).Single().Id == "system-ordering-drain-v213" &&
+            SystemPreflightGuard.ChangesSystemCache(guardedDrain.Suite) &&
+            !VerificationRunner.RemovesWorkloads(guardedDrain), "guarded drain owns original-cache restoration and its payload");
+        foreach (var invalid in new[] { guardedDrain with { RecoverableVm = false }, guardedDrain with { SystemInstance = null },
+            guardedDrain with { SystemBytes = null }, guardedDrain with { Volume = "Q:" }, guardedDrain with { BudgetMiB = 1024 },
+            guardedDrain with { OraclePath = "Q:\\oracle.json" } })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Unguarded drain test accepted"); }
+            catch (ArgumentException) { }
+        }
+        var beatClocks = Enumerable.Range(0, 21).Select(i => new HeartbeatSample(DateTimeOffset.UnixEpoch.AddMilliseconds(i * 100),
+            new(1 + i * 100_000L, 1_000_000), i == 0 ? null : 100)).ToArray();
+        Check(Math.Abs(ProgressHeartbeat.Validate(beatClocks, beatClocks[0].Clock, beatClocks[^1].Clock) - 0.1) < 1e-9,
+            "heartbeat covers complete monotonic interval");
+        Reject(() => ProgressHeartbeat.Validate(beatClocks[..10], beatClocks[0].Clock, beatClocks[^1].Clock));
+        Reject(() => ProgressHeartbeat.Validate([beatClocks[0], beatClocks[^1] with { Clock = new(4_000_001, 1_000_000) }],
+            beatClocks[0].Clock, new(4_000_001, 1_000_000)));
+        Reject(() => ProgressHeartbeat.Validate([beatClocks[0], beatClocks[^1] with { Clock = new(1, 1_000_000) }],
+            beatClocks[0].Clock, new(1, 1_000_000)));
         foreach (var invalid in new[] { guardedPaging with { RecoverableVm = false }, guardedPaging with { SystemInstance = null },
             guardedPaging with { SystemBytes = null }, guardedPaging with { Volume = "Q:" }, guardedPaging with { BudgetMiB = 1024 } })
         {

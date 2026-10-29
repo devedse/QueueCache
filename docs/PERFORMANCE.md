@@ -218,6 +218,13 @@ Q: uncached, Verifier off, apps/service and detached lab image were checked
 after restoration. All 1,680 exported evidence files were independently
 hash-verified. No C: reset or final release run followed this failed guard.
 
+Plan 213 adds the focused maintained `system-ordering-drain` diagnostic. Its
+independent heartbeat and telemetry run through five minutes of flushed files,
+the final cache flush and deletion, with detailed queue timing enabled and the
+same two-second coverage limit. It retains both observer results even if one
+fails. This is preparation for diagnosis, not a fix or accepted repetition;
+the existing bounded paging contract and prior failed evidence are unchanged.
+
 ### C: paging under an artificial drain delay (#32, October 29)
 
 On native/controller 0.4.896.1 under Driver Verifier, the first guarded two-minute

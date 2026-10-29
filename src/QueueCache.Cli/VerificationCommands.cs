@@ -196,6 +196,7 @@ internal static class VerificationCommands
             Run ordinary suites elevated on a clean, non-OS test disk, with no competing workloads or armed fault/delay hooks.
             System suites and C: durability cuts require an existing output directory on another physical disk and explicit VM/disk identity.
             system-paging-ordering runs two minutes of locked-memory/pager pressure and flushed writes with ordering on C:; --budget-mib 2048 is required.
+            system-ordering-drain diagnoses five minutes of flushed-file writing on C: and final cache flush/cleanup, with independent heartbeat and full telemetry; --budget-mib 2048, Verifier off and 15 minutes uptime are required.
             system-files reports live unbuffered bytes; it does not alone prove persistence under an active Fast cache.
             """);
         var volume = new Argument<string>("volume");

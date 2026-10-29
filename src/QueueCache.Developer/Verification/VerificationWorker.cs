@@ -298,13 +298,13 @@ public static class VerificationWorker
         }
         Stage("job loaded; validating target");
         if (SystemPreflightGuard.IsSystemDurability(job.Volume, job.Operation == "compare-target" ? job.Suite! : job.Operation) ||
-            job.Suite == "system-paging-ordering")
+            SystemPreflightGuard.ChangesSystemCache(job.Suite))
         {
             var suite = job.Operation == "compare-target" ? job.Suite! :
-                job.Suite == "system-paging-ordering" ? job.Suite : job.Operation;
+                SystemPreflightGuard.ChangesSystemCache(job.Suite) ? job.Suite! : job.Operation;
             SystemPreflightGuard.ValidateOptions(new(job.Volume, suite, BudgetMiB: job.BudgetMiB,
                 SystemInstance: job.SystemInstance, SystemBytes: job.SystemBytes, RecoverableVm: job.RecoverableVm,
-                Product: job.Product, OraclePath: job.Suite == "system-paging-ordering" ? null : job.OraclePath));
+                Product: job.Product, OraclePath: SystemPreflightGuard.ChangesSystemCache(job.Suite) ? null : job.OraclePath));
             var guardedTarget = await DiskTarget.InspectAsync(job.Volume);
             var guardedOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!));
             SystemPreflightGuard.ValidateTargets(guardedTarget, guardedOutput, job.SystemInstance!, job.SystemBytes!.Value);
@@ -324,6 +324,8 @@ public static class VerificationWorker
         }
         if (job.Operation.StartsWith("paging-order-", StringComparison.Ordinal) && job.Suite == SystemPagingOrdering.Suite)
             return await SystemPagingOrdering.WorkerAsync(job);
+        if (job.Operation.StartsWith("ordering-drain-", StringComparison.Ordinal) && job.Suite == SystemOrderingDrain.Suite)
+            return await SystemOrderingDrain.WorkerAsync(job);
         if (job.Operation == "compare-drain-restore")
         {
             await ComparisonDrainScenarios.RestoreAsync(job);
@@ -770,7 +772,7 @@ public static class VerificationWorker
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
                 if ((inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0) &&
-                    job.Suite != "system-paging-ordering")
+                    !SystemPreflightGuard.ChangesSystemCache(job.Suite))
                     throw new IOException("Verification excludes boot/system/paging disks.");
                 // Only the supported registration is verified: topmost volume filter on every volume, none on disks.
                 var registrationProblems = DriverRegistration.Inspect().Problems();
@@ -1227,7 +1229,7 @@ public static class VerificationWorker
                 break;
             case "telemetry":
                 Stage("opening telemetry output");
-                var residency = job.Suite == SystemPagingOrdering.Suite ? TelemetryWorkingSet.ProtectCurrentProcess() : null;
+                var residency = SystemPreflightGuard.ChangesSystemCache(job.Suite) ? TelemetryWorkingSet.ProtectCurrentProcess() : null;
                 try
                 {
                     if (residency is not null) RunStorage.AtomicJson(job.Reply + ".residency.json", residency.Evidence);

@@ -83,7 +83,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         !ComparisonPlan.IsDurabilityWrite(options.Suite) &&
         !options.Suite.StartsWith("managed-", StringComparison.Ordinal) && !options.Suite.StartsWith("disk-removal", StringComparison.Ordinal);
     private static bool IsSystemSuite(string suite) => suite is
-        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering";
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
     // Leases are per physical disk (one verification per disk), not per cached volume.
@@ -247,6 +247,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast and Strict cases with independent restoration." :
                 options.Suite == "system-app-session" ? $"Operator application session on C:; runtime-only Fast cache, waiting up to {AppSessionSeconds / 60} minutes for {storage.PathFor(AppSessionDoneFile)}, then drain/release and byte comparison. Instructions: {storage.PathFor("operator-instructions.txt")}" :
                 options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
+                options.Suite == SystemOrderingDrain.Suite ? "Guarded C: final-write-out diagnosis; telemetry and independent heartbeat through explicit flush/cleanup; queue timing on." :
                 options.Suite == "system-paging-ordering" ? "Guarded C: ordering, paging pressure and owned flushed-file checks; independent restoration." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
@@ -333,9 +334,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 ownsSystemLease = systemLease.WaitOne(0);
                 if (!ownsSystemLease)
                     throw new IOException("Another guarded system-disk verification owns this physical disk.");
-                if (options.Suite is "system-active-image" or "system-app-session" or "system-paging-ordering")
+                if (options.Suite is "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain")
                 {
-                    await Worker(Job(options.Suite == "system-paging-ordering" ? "capture" : "system-capture") with
+                    await Worker(Job(SystemPreflightGuard.ChangesSystemCache(options.Suite) ? "capture" : "system-capture") with
                     {
                         Reply = storage.PathFor("recovery.json"),
                         SystemInstance = options.SystemInstance,
@@ -343,7 +344,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         RecoverableVm = options.RecoverableVm
                     }, deadline.Token, 120);
                     systemCaptured = true;
-                    if (options.Suite == SystemPagingOrdering.Suite)
+                    if (SystemPreflightGuard.ChangesSystemCache(options.Suite))
                         storage.Write("restoration.json", new { Required = true, Status = "PENDING", Restored = false });
                 }
                 else
@@ -394,7 +395,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 workDirectory = ComparisonPlan.WorkDirectory(options.Suite, comparisonTarget!.Root, Path.GetFileName(storage.DirectoryPath)) ?? "";
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = options.Suite != "compare-ram" });
             }
-            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session" or "system-paging-ordering")
+            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
                 if (options.Suite == "system-app-session")
@@ -507,6 +508,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         if (options.Suite != "disk-removal-windows")
                             DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
                         storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        return null;
+                    }
+                    if (test.Operation == SystemOrderingDrain.Suite)
+                    {
+                        caseChecks = await SystemOrderingDrain.RunAsync(fileTarget!, workDirectory!,
+                            storage.DirectoryPath, ExecuteWorker, Log, deadline.Token);
                         return null;
                     }
                     if (test.Operation == SystemPagingOrdering.Suite)
@@ -714,14 +721,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             if (systemCaptured)
             {
                 progressLabel = $"Restoring system disk | {storage.Results.Count}/{totalCases} recorded";
-                Log(options.Suite == SystemPagingOrdering.Suite
+                Log(SystemPreflightGuard.ChangesSystemCache(options.Suite)
                     ? "Restoring original C: cache settings and checking saved profiles (independent cleanup deadline)."
                     : "Restoring the disabled/released C: runtime baseline (independent cleanup deadline).");
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
                     var requiredImageOracles = PassedSystemImageOracles(storage.DirectoryPath, storage.Results);
-                    await Worker(Job(options.Suite == "system-paging-ordering" ? "restore" : "system-restore") with
+                    await Worker(Job(SystemPreflightGuard.ChangesSystemCache(options.Suite) ? "restore" : "system-restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
@@ -732,13 +739,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ImageOraclePaths = requiredImageOracles,
                         RequireImageEvidence = VerificationWorker.RequiresSystemImageEvidence(storage.Results)
                     }, CancellationToken.None, 300);
-                    if (options.Suite == SystemPagingOrdering.Suite)
+                    if (SystemPreflightGuard.ChangesSystemCache(options.Suite))
                         storage.Write("restoration.json", new { Required = true, Status = "RESTORED", Restored = true, At = DateTimeOffset.UtcNow });
                 }
                 catch (Exception ex)
                 {
                     restorationFailure = ex.ToString(); Log("SYSTEM RESTORATION ERROR: " + restorationFailure);
-                    if (options.Suite == SystemPagingOrdering.Suite)
+                    if (SystemPreflightGuard.ChangesSystemCache(options.Suite))
                         storage.Write("restoration.json", new { Required = true, Status = "RESTORATION_FAILED", Restored = false, Error = restorationFailure });
                 }
             }
@@ -1760,7 +1767,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     Reason = "No trustworthy pre-mutation copy-flags evidence is available."
                 });
             }
-            var operation = systemRecovery && options.Suite != "system-paging-ordering" ? "system-restore" : "restore";
+            var operation = systemRecovery && !SystemPreflightGuard.ChangesSystemCache(options.Suite) ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
                 ? JsonSerializer.Deserialize<CaseResult[]>(await File.ReadAllTextAsync(resultsPath, token)) ?? []
