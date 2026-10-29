@@ -140,9 +140,9 @@ public sealed class CacheDevice : IDisposable
             throw new InvalidDataException("Unexpected cache control response.");
     }
     /// <summary>T085: replace one driver range set (see <see cref="SpecialRangeKind"/>); an empty list clears it.</summary>
-    public void SetSpecialRanges(IReadOnlyList<DiskRange> ranges, SpecialRangeKind kind)
+    public void SetSpecialRanges(IReadOnlyList<DiskRange> ranges, SpecialRangeKind kind, ulong generation = 0)
     {
-        var data = SpecialRangeMap.Encode(ranges, kind);
+        var data = SpecialRangeMap.Encode(ranges, kind, generation);
         if (!Native.DeviceIoControlCommand(handle, SpecialRangesIoctl, data, (uint)data.Length, IntPtr.Zero, 0, out var returned, IntPtr.Zero))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Special-file range map update failed.");
         if (returned != 0)

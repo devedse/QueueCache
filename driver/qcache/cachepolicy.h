@@ -103,12 +103,12 @@ constexpr bool QcShouldCacheDataIo(bool pagingIo, bool applicationPaging)
 // group, and so does a write-through write after itself. Later groups stay in RAM
 // until the earlier group and a lower flush completed. Off until qualified.
 static constexpr LONG QcDefaultFlushOrder = 0;
-// Ordering excludes paging/hibernation/dump paths for its entire lifetime,
-// including registrations arriving after it was selected. Both checks run under
-// RoutingLock so a reservation and the selection cannot pass each other.
+// Registered special paths are supported by the safe paging-range protocol.
+// Reservations and selection still serialize under RoutingLock. Negative counts
+// are invalid; lab FUA mode remains limited to a disk without special paths.
 constexpr bool QcMaySelectFlushOrder(ULONGLONG mode, LONG usagePaths)
 {
-    return mode == 0 || (mode <= 2 && usagePaths == 0);
+    return usagePaths >= 0 && (mode <= 1 || (mode == 2 && usagePaths == 0));
 }
 // Lab mode 2 (#31): mode 1, but a sealed frontier group of at most this many bytes is
 // written with forced unit access (FUA) and needs no lower flush once those writes
@@ -145,7 +145,7 @@ constexpr ULONGLONG QcNextFrontier(ULONGLONG frontier, ULONGLONG nextWork, ULONG
 }
 constexpr bool QcMayRegisterUsage(LONG flushOrderMode)
 {
-    return flushOrderMode == 0;
+    return flushOrderMode >= 0 && flushOrderMode <= 1;
 }
 constexpr bool QcEpochMayDrain(bool ordered, ULONGLONG version, ULONGLONG frontier)
 {
@@ -155,6 +155,17 @@ constexpr bool QcEpochNeedsVersion(bool ordered, bool dirty, ULONGLONG version, 
 {
     return ordered && dirty && version != writing;
 }
+// Every full barrier, including power-down, waits for all retained versions,
+// sealed groups and TRIM fences, rather than only the current dirty byte count.
+constexpr bool QcBarrierHasPending(bool ordered, bool dirty, bool flushing, bool versions,
+                                   bool trims, ULONGLONG frontier, ULONGLONG open)
+{
+    return dirty || flushing || (ordered && (versions || trims || frontier < open));
+}
+static_assert(QcBarrierHasPending(true, false, false, true, false, 1, 2));
+static_assert(QcBarrierHasPending(true, false, false, false, true, 2, 2));
+static_assert(QcBarrierHasPending(true, false, false, false, false, 1, 2));
+static_assert(!QcBarrierHasPending(true, false, false, false, false, 2, 2));
 constexpr bool QcResumeAfterPower(bool wasEnabled, bool hasCapacity, bool healthy, bool gone)
 {
     return wasEnabled && hasCapacity && healthy && !gone;

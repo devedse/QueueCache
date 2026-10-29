@@ -39,9 +39,9 @@ constexpr bool PolicyChecks()
         QcEpochNeedsVersion(false, true, 3, 4))
         return false;
     if (!QcMaySelectFlushOrder(0, 3) || !QcMaySelectFlushOrder(1, 0) ||
-        QcMaySelectFlushOrder(1, 1) || QcMaySelectFlushOrder(1, -1) ||
+        !QcMaySelectFlushOrder(1, 1) || !QcMaySelectFlushOrder(1, 100) || QcMaySelectFlushOrder(1, -1) ||
         !QcMaySelectFlushOrder(2, 0) || QcMaySelectFlushOrder(2, 1) || QcMaySelectFlushOrder(3, 0) ||
-        !QcMayRegisterUsage(0) || QcMayRegisterUsage(1))
+        !QcMayRegisterUsage(0) || !QcMayRegisterUsage(1) || QcMayRegisterUsage(2) || QcMayRegisterUsage(-1))
         return false;
     // #13: only frontier work wakes ordered drainers; unordered writes keep their policy wake-up.
     if (!QcSealWakes(4, 5, 0) || QcSealWakes(4, 5, 4096) || QcSealWakes(3, 5, 0) ||

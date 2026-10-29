@@ -29,7 +29,9 @@ struct QC_SPECIAL_RANGE
 enum : ULONG
 {
     QcRangesForceDirect = 1,
-    QcRangesReference = 2
+    QcRangesReference = 2,
+    QcRangesSafePaging = 3,
+    QcRangesLabPaging = 4 // Verification only: forced-direct writes are synthetic page-file writes.
 };
 struct QC_SPECIAL_RANGES_HEADER
 {
@@ -38,6 +40,12 @@ struct QC_SPECIAL_RANGES_HEADER
 };
 static_assert(sizeof(QC_SPECIAL_RANGE) == 16 && sizeof(QC_SPECIAL_RANGES_HEADER) == 24);
 static constexpr ULONG QcSpecialRangeMax = 256;
+#include "pagingorder.h"
+enum QC_SAFE_CLEAR_REASON : ULONG
+{
+    QcSafeEnable = 1, QcSafeDisable, QcSafeAllocation, QcSafeMode, QcSafeUsage,
+    QcSafeRemoval, QcSafeCachedWrite, QcSafeDirectWrite, QcSafeTrim, QcSafeSeed
+};
 // Durations are QPC ticks, converted using Frequency. Counters are lifetime cumulative.
 // V2 appends opt-in cooperative-read diagnostics; V3 appends drain phase timings.
 // V4 appends batch termination reasons and size buckets (one reason/bucket per batch).
@@ -174,6 +182,11 @@ struct QC_DIAGNOSTICS
     // those writes, whether the lower device reported write-through support when mode 2 was
     // selected (0 for other modes), and performance-counter ticks in group flushes (timing on only).
     ULONGLONG EpochWriteThroughGroups, EpochWriteThroughWrites, EpochWriteThroughAvailable, EpochFlushTicks;
+    // V28: paging-file ordering. Classification write counters are dispatch-time, write-only.
+    ULONGLONG PagingOrderBypasses, PagingOrderBypassBytes, PagingOrderLearnBarriers, UnidentifiedDirectBarriers;
+    ULONGLONG SafeRangeOverlapFound, SafeRangeTableFull, SafeRangeClears, SafeRangeCount, SafeRangeLastClearReason;
+    ULONGLONG PagingFileWriteRequests, PagingWriteNoFileObject, PagingWriteHighIrql;
+    ULONGLONG SafeMutationSequence; // Seed token: rejects maps captured across other writes.
 };
 static constexpr ULONG QcDiagnosticsV1Size = 80;
 static constexpr ULONG QcDiagnosticsV2Size = 216;
@@ -201,7 +214,9 @@ static constexpr ULONG QcDiagnosticsV23Size = 1136;
 static constexpr ULONG QcDiagnosticsV24Size = 1184;
 static constexpr ULONG QcDiagnosticsV25Size = 1208;
 static constexpr ULONG QcDiagnosticsV26Size = 1280;
-static_assert(sizeof(QC_DIAGNOSTICS) == 1312);
+static constexpr ULONG QcDiagnosticsV27Size = 1312;
+static_assert(sizeof(QC_DIAGNOSTICS) == 1416);
+static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, PagingOrderBypasses) == QcDiagnosticsV27Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, EpochWriteThroughGroups) == QcDiagnosticsV26Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, FlushOrderMode) == QcDiagnosticsV25Size);
 static_assert(FIELD_OFFSET(QC_DIAGNOSTICS, StrictPieces) == QcDiagnosticsV24Size);
@@ -589,6 +604,9 @@ struct QC_CACHE
     // set at up to DISPATCH_LEVEL for classification counters.
     KSPIN_LOCK RangeLock;
     ULONG ForceDirectCount, ReferenceCount;
+    BOOLEAN ForceDirectPaging; // RangeLock, lab-only classification override.
+    QC_SAFE_PAGING SafePaging; // Mutex; never read from dispatch.
+    volatile LONG64 PagingFileWriteRequests, PagingWriteNoFileObject, PagingWriteHighIrql;
     QC_SPECIAL_RANGE ForceDirect[QcSpecialRangeMax], Reference[QcSpecialRangeMax];
     volatile LONG64 PagingAdmittedWrites, PagingAdmittedBytes, PagingDirectWrites;
     volatile LONG64 PagingFileRequests, PagingNoFileObject, PagingHighIrql, PagingReferenceMisses;

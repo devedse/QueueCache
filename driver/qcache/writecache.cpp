@@ -85,6 +85,28 @@ static void ReleaseCache(QC_CACHE* c)
     ExReleasePushLockExclusiveEx(&c->Mutex, EX_DEFAULT_PUSH_LOCK_FLAGS);
     KeLeaveCriticalRegion();
 }
+// Mutex held on every safe-set access. Clearing does not allocate or wait.
+static void AdvanceSafeMutation(QC_CACHE* c)
+{
+    // Saturation refuses future seeds rather than reusing an old token.
+    if (c->Diagnostics.SafeMutationSequence != MAXULONGLONG) ++c->Diagnostics.SafeMutationSequence;
+}
+static void ClearSafePaging(QC_CACHE* c, QC_SAFE_CLEAR_REASON reason)
+{
+    AdvanceSafeMutation(c);
+    if (c->SafePaging.Count)
+    {
+        ++c->Diagnostics.SafeRangeClears;
+        c->Diagnostics.SafeRangeLastClearReason = reason;
+        c->SafePaging.Count = 0;
+        c->SafePaging.Low = c->SafePaging.High = 0;
+    }
+}
+static void InvalidateSafePaging(QC_CACHE* c, LONGLONG first, LONGLONG end, QC_SAFE_CLEAR_REASON reason)
+{
+    AdvanceSafeMutation(c);
+    if (QcSafePagingOverlaps(c->SafePaging, first, end)) ClearSafePaging(c, reason);
+}
 static void WakeDrainers(QC_CACHE* c)
 {
     // NotificationEvent is level-triggered. Re-signalling an already-set event
@@ -136,6 +158,7 @@ static void Publish(QC_CACHE* c)
     c->Diagnostics.FlushOrderMode = c->FlushOrderMode;
     c->Diagnostics.WriteEpoch = c->WriteEpoch;
     c->Diagnostics.DrainEpoch = c->DrainEpoch;
+    c->Diagnostics.SafeRangeCount = c->SafePaging.Count;
     c->DiagnosticsSnapshot = c->Diagnostics;
     c->Performance.Version = 5;
     c->Performance.Size = sizeof(QC_PERFORMANCE);
@@ -174,6 +197,9 @@ void QcCacheDiagnostics(QC_CACHE* c, QC_DIAGNOSTICS* output)
     output->LowerGeneratedWrites = InterlockedCompareExchange64(&c->LowerGeneratedWrites, 0, 0);
     output->LowerAllocationRetries = InterlockedCompareExchange64(&c->LowerAllocationRetries, 0, 0);
     output->PagingFileBypasses = InterlockedCompareExchange64(&c->PagingFileBypasses, 0, 0);
+    output->PagingFileWriteRequests = InterlockedCompareExchange64(&c->PagingFileWriteRequests, 0, 0);
+    output->PagingWriteNoFileObject = InterlockedCompareExchange64(&c->PagingWriteNoFileObject, 0, 0);
+    output->PagingWriteHighIrql = InterlockedCompareExchange64(&c->PagingWriteHighIrql, 0, 0);
     output->ReadFills = InterlockedCompareExchange64(&c->ReadFills, 0, 0);
     output->PagingReadFills = InterlockedCompareExchange64(&c->PagingReadFills, 0, 0);
     output->CallerPathReads = InterlockedCompareExchange64(&c->CallerPathReads, 0, 0);
@@ -348,12 +374,19 @@ bool QcCacheRecordPagingIo(QC_CACHE* c, PIRP irp)
     auto fileObject = RequestFileObject(irp);
     bool pagingFile = false;
     if (!fileObject)
+    {
         InterlockedIncrement64(&c->PagingNoFileObject);
+        if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedIncrement64(&c->PagingWriteNoFileObject);
+    }
     else if (KeGetCurrentIrql() > APC_LEVEL)
+    {
         InterlockedIncrement64(&c->PagingHighIrql);
+        if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedIncrement64(&c->PagingWriteHighIrql);
+    }
     else if (FsRtlIsPagingFile(fileObject))
     {
         InterlockedIncrement64(&c->PagingFileRequests);
+        if (stack->MajorFunction == IRP_MJ_WRITE) InterlockedIncrement64(&c->PagingFileWriteRequests);
         pagingFile = true;
     }
     else
@@ -903,7 +936,8 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
         return STATUS_INVALID_PARAMETER;
     const auto header = *static_cast<QC_SPECIAL_RANGES_HEADER*>(irp->AssociatedIrp.SystemBuffer);
     if (header.Version != 1 || header.Size != sizeof(header) || header.Count > QcSpecialRangeMax ||
-        (header.Flags != QcRangesForceDirect && header.Flags != QcRangesReference) ||
+        (header.Flags != QcRangesForceDirect && header.Flags != QcRangesReference &&
+         header.Flags != QcRangesSafePaging && header.Flags != QcRangesLabPaging) ||
         inputBytes != sizeof(header) + header.Count * sizeof(QC_SPECIAL_RANGE))
         return STATUS_INVALID_PARAMETER;
     auto ranges = reinterpret_cast<const QC_SPECIAL_RANGE*>(
@@ -911,12 +945,43 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
     for (ULONG i = 0; i < header.Count; ++i)
         if (ranges[i].Start < 0 || ranges[i].Length <= 0 || ranges[i].Start > MAXLONGLONG - ranges[i].Length)
             return STATUS_INVALID_PARAMETER;
+    if (header.Flags == QcRangesSafePaging)
+    {
+        AcquireCache(c);
+        const bool ordered = c->UnsafeDefer && c->FlushOrderMode != 0;
+        const auto size = c->State.DeviceBytes;
+        const auto sequence = c->Diagnostics.SafeMutationSequence;
+        ReleaseCache(c);
+        if (!ordered) return STATUS_INVALID_DEVICE_STATE;
+        if (sequence == MAXULONGLONG || header.Generation != sequence) return STATUS_RETRY;
+        for (ULONG i = 0; i < header.Count; ++i)
+            if (static_cast<ULONGLONG>(ranges[i].Start + ranges[i].Length) > size)
+                return STATUS_INVALID_PARAMETER;
+        // The foreground owner holds admission behind this control. Older copies
+        // and every sealed group must be durable before these extents become safe.
+        const auto status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
+        if (!NT_SUCCESS(status)) return status;
+        AcquireCache(c);
+        if (c->Diagnostics.SafeMutationSequence != sequence)
+        {
+            ReleaseCache(c);
+            return STATUS_RETRY;
+        }
+        ClearSafePaging(c, QcSafeSeed);
+        for (ULONG i = 0; i < header.Count; ++i)
+            if (!QcSafePagingAdd(c->SafePaging, ranges[i].Start, ranges[i].Start + ranges[i].Length))
+                ++c->Diagnostics.SafeRangeTableFull;
+        Publish(c);
+        ReleaseCache(c);
+        return STATUS_SUCCESS;
+    }
     // A newly forced range may cover cached versions; the direct path's overlap
     // fence reconciles them before any lower write, so no drain is needed here.
     KIRQL irql;
     KeAcquireSpinLock(&c->RangeLock, &irql);
-    if (header.Flags == QcRangesForceDirect)
+    if (header.Flags == QcRangesForceDirect || header.Flags == QcRangesLabPaging)
     {
+        c->ForceDirectPaging = header.Flags == QcRangesLabPaging;
         RtlCopyMemory(c->ForceDirect, ranges, header.Count * sizeof(QC_SPECIAL_RANGE));
         c->ForceDirectCount = header.Count;
     }
@@ -1595,6 +1660,7 @@ NTSTATUS QcCacheInitialize(QC_CACHE* c, PDEVICE_OBJECT self, PDEVICE_OBJECT lowe
 // Shared across disk instances, not a separate 4 GiB reservation per disk.
 static void FreeSlots(QC_CACHE* c)
 {
+    ClearSafePaging(c, QcSafeAllocation);
     const auto reservation = c->State.BudgetBytes;
     if (c->Slots)
     {
@@ -1656,12 +1722,15 @@ NTSTATUS QcCacheBarrier(QC_CACHE* c, BOOLEAN disable, QC_BARRIER_REASON reason, 
             c->Diagnostics.LastCode = code ? code : stack->Parameters.DeviceIoControl.IoControlCode;
     }
     if (disable)
+    {
+        ClearSafePaging(c, QcSafeDisable);
         c->Enabled = FALSE;
+    }
     c->Barrier = TRUE;
     c->Performance.Phase = QcDrainPhase;
     Publish(c);
-    while ((c->State.DirtyBytes || c->EpochFlushInFlight ||
-            (FlushOrdering(c) && (c->Head != NoSlot || c->TrimFenceCount || c->DrainEpoch < c->WriteEpoch))) &&
+    while (QcBarrierHasPending(FlushOrdering(c), c->State.DirtyBytes != 0, c->EpochFlushInFlight != FALSE,
+                              c->Head != NoSlot, c->TrimFenceCount != 0, c->DrainEpoch, c->WriteEpoch) &&
            NT_SUCCESS(c->State.LastError) && !c->Gone)
     {
         KeClearEvent(&c->Changed);
@@ -1717,6 +1786,7 @@ bool QcCacheDisconnect(QC_CACHE* c, QC_STATE* snapshot)
     // lock makes this the cutoff: previously pinned/copied requests retain
     // their ownership, but later requests cannot start from RAM.
     AcquireCache(c);
+    ClearSafePaging(c, QcSafeRemoval);
     const bool first = !InterlockedExchange(&c->Gone, TRUE);
     Publish(c);
     if (snapshot)
@@ -2000,6 +2070,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
                 status = STATUS_NOT_SUPPORTED;
             else
             {
+                ClearSafePaging(c, QcSafeMode);
                 c->FlushOrderMode = static_cast<LONG>(command.Value);
                 c->WriteEpoch = c->DrainEpoch = 1;
                 c->Diagnostics.EpochMaxSubmitted = 0;
@@ -2040,12 +2111,12 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
             // paging/hibernation/dump path. Keep it through Enabled transition.
             KIRQL irql;
             KeAcquireSpinLock(c->RoutingLock, &irql);
-            // Ordinary caching supports registered usage paths. Experimental
-            // ordering does not; also check activation against a prior reservation.
+            // Keep activation and prior usage reservations under the same lock.
             if (!QcMaySelectFlushOrder(static_cast<ULONGLONG>(c->FlushOrderMode), QcCachePagingPathCount(c)))
                 status = STATUS_NOT_SUPPORTED;
             else
             {
+                ClearSafePaging(c, QcSafeEnable);
                 c->Enabled = TRUE;
                 ++c->Generation;
             }
@@ -2197,6 +2268,7 @@ static NTSTATUS Control(QC_CACHE* c, PIRP irp, LONGLONG size)
 static NTSTATUS PrepareUsagePath(QC_CACHE* c, PIRP irp)
 {
     AcquireCache(c);
+    ClearSafePaging(c, QcSafeUsage);
     const bool active = c->Enabled != FALSE;
     auto status = irp->Cancel ? STATUS_CANCELLED : c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
     ReleaseCache(c);
@@ -2235,16 +2307,47 @@ static PUCHAR Map(PIRP irp)
 static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
 {
     const bool ordered = FlushOrdering(c);
-    if (ordered)
+    const auto end = first + length;
+    bool pagingFile = false;
+    if (ordered && KeGetCurrentIrql() <= APC_LEVEL)
     {
-        // An unsupported/unmappable paging write cannot be admitted to RAM.
-        // It must not bypass sealed dependencies elsewhere on the volume.
+        auto fileObject = RequestFileObject(irp);
+        pagingFile = fileObject && FsRtlIsPagingFile(fileObject);
+        // Verification on W: uses real forced-direct paging writes to an owned
+        // file. Only this explicit lab override substitutes for a page-file FO.
+        KIRQL irql;
+        KeAcquireSpinLock(&c->RangeLock, &irql);
+        if (!pagingFile && c->ForceDirectPaging)
+            for (ULONG i = 0; i < c->ForceDirectCount; ++i)
+                if (c->ForceDirect[i].Start <= first &&
+                    c->ForceDirect[i].Start + c->ForceDirect[i].Length >= end) pagingFile = true;
+        KeReleaseSpinLock(&c->RangeLock, irql);
+        pagingFile = pagingFile && Map(irp) != nullptr;
+    }
+    bool safe = ordered && pagingFile && QcSafePagingContains(c->SafePaging, first, end);
+    if (safe && PendingRange(c, first, end))
+    {
+        // Never silently wait on an impossible safe overlap. Fail closed and
+        // retain the witness even in Release builds.
+        ++c->Diagnostics.SafeRangeOverlapFound;
+        ClearSafePaging(c, QcSafeDirectWrite);
+        safe = false;
+    }
+    if (!pagingFile) InvalidateSafePaging(c, first, end, QcSafeDirectWrite);
+    if (ordered && !safe)
+    {
+        if (pagingFile) ++c->Diagnostics.PagingOrderLearnBarriers;
+        else ++c->Diagnostics.UnidentifiedDirectBarriers;
         ReleaseCache(c);
         const auto status = QcCacheBarrier(c, FALSE, QcOrderedBarrier, irp);
         if (!NT_SUCCESS(status)) return status;
         AcquireCache(c);
     }
-    const auto end = first + length;
+    if (safe)
+    {
+        ++c->Diagnostics.PagingOrderBypasses;
+        c->Diagnostics.PagingOrderBypassBytes += length;
+    }
     // A paging-marked write can also be ordinary mapped-file data. Drain
     // only its overlapping versions, including writes already issued by a
     // drainer. Keep the range fenced until the direct lower write completes.
@@ -2308,13 +2411,15 @@ static NTSTATUS DirectWrite(QC_CACHE* c, PIRP irp, LONGLONG first, ULONG length)
     if (NT_SUCCESS(status) && irp->IoStatus.Information != length)
         status = STATUS_DEVICE_DATA_ERROR;
     NTSTATUS orderedFlush = STATUS_SUCCESS;
-    if (ordered)
+    if (ordered && !safe)
     {
         orderedFlush = LowerIo(c, IRP_MJ_FLUSH_BUFFERS);
         if (NT_SUCCESS(status)) status = orderedFlush;
     }
     AcquireCache(c);
     if (!NT_SUCCESS(orderedFlush) && NT_SUCCESS(c->State.LastError)) Fault(c, orderedFlush);
+    if (ordered && pagingFile && !safe && NT_SUCCESS(status))
+        if (!QcSafePagingAdd(c->SafePaging, first, end)) ++c->Diagnostics.SafeRangeTableFull;
     // A failed or short lower write may still have changed some sectors.
     // The request reports that failure; no old clean view may survive it.
     InvalidateCleanRange(c, first, length);
@@ -2413,6 +2518,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     if (!c->Enabled || (writeThrough && !c->UnsafeDefer) || needed > WriteLimit(c))
     {
         const bool ordered = FlushOrdering(c);
+        InvalidateSafePaging(c, offset.QuadPart, end, QcSafeDirectWrite);
         auto reason = !c->Enabled ? QcDisabledWriteBarrier :
             (writeThrough && !c->UnsafeDefer) ? QcStrictWriteBarrier : QcQuotaWriteBarrier;
         ReleaseCache(c);
@@ -2573,6 +2679,7 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     // A write-through joins the open group with its unrelated predecessors: the seal
     // below makes the entire group durable before any later group submits.
     NT_ASSERT(!FlushOrdering(c) || writeEpoch == c->WriteEpoch);
+    InvalidateSafePaging(c, firstBlock, firstBlock + static_cast<LONGLONG>(blocks) * Chunk, QcSafeCachedWrite);
     ULONG admittedSlot = NoSlot;
     for (auto block = firstBlock; block < end; block += Chunk)
     {
@@ -3704,6 +3811,9 @@ static bool TryTrim(QC_CACHE* c, PIRP irp, LONGLONG deviceBytes, NTSTATUS* resul
             ranges[merged++] = ranges[i];
     }
     AcquireCache(c);
+    for (ULONG i = 0; i < merged; ++i)
+        InvalidateSafePaging(c, ranges[i].StartingOffset,
+            ranges[i].StartingOffset + static_cast<LONGLONG>(ranges[i].LengthInBytes), QcSafeTrim);
     c->TrimPaused = TRUE;
     // The serialized request worker admits no subsequent writes while this request
     // runs, and TrimPaused starts no new drain batch. Wait only for already-issued

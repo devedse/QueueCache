@@ -1,67 +1,29 @@
-// Compile-time model of the usage-path/activation ordering contract.
+// SPDX-License-Identifier: MIT
 #pragma once
-
-struct QC_USAGE_PATH_MODEL
-{
-    bool Enabled;
-    unsigned Paths;
-};
-
-constexpr bool QcModelEnable(QC_USAGE_PATH_MODEL& state)
-{
-    if (state.Paths != 0)
-        return false;
-    state.Enabled = true;
-    return true;
-}
-
-constexpr void QcModelReserveInPath(QC_USAGE_PATH_MODEL& state)
-{
-    ++state.Paths;
-}
-
-constexpr void QcModelCompleteInPath(QC_USAGE_PATH_MODEL& state, bool success)
-{
-    if (!success)
-        --state.Paths;
-    else
-        state.Enabled = false;
-}
-
-constexpr void QcModelCompleteOutPath(QC_USAGE_PATH_MODEL& state, bool success)
-{
-    if (success && state.Paths != 0)
-        --state.Paths;
-}
-
+#include "cachepolicy.h"
+// The real policy predicates, under the same serialized selection/reservation
+// order as dispatch. Successful registration preserves the active cache.
 constexpr bool QcUsagePathContract()
 {
-    QC_USAGE_PATH_MODEL notificationFirst{false, 0};
-    QcModelReserveInPath(notificationFirst);
-    if (QcModelEnable(notificationFirst))
-        return false;
-    QcModelCompleteInPath(notificationFirst, true);
-    if (notificationFirst.Enabled || notificationFirst.Paths != 1)
-        return false;
-    QcModelCompleteOutPath(notificationFirst, false);
-    if (notificationFirst.Paths != 1)
-        return false;
-    QcModelCompleteOutPath(notificationFirst, true);
-    if (notificationFirst.Paths != 0)
-        return false;
-
-    QC_USAGE_PATH_MODEL enableFirst{false, 0};
-    if (!QcModelEnable(enableFirst))
-        return false;
-    QcModelReserveInPath(enableFirst);
-    QcModelCompleteInPath(enableFirst, true);
-    if (enableFirst.Enabled || enableFirst.Paths != 1)
-        return false;
-
-    QC_USAGE_PATH_MODEL failedNotification{false, 0};
-    QcModelReserveInPath(failedNotification);
-    QcModelCompleteInPath(failedNotification, false);
-    return failedNotification.Paths == 0 && QcModelEnable(failedNotification);
+    for (LONG mode = -1; mode <= 3; ++mode)
+    {
+        for (LONG paths = -1; paths <= 3; ++paths)
+        {
+            const bool expected = paths >= 0 && (mode == 0 || mode == 1 || (mode == 2 && paths == 0));
+            if (QcMaySelectFlushOrder(static_cast<ULONGLONG>(mode), paths) != expected)
+                return false;
+        }
+        if (QcMayRegisterUsage(mode) != (mode == 0 || mode == 1)) return false;
+    }
+    // Both reservation-first and selection-first support an ordinary ordered
+    // cache. A failed notification drops its reservation, not its cache setting.
+    LONG paths = 0;
+    if (!QcMayRegisterUsage(1)) return false;
+    ++paths;
+    if (!QcMaySelectFlushOrder(1, paths)) return false;
+    --paths;
+    if (!QcMaySelectFlushOrder(1, paths)) return false;
+    ++paths;
+    return QcMaySelectFlushOrder(1, paths);
 }
-
-static_assert(QcUsagePathContract(), "Usage-path reservation/activation contract changed");
+static_assert(QcUsagePathContract(), "Usage-path selection/reservation contract changed");

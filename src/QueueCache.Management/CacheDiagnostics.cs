@@ -38,7 +38,7 @@ public sealed record CachePagingAdmission(ulong AdmittedWrites, ulong AdmittedBy
     ulong ForceDirectRanges, ulong ReferenceRanges);
 /// <summary>Which driver range set to replace: ForceDirect keeps matching paging traffic on the direct path;
 /// Reference is observe-only paging-file extents for the recognition cross-check.</summary>
-public enum SpecialRangeKind : uint { ForceDirect = 1, Reference = 2 }
+public enum SpecialRangeKind : uint { ForceDirect = 1, Reference = 2, SafePaging = 3, LabPaging = 4 }
 /// <summary>One special-file range in disk byte offsets.</summary>
 public sealed record DiskRange(long Start, long Length);
 public sealed record CacheLabGate(ulong State, ulong Hits, ulong OldSubmitSeq, ulong OldLowerDoneSeq,
@@ -77,7 +77,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public const int FlushOrderWireSize = 1280;
     public const int WriteThroughGroupsWireSize = 1312;
     /// <summary>The newest version: the buffer callers offer, so the driver returns every known field.</summary>
-    public const int CurrentWireSize = WriteThroughGroupsWireSize;
+    public const int PagingOrderWireSize = 1416;
+    public const int CurrentWireSize = PagingOrderWireSize;
     public CacheAttribution? Attribution { get; init; }
     public CacheUsagePaths? UsagePaths { get; init; }
     public CacheUsageActivities? UsageActivity { get; init; }
@@ -128,6 +129,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
     public CacheFlushOrder? FlushOrder { get; init; }
     /// <summary>V27 (#31): lab ordering mode 2's forced-unit-access groups and the time spent in group flushes.</summary>
     public CacheWriteThroughGroups? WriteThroughGroups { get; init; }
+    /// <summary>V28: capability and evidence for safe page-file write ordering.</summary>
+    public CachePagingOrder? PagingOrder { get; init; }
     public static CacheDiagnostics Decode(ReadOnlySpan<byte> bytes)
     {
         var expectedVersion = bytes.Length switch
@@ -159,6 +162,7 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             StrictBacklogWireSize => 25u,
             FlushOrderWireSize => 26u,
             WriteThroughGroupsWireSize => 27u,
+            PagingOrderWireSize => 28u,
             _ => 0u
         };
         if (expectedVersion == 0 || BinaryPrimitives.ReadUInt32LittleEndian(bytes) != expectedVersion ||
@@ -364,6 +368,17 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(FlushOrderWireSize + 16)..]),
                 BinaryPrimitives.ReadUInt64LittleEndian(bytes[(FlushOrderWireSize + 24)..]))
             : null;
+        CachePagingOrder? pagingOrder = null;
+        if (bytes.Length >= PagingOrderWireSize)
+        {
+            var fields = new ulong[13];
+            for (var i = 0; i < fields.Length; ++i)
+                fields[i] = BinaryPrimitives.ReadUInt64LittleEndian(bytes[(WriteThroughGroupsWireSize + 8 * i)..]);
+            if (fields[7] > SpecialRangeMap.MaxRanges || fields[8] > 10)
+                throw new InvalidDataException("Invalid safe paging-range state.");
+            pagingOrder = new(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5],
+                fields[6], fields[7], fields[8], fields[9], fields[10], fields[11], fields[12]);
+        }
         if (writeThroughGroups is { Available: > 1 })
             throw new InvalidDataException("Invalid write-through availability.");
         if (flushOrder is { Mode: > 2 } || flushOrder is { CurrentEpoch: 0 } or { DrainingEpoch: 0 } ||
@@ -399,7 +414,8 @@ public sealed record CacheDiagnostics(ulong ApplicationFlushes, ulong DeferredFl
             DrainPriority = drainPriority,
             StrictBacklog = strictBacklog,
             FlushOrder = flushOrder,
-            WriteThroughGroups = writeThroughGroups
+            WriteThroughGroups = writeThroughGroups,
+            PagingOrder = pagingOrder
         };
     }
 }
@@ -477,3 +493,11 @@ public sealed record CacheStagedReads(ulong Requests, ulong Bytes, ulong MixedRe
 }
 /// <summary>Requests served on the dispatching thread instead of the request worker.</summary>
 public sealed record CacheCallerPath(ulong Reads, ulong Writes, ulong Declined);
+
+/// <summary>V28. Presence is the loaded driver's system-volume ordering capability. Last clear reason:
+/// 0 none, 1 enable, 2 disable, 3 allocation, 4 mode, 5 usage, 6 removal, 7 cached write,
+/// 8 other direct write, 9 TRIM, 10 seed replacement. Classification counters count writes only.</summary>
+public sealed record CachePagingOrder(ulong Bypasses, ulong BypassBytes, ulong LearnBarriers,
+    ulong UnidentifiedDirectBarriers, ulong OverlapFound, ulong TableFull, ulong Clears,
+    ulong SafeRanges, ulong LastClearReason, ulong PagingFileWrites, ulong NoFileObjectWrites,
+    ulong HighIrqlWrites, ulong SeedSequence);

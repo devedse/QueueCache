@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
@@ -21,6 +22,28 @@ internal static class DiagnosticContracts
             throw new Exception("Expected diagnostic evidence rejection.");
         }
         Check(VerificationPlan.Version == 206, "plan 206 retains UTC and requires monotonic cache-exercise coverage");
+        // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
+        var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
+        BinaryPrimitives.WriteUInt32LittleEndian(pagingWire.AsSpan(4), (uint)pagingWire.Length);
+        BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.StrictBacklogWireSize + 8), 1);
+        BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.StrictBacklogWireSize + 16), 1);
+        for (var i = 0; i < 13; ++i)
+            BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + i * 8), (ulong)i);
+        Check(CacheDiagnostics.Decode(pagingWire).PagingOrder == new CachePagingOrder(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12),
+            "V28 paging-order field offsets and write-only classification");
+        var olderWire = pagingWire[..CacheDiagnostics.WriteThroughGroupsWireSize];
+        BinaryPrimitives.WriteUInt32LittleEndian(olderWire, 27);
+        BinaryPrimitives.WriteUInt32LittleEndian(olderWire.AsSpan(4), (uint)olderWire.Length);
+        Check(CacheDiagnostics.Decode(olderWire).PagingOrder is null, "V27 has no system-ordering capability");
+        BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 7 * 8), 257);
+        Reject(() => CacheDiagnostics.Decode(pagingWire));
+        BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 7 * 8), 256);
+        BinaryPrimitives.WriteUInt64LittleEndian(pagingWire.AsSpan(CacheDiagnostics.WriteThroughGroupsWireSize + 8 * 8), 11);
+        Reject(() => CacheDiagnostics.Decode(pagingWire));
+        var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
+        Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
+            "Safe paging seeds use the separate range set without altering older flags");
         var clockStart = new TelemetryClock(10_000_000, 1_000_000);
         var clockEnd = clockStart with { Timestamp = 12_000_000 };
         TelemetryClock?[] coveredClocks = [clockStart, clockStart with { Timestamp = 11_000_000 }, clockEnd];

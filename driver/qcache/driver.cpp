@@ -1171,6 +1171,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
             QC_DIAGNOSTICS diagnostics;
             QcCacheDiagnostics(&ext->Cache, &diagnostics);
             auto returned = outputLength >= sizeof(diagnostics) ? sizeof(diagnostics) :
+                outputLength >= QcDiagnosticsV27Size ? QcDiagnosticsV27Size :
                 outputLength >= QcDiagnosticsV26Size ? QcDiagnosticsV26Size :
                 outputLength >= QcDiagnosticsV25Size ? QcDiagnosticsV25Size :
                 outputLength >= QcDiagnosticsV24Size ? QcDiagnosticsV24Size :
@@ -1208,7 +1209,7 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
                 returned == QcDiagnosticsV20Size ? 20 : returned == QcDiagnosticsV21Size ? 21 :
                 returned == QcDiagnosticsV22Size ? 22 : returned == QcDiagnosticsV23Size ? 23 :
                 returned == QcDiagnosticsV24Size ? 24 : returned == QcDiagnosticsV25Size ? 25 :
-                returned == QcDiagnosticsV26Size ? 26 : 27;
+                returned == QcDiagnosticsV26Size ? 26 : returned == QcDiagnosticsV27Size ? 27 : 28;
             diagnostics.Size = static_cast<ULONG>(returned);
             RtlCopyMemory(irp->AssociatedIrp.SystemBuffer, &diagnostics, returned);
             IoReleaseRemoveLock(&ext->RemoveLock, irp);
@@ -1365,11 +1366,13 @@ NTSTATUS QcDispatch(PDEVICE_OBJECT device, PIRP irp)
         QcSnapshotControlWithoutDrain(stack->Parameters.DeviceIoControl.IoControlCode))
         return Forward(ext, irp); // See observation.h: shadow-copy controls after flush-and-hold.
 #if QCACHE_CACHE_DRIVER
-    // Paging-file blocks are never cached (registration drains and drops clean data,
-    // and paging-file writes are never admitted), so this I/O needs no ordering
-    // against the cache. Forwarding it here means a page-in never waits behind the
-    // worker, whatever the worker is blocked on. No DirectCount, like observations.
-    if (pagingFile)
+    // Page-ins must never wait behind the worker: lower drivers can fault pages
+    // while it waits for I/O. Unordered page-file writes also forward here.
+    // Ordered writes use the safe-range protocol below. No DirectCount for the
+    // forwarded requests, like observations.
+    // Ordered page-file writes need the safe-range fence/learning path. Page-ins
+    // still bypass the worker so lower drivers can fault pages while it waits.
+    if (pagingFile && (stack->MajorFunction != IRP_MJ_WRITE || ReadNoFence(&ext->Cache.FlushOrderMode) == 0))
     {
         InterlockedIncrement64(&ext->Cache.PagingFileBypasses);
         return Forward(ext, irp);

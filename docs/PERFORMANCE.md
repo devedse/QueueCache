@@ -120,6 +120,32 @@ effect are unknown; the warnings cleared after restoration. Controls and exact r
 
 ## Results, newest first
 
+### C: ordering baseline (#32, October 29)
+
+The 0.4.882.1 native pair, with a saved 2 GiB Fast C: cache, ordering off, Verifier
+off and the dedicated Defender/Search baseline, passed the pre-implementation
+screen. Ten minutes idle and the 91.3 s copy/archive/extract/app-launch workload
+had busiest observed one-minute flush-plus-write-through rates of **2.53/s** and
+**10.04/s**, below the 100/s gate. Both and the corrected five-minute memory-pressure
+step had **zero unidentified direct paging writes, mapping failures or cache errors**.
+The guarded recognition suite reported zero reference misses and byte-exact
+program-file reads. Recognition counters on this driver mix reads and writes;
+DirectWrites is write-only, with no force-direct ranges armed.
+
+The pressure fixture locked 5.625 GiB and the pager allocated 4 GiB; its heartbeat's
+longest interval was **0.343 s**. Its first attempt is invalid: an Int32 overload in
+the private PowerShell RAM-lock fixture failed, while the pager continued. The
+corrected repeat, separate completion records and allocation checks supply the
+pressure result; the invalid attempt is not counted as a passing pressure test.
+Five minutes creating and flushing new 4 KiB files completed 480,832 files,
+**1,603 files/s**. This flush-heavy row is a baseline, not an ordering-on result.
+
+These measurements permit implementation of the C: ordering experiment. They do
+not qualify ordering on C:, change its default, or establish an on/off cost. The
+existing saved C: profile was preserved and the baseline payloads removed. All 81
+exported evidence files were independently hash-checked. Further work is tracked
+in [#32](https://github.com/devedse/QueueCache/issues/32).
+
 <a id="release-206"></a>**Final release qualification and #13 scope, plan 206 (2026-10-28).**
 The current ordering mode meets the planned NTFS data-volume VM-reset screen:
 six ordering-on scenarios plus a middle-drain repeat passed on native 0.4.882.1;
