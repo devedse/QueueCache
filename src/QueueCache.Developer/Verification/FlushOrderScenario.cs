@@ -12,7 +12,7 @@ namespace QueueCache.Developer.Verification;
 public static class FlushOrderScenario
 {
     private const int Block = 4096, MiB = 1 << 20, Offset = 4 * MiB;
-    public const int CheckCount = 14, WriteThroughCheckCount = 11;
+    public const int CheckCount = 14 + PagingOrderScenario.CheckCount, WriteThroughCheckCount = 11;
     public const ulong On = 1, WriteThrough = 2;
 
     /// <summary>Mode 1 runs every check, including the per-cache setting. Lab mode 2 (#31) runs the driver
@@ -317,7 +317,10 @@ public static class FlushOrderScenario
             checks.Add(CheckOversizedFallback(target, device, workDirectory, evidence, mode));
             checks.Add(CheckMapFallback(target, device, workDirectory, evidence, mode));
             if (mode == On)
+            {
                 checks.Add(await CheckSetting(target, device, evidence));
+                checks.AddRange(await PagingOrderScenario.RunAsync(target, device, workDirectory, evidence));
+            }
             if (mode == WriteThrough)
                 for (var i = 0; i < checks.Count; i++)
                     checks[i] = checks[i] with { Name = "flush-order-fua/" + checks[i].Name["flush-order/".Length..] };

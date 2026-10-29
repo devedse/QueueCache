@@ -23,7 +23,7 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
     long? DrainSeedBytes = null, string? StartFile = null,
     string? ProcessEvidence = null, ComparisonProvider? Provider = null, string? PrimoCli = null,
-    bool DurableCheckpoint = false, bool WriteThroughGeneration2 = false);
+    bool DurableCheckpoint = false, bool WriteThroughGeneration2 = false, bool GrowthMarkers = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
@@ -296,13 +296,33 @@ public static class VerificationWorker
             Console.Error.Flush();
         }
         Stage("job loaded; validating target");
+        if (SystemPreflightGuard.IsSystemDurability(job.Volume, job.Operation == "compare-target" ? job.Suite! : job.Operation) ||
+            job.Suite == "system-paging-ordering")
+        {
+            var suite = job.Operation == "compare-target" ? job.Suite! :
+                job.Suite == "system-paging-ordering" ? job.Suite : job.Operation;
+            SystemPreflightGuard.ValidateOptions(new(job.Volume, suite, BudgetMiB: job.BudgetMiB,
+                SystemInstance: job.SystemInstance, SystemBytes: job.SystemBytes, RecoverableVm: job.RecoverableVm,
+                Product: job.Product, OraclePath: job.Suite == "system-paging-ordering" ? null : job.OraclePath));
+            var guardedTarget = await DiskTarget.InspectAsync(job.Volume);
+            var guardedOutput = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(job.Reply)!));
+            SystemPreflightGuard.ValidateTargets(guardedTarget, guardedOutput, job.SystemInstance!, job.SystemBytes!.Value);
+            if (job.OraclePath is { } oracle)
+            {
+                var oracleTarget = await DiskTarget.InspectAsync(SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(Path.GetFullPath(oracle))!));
+                SystemPreflightGuard.ValidateTargets(guardedTarget, oracleTarget, job.SystemInstance!, job.SystemBytes.Value);
+            }
+        }
         // Comparisons measure other products' volumes, which may have no disk number or QueueCache device.
         if (job.Operation == "compare-target")
         {
             RunStorage.AtomicJson(job.Reply, ComparisonScenarios.Inspect(job.Volume, Path.GetDirectoryName(job.Reply)!,
-                job.Suite ?? throw new ArgumentException("Missing comparison suite.")));
+                job.Suite ?? throw new ArgumentException("Missing comparison suite."),
+                SystemPreflightGuard.IsSystemDurability(job.Volume, job.Suite!)));
             return 0;
         }
+        if (job.Operation.StartsWith("paging-order-", StringComparison.Ordinal) && job.Suite == SystemPagingOrdering.Suite)
+            return await SystemPagingOrdering.WorkerAsync(job);
         if (job.Operation == "compare-drain-restore")
         {
             await ComparisonDrainScenarios.RestoreAsync(job);
@@ -748,7 +768,8 @@ public static class VerificationWorker
             case "campaign-prepare":
                 // Testing a data partition on the OS physical disk is also excluded.
                 var inventory = (await DiskCatalog.ListAsync()).Single(d => d.Number == target.Number);
-                if (inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0)
+                if ((inventory.IsBoot || inventory.IsSystem || device.GetStatistics().PagingPathCount != 0) &&
+                    job.Suite != "system-paging-ordering")
                     throw new IOException("Verification excludes boot/system/paging disks.");
                 // Only the supported registration is verified: topmost volume filter on every volume, none on disks.
                 var registrationProblems = DriverRegistration.Inspect().Problems();

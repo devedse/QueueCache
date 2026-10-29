@@ -5,9 +5,14 @@ namespace QueueCache.Developer.Verification;
 /// <summary>Read-only OS-disk inventory gate. It never enables caching or writes a workload.</summary>
 public static class SystemPreflightGuard
 {
+    public static bool IsSystemDurability(string volume, string suite) =>
+        volume.Equals("C:", StringComparison.OrdinalIgnoreCase) &&
+        suite is "compare-durability-write" or "compare-durability-churn" or "compare-durability-verify";
+
     public static void ValidateOptions(VerificationOptions options)
     {
-        if (options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session"))
+        var durability = IsSystemDurability(options.Volume, options.Suite);
+        if (!durability && options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering"))
         {
             if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm ||
                 options.OraclePath is not null && options.Suite != "compare-durability-verify")
@@ -20,6 +25,16 @@ public static class SystemPreflightGuard
             throw new ArgumentException("System suites require C:, --recoverable-vm, --system-instance and --system-bytes.");
         if (options.DiskSpd is not null || options.CaseFilter is not null)
             throw new ArgumentException("System suites do not accept DiskSpd or case filters.");
+        if (durability)
+        {
+            if (options.Product?.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase) != true)
+                throw new ArgumentException("Guarded C: durability requires a QueueCache product label.");
+            if ((options.Suite == "compare-durability-verify") != (options.OraclePath is not null))
+                throw new ArgumentException("C: durability verification requires its off-disk oracle.");
+            return;
+        }
+        if (options.Suite == "system-paging-ordering" && options.BudgetMiB != 2048)
+            throw new ArgumentException("system-paging-ordering requires --budget-mib 2048.");
         if ((options.Suite == "system-post-restart") != (options.OraclePath is not null))
             throw new ArgumentException("--oracle is required only for system-post-restart.");
         if (options.Suite == "system-active-image" && options.BudgetMiB is < 256 or > 512)

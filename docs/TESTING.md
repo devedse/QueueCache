@@ -123,7 +123,17 @@ it finish. Results go to a new folder under `--output`.
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
-Plan 176 extends the standalone experimental `flush-order` suite without expanding the retained matrix.
+Plan 207 adds eight paging-ordering checks to standalone `flush-order` (case `flush-order-v207`):
+seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
+cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. Diagnostics V28 is append-only; V27 remains
+the FUA layout. C: durability write/churn/verify are accepted only with the guarded system identity,
+recoverable-VM opt-in, a QueueCache product label and evidence/oracles on another physical disk.
+`--growth-markers` selects a distinct schema-6 C: durability workload: 2,000 markers reach an explicit
+filesystem/cache checkpoint before they are deleted; their deletion-group range is recorded before cut readiness.
+Post-cut verification accepts absent or exact markers only, and rejects changed or unreadable ones. This does
+not force NTFS to reuse the marker clusters for page-file growth.
+The retained release matrix is unchanged.
+Plan 176 extended the standalone `flush-order` suite without expanding the retained matrix.
 Plan 183 adds retained-version capacity, live mode-change refusal and
 disable/release/reapply checks (nine total), plus the narrow `flush-order-cost`
 screen. Its observer must complete the ready handshake before the worker starts,
@@ -361,6 +371,7 @@ ones in use:
 | `stress-races` | Both lab NTFS volumes at once under concurrent writers of 4 KiB to 4 MiB, cancelled overlapped I/O, cache flush/resize/teardown/drop/delay/allocation faults, refused settings and RAM disk churn; then fault and Retry at drain parallelism 1, 2 and 4; every byte read back. Plan 128 flushes filesystem metadata before fault injection and after retry, and requires retained-byte drainage plus a clean result. Since plan 167, a churn RAM-disk creation that the RAM headroom guard refuses (on a 16 GiB VM the previous disk's 2 GiB may not have returned yet) is retried and counted; fewer than two completed cycles still fails | Lab VHDX; `--soak-seconds` (default 240); run under Driver Verifier and without |
 | `managed-provider`, `ram-disk`, `vhdx-backed`, `image-in-ram`, `managed-cli`, `managed-broker-restart`, `managed-lifecycle-*` | Managed disk creation, checkpoints, broker restart and restart lifecycle. `managed-lifecycle-*` needs an empty virtual-disk list, a host volume off the Windows disk and an `--output` folder on another disk that only administrators can change (the [image folder rule](MANAGED_DISKS.md)) | Owned fixtures only |
 | `disk-removal`, `disk-removal-windows` | Eject with pending writes, reconnect | Disposable disk identity required |
+| `system-paging-ordering` | Plan 207: guarded C:, 2 GiB ordered Fast cache, seeded paging extents, two-minute locked-memory + 4 GiB pager workload, flushed-file writer and heartbeat | Explicit system identity/VM opt-in and output on another physical disk; observe safe bypasses while earlier saves are pending, zero safe overlaps, heartbeat ≤2 s, lower-disk byte checks and independent restoration. Original saved profiles are preserved. |
 | `system-*` | Guarded checks on the OS disk | Explicit acknowledgement and off-disk output |
 | `write-performance` | 72 fitting-file write cases: random 4K Q1/Q32, sequential 1M Q1/Q8, Off/Eager/Idle, timing off/on | `--budget-mib 2048`; ~35-55 min |
 | `cache-recall`, `cache-sustained`, `cache-map-cost`, `cache-concurrency` | Read recall, long mixed use with byte oracles, map polling cost, concurrent streams. Plan 129 primes the write profile before RAM-only write counters start; the scored window still requires zero lower I/O | `cache-sustained` defaults to a 30-minute soak |

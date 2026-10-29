@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 206;
+    public const int Version = 207;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -79,6 +79,7 @@ public static class VerificationPlan
         "system-image-baseline",
         "system-active-image",
         "system-paging-recognition",
+        "system-paging-ordering",
         "system-app-session",
         "policies",
         "cache-allocation",
@@ -219,6 +220,7 @@ public static class VerificationPlan
             new("system-active-image-strict", "system-active-image")
         ],
         "system-paging-recognition" => [new("system-paging-recognition", "system-paging-recognition")],
+        "system-paging-ordering" => [new("system-paging-ordering-v207", "system-paging-ordering")],
         "system-app-session" => [new("system-app-session", "system-app-session")],
         "policies" => [new("policy-integrity", "policies")],
         "cache-allocation" => [new("cache-allocation-bounds", "cache-allocation")],
@@ -226,7 +228,7 @@ public static class VerificationPlan
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
         var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
-        "flush-order" => [new("flush-order-v199", "flush-order")],
+        "flush-order" => [new("flush-order-v207", "flush-order")],
         "flush-order-cost" => [new("flush-order-cost", "flush-order-cost")],
         "flush-order-sustained" => [new("flush-order-sustained", "flush-order-sustained")],
         "flush-order-fua" => [new("flush-order-fua-v201", "flush-order-fua")],
@@ -253,7 +255,8 @@ public static class VerificationPlan
         // Plan 165: the policies parallel-copies scenario alone, alternating the 2048 KiB default and 1024 KiB batches.
         ParallelCopiesSuite => Enumerable.Range(1, options.Repeats).SelectMany(r => (r % 2 == 1 ? new[] { 2048, 1024 } : [1024, 2048])
             .Select(batch => new IntegrityCase($"parallel-copies-b{batch}-r{r}", $"parallel-copies-{batch}"))).ToArray(),
-        var suite when ComparisonPlan.IsComparison(suite) => [new(suite, suite)],
+        var suite when ComparisonPlan.IsComparison(suite) => [new(suite + (options.GrowthMarkers ? "-growth-v207" :
+            SystemPreflightGuard.IsSystemDurability(options.Volume, suite) ? "-system-v207" : ""), suite)],
         _ => []
     };
 
@@ -508,6 +511,9 @@ public static class VerificationPlan
             throw new ArgumentException("Unknown verification suite.");
         }
         SystemPreflightGuard.ValidateOptions(options);
+        if (options.GrowthMarkers && (!SystemPreflightGuard.IsSystemDurability(options.Volume, options.Suite) ||
+            options.Suite != "compare-durability-write" || options.DurableCheckpoint || options.WriteThroughGeneration2))
+            throw new ArgumentException("--growth-markers requires guarded C: compare-durability-write without other cut variants.");
         if (options.WriteThroughGeneration2 && (options.Suite != "compare-durability-write" ||
             options.Product?.StartsWith("QueueCache", StringComparison.OrdinalIgnoreCase) != true))
             throw new ArgumentException("--write-through-generation2 requires compare-durability-write and a QueueCache product label.");

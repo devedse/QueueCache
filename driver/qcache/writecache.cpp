@@ -104,6 +104,7 @@ static void ClearSafePaging(QC_CACHE* c, QC_SAFE_CLEAR_REASON reason)
 }
 static void InvalidateSafePaging(QC_CACHE* c, LONGLONG first, LONGLONG end, QC_SAFE_CLEAR_REASON reason)
 {
+    if (!c->FlushOrderMode && !c->SafePaging.Count) return;
     AdvanceSafeMutation(c);
     if (QcSafePagingOverlaps(c->SafePaging, first, end)) ClearSafePaging(c, reason);
 }
@@ -2504,6 +2505,8 @@ static NTSTATUS Write(QC_CACHE* c, PIRP irp, bool callerPath = false)
     }
     if (!c->Enabled && !c->State.DirtyBytes)
     {
+        InvalidateSafePaging(c, offset.QuadPart, end, QcSafeDirectWrite);
+        if (c->FlushOrderMode) Publish(c);
         ReleaseCache(c);
         return OriginalIo(c, irp);
     }

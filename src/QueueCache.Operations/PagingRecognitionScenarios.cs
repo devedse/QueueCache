@@ -86,7 +86,19 @@ public static class PagingRecognitionScenarios
             var checks = Evaluate(diagnosticsBefore.PagingAdmission!, diagnosticsAfter.PagingAdmission!,
                 diagnosticsBefore.PagingIo!, diagnosticsAfter.PagingIo!,
                 $"Reference: {map.Ranges.Count} range(s) of {string.Join(", ", map.Files)}. {pressure}",
-                diagnosticsBefore.PagingFileBypasses, diagnosticsAfter.PagingFileBypasses);
+                diagnosticsBefore.FlushOrder is { Mode: > 0 } ? null : diagnosticsBefore.PagingFileBypasses,
+                diagnosticsBefore.FlushOrder is { Mode: > 0 } ? null : diagnosticsAfter.PagingFileBypasses);
+            if (diagnosticsBefore.FlushOrder is { Mode: > 0 })
+            {
+                var a = diagnosticsBefore.PagingOrder ?? throw new IOException("Ordered paging requires V28 diagnostics.");
+                var b = diagnosticsAfter.PagingOrder ?? throw new IOException("Ordered paging diagnostics disappeared.");
+                if (b.OverlapFound != 0 || diagnosticsAfter.FlushOrder?.Mode != diagnosticsBefore.FlushOrder.Mode)
+                    throw new IOException("Ordering mode changed or a safe-range overlap was found.");
+                checks = [.. checks, new CheckResult("system-paging/ordered-routing", "PASS",
+                    $"Page-file writes classified {b.PagingFileWrites - a.PagingFileWrites}; safe bypasses {b.Bypasses - a.Bypasses}; " +
+                    $"learning barriers {b.LearnBarriers - a.LearnBarriers}; unidentified barriers {b.UnidentifiedDirectBarriers - a.UnidentifiedDirectBarriers}. " +
+                    "Page-ins retain immediate forwarding; ordered writes use the safe-range path.")];
+            }
             return [.. checks, VerifyImages(images.Length, images.Sum(path => new FileInfo(path).Length), mismatched, launches,
                 diagnosticsBefore.PagingReadsRepeatedPages is null || diagnosticsAfter.PagingReadsRepeatedPages is null
                     ? null : diagnosticsAfter.PagingReadsRepeatedPages - diagnosticsBefore.PagingReadsRepeatedPages,

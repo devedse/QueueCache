@@ -67,9 +67,10 @@ public static class ComparisonPlan
         _ => 300
     };
 
-    public static IReadOnlyList<ComparisonCase> CasesFor(string suite, int repeats)
+    public static IReadOnlyList<ComparisonCase> CasesFor(string suite, int repeats, bool growthMarkers = false)
     {
         if (repeats is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(repeats), "Comparison suites take 1..3 repeats.");
+        if (growthMarkers && suite != "compare-durability-write") throw new ArgumentException("Growth markers are a durability-write variant.");
         var cases = suite switch
         {
             "compare-drain" => ComparisonDrain.Cases(repeats),
@@ -80,7 +81,7 @@ public static class ComparisonPlan
             "compare-ram" => Ram(repeats),
             "compare-cache" => Cache(repeats),
             "compare-cache-cold" => CacheCold(),
-            "compare-durability-write" => [new("durability-write", "durability-write", 1)],
+            "compare-durability-write" => [new(growthMarkers ? "durability-growth-v207" : "durability-write", "durability-write", 1)],
             "compare-durability-churn" => [new("durability-churn", "durability-churn", 1)],
             "compare-durability-verify" => [new("durability-verify", "durability-verify", 1)],
             _ => throw new ArgumentException("Not a comparison suite: " + suite)

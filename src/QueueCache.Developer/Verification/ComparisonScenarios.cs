@@ -37,6 +37,9 @@ public sealed record TreeResult(int Files, long Bytes, double CreateSeconds, dou
 public sealed record DurabilityOracle(int SchemaVersion, ulong Nonce, string Directory, int SetMiB, int SmallFiles,
     DateTimeOffset Generation1Utc, DateTimeOffset CompletedUtc, double FlushedSetFlushSeconds, string Product)
 {
+    public int GrowthMarkers { get; init; }
+    public ulong? MarkerDeleteStartEpoch { get; init; }
+    public ulong? MarkerDeleteEndEpoch { get; init; }
     public bool DurableCheckpoint { get; init; }
     public bool WriteThroughGeneration2 { get; init; }
     public ulong? WriteThroughRequestsObserved { get; init; }
@@ -65,14 +68,14 @@ internal static class ComparisonScenarios
     private const int Block = 1 << 20;
     private const FileOptions NoBuffering = (FileOptions)0x20000000;
 
-    public static ComparisonTarget Inspect(string volume, string outputDirectory, string suite)
+    public static ComparisonTarget Inspect(string volume, string outputDirectory, string suite, bool allowSystem = false)
     {
         if (volume.Length != 2 || volume[1] != ':' || !char.IsAsciiLetter(volume[0]))
             throw new ArgumentException("Comparisons take a drive letter such as T:.");
         var letter = char.ToUpperInvariant(volume[0]);
         var root = letter + @":\";
         var system = char.ToUpperInvariant(Environment.GetFolderPath(Environment.SpecialFolder.Windows)[0]);
-        if (letter == system) throw new IOException("Comparisons never run on the Windows volume.");
+        if (letter == system && !allowSystem) throw new IOException("Comparisons never run on the Windows volume.");
         if (char.ToUpperInvariant(Path.GetFullPath(outputDirectory)[0]) == letter)
             throw new IOException("Comparison evidence must be written to another volume than the one measured.");
         var drive = new DriveInfo(root);
@@ -93,7 +96,7 @@ internal static class ComparisonScenarios
         if (Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Comparisons require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         var evidenceDirectory = Path.GetDirectoryName(job.Reply)!;
-        var target = Inspect(job.Volume, evidenceDirectory, job.Operation);
+        var target = Inspect(job.Volume, evidenceDirectory, job.Operation, SystemPreflightGuard.IsSystemDurability(job.Volume, job.Operation));
         var evidence = Path.Combine(evidenceDirectory, "compare");
         var product = job.Product ?? throw new ArgumentException("Comparisons require --product.");
         var queueCache = LoadedDriverInspection.Capture();
@@ -104,7 +107,7 @@ internal static class ComparisonScenarios
             throw new IOException(isQueueCache ? "The product is QueueCache, but no QueueCache driver is loaded."
                 : "A QueueCache driver is loaded; measure other products on a VM state without QueueCache.");
         RunStorage.AtomicJson(evidence + ".environment.json", CaptureEnvironment(target, product, queueCache));
-        var plan = ComparisonPlan.CasesFor(job.Operation, job.ReferenceRepeats);
+        var plan = ComparisonPlan.CasesFor(job.Operation, job.ReferenceRepeats, job.GrowthMarkers);
         RunStorage.AtomicJson(evidence + ".plan.json", plan);
         if (ComparisonDrain.IsSuite(job.Operation))
             return await ComparisonDrainScenarios.RunAsync(job, target, plan);
@@ -210,7 +213,7 @@ internal static class ComparisonScenarios
                 return $"Rewrote and read back {step.Bytes >> 20} MiB; bytes identical.";
             }
             case "durability-write":
-                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix, job.DurableCheckpoint, job.WriteThroughGeneration2);
+                return DurabilityWrite(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix, job.DurableCheckpoint, job.WriteThroughGeneration2, job.GrowthMarkers);
             case "durability-churn":
                 return DurabilityChurn(target, work!, job.OraclePath ?? throw new ArgumentException("Missing durability oracle path."), job.Product!, prefix);
             case "durability-verify":
@@ -502,13 +505,22 @@ internal static class ComparisonScenarios
         file.Flush(flushToDisk: generation == 1 || set == 1);
     }
 
-    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix, bool durableCheckpoint, bool writeThroughGeneration2)
+    private static string DurabilityWrite(ComparisonTarget target, string work, string oraclePath, string product, string prefix, bool durableCheckpoint, bool writeThroughGeneration2, bool growthMarkers)
     {
         if (Directory.Exists(work)) throw new IOException("Durability writer refuses an existing directory; preserve its oracle and evidence.");
         Directory.CreateDirectory(work);
         var nonce = BinaryPrimitives.ReadUInt64LittleEndian(RandomNumberGenerator.GetBytes(8));
         var flushed = Path.Combine(work, "flushed.dat"); var unflushed = Path.Combine(work, "unflushed.dat");
         var small = Path.Combine(work, "small-new");
+        if (growthMarkers)
+        {
+            var markers = Path.Combine(work, "growth-markers"); Directory.CreateDirectory(markers);
+            for (var i = 0; i < GrowthMarkerEvidence.Count; ++i)
+                File.WriteAllBytes(Path.Combine(markers, $"m{i:D4}.bin"), GrowthMarkerEvidence.Pattern(nonce, i));
+            using var markerCache = new CacheDevice($"{target.Letter}:", writable: true);
+            if (markerCache.GetDiagnostics().FlushOrder?.Mode != 1) throw new IOException("Growth cut requires ordering on.");
+            RunStorage.AtomicJson(prefix + ".markers-durable.json", DurableCheckpoint.Complete(target.Letter, markerCache, prefix + ".markers-checkpoint.json"));
+        }
         // Generation 1 is written and flushed, then given time to reach the disk even through a write-back cache.
         WriteSet(flushed, nonce, 1, 1, ComparisonPlan.DurabilitySetMiB, unbuffered: false);
         WriteSet(unflushed, nonce, 1, 2, ComparisonPlan.DurabilitySetMiB, unbuffered: false);
@@ -547,10 +559,24 @@ internal static class ComparisonScenarios
             var checkpoint = DurableCheckpoint.Complete(target.Letter, cache, prefix + ".checkpoint.json");
             RunStorage.AtomicJson(prefix + ".checkpoint.json", checkpoint);
         }
-        var oracle = new DurabilityOracle(DurabilityOracleContract.Version(durableCheckpoint, writeThroughGeneration2), nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
+        ulong? markerStart = null, markerEnd = null;
+        if (growthMarkers)
+        {
+            using var markerCache = new CacheDevice($"{target.Letter}:", writable: true);
+            markerStart = markerCache.GetDiagnostics().FlushOrder!.CurrentEpoch;
+            for (var i = 0; i < GrowthMarkerEvidence.Count; ++i) File.Delete(Path.Combine(work, "growth-markers", $"m{i:D4}.bin"));
+            // Send NTFS's deletion metadata into the volatile cache, without a
+            // QueueCache checkpoint, so the external cut observer can locate it.
+            using var volume = new FileStream($@"\\.\{target.Letter}:", FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+            if (!FlushFileBuffers(volume.SafeFileHandle)) throw new Win32Exception();
+            markerEnd = markerCache.GetDiagnostics().FlushOrder!.CurrentEpoch;
+        }
+        var oracle = new DurabilityOracle(DurabilityOracleContract.Version(durableCheckpoint, writeThroughGeneration2, growthMarkers), nonce, work, ComparisonPlan.DurabilitySetMiB, ComparisonPlan.DurabilitySmallFiles,
             generation1, DateTimeOffset.UtcNow, flushSeconds, product)
         { DurableCheckpoint = durableCheckpoint, WriteThroughGeneration2 = writeThroughGeneration2,
-            WriteThroughRequestsObserved = writeThroughRequests, OrderingMode = orderMode };
+            WriteThroughRequestsObserved = writeThroughRequests, OrderingMode = growthMarkers ? 1UL : orderMode,
+            GrowthMarkers = growthMarkers ? GrowthMarkerEvidence.Count : 0,
+            MarkerDeleteStartEpoch = markerStart, MarkerDeleteEndEpoch = markerEnd };
         DurabilityOracleContract.Validate(oracle);
         using (var file = new FileStream(oraclePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
         {
@@ -696,6 +722,26 @@ internal static class ComparisonScenarios
             if (!File.Exists(path)) { missing++; continue; }
             var bytes = await File.ReadAllBytesAsync(path);
             if (bytes.Length == 4096 && ComparisonData.Classify(bytes, oracle.Nonce, 3, i) == 2) intact++; else damaged++;
+        }
+        if (oracle.GrowthMarkers > 0)
+        {
+            var absent = 0; var exact = 0; var damage = new List<string>();
+            for (var i = 0; i < oracle.GrowthMarkers; ++i)
+            {
+                var marker = Path.Combine(oracle.Directory, "growth-markers", $"m{i:D4}.bin");
+                try
+                {
+                    var attributes = File.GetAttributes(marker);
+                    if ((attributes & (FileAttributes.ReparsePoint | FileAttributes.Directory)) == 0 &&
+                        new FileInfo(marker).Length == 4096 &&
+                        GrowthMarkerEvidence.Intact(await File.ReadAllBytesAsync(marker), oracle.Nonce, i)) ++exact;
+                    else damage.Add(marker);
+                }
+                catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException) { ++absent; }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { damage.Add(marker + ": " + ex.Message); }
+            }
+            RunStorage.AtomicJson(prefix + ".growth-markers.json", new GrowthMarkerResult(oracle.GrowthMarkers, absent, exact, damage));
+            if (damage.Count != 0) throw new IOException($"{damage.Count} durable deleted markers contain other bytes or cannot be read.");
         }
         var chkdsk = await OwnedProcess.RunAsync(Path.Combine(System.Environment.SystemDirectory, "chkdsk.exe"), [$"{target.Letter}:", "/scan"],
             prefix + ".chkdsk", TimeSpan.FromMinutes(20), CancellationToken.None);

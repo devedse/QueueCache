@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 206, "plan 206 retains UTC and requires monotonic cache-exercise coverage");
+        Check(VerificationPlan.Version == 207, "plan 207 retains monotonic coverage and adds guarded system paging ordering");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -44,6 +44,83 @@ internal static class DiagnosticContracts
         var seedWire = SpecialRangeMap.Encode([new DiskRange(4096, 8192)], SpecialRangeKind.SafePaging);
         Check(BinaryPrimitives.ReadUInt32LittleEndian(seedWire.AsSpan(12)) == 3 && seedWire.Length == 40,
             "Safe paging seeds use the separate range set without altering older flags");
+        var pagingBefore = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        {
+            PagingOrder = new CachePagingOrder(0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)
+        };
+        var pagingAfter = pagingBefore with
+        {
+            PagingOrder = pagingBefore.PagingOrder with { Bypasses = 1, BypassBytes = 4096 },
+            LabGate = new(2, 1, 10, 11, 0, 0, 12, 13)
+        };
+        PagingOrderScenario.ValidateBypass(pagingBefore, pagingAfter);
+        Reject(() => PagingOrderScenario.ValidateBypass(pagingBefore, pagingAfter with
+            { LabGate = pagingAfter.LabGate! with { OldRetireSeq = 14 } }));
+        Reject(() => PagingOrderScenario.ValidateBypass(pagingBefore, pagingAfter with
+            { PagingOrder = pagingAfter.PagingOrder! with { LearnBarriers = 1 } }));
+        Reject(() => PagingOrderScenario.ValidateBypass(pagingBefore, pagingAfter with { PagingOrder = null }));
+        var learning = pagingBefore with { PagingOrder = pagingBefore.PagingOrder with { LearnBarriers = 1 },
+            LabGate = new(3, 1, 10, 11, 12, 0, 13, 14) };
+        PagingOrderScenario.ValidateLearn(pagingBefore, learning, true);
+        Reject(() => PagingOrderScenario.ValidateLearn(pagingBefore, learning with
+            { LabGate = learning.LabGate! with { DirectSubmitSeq = 11 } }, true));
+        var clearing = pagingBefore with { PagingOrder = pagingBefore.PagingOrder with
+            { Clears = 1, SafeRanges = 0, LastClearReason = 7 } };
+        PagingOrderScenario.ValidateClear(pagingBefore, clearing, 7);
+        Reject(() => PagingOrderScenario.ValidateClear(pagingBefore, clearing, 9));
+        Reject(() => PagingOrderScenario.ValidateClear(pagingBefore, clearing with
+            { PagingOrder = clearing.PagingOrder! with { SafeRanges = 1 } }, 7));
+        var guardedPaging = new VerificationOptions("C:", "system-paging-ordering", BudgetMiB: 2048,
+            SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
+        VerificationPlan.Validate(guardedPaging);
+        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v207", "unique guarded paging workload identity");
+        foreach (var invalid in new[] { guardedPaging with { RecoverableVm = false }, guardedPaging with { SystemInstance = null },
+            guardedPaging with { SystemBytes = null }, guardedPaging with { Volume = "Q:" }, guardedPaging with { BudgetMiB = 1024 } })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Unguarded paging test accepted"); }
+            catch (ArgumentException) { }
+        }
+        var guardedCut = guardedPaging with { Suite = "compare-durability-write", Product = "QueueCache fixture" };
+        VerificationPlan.Validate(guardedCut);
+        try { VerificationPlan.Validate(guardedCut with { RecoverableVm = false }); throw new Exception("Unguarded C: cut accepted"); }
+        catch (ArgumentException) { }
+        var pressureState = new WriteCacheState(1, 0, 8UL << 30, 2UL << 30, 2UL << 30, 4096, 0, 2UL << 30, 1, 4096, 0, 0, 0, 0, 0, 4096);
+        var pressurePerformance = new CachePerformance(1_000_000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        var pressureRows = Enumerable.Range(0, 121).Select(i => new TelemetrySnapshot(DateTimeOffset.UnixEpoch.AddSeconds(i), i,
+            pressureState, pressurePerformance, pagingBefore with { FlushOrder = new(1, 1, 1, 0, 0, 0, 0, 0, 0),
+                PagingOrder = pagingBefore.PagingOrder! with { Bypasses = (ulong)i } }, new(0, 0, 0, 0, 0, 0), new(1 + i * 1_000_000L, 1_000_000))).ToArray();
+        PagingPressureResult[] pressureChildren = [new(0, 2L << 30, 2L << 30, 0, null, 120),
+            new(1, 4L << 30, 4L << 30, 10, null, 120), new(2, null, null, 1200, 0.1, 120), new(3, null, null, 1000, null, 120)];
+        Check(SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren) == 120,
+            "pressure witness covers all workers and bypasses while earlier saves remain pending");
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren[..^1]));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
+            [.. pressureChildren[..2], pressureChildren[2] with { LongestGapSeconds = 2.1 }, pressureChildren[3]]));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows.Select(r => r with { State = r.State with { DirtyBytes = 0 } }).ToArray(),
+            pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
+            [pressureChildren[0], pressureChildren[1] with { AllocatedBytes = null }, .. pressureChildren[2..]]));
+        var growthCut = guardedCut with { GrowthMarkers = true };
+        VerificationPlan.Validate(growthCut);
+        Check(VerificationPlan.Integrity(growthCut).Single().Id.EndsWith("growth-v207", StringComparison.Ordinal) &&
+            ComparisonPlan.CasesFor(growthCut.Suite, 1, true).Single().Id == "durability-growth-v207", "growth cuts have distinct outer and workload identities");
+        var growthOracle = new DurabilityOracle(6, 123, "C:/owned", 256, 10000, DateTimeOffset.UnixEpoch,
+            DateTimeOffset.UnixEpoch.AddMinutes(1), 0.1, "QueueCache fixture")
+            { GrowthMarkers = 2000, MarkerDeleteStartEpoch = 4, MarkerDeleteEndEpoch = 6, OrderingMode = 1 };
+        DurabilityOracleContract.Validate(growthOracle);
+        Reject(() => DurabilityOracleContract.Validate(growthOracle with { GrowthMarkers = 1999 }));
+        Reject(() => DurabilityOracleContract.Validate(growthOracle with { MarkerDeleteStartEpoch = null }));
+        Reject(() => DurabilityOracleContract.Validate(growthOracle with { MarkerDeleteEndEpoch = 3 }));
+        var markerBytes = GrowthMarkerEvidence.Pattern(123, 42);
+        Check(GrowthMarkerEvidence.Intact(markerBytes, 123, 42) && !GrowthMarkerEvidence.Intact(markerBytes, 123, 43) &&
+            !GrowthMarkerEvidence.Intact(markerBytes, 124, 42) && !GrowthMarkerEvidence.Intact(markerBytes[..^1], 123, 42),
+            "marker proof requires exact bytes, nonce, identity and length");
+        foreach (var invalid in new[] { growthCut with { DurableCheckpoint = true }, growthCut with { WriteThroughGeneration2 = true },
+            growthCut with { Volume = "W:" }, growthCut with { Suite = "compare-durability-churn" } })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Invalid growth variant accepted"); }
+            catch (ArgumentException) { }
+        }
         var clockStart = new TelemetryClock(10_000_000, 1_000_000);
         var clockEnd = clockStart with { Timestamp = 12_000_000 };
         TelemetryClock?[] coveredClocks = [clockStart, clockStart with { Timestamp = 11_000_000 }, clockEnd];
@@ -168,11 +245,11 @@ internal static class DiagnosticContracts
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
         Reject(() => TelemetryCoverage.Validate(completeDrain.Where((_, i) => i is < 60 or > 63).ToArray(),
             drainStart.AddMilliseconds(250), drainStart.AddSeconds(140)));
-        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v199", "flush-order")]) &&
+        Check(VerificationPlan.Integrity(new("Q:", "flush-order")).SequenceEqual([new IntegrityCase("flush-order-v207", "flush-order")]) &&
             VerificationPlan.InjectsLabFaults("flush-order"), "ordering suite runs only its owned checks and records deliberate fault recovery");
         var orderCampaign = VerificationCampaignPlan.Create(new(new("Q:", "quick", Repeats: 1), "experiment", "W:", FocusSuite: "flush-order", PauseBackingCache: true));
         Check(orderCampaign.Count == 1 && orderCampaign[0].Role == CampaignTargetRole.NtfsLab &&
-            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v199"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
+            orderCampaign[0].ExpectedCases.SequenceEqual(["flush-order-v207"]), "ordering experiment pauses the backing cache and targets only the disposable lab role");
         var orderRecovery = new RecoverySnapshot(1, new DiskTarget('Q', 99990, 8L << 30, "fixture"),
             new(0, 0, 8UL << 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0), false, "[]", DateTimeOffset.UnixEpoch, "fixture", FlushOrderMode: 0);
         Check(VerificationWorker.RestorationMismatches(orderRecovery, orderRecovery.State, orderRecovery.State, "[]", 0,

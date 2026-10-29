@@ -83,7 +83,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         !ComparisonPlan.IsDurabilityWrite(options.Suite) &&
         !options.Suite.StartsWith("managed-", StringComparison.Ordinal) && !options.Suite.StartsWith("disk-removal", StringComparison.Ordinal);
     private static bool IsSystemSuite(string suite) => suite is
-        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session";
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
     // Leases are per physical disk (one verification per disk), not per cached volume.
@@ -154,7 +154,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
     /// <summary>Suites whose cases may SKIP on hardware that lacks the capability (TRIM, a second volume on
     /// the disk). The run then completes as COMPLETED_WITH_SKIPS, never as COMPLETED.</summary>
     public static bool AllowsSkips(string suite) => suite is "trim-file" or "trim-cache" or "volumes";
-    private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original.Target);
+    private WorkerJob Job(string operation) => new(operation, options.Volume, "", fileTarget ?? original?.Target)
+    { Suite = options.Suite, BudgetMiB = options.BudgetMiB, SystemInstance = options.SystemInstance, SystemBytes = options.SystemBytes, RecoverableVm = options.RecoverableVm };
 
     public static (string WorkDirectory, string OracleFile) SystemImageArtifacts(string workDirectory, string caseId)
     {
@@ -191,7 +192,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         if ((selected.Suite is "cache-read-misses" or "tree-decision" or "read-tail-decision" || VerificationPlan.IsLayoutSuite(selected.Suite) || CacheExercisePlan.Contains(selected.Suite) || VerificationPlan.IsRamReadSuite(selected.Suite)) && Process.GetCurrentProcess().PriorityClass != ProcessPriorityClass.Normal)
             throw new IOException("Read performance suites require a normal-priority process; use task priority 4 when launching through Task Scheduler.");
         fileTarget = null;
-        if (IsSystemSuite(selected.Suite))
+        if (IsSystemSuite(selected.Suite) || SystemPreflightGuard.IsSystemDurability(selected.Volume, selected.Suite))
         {
             var outputVolume = SystemPreflightGuard.OutputVolume(selected.Output);
             var system = await DiskTarget.InspectAsync(selected.Volume, token);
@@ -199,15 +200,15 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             system.ValidateCurrent(token);
             output.ValidateCurrent(token);
             SystemPreflightGuard.ValidateTargets(system, output, selected.SystemInstance!, selected.SystemBytes!.Value);
-            if (selected.Suite == "system-post-restart")
+            if (selected.Suite == "system-post-restart" || SystemPreflightGuard.IsSystemDurability(selected.Volume, selected.Suite) && selected.OraclePath is not null)
             {
                 var oraclePath = Path.GetFullPath(selected.OraclePath!);
                 var oracleVolume = SystemPreflightGuard.OutputVolume(Path.GetDirectoryName(oraclePath)!);
                 var oracleDisk = await DiskTarget.InspectAsync(oracleVolume, token);
                 oracleDisk.ValidateCurrent(token);
                 SystemPreflightGuard.ValidateTargets(system, oracleDisk, selected.SystemInstance!, selected.SystemBytes!.Value);
-                SystemPreflightGuard.ValidateRecordedTarget(
-                    SystemFileScenarios.ReadOracle(oraclePath).Target, system);
+                if (selected.Suite == "system-post-restart")
+                    SystemPreflightGuard.ValidateRecordedTarget(SystemFileScenarios.ReadOracle(oraclePath).Target, system);
             }
             fileTarget = system;
         }
@@ -246,6 +247,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast and Strict cases with independent restoration." :
                 options.Suite == "system-app-session" ? $"Operator application session on C:; runtime-only Fast cache, waiting up to {AppSessionSeconds / 60} minutes for {storage.PathFor(AppSessionDoneFile)}, then drain/release and byte comparison. Instructions: {storage.PathFor("operator-instructions.txt")}" :
                 options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
+                options.Suite == "system-paging-ordering" ? "Guarded C: ordering, paging pressure and owned flushed-file checks; independent restoration." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
                 "Read-only system-disk phase; no workload or cache configuration action.");
         if (options.CaseFilter is not null)
@@ -272,7 +274,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             DrainDecisionTiming = drainDecision.Count == 0 ? null : DrainDecisionTiming.ForScore(options.DurationSeconds),
             CacheExerciseCases = exercises,
             RamReadReferenceWindows = VerificationPlan.IsRamReadSuite(options.Suite) ? RamReadReferencePlan.CasesFor(options) : [],
-            ComparisonCases = ComparisonPlan.IsComparison(options.Suite) ? ComparisonPlan.CasesFor(options.Suite, options.Repeats) : [],
+            ComparisonCases = ComparisonPlan.IsComparison(options.Suite) ? ComparisonPlan.CasesFor(options.Suite, options.Repeats, options.GrowthMarkers) : [],
             CacheExerciseTargets = exercises.Count == 0 ? [] : options.Suite == "cache-recall"
                 ? CacheExercisePlan.RecallTargets(options.BudgetMiB) : options.Suite is "caller-backoff" or "priority-cost" or "priority-affinity"
                 ? CacheExercisePlan.Targets(options.BudgetMiB, 1) : CacheExercisePlan.AllTargets(options.BudgetMiB),
@@ -304,7 +306,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             {
                 // Other products' volumes: identity only. No QueueCache capture, configuration, hook or telemetry,
                 // so every product is measured the same way (see ComparisonPlan).
-                var identity = await ExecuteWorker(new WorkerJob("compare-target", options.Volume, storage.PathFor("target.json")) with { Suite = options.Suite }, deadline.Token);
+                if (SystemPreflightGuard.IsSystemDurability(options.Volume, options.Suite))
+                {
+                    systemLease = new Semaphore(1, 1, SystemLeaseName(fileTarget!));
+                    ownsSystemLease = systemLease.WaitOne(0);
+                    if (!ownsSystemLease) throw new IOException("Another guarded verification owns C:.");
+                }
+                var identity = await ExecuteWorker(Job("compare-target") with
+                { Reply = storage.PathFor("target.json"), Product = options.Product, OraclePath = options.OraclePath }, deadline.Token);
                 comparisonTarget = JsonSerializer.Deserialize<ComparisonTarget>(await File.ReadAllTextAsync(identity, deadline.Token))
                     ?? throw new InvalidDataException("Missing comparison target.");
                 storage.Write("restoration.json", new { Required = ComparisonDrain.IsSuite(options.Suite), Reason = ComparisonDrain.IsSuite(options.Suite)
@@ -324,9 +333,9 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 ownsSystemLease = systemLease.WaitOne(0);
                 if (!ownsSystemLease)
                     throw new IOException("Another guarded system-disk verification owns this physical disk.");
-                if (options.Suite is "system-active-image" or "system-app-session")
+                if (options.Suite is "system-active-image" or "system-app-session" or "system-paging-ordering")
                 {
-                    await Worker(Job("system-capture") with
+                    await Worker(Job(options.Suite == "system-paging-ordering" ? "capture" : "system-capture") with
                     {
                         Reply = storage.PathFor("recovery.json"),
                         SystemInstance = options.SystemInstance,
@@ -334,6 +343,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         RecoverableVm = options.RecoverableVm
                     }, deadline.Token, 120);
                     systemCaptured = true;
+                    if (options.Suite == SystemPagingOrdering.Suite)
+                        storage.Write("restoration.json", new { Required = true, Status = "PENDING", Restored = false });
                 }
                 else
                     storage.Write("restoration.json", new { Required = false, Reason = "System suite does not change cache configuration or hooks." });
@@ -383,7 +394,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 workDirectory = ComparisonPlan.WorkDirectory(options.Suite, comparisonTarget!.Root, Path.GetFileName(storage.DirectoryPath)) ?? "";
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = options.Suite != "compare-ram" });
             }
-            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session")
+            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session" or "system-paging-ordering")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
                 if (options.Suite == "system-app-session")
@@ -412,13 +423,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 {
                     if (comparison)
                     {
-                        var plan = ComparisonPlan.CasesFor(options.Suite, options.Repeats);
+                        var plan = ComparisonPlan.CasesFor(options.Suite, options.Repeats, options.GrowthMarkers);
                         var comparisonReply = await ExecuteWorker(new WorkerJob(test.Operation, options.Volume, "") with
                         {
                             WorkDirectory = workDirectory.Length == 0 ? null : workDirectory, DiskSpd = options.DiskSpd,
                             ReferenceRepeats = options.Repeats, Product = options.Product, Suite = options.Suite,
                             Provider = options.Provider, PrimoCli = options.PrimoCli, BudgetMiB = options.BudgetMiB,
-                            DurableCheckpoint = options.DurableCheckpoint, WriteThroughGeneration2 = options.WriteThroughGeneration2,
+                            SystemInstance = options.SystemInstance, SystemBytes = options.SystemBytes, RecoverableVm = options.RecoverableVm,
+                            DurableCheckpoint = options.DurableCheckpoint, WriteThroughGeneration2 = options.WriteThroughGeneration2, GrowthMarkers = options.GrowthMarkers,
                             OraclePath = ComparisonPlan.IsDurabilityWrite(options.Suite) ? storage.PathFor("durability-oracle.json") : options.OraclePath
                         }, deadline.Token, ComparisonPlan.TimeoutSeconds(options.Suite, options.Repeats));
                         caseChecks = JsonSerializer.Deserialize<CheckResult[]>(await File.ReadAllTextAsync(comparisonReply, deadline.Token))
@@ -495,6 +507,12 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         if (options.Suite != "disk-removal-windows")
                             DiskRemovalEvidence.ValidatePreparation(original.Target.Device, original.Target.VolumeId, original.Target.Bytes, eject.Preparation);
                         storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
+                        return null;
+                    }
+                    if (test.Operation == SystemPagingOrdering.Suite)
+                    {
+                        caseChecks = await SystemPagingOrdering.RunAsync(fileTarget!, workDirectory!,
+                            storage.DirectoryPath, ExecuteWorker, deadline.Token);
                         return null;
                     }
                     if (test.Operation == "system-app-session")
@@ -696,12 +714,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             if (systemCaptured)
             {
                 progressLabel = $"Restoring system disk | {storage.Results.Count}/{totalCases} recorded";
-                Log("Restoring the disabled/released C: runtime baseline (independent cleanup deadline).");
+                Log(options.Suite == SystemPagingOrdering.Suite
+                    ? "Restoring original C: cache settings and checking saved profiles (independent cleanup deadline)."
+                    : "Restoring the disabled/released C: runtime baseline (independent cleanup deadline).");
                 try
                 {
                     OwnedProcess.EnsureStopped(storage.DirectoryPath);
                     var requiredImageOracles = PassedSystemImageOracles(storage.DirectoryPath, storage.Results);
-                    await Worker(Job("system-restore") with
+                    await Worker(Job(options.Suite == "system-paging-ordering" ? "restore" : "system-restore") with
                     {
                         Recovery = storage.PathFor("recovery.json"),
                         Reply = storage.PathFor("restored.json"),
@@ -712,8 +732,15 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         ImageOraclePaths = requiredImageOracles,
                         RequireImageEvidence = VerificationWorker.RequiresSystemImageEvidence(storage.Results)
                     }, CancellationToken.None, 300);
+                    if (options.Suite == SystemPagingOrdering.Suite)
+                        storage.Write("restoration.json", new { Required = true, Status = "RESTORED", Restored = true, At = DateTimeOffset.UtcNow });
                 }
-                catch (Exception ex) { restorationFailure = ex.ToString(); Log("SYSTEM RESTORATION ERROR: " + restorationFailure); }
+                catch (Exception ex)
+                {
+                    restorationFailure = ex.ToString(); Log("SYSTEM RESTORATION ERROR: " + restorationFailure);
+                    if (options.Suite == SystemPagingOrdering.Suite)
+                        storage.Write("restoration.json", new { Required = true, Status = "RESTORATION_FAILED", Restored = false, Error = restorationFailure });
+                }
             }
             diskLease?.Dispose();
             if (ownsSystemLease) systemLease!.Release();
@@ -1733,7 +1760,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                     Reason = "No trustworthy pre-mutation copy-flags evidence is available."
                 });
             }
-            var operation = systemRecovery ? "system-restore" : "restore";
+            var operation = systemRecovery && options.Suite != "system-paging-ordering" ? "system-restore" : "restore";
             var resultsPath = Path.Combine(path, "results.json");
             var priorResults = File.Exists(resultsPath)
                 ? JsonSerializer.Deserialize<CaseResult[]>(await File.ReadAllTextAsync(resultsPath, token)) ?? []
