@@ -1227,51 +1227,64 @@ public static class VerificationWorker
                 break;
             case "telemetry":
                 Stage("opening telemetry output");
-                await using (var writer = new StreamWriter(job.Reply, append: false))
+                var residency = job.Suite == SystemPagingOrdering.Suite ? TelemetryWorkingSet.ProtectCurrentProcess() : null;
+                try
                 {
-                    var timer = Stopwatch.StartNew();
-                    double? persistenceMilliseconds = null;
-                    var readyPublished = false;
-                    var stop = new TelemetryStopSignal(() => File.Exists(job.StopFile));
-                    TelemetryCapture<TelemetrySnapshot> Capture(double? delayMilliseconds)
+                    if (residency is not null) RunStorage.AtomicJson(job.Reply + ".residency.json", residency.Evidence);
+                    await using (var writer = new StreamWriter(job.Reply, append: false))
                     {
-                        // On stop, take one final sample covering workload completion.
-                        // File metadata can require disk I/O under RAM pressure;
-                        // only the separate persister polls it, never this thread.
-                        var stopping = stop.Requested;
-                        var stage = Stopwatch.StartNew();
-                        var observedState = device.GetWriteCacheState();
-                        var stateMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        stage.Restart();
-                        var observedPerformance = device.GetPerformance();
-                        var performanceMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        stage.Restart();
-                        var observedDiagnostics = device.GetDiagnostics();
-                        var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
-                            observedPerformance, observedDiagnostics, new(0, stateMilliseconds,
-                                performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds),
-                            TelemetryClock.Capture()), stopping);
+                        var timer = Stopwatch.StartNew();
+                        double? persistenceMilliseconds = null;
+                        var readyPublished = false;
+                        var stop = new TelemetryStopSignal(() => File.Exists(job.StopFile));
+                        TelemetryCapture<TelemetrySnapshot> Capture(double? delayMilliseconds)
+                        {
+                            // On stop, take one final sample covering workload completion.
+                            // File metadata can require disk I/O under RAM pressure;
+                            // only the separate persister polls it, never this thread.
+                            var stopping = stop.Requested;
+                            var stage = Stopwatch.StartNew();
+                            var observedState = device.GetWriteCacheState();
+                            var stateMilliseconds = stage.Elapsed.TotalMilliseconds;
+                            stage.Restart();
+                            var observedPerformance = device.GetPerformance();
+                            var performanceMilliseconds = stage.Elapsed.TotalMilliseconds;
+                            stage.Restart();
+                            var observedDiagnostics = device.GetDiagnostics();
+                            var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
+                            return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
+                                observedPerformance, observedDiagnostics, new(0, stateMilliseconds,
+                                    performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds),
+                                TelemetryClock.Capture()), stopping);
+                        }
+                        async Task Persist(TelemetrySnapshot sample, CancellationToken token)
+                        {
+                            var stage = Stopwatch.StartNew();
+                            var output = sample with { StageTiming = sample.StageTiming with
+                                { PreviousPersistenceMilliseconds = persistenceMilliseconds,
+                                  PreviousStopFileMilliseconds = stop.LastPollMilliseconds } };
+                            await writer.WriteLineAsync(JsonSerializer.Serialize(output).AsMemory(), token);
+                            await writer.FlushAsync(token);
+                            persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
+                            if (!readyPublished && job.ReadyFile is not null)
+                                RunStorage.AtomicJson(job.ReadyFile, new
+                                {
+                                    Ready = true
+                                });
+                            readyPublished = true;
+                            stop.Poll();
+                        }
+                        await TelemetryRecorder.RecordAsync(Capture, Persist, TimeSpan.FromSeconds(job.Seconds),
+                            TimeSpan.FromMilliseconds(200));
                     }
-                    async Task Persist(TelemetrySnapshot sample, CancellationToken token)
+                }
+                finally
+                {
+                    if (residency is not null)
                     {
-                        var stage = Stopwatch.StartNew();
-                        var output = sample with { StageTiming = sample.StageTiming with
-                            { PreviousPersistenceMilliseconds = persistenceMilliseconds,
-                              PreviousStopFileMilliseconds = stop.LastPollMilliseconds } };
-                        await writer.WriteLineAsync(JsonSerializer.Serialize(output).AsMemory(), token);
-                        await writer.FlushAsync(token);
-                        persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        if (!readyPublished && job.ReadyFile is not null)
-                            RunStorage.AtomicJson(job.ReadyFile, new
-                            {
-                                Ready = true
-                            });
-                        readyPublished = true;
-                        stop.Poll();
+                        try { residency.Dispose(); }
+                        finally { RunStorage.AtomicJson(job.Reply + ".residency.json", residency.Evidence); }
                     }
-                    await TelemetryRecorder.RecordAsync(Capture, Persist, TimeSpan.FromSeconds(job.Seconds),
-                        TimeSpan.FromMilliseconds(200));
                 }
                 return 0;
             default:

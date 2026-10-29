@@ -49,6 +49,9 @@ public static class SystemPagingOrdering
             // The observer must capture a real trailing sample; never fill missing coverage.
             await Task.Delay(1000, token);
             File.WriteAllText(observerStop, "stop"); await observer;
+            TelemetryWorkingSet.Validate(JsonSerializer.Deserialize<TelemetryResidency>(
+                File.ReadAllText(observerReply + ".residency.json"))
+                ?? throw new InvalidDataException("Missing telemetry residency evidence."));
             var rows = File.ReadLines(observerReply).Select(line => JsonSerializer.Deserialize<TelemetrySnapshot>(line)
                 ?? throw new InvalidDataException("Missing paging observation.")).ToArray();
             var children = replies.Select(path => JsonSerializer.Deserialize<PagingPressureResult>(File.ReadAllText(path))

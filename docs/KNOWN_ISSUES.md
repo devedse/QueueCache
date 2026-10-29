@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Baseline paging recognition and traffic limits passed; safe-range driver changes are not yet VM-qualified. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1; fresh 0.4.898.1 pressure failed observer coverage. Cost and C: reset qualification remain pending. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -145,6 +145,13 @@ file. Plan 211 moves that filesystem poll off the sampling thread and retains
 the strict coverage requirements. The incomplete attempts are preserved;
 original settings/apps were restored and no C: reset followed.
 [Evidence and limits](PERFORMANCE.md#c-ordering-cost-observer-32).
+The fresh 0.4.898.1 pressure run still missed coverage despite a healthy heartbeat;
+it restored successfully but has no credited final-byte pass. A diagnostic trace
+found runtime suspension and tracing-induced paging, without establishing the
+untraced pause's root cause. Plan 212 protects a bounded observer working set and
+requires applied/restored limits; its effectiveness still needs VM verification.
+The pressure workload and coverage gates are unchanged.
+
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on

@@ -114,6 +114,70 @@ internal static class TelemetryRecorderTests
             (_, _) => Task.FromException(persistenceFailure), TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(1));
         try { await failingWriter.WaitAsync(TimeSpan.FromSeconds(5)); throw new Exception("Persistence failure was accepted."); }
         catch (IOException error) { Check(ReferenceEquals(error, persistenceFailure), "Persistence failure stops and joins the sampler while retaining its cause."); }
+
+        var original = new WorkingSetLimits(204800, 1413120, 0);
+        var current = original;
+        var writes = new List<WorkingSetLimits>();
+        var lease = new TelemetryWorkingSet(() => current, value => { current = value; writes.Add(value); });
+        Check(current.MinimumBytes == 64UL << 20 && current.MaximumBytes == current.MinimumBytes &&
+              (current.Flags & 1) != 0, "Only the observer receives a bounded 64 MiB resident minimum.");
+        try { TelemetryWorkingSet.Validate(lease.Evidence); throw new Exception("Missing restoration accepted."); }
+        catch (InvalidDataException) { }
+        lease.Dispose(); lease.Dispose();
+        TelemetryWorkingSet.Validate(lease.Evidence);
+        Check(writes.Count == 2 && current.MinimumBytes == original.MinimumBytes &&
+              current.MaximumBytes == original.MaximumBytes && current.Flags == 10,
+            "Original byte limits and soft enforcement are restored once, including originally implicit disable flags.");
+
+        current = original; writes.Clear();
+        try
+        {
+            _ = new TelemetryWorkingSet(() => current, value =>
+            {
+                writes.Add(value);
+                current = writes.Count == 1 ? value with { Flags = 0 } : value;
+            });
+            throw new Exception("Unapplied residency accepted.");
+        }
+        catch (IOException)
+        {
+            Check(writes.Count == 2 && current.MinimumBytes == original.MinimumBytes && current.Flags == 10,
+                "Failed enforcement read-back restores original process limits before readiness can be published.");
+        }
+        current = original; writes.Clear();
+        var applyFailure = new IOException("partial working set application failed");
+        try
+        {
+            _ = new TelemetryWorkingSet(() => current, value =>
+            {
+                current = value; writes.Add(value);
+                if (writes.Count == 1) throw applyFailure;
+            });
+            throw new Exception("Failed application accepted.");
+        }
+        catch (IOException error)
+        {
+            Check(ReferenceEquals(error, applyFailure) && writes.Count == 2 && current.MinimumBytes == original.MinimumBytes,
+                "Partial application failure restores original limits and preserves the actual failure.");
+        }
+        try
+        {
+            _ = TelemetryWorkingSet.Requested(original with { Flags = 4 });
+            throw new Exception("Existing hard maximum silently relaxed.");
+        }
+        catch (InvalidOperationException) { }
+
+        if (OperatingSystem.IsWindows())
+        {
+            var before = TelemetryWorkingSet.ReadCurrent();
+            var resident = TelemetryWorkingSet.ProtectCurrentProcess();
+            using (resident)
+                Check(resident.Evidence.Applied.MinimumBytes >= 64UL << 20 &&
+                      (resident.Evidence.Applied.Flags & 1) != 0, "Windows confirms the actual observer minimum.");
+            TelemetryWorkingSet.Validate(resident.Evidence);
+            Check(TelemetryWorkingSet.ReadCurrent() == resident.Evidence.Restored &&
+                  resident.Evidence.Original == before, "Windows confirms original process-limit restoration.");
+        }
         Console.WriteLine("Telemetry sampling/persistence/ownership contracts passed (no driver access).");
     }
 }

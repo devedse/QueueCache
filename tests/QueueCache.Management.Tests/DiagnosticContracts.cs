@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 211, "plan 211 separates stop polling without relaxing coverage or byte checks");
+        Check(VerificationPlan.Version == 212, "plan 212 records bounded observer residency without relaxing coverage or byte checks");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -73,7 +73,7 @@ internal static class DiagnosticContracts
         var guardedPaging = new VerificationOptions("C:", "system-paging-ordering", BudgetMiB: 2048,
             SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(guardedPaging);
-        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v210", "unique guarded paging workload identity");
+        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v212", "unique guarded paging measurement identity");
         foreach (var invalid in new[] { guardedPaging with { RecoverableVm = false }, guardedPaging with { SystemInstance = null },
             guardedPaging with { SystemBytes = null }, guardedPaging with { Volume = "Q:" }, guardedPaging with { BudgetMiB = 1024 } })
         {
