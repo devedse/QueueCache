@@ -113,7 +113,7 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
         : !IsFast
             ? "Fast only. Strict already waits until each save is on the disk."
             : systemVolume
-                ? "Windows-drive ordering is being qualified on a recoverable VM. Recent changes can still be lost. Hibernation and Fast Startup have not been tested."
+                ? "Windows-drive ordering is being qualified on a recoverable VM. A growing paging file waits for earlier saves; a large queue can pause Windows. Recent changes can still be lost. Hibernation and Fast Startup have not been tested."
             : "Passed every power-cut test without NTFS damage. Recent writes can still be lost. " +
               "Frequent saves can slow down once the cache fills.";
     public bool IsFixedAllocation => Allocation == 1;

@@ -7,7 +7,7 @@ using QueueCache.Operations;
 namespace QueueCache.Developer.Verification;
 
 public sealed record PagingPressureResult(ulong Role, long? RequestedBytes, long? AllocatedBytes,
-    long Operations, double? LongestGapSeconds, double Seconds);
+    long Operations, double? LongestGapSeconds, double Seconds, int? OfferedWritesPerSecond = null);
 
 /// <summary>Bounded fixtures in owned qcache workers. Native allocations always leave with their process.</summary>
 [SupportedOSPlatform("windows")]
@@ -63,8 +63,13 @@ internal static class PagingPressureWorker
                     var i = (int)(writes % files.Length); files[i].Position = 0;
                     files[i].Write(PagingWriteEvidence.Pattern(i, writes / files.Length + 1));
                     files[i].Flush(true); ++writes;
+                    // Keep this a paging/coexistence check: the artificial drain
+                    // delay must not accumulate an unbounded queue of bookmarks.
+                    var next = writes / (double)PagingWriteEvidence.WritesPerSecond;
+                    while (clock.Elapsed.TotalSeconds < next && clock.Elapsed.TotalSeconds < job.Seconds &&
+                           !File.Exists(job.StopFile)) Thread.Sleep(10);
                 }
-                return new(3, null, null, writes, null, clock.Elapsed.TotalSeconds);
+                return new(3, null, null, writes, null, clock.Elapsed.TotalSeconds, PagingWriteEvidence.WritesPerSecond);
             }
             finally { foreach (var file in files) file.Dispose(); }
         }

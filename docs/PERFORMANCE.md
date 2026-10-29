@@ -22,6 +22,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 | Topic | Decision | Reopen when |
 |---|---|---|
 | Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The [final plan-206 release campaign](#release-206) completed/restored all 11 phases, 106 cases and 94 retained checks on the unchanged 0.4.882.1 native pair. Earlier [preparation/clock failures](#release-203-read-preparation) remain separate. #13 was closed for the tested NTFS data-volume VM-reset scope on 2026-10-28 and the "experimental" label removed; the default stays off and broader limits are unchanged. | A default-on decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
+| Windows-drive ordering (#32) | **Qualification pending; default off.** The unbounded pressure writer under a 100 ms lab delay stalled Windows when a new paging range waited for about 2,400 save points. Original C: settings were restored; the run is incomplete. The bounded paging fixture retains all pressure/coverage/byte criteria but does not qualify saturated-backlog responsiveness. [Finding](#c-paging-under-an-artificial-drain-delay-32-october-29). | Complete bounded C: correctness, same-build cost, reset and final release checks before a scope decision. Revisit full-backlog paging latency separately; do not treat a bounded-fixture pass as resolving it. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -119,6 +120,26 @@ state. PrimoCache also has a post-run Ceph near-full warning; its onset and
 effect are unknown; the warnings cleared after restoration. Controls and exact runs are in the decisions table and the sections below.
 
 ## Results, newest first
+
+### C: paging under an artificial drain delay (#32, October 29)
+
+On native/controller 0.4.896.1 under Driver Verifier, the first guarded two-minute
+paging/ordering run was **INCOMPLETE**, with original C: settings restored. Its
+unbounded flushed-file writer built about 2,400 save points while a 100 ms lab
+delay slowed each drain. The last samples held about 25 MiB; a new paging range
+entered its required full ordering boundary. Windows stopped responding for
+several minutes, workers exceeded their deadlines, and telemetry coverage was
+incomplete. The runner cleared the delay and restored the original cache without
+a reboot. This is not a performance verdict: Verifier and an artificial delay
+were active. It is evidence of a lifecycle/latency limit: new page-file space
+cannot skip earlier pending saves, even if the byte backlog fits in RAM.
+
+Plan 210 bounds the pressure writer at two flushed writes/s, retaining the same
+locked-memory/pager pressure, two-minute duration, ≤2 s heartbeat, complete
+monotonic coverage and latest acknowledged bytes after release. The new workload
+has a distinct case ID. The original run remains failed evidence; bounding the
+fixture does not fix or qualify responsiveness with a saturated flush backlog.
+Ordering remains off by default and C: qualification remains in progress.
 
 ### C: ordering baseline (#32, October 29)
 

@@ -54,7 +54,10 @@ internal static class EditorTests
         var capableWindows = new CacheSettingsViewModel(volumes.Volumes[1] with { IsBoot = true, IsPaging = true },
             volumes.State, true, 8192, writeOrdering: true, systemOrderingSupported: true);
         Check(capableWindows.CanOrderWrites && capableWindows.WriteOrdering && capableWindows.Result()?.Configuration.WriteOrdering == true &&
-            capableWindows.OrderingText.Contains("qualified", StringComparison.Ordinal), "V28 permits Windows-volume ordering and states the pending qualification");
+            capableWindows.OrderingText.Contains("qualified", StringComparison.Ordinal) &&
+            capableWindows.OrderingText.Contains("paging file", StringComparison.Ordinal) &&
+            capableWindows.OrderingText.Contains("pause Windows", StringComparison.Ordinal),
+            "V28 permits Windows ordering and states qualification and the observed page-file growth cost");
         capableWindows.IsStrict = true;
         Check(!capableWindows.CanOrderWrites && capableWindows.Result()?.Configuration.WriteOrdering == false, "system ordering remains Fast-only");
         var remembered = new CacheSettingsViewModel(stick, new CacheConfiguration(64) { WriteOrdering = true });

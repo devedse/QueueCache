@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 209;
+    public const int Version = 210;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -220,7 +220,7 @@ public static class VerificationPlan
             new("system-active-image-strict", "system-active-image")
         ],
         "system-paging-recognition" => [new("system-paging-recognition", "system-paging-recognition")],
-        "system-paging-ordering" => [new("system-paging-ordering-v208", "system-paging-ordering")],
+        "system-paging-ordering" => [new("system-paging-ordering-v210", "system-paging-ordering")],
         "system-app-session" => [new("system-app-session", "system-app-session")],
         "policies" => [new("policy-integrity", "policies")],
         "cache-allocation" => [new("cache-allocation-bounds", "cache-allocation")],

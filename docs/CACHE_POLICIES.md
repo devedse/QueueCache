@@ -306,6 +306,10 @@ refused before draining, with an update message. C: paging and reset qualificati
 is in progress ([#32](https://github.com/devedse/QueueCache/issues/32)); the proven
 crash scope above remains NTFS data volumes. Hibernation, Fast Startup and physical
 power loss have not been qualified.
+A new paging-file range must wait until earlier saves reach the disk. A large queue
+of flush groups can therefore pause Windows during paging-file growth, even when
+the queued bytes fit in RAM. The C: pressure check bounds its writer load; it
+does not establish responsiveness under a saturated flush backlog.
 
 Page-file data is not retained in the cache. With ordering on, a page-file write
 can skip the full-cache boundary only inside an established safe extent. A new

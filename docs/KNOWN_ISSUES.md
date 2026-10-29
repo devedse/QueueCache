@@ -115,6 +115,18 @@ was incomplete and restoration succeeded. Plan 209 keeps worker routing active
 only while the explicit synthetic-paging lab override is armed and records
 invalidation counters before asserting. Production inactive routing is unchanged.
 
+The first guarded C: pressure run on 0.4.896.1 was INCOMPLETE: its unbounded
+flushed-file writer accumulated about 2,400 pending save points under the artificial
+100 ms drain delay. A new paging-file range needed the required full boundary,
+and Windows stalled while it drained; pressure workers exceeded their deadlines.
+The runner cleared the delay and restored the original C: cache without a reboot.
+There were no cache errors or safe-range overlaps in the retained samples, but
+missing telemetry and completion records prevent a correctness/latency pass.
+Plan 210 caps the writer at two flushed writes/s with the original RAM pressure,
+duration, heartbeat limit and final-byte requirements. **A growing paging file
+can still pause Windows behind a large flush backlog.** The bounded test does not
+remove or qualify that limitation. C: reset qualification remains pending.
+
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
   0.4.865.1 (plan 196). The earlier variants

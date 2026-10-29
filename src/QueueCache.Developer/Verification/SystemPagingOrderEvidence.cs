@@ -17,6 +17,8 @@ public static class SystemPagingOrderEvidence
         var heartbeat = children.Single(c => c.Role == 2); var writer = children.Single(c => c.Role == 3);
         if (hog.RequestedBytes is null or < (1L << 30) || hog.AllocatedBytes != hog.RequestedBytes ||
             pager.AllocatedBytes != 4L << 30 || pager.Operations <= 0 || writer.Operations < PagingWriteEvidence.Files ||
+            writer.OfferedWritesPerSecond != PagingWriteEvidence.WritesPerSecond ||
+            writer.Operations > Math.Floor(writer.Seconds * PagingWriteEvidence.WritesPerSecond) + 1 ||
             heartbeat.Operations < 100 || heartbeat.LongestGapSeconds is null or <= 0 or > 2)
             throw new InvalidDataException("Pressure allocations, writer progress or heartbeat contract was not met.");
         var first = rows[0]; var held = 0;

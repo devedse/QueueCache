@@ -6,6 +6,7 @@ namespace QueueCache.Developer.Verification;
 public static class PagingWriteEvidence
 {
     public const int Files = 128;
+    public const int WritesPerSecond = 2;
 
     public static long LastGeneration(long writes, int file)
     {

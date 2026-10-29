@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 209, "plan 209 retains changed pressure writes and routes the inactive lab fixture");
+        Check(VerificationPlan.Version == 210, "plan 210 bounds pressure-writer load without relaxing coverage or byte checks");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -73,7 +73,7 @@ internal static class DiagnosticContracts
         var guardedPaging = new VerificationOptions("C:", "system-paging-ordering", BudgetMiB: 2048,
             SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(guardedPaging);
-        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v208", "unique guarded paging workload identity");
+        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v210", "unique guarded paging workload identity");
         foreach (var invalid in new[] { guardedPaging with { RecoverableVm = false }, guardedPaging with { SystemInstance = null },
             guardedPaging with { SystemBytes = null }, guardedPaging with { Volume = "Q:" }, guardedPaging with { BudgetMiB = 1024 } })
         {
@@ -90,7 +90,7 @@ internal static class DiagnosticContracts
             pressureState, pressurePerformance, pagingBefore with { FlushOrder = new(1, 1, 1, 0, 0, 0, 0, 0, 0),
                 PagingOrder = pagingBefore.PagingOrder! with { Bypasses = (ulong)i } }, new(0, 0, 0, 0, 0, 0), new(1 + i * 1_000_000L, 1_000_000))).ToArray();
         PagingPressureResult[] pressureChildren = [new(0, 2L << 30, 2L << 30, 0, null, 120),
-            new(1, 4L << 30, 4L << 30, 10, null, 120), new(2, null, null, 1200, 0.1, 120), new(3, null, null, 1000, null, 120)];
+            new(1, 4L << 30, 4L << 30, 10, null, 120), new(2, null, null, 1200, 0.1, 120), new(3, null, null, 200, null, 120, 2)];
         Check(SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren) == 120,
             "pressure witness covers all workers and bypasses while earlier saves remain pending");
         Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren[..^1]));
@@ -102,6 +102,10 @@ internal static class DiagnosticContracts
             [pressureChildren[0], pressureChildren[1] with { AllocatedBytes = null }, .. pressureChildren[2..]]));
         Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
             [.. pressureChildren[..3], pressureChildren[3] with { Operations = 127 }]));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
+            [.. pressureChildren[..3], pressureChildren[3] with { OfferedWritesPerSecond = null }]));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
+            [.. pressureChildren[..3], pressureChildren[3] with { Operations = 1000 }]));
         Check(PagingWriteEvidence.LastGeneration(0, 0) == 0 && PagingWriteEvidence.LastGeneration(128, 127) == 1 &&
             PagingWriteEvidence.LastGeneration(129, 0) == 2 && PagingWriteEvidence.LastGeneration(129, 1) == 1,
             "pressure oracle distinguishes untouched files, complete rounds and a partial final round");
