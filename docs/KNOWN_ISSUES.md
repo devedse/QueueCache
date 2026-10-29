@@ -19,7 +19,7 @@ still to do. Open items link to their details.
 | Issue | Fixed | Build or status |
 |---|:-:|---|
 | [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1; fresh 0.4.898.1 pressure failed observer coverage. Cost and C: reset qualification remain pending. The app offers it only with a matching V28 driver. |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Bounded live correctness passed on 0.4.897.1 and 0.4.900.1; cost and C: reset qualification remain pending. Earlier coverage failures are retained. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -149,8 +149,20 @@ The fresh 0.4.898.1 pressure run still missed coverage despite a healthy heartbe
 it restored successfully but has no credited final-byte pass. A diagnostic trace
 found runtime suspension and tracing-induced paging, without establishing the
 untraced pause's root cause. Plan 212 protects a bounded observer working set and
-requires applied/restored limits; its effectiveness still needs VM verification.
-The pressure workload and coverage gates are unchanged.
+requires applied/restored limits. On 0.4.900.1 the fresh untraced bounded run
+passed and restored: all 128 latest-generation files exact, heartbeat maximum
+0.209 s and complete telemetry's maximum gap 1.097 s. Applied observer limits
+restored exactly, and all 22 ordering checks and recognition also passed.
+The pressure workload and coverage gates are unchanged. This bounded pass does
+not resolve saturated-backlog paging latency or qualify C: crashes.
+
+The latest 0.4.900.1 cost attempt stopped after an ordering-on observer gap of
+234.211 s during final write-out, after the four timed workloads. The first off
+control completed; the final off control was not started, so there is still no
+accepted cost comparison. The pressure heartbeat was below 0.27 s in both arms
+but did not cover the later gap. Disk progress and zero retained I/O errors do
+not prove responsiveness during that missing interval. Original settings/apps
+were restored and evidence hash-verified; no C: power-cut test followed.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

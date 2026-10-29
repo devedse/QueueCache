@@ -444,8 +444,11 @@ Current contracts (plan 149):
   aggressively trimmed during the explicit RAM-pressure workload; it does not
   pin workload memory beyond the existing pressure allocation. Cadence, sample
   coverage, heartbeat and byte checks are unchanged. The distinct case ID keeps
-  earlier failures separate. This measurement change still needs fresh VM
-  qualification and does not resolve paging latency behind a large flush backlog.
+  earlier failures separate. The bounded fixture passed on 0.4.900.1; it does
+  not resolve paging latency behind a large flush backlog.
+  A separate cost attempt on that package still lost 234 s of observation
+  during final write-out. Validate coverage through cleanup; a healthy earlier
+  heartbeat or completed workload cannot substitute for missing tail samples.
 - **Drain completion (plan 132):** `drain-decision` allows 300 seconds for process
   completion because an explicit flush may hold the final I/O beyond the unchanged
   score window. Full-process telemetry and independent restoration still apply.

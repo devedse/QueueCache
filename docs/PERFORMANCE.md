@@ -22,7 +22,7 @@ Contents: [Decisions](#current-decisions-and-when-to-repeat-tests) ·
 | Topic | Decision | Reopen when |
 |---|---|---|
 | Fast write ordering (#13) | **Keep ordering default off. The ordinary mode is the former lab mode 3; a separate forced-write lab mode is measured below.** Mode 2 had made applications slower (plan 194: flushed small files 2.5×, write-through pairs 43×) because every write and bookmark woke all drain threads, which then searched the whole backlog while holding the cache lock (plan 195). The current mode searches only the group it may write now and wakes the threads only for that group. Plan 196 on release 0.4.865.1: writing into the cache took the same time with ordering on and off for a 1.5 GiB file that fits the cache (about 0.2–0.3 s), 25,600 flushed files (about 9 s) and 25,600 write-through pairs (about 0.25 s). Reaching the disk is still slow with ordering on, because each bookmark needs its own disk flush: about **7×** as long as off for files and **54×** for pairs. That only matters for nonstop flush-heavy writing (plan 197): flushing every small file for five minutes filled the 2 GiB cache after about 1.5 minutes, after which the application ran at about 230 files/s instead of about 2,000; `tar` and `robocopy` on a 16,000-file tree showed no difference. [Sustained result](#fast-ordering-13-sustained), [single-mode result](#fast-ordering-13-single), [fix](#fast-ordering-13-fix), [minute-scale result](#fast-ordering-13-minute). The plan-203 forced-write lab variant on a temporary virtual SCSI disk shortened flush-heavy durable completion by **8.8% for files and 7.2% for pairs**, with every pair improved and separated ranges; measured group-flush calls were only about 5–6% of the ordinary mode's total time. [B result](#fast-ordering-31-fua). Its complete sustained comparison still filled and throttled the cache, with five-minute application throughput −0.33%, +3.62%, +2.59% against ordinary ordering and no tree application benefit. [Sustained B result](#fast-ordering-31-fua-sustained). The current ordinary mode passed 14/14 targeted checks under Verifier and six bounded NTFS data-volume VM-reset scenarios plus a middle-drain repeat on 0.4.882.1; the ordering-off early-churn control damaged NTFS. Broader power-loss and system-volume scope remains unqualified. The [final plan-206 release campaign](#release-206) completed/restored all 11 phases, 106 cases and 94 retained checks on the unchanged 0.4.882.1 native pair. Earlier [preparation/clock failures](#release-203-read-preparation) remain separate. #13 was closed for the tested NTFS data-volume VM-reset scope on 2026-10-28 and the "experimental" label removed; the default stays off and broader limits are unchanged. | A default-on decision, a flush-heavy application that matters to users, fewer or cheaper disk flushes per bookmark, remaining bypass/crash qualification, a new storage contract, or group retention/flush scheduling changes. No global or system-volume safety claim. |
-| Windows-drive ordering (#32) | **Qualification pending; default off.** Bounded live correctness passed on 0.4.897.1. The first cost window is invalid; its corrected off control still lost telemetry coverage when the observer checked its stop file. Plan 211 separates that poll from sampling, but a fresh pressure run still missed coverage. Plan 212 records/restores a bounded resident observer working set; fresh qualification is required. No cost pass or C: reset is credited. [Cost attempts](#c-ordering-cost-observer-32). The unbounded pressure writer under a 100 ms lab delay stalled Windows when a new paging range waited for about 2,400 save points. The bounded fixture does not qualify saturated-backlog responsiveness. [Finding](#c-paging-under-an-artificial-drain-delay-32-october-29). | Complete valid same-build cost, reset and final release checks before a scope decision. Revisit full-backlog paging latency separately; do not treat a bounded-fixture pass as resolving it. |
+| Windows-drive ordering (#32) | **Qualification pending; default off.** Bounded live correctness passed on 0.4.897.1 and again on 0.4.900.1 with the plan-212 resident observer. Cost attempts remain invalid/incomplete: the latest on arm lost 234 s of observation during final write-out, and the final off control was not started. No cost pass or C: reset is credited. [Cost attempts](#c-ordering-cost-observer-32). The unbounded pressure writer under a 100 ms lab delay stalled Windows when a new paging range waited for about 2,400 save points. The bounded fixture does not qualify saturated-backlog responsiveness. [Finding](#c-paging-under-an-artificial-drain-delay-32-october-29). | Diagnose the final-write-out observation gap before a fresh complete same-build cost comparison; reset and final release checks still precede a scope decision. Revisit full-backlog paging latency separately; do not treat a bounded-fixture pass as resolving it. |
 | Changed-region image checkpoints (#28) | Keep eligible older-candidate reuse with full read-back and safe full-save fallback. A small change to half-filled 1 GiB images saved **21–22% elapsed time** in the short plan-182 observation. **Mostly empty images have no consistent time gain** in plans 180/181. Protect current/original images and explicit exports. [Evidence](#checkpoint-reuse-28). | Changes to payload mapping, source hashing, verification, candidate ownership or host storage, or a materially different image size/occupancy. These are single observations; logical-byte reduction alone does not establish physical I/O or general speed gains. |
 | Asynchronous split RAM-disk reads | **Accepted, default adaptive** (1M Q8T1 +79.84%; Q1 and four readers unchanged). | Changes to provider workers, the Direct read path or chunking; a `ram-read-async` or `ram-read-async-lifecycle` regression. |
 | Cached read-hit bookkeeping (copy flag 4) | **Accepted, default on** (1M Q8T1 +7.92%, Q1T1 +4.52%, four readers +3.46%). | Changes to the read-hit path, pinning, recency lists or the slot index; a `cache-read-bookkeeping` regression. |
@@ -171,8 +171,52 @@ Plan 212 gives only this suite's observer a 64 MiB resident working set minimum,
 with strict application/restoration evidence before readiness and after completion.
 The pressure processes, two-second coverage/heartbeat limits and byte oracle are
 unchanged. This is a bounded instrumentation candidate, not a proven resolution
-of the earlier pauses or the native growth/backlog limitation. A fresh untraced
-pressure result and complete same-build cost window are required.
+of the earlier pauses or the native growth/backlog limitation. The corrected
+request leaves room above its minimum; equal minimum/maximum values were
+refused by Windows CI before packaging.
+
+On clean 0.4.900.1 under Verifier, the fresh untraced plan-212 run completed
+and restored: 10 GiB locked RAM, 4 GiB pager, 240 acknowledged writes and all
+128 latest-generation files exact after release. 651 actual samples covered the
+full interval, with maximum gap 1.097 s; heartbeat maximum 0.209 s. It observed
+1,340 page-file bypasses and 117 learning boundaries, with zero unidentified
+barriers, safe overlaps, table exhaustion or cache errors. Original observer
+limits were exactly restored. All 22 ordering checks and ordered recognition
+also passed on this package. This qualifies the bounded fixture only; the
+earlier failed runs remain separate, and complete same-build cost, C: reset
+and final release qualification are still pending.
+
+The next cost attempt on the same 0.4.900.1 package was refused before the first
+workload because Edge had started with Windows. It collected no measurements.
+After Edge was closed normally, fresh off/on attempts ran with verified app
+closure and observer-limit restoration. The off arm completed; the on arm
+finished all four workloads and cleanup, but failed the unchanged two-second
+coverage guard during its final write-out. The final off control was not
+started. **This is another incomplete comparison, not a cost pass.**
+
+| Diagnostic observation, latest attempt | First off control | Ordering on |
+|---|---:|---:|
+| Copy/archive/extract/app launches/deletion | 115.202 s | 113.758 s |
+| Memory-pressure completion | 312.156 s | 311.661 s |
+| Longest heartbeat gap during pressure | 0.243 s | 0.262 s |
+| Fresh 4 KiB flushed files, five minutes | 1,609/s | 532/s |
+| Final write-out, deletion and identity collection | 65.225 s | 347.999 s |
+| Largest observer gap, including final write-out | 0.532 s | 234.211 s |
+
+The on arm's gap was 14:19:15.925–14:23:10.137 UTC, after the timed workloads.
+Its completed state/performance/diagnostic calls took less than a millisecond;
+both previous persistence and sampler wait timings spanned about 234 s.
+These timings do not establish the cause or prove a desktop freeze. The
+pressure heartbeat had already ended, so it does not cover this tail. Across
+the timed workloads, the largest on-arm sample gap was 0.332 s; it recorded
+3,185 safe paging bypasses and zero unidentified barriers, overlaps or cache
+errors. At the flush-heavy workload's end, 2.078 GB remained pending. Retained
+observations surrounding the gap and independent host counters show disk
+write/flush progress without reported read/write/flush failures, but cannot
+replace missing guest observations. Original C: settings and saved profiles,
+Q: uncached, Verifier off, apps/service and detached lab image were checked
+after restoration. All 1,680 exported evidence files were independently
+hash-verified. No C: reset or final release run followed this failed guard.
 
 ### C: paging under an artificial drain delay (#32, October 29)
 
