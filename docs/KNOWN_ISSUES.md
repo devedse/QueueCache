@@ -183,8 +183,9 @@ The follow-up audit found that a new paging/hibernation/dump registration could
 arrive after ordering was selected. Selection and registration were serialized under the routing lock and new
 registrations refused for the data-volume-only scope. The #32 candidate now permits
 ordinary ordered registrations, clears safe extents and runs the existing full
-boundary before registration. Lab FUA mode remains data-volume-only. Compile-time
-contracts cover both reservation orders; a real new special-file registration
+boundary before registration. Invalidation diagnostics are published even when
+the cache was already disabled and needs no active-cache boundary. Lab FUA mode
+remains data-volume-only. Compile-time contracts cover both reservation orders; a real new special-file registration
 with ordering on has not yet been exercised on Windows.
 
 **Decided 2026-10-25: no separate QueueCache journal.** A write-ahead journal on

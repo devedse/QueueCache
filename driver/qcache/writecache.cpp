@@ -2270,6 +2270,9 @@ static NTSTATUS PrepareUsagePath(QC_CACHE* c, PIRP irp)
 {
     AcquireCache(c);
     ClearSafePaging(c, QcSafeUsage);
+    // A disabled cache can still have learned direct paging ranges. Publish
+    // their invalidation even when no active-cache boundary runs below.
+    Publish(c);
     const bool active = c->Enabled != FALSE;
     auto status = irp->Cancel ? STATUS_CANCELLED : c->Gone ? STATUS_DEVICE_NOT_CONNECTED : c->State.LastError;
     ReleaseCache(c);
