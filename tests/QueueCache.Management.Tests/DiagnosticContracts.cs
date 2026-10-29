@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 207, "plan 207 retains monotonic coverage and adds guarded system paging ordering");
+        Check(VerificationPlan.Version == 208, "plan 208 retains monotonic coverage and proves changed pressure writes");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -73,7 +73,7 @@ internal static class DiagnosticContracts
         var guardedPaging = new VerificationOptions("C:", "system-paging-ordering", BudgetMiB: 2048,
             SystemInstance: "SCSI/test", SystemBytes: 100L << 30, RecoverableVm: true);
         VerificationPlan.Validate(guardedPaging);
-        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v207", "unique guarded paging workload identity");
+        Check(VerificationPlan.Integrity(guardedPaging).Single().Id == "system-paging-ordering-v208", "unique guarded paging workload identity");
         foreach (var invalid in new[] { guardedPaging with { RecoverableVm = false }, guardedPaging with { SystemInstance = null },
             guardedPaging with { SystemBytes = null }, guardedPaging with { Volume = "Q:" }, guardedPaging with { BudgetMiB = 1024 } })
         {
@@ -100,6 +100,15 @@ internal static class DiagnosticContracts
             pressureRows[0].Clock!, pressureRows[^1].Clock!, pressureChildren));
         Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
             [pressureChildren[0], pressureChildren[1] with { AllocatedBytes = null }, .. pressureChildren[2..]]));
+        Reject(() => SystemPagingOrderEvidence.Validate(pressureRows, pressureRows[0].Clock!, pressureRows[^1].Clock!,
+            [.. pressureChildren[..3], pressureChildren[3] with { Operations = 127 }]));
+        Check(PagingWriteEvidence.LastGeneration(0, 0) == 0 && PagingWriteEvidence.LastGeneration(128, 127) == 1 &&
+            PagingWriteEvidence.LastGeneration(129, 0) == 2 && PagingWriteEvidence.LastGeneration(129, 1) == 1,
+            "pressure oracle distinguishes untouched files, complete rounds and a partial final round");
+        Check(!PagingWriteEvidence.Pattern(0, 0).AsSpan().SequenceEqual(PagingWriteEvidence.Pattern(0, 1)) &&
+            !PagingWriteEvidence.Pattern(0, 1).AsSpan().SequenceEqual(PagingWriteEvidence.Pattern(0, 2)) &&
+            !PagingWriteEvidence.Pattern(0, 1).AsSpan().SequenceEqual(PagingWriteEvidence.Pattern(1, 1)),
+            "initial bytes, later acknowledged generations and neighboring files have different full-block patterns");
         var growthCut = guardedCut with { GrowthMarkers = true };
         VerificationPlan.Validate(growthCut);
         Check(VerificationPlan.Integrity(growthCut).Single().Id.EndsWith("growth-v207", StringComparison.Ordinal) &&

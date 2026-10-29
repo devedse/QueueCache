@@ -103,6 +103,11 @@ with a matching V28 driver required. Older drivers refuse volumes registered for
 paging, hibernation or dumps. Windows registered C: for paging even with page files
 and crash dumps off; moving them to Q: was refused because the VM disks are hot-pluggable.
 
+The new C: pressure workload uses plan 208: it replaces the initial file patterns
+and checks the last acknowledged write in each file after releasing the cache.
+Plan 207's identical rewrites could miss lost writes; that test gap was found and
+fixed before any VM run was credited. C: qualification is still pending.
+
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
   0.4.865.1 (plan 196). The earlier variants

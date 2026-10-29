@@ -57,12 +57,12 @@ internal static class PagingPressureWorker
                 SystemPagingOrdering.FileName(job.WorkDirectory, i), FileMode.Open, FileAccess.Write, FileShare.ReadWrite)).ToArray();
             try
             {
-                var patterns = Enumerable.Range(0, files.Length).Select(SystemPagingOrdering.Pattern).ToArray();
                 Start(job); var clock = Stopwatch.StartNew(); long writes = 0;
                 while (clock.Elapsed.TotalSeconds < job.Seconds && !File.Exists(job.StopFile))
                 {
                     var i = (int)(writes % files.Length); files[i].Position = 0;
-                    files[i].Write(patterns[i]); files[i].Flush(true); ++writes;
+                    files[i].Write(PagingWriteEvidence.Pattern(i, writes / files.Length + 1));
+                    files[i].Flush(true); ++writes;
                 }
                 return new(3, null, null, writes, null, clock.Elapsed.TotalSeconds);
             }

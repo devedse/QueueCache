@@ -11,9 +11,9 @@ namespace QueueCache.Developer.Verification;
 public static class SystemPagingOrdering
 {
     public const string Suite = "system-paging-ordering";
-    public const int Files = 128, Seconds = 120;
+    public const int Files = PagingWriteEvidence.Files, Seconds = 120;
     internal static string FileName(string work, int i) => Path.Combine(work, $"ordered-{i:D4}.bin");
-    internal static byte[] Pattern(int i) => ConcurrentCacheOracle.Pattern(132, i, 4096);
+    internal static byte[] Pattern(int i) => PagingWriteEvidence.Pattern(i, 0);
 
     public static async Task<IReadOnlyList<CheckResult>> RunAsync(DiskTarget target, string work, string output,
         Func<WorkerJob, CancellationToken, int, Task<string>> worker, CancellationToken token)
@@ -55,7 +55,8 @@ public static class SystemPagingOrdering
                 ?? throw new InvalidDataException("Missing pressure completion record.")).ToArray();
             var held = SystemPagingOrderEvidence.Validate(rows, begin, end, children);
             RunStorage.AtomicJson(Path.Combine(output, "paging-order-window.json"), new { Start = begin, End = end, Children = children, HeldBypassIntervals = held });
-            await worker(Job("paging-order-finish", Path.Combine(output, "paging-order-bytes.json")), token, 900);
+            await worker(Job("paging-order-finish", Path.Combine(output, "paging-order-bytes.json")) with
+                { Value = checked((ulong)children.Single(c => c.Role == 3).Operations) }, token, 900);
             var a = rows[0].Diagnostics.PagingOrder!; var b = rows[^1].Diagnostics.PagingOrder!;
             return [new("system-paging-ordering/pressure-and-held-bypass", "PASS",
                 $"{held} sampled intervals had page-file bypasses while earlier saves remained pending. " +
@@ -121,13 +122,17 @@ public static class SystemPagingOrdering
         device.Control(WriteCacheAction.LabDelay, value: 0);
         using (var volume = new FileTests.CheckedVolume(target.Letter, target.Number, target.DiskBytes, true)) volume.Flush();
         device.Control(WriteCacheAction.Flush); device.Control(WriteCacheAction.Disable); device.Control(WriteCacheAction.Release);
+        var writes = checked((long)job.Value);
+        if (writes < Files) throw new IOException("Pressure writer did not replace every initial file pattern.");
         for (var i = 0; i < Files; ++i)
         {
             using var file = new AlignedFile(FileName(job.WorkDirectory, i), 4096, create: false);
             var actual = new byte[4096]; file.Read(0, actual);
-            if (!actual.AsSpan().SequenceEqual(Pattern(i))) throw new IOException("Owned C: file differs after lower flush/release.");
+            var generation = PagingWriteEvidence.LastGeneration(writes, i);
+            if (!actual.AsSpan().SequenceEqual(PagingWriteEvidence.Pattern(i, generation)))
+                throw new IOException($"Owned C: file {i} differs from acknowledged generation {generation} after lower flush/release.");
         }
-        RunStorage.AtomicJson(job.Reply, new { VerifiedFiles = Files, State = device.GetWriteCacheState() });
+        RunStorage.AtomicJson(job.Reply, new { VerifiedFiles = Files, AcknowledgedWrites = writes, State = device.GetWriteCacheState() });
         return 0;
     }
 }
