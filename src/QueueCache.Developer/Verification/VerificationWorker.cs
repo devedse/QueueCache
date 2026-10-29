@@ -23,7 +23,8 @@ public sealed record WorkerJob(string Operation, string Volume, string Reply, Di
     bool RequireCopyFlagsRestore = false, ReadTailCase? TailDecision = null,
     long? DrainSeedBytes = null, string? StartFile = null,
     string? ProcessEvidence = null, ComparisonProvider? Provider = null, string? PrimoCli = null,
-    bool DurableCheckpoint = false, bool WriteThroughGeneration2 = false, bool GrowthMarkers = false);
+    bool DurableCheckpoint = false, bool WriteThroughGeneration2 = false, bool GrowthMarkers = false,
+    bool ProtectTelemetryWorkingSet = false);
 /// <summary>ReadRecall: QcLabReadRecall mode at capture (null: the driver has none), restored afterwards.</summary>
 public sealed record RecoverySnapshot(int SchemaVersion, DiskTarget Target, WriteCacheState State,
     bool Timing, string Profiles, DateTimeOffset Captured, string Machine, ulong? ReadRecall = null,
@@ -324,7 +325,8 @@ public static class VerificationWorker
         }
         if (job.Operation.StartsWith("paging-order-", StringComparison.Ordinal) && job.Suite == SystemPagingOrdering.Suite)
             return await SystemPagingOrdering.WorkerAsync(job);
-        if (job.Operation.StartsWith("ordering-drain-", StringComparison.Ordinal) && job.Suite == SystemOrderingDrain.Suite)
+        if (job.Operation.StartsWith("ordering-drain-", StringComparison.Ordinal) &&
+            job.Suite is SystemOrderingDrain.Suite or SystemOrderingDrain.PressureSuite)
             return await SystemOrderingDrain.WorkerAsync(job);
         if (job.Operation == "compare-drain-restore")
         {

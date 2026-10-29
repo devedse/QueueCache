@@ -164,8 +164,10 @@ but did not cover the later gap. Disk progress and zero retained I/O errors do
 not prove responsiveness during that missing interval. Original settings/apps
 were restored and evidence hash-verified; no C: power-cut test followed.
 The maintained plan-213 `system-ordering-drain` diagnostic keeps a separate
-heartbeat and queue telemetry through the final flush/cleanup. Its result is
-still pending; adding observation does not resolve the pause.
+heartbeat and queue telemetry through the final flush/cleanup. On 0.4.902.1 it
+completed/restored with maximum telemetry/heartbeat gaps 0.242 / 0.127 s;
+flush-only work did not reproduce the earlier gap. Plan 214 adds the preceding
+memory-pressure condition as a separate diagnostic. The cause is still open.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

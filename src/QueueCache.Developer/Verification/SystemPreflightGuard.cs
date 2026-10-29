@@ -9,12 +9,12 @@ public static class SystemPreflightGuard
         volume.Equals("C:", StringComparison.OrdinalIgnoreCase) &&
         suite is "compare-durability-write" or "compare-durability-churn" or "compare-durability-verify";
 
-    public static bool ChangesSystemCache(string? suite) => suite is SystemPagingOrdering.Suite or SystemOrderingDrain.Suite;
+    public static bool ChangesSystemCache(string? suite) => suite is SystemPagingOrdering.Suite or SystemOrderingDrain.Suite or SystemOrderingDrain.PressureSuite;
 
     public static void ValidateOptions(VerificationOptions options)
     {
         var durability = IsSystemDurability(options.Volume, options.Suite);
-        if (!durability && options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain"))
+        if (!durability && options.Suite is not ("system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain"))
         {
             if (options.SystemInstance is not null || options.SystemBytes is not null || options.RecoverableVm ||
                 options.OraclePath is not null && options.Suite != "compare-durability-verify")

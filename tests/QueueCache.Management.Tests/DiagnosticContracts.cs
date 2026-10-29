@@ -21,7 +21,7 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 213, "plan 213 diagnoses final write-out with full telemetry and independent heartbeat");
+        Check(VerificationPlan.Version == 214, "plan 214 conditions final-write-out diagnosis with recorded memory pressure");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);
@@ -85,6 +85,18 @@ internal static class DiagnosticContracts
         {
             try { VerificationPlan.Validate(invalid); throw new Exception("Unguarded drain test accepted"); }
             catch (ArgumentException) { }
+        }
+        var pressureDrain = guardedDrain with { Suite = "system-paging-ordering-drain" };
+        VerificationPlan.Validate(pressureDrain);
+        Check(VerificationPlan.Integrity(pressureDrain).Single().Id == "system-paging-ordering-drain-v214" &&
+            SystemPreflightGuard.ChangesSystemCache(pressureDrain.Suite), "pressure-conditioned drain has its own guarded identity");
+        try { VerificationPlan.Validate(pressureDrain with { RecoverableVm = false }); throw new Exception("Unguarded conditioned drain accepted"); }
+        catch (ArgumentException) { }
+        ProgressHeartbeat.ValidateDuration(1); ProgressHeartbeat.ValidateDuration(14400);
+        foreach (var seconds in new[] { 0, -1, 14401 })
+        {
+            try { ProgressHeartbeat.ValidateDuration(seconds); throw new Exception("Invalid heartbeat duration accepted"); }
+            catch (ArgumentOutOfRangeException) { }
         }
         var beatClocks = Enumerable.Range(0, 21).Select(i => new HeartbeatSample(DateTimeOffset.UnixEpoch.AddMilliseconds(i * 100),
             new(1 + i * 100_000L, 1_000_000), i == 0 ? null : 100)).ToArray();

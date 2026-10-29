@@ -225,6 +225,27 @@ same two-second coverage limit. It retains both observer results even if one
 fails. This is preparation for diagnosis, not a fix or accepted repetition;
 the existing bounded paging contract and prior failed evidence are unchanged.
 
+The flush-only plan-213 diagnostic on 0.4.902.1 completed/restored, with 2,376
+telemetry samples (maximum gap 0.242 s) and 4,418 independent heartbeat samples
+(maximum gap 0.127 s). Its 123,676 flushed files took 300.011 s; final cache
+flush took 164.954 s and deletion 16.761 s. The run had 2.080 GB pending before
+the explicit flush. Detailed queue timing recorded the storage dataset IOCTL as a read
+selection fence and a maximum queue wait of 164.869 s, but it did not reproduce
+the lost observer coverage. That queued control alone does not establish why
+the earlier observer paused. The 1,782 exported records were independently
+hash-verified. The trace is diagnostic only and remains retained.
+
+Plan 214 adds a separate pressure-conditioned diagnostic: five minutes of
+locked-memory/4 GiB pager activity before the same flushed-file/write-out work,
+with both observers active throughout. Monitor residency is recorded/restored;
+the pressure workers retain ordinary paging. The original cost window had this
+preceding memory pressure, which the flush-only diagnostic omitted. The new
+case tests that condition without changing the existing bounded paging fixture,
+weakening coverage or claiming the original pause fixed. Timing diagnostics now
+record a queued control's input length and, for the buffered dataset IOCTL, its
+action. That interface carries TRIM and other actions; its IOCTL number alone
+does not identify the operation. I/O handling is unchanged.
+
 ### C: paging under an artificial drain delay (#32, October 29)
 
 On native/controller 0.4.896.1 under Driver Verifier, the first guarded two-minute

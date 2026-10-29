@@ -38,7 +38,12 @@ internal static class PagingPressureWorker
     }
     public static PagingPressureResult Run(WorkerJob job)
     {
-        if (job.ReadyFile is null || job.StartFile is null || job.StopFile is null || job.Seconds != 120 || job.Value > 3)
+        var drainConditioning = job.Suite == SystemOrderingDrain.PressureSuite &&
+            job.Operation == "ordering-drain-pressure" && job.Seconds == SystemOrderingDrain.PressureSeconds && job.Value < 2;
+        var boundedPaging = job.Suite == SystemPagingOrdering.Suite && job.Operation == "paging-order-pressure" &&
+            job.Seconds == SystemPagingOrdering.Seconds && job.Value <= 3;
+        if (job.ReadyFile is null || job.StartFile is null || job.StopFile is null ||
+            (!drainConditioning && !boundedPaging))
             throw new IOException("Invalid guarded paging fixture contract.");
         if (job.Value == 2)
         {

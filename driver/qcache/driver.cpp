@@ -370,7 +370,20 @@ static void RecordSelection(QC_PERFORMANCE* performance, PIRP request, ULONG sca
         performance->LastSelectionLength = stack->Parameters.Read.Length;
     }
     else
+    {
         performance->LastSelectionOffset = performance->LastSelectionLength = 0;
+        if (stack->MajorFunction == IRP_MJ_DEVICE_CONTROL || stack->MajorFunction == IRP_MJ_INTERNAL_DEVICE_CONTROL)
+        {
+            performance->LastSelectionLength = stack->Parameters.DeviceIoControl.InputBufferLength;
+            // This IOCTL carries TRIM and other dataset actions. Record the
+            // buffered action rather than guessing which request fenced reads.
+            if (performance->LastSelectionCode == IOCTL_STORAGE_MANAGE_DATA_SET_ATTRIBUTES &&
+                request->AssociatedIrp.SystemBuffer &&
+                performance->LastSelectionLength >= sizeof(DEVICE_MANAGE_DATA_SET_ATTRIBUTES))
+                performance->LastSelectionOffset =
+                    static_cast<PDEVICE_MANAGE_DATA_SET_ATTRIBUTES>(request->AssociatedIrp.SystemBuffer)->Action;
+        }
+    }
 }
 static bool Overlaps(PIRP read, PIRP write)
 {

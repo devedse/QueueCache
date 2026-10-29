@@ -83,7 +83,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         !ComparisonPlan.IsDurabilityWrite(options.Suite) &&
         !options.Suite.StartsWith("managed-", StringComparison.Ordinal) && !options.Suite.StartsWith("disk-removal", StringComparison.Ordinal);
     private static bool IsSystemSuite(string suite) => suite is
-        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain";
+        "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
     // Leases are per physical disk (one verification per disk), not per cached volume.
@@ -247,6 +247,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Log(options.Suite == "system-active-image" ? "Bounded active C: image phase; runtime-only 256..512 MiB Fast and Strict cases with independent restoration." :
                 options.Suite == "system-app-session" ? $"Operator application session on C:; runtime-only Fast cache, waiting up to {AppSessionSeconds / 60} minutes for {storage.PathFor(AppSessionDoneFile)}, then drain/release and byte comparison. Instructions: {storage.PathFor("operator-instructions.txt")}" :
                 options.Suite == "system-image-baseline" ? "Bounded uncached C: image baseline; cache configuration remains disabled and released." :
+                options.Suite == SystemOrderingDrain.PressureSuite ? "Guarded C: memory pressure followed by final-write-out diagnosis; both observers cover pressure, flush and cleanup." :
                 options.Suite == SystemOrderingDrain.Suite ? "Guarded C: final-write-out diagnosis; telemetry and independent heartbeat through explicit flush/cleanup; queue timing on." :
                 options.Suite == "system-paging-ordering" ? "Guarded C: ordering, paging pressure and owned flushed-file checks; independent restoration." :
                 options.Suite == "system-files" ? "Bounded owned-file phase; no cache configuration, faults, TRIM or reboot." :
@@ -334,7 +335,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 ownsSystemLease = systemLease.WaitOne(0);
                 if (!ownsSystemLease)
                     throw new IOException("Another guarded system-disk verification owns this physical disk.");
-                if (options.Suite is "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain")
+                if (options.Suite is "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain")
                 {
                     await Worker(Job(SystemPreflightGuard.ChangesSystemCache(options.Suite) ? "capture" : "system-capture") with
                     {
@@ -395,11 +396,14 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                 workDirectory = ComparisonPlan.WorkDirectory(options.Suite, comparisonTarget!.Root, Path.GetFileName(storage.DirectoryPath)) ?? "";
                 storage.Write("workloads.json", new { Directory = workDirectory, Retained = options.Suite != "compare-ram" });
             }
-            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain")
+            else if (options.Suite is "system-files" or "system-image-baseline" or "system-active-image" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain")
             {
                 workDirectory = Path.Combine(target.Root, "QueueCache-System-" + Guid.NewGuid().ToString("N"));
                 if (options.Suite == "system-app-session")
                     storage.Write("workloads.json", new { Directory = workDirectory, Retained = true, BaselineOracle = storage.PathFor(AppSessionOracleFile) });
+                else if (options.Suite is SystemOrderingDrain.Suite or SystemOrderingDrain.PressureSuite)
+                    storage.Write("workloads.json", new { Directory = workDirectory, Retained = true,
+                        Purpose = "Diagnostic payload; deleted during the observed cleanup. No byte or crash verdict." });
                 else if (options.Suite == "system-active-image")
                     storage.Write("workloads.json", new
                     {
@@ -510,10 +514,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
                         storage.Write("removal-verified.json", new { Phase = "Verifying", Target = original.Target, At = DateTimeOffset.UtcNow });
                         return null;
                     }
-                    if (test.Operation == SystemOrderingDrain.Suite)
+                    if (test.Operation is SystemOrderingDrain.Suite or SystemOrderingDrain.PressureSuite)
                     {
                         caseChecks = await SystemOrderingDrain.RunAsync(fileTarget!, workDirectory!,
-                            storage.DirectoryPath, ExecuteWorker, Log, deadline.Token);
+                            storage.DirectoryPath, ExecuteWorker, Log, deadline.Token, test.Operation == SystemOrderingDrain.PressureSuite);
                         return null;
                     }
                     if (test.Operation == SystemPagingOrdering.Suite)
