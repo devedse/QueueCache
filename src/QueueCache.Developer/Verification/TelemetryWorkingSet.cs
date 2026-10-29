@@ -23,9 +23,13 @@ public sealed class TelemetryWorkingSet : IDisposable
     public static WorkingSetLimits Requested(WorkingSetLimits original)
     {
         var minimum = Math.Max(original.MinimumBytes, MinimumBytes);
-        if ((original.Flags & HardMaximum) != 0 && original.MaximumBytes < minimum)
+        if ((original.Flags & HardMaximum) != 0 && original.MaximumBytes <= minimum)
             throw new InvalidOperationException("The telemetry process's existing hard maximum cannot accommodate its resident observer minimum.");
-        return new(minimum, Math.Max(original.MaximumBytes, minimum),
+        // Windows rejects equal minimum/maximum values (ERROR_INVALID_PARAMETER).
+        // Leave room above the protected minimum; preserve an existing hard cap.
+        var maximum = (original.Flags & HardMaximum) != 0 ? original.MaximumBytes :
+            Math.Max(original.MaximumBytes, checked(minimum + MinimumBytes));
+        return new(minimum, maximum,
             (original.Flags & ~SoftMinimum) | HardMinimum);
     }
 
@@ -101,7 +105,8 @@ public sealed class TelemetryWorkingSet : IDisposable
         using var privilege = new ProcessPrivilege("SeIncreaseWorkingSetPrivilege", "to keep the verification observer resident during memory pressure");
         if (!SetProcessWorkingSetSizeEx(GetCurrentProcess(), checked((nuint)limits.MinimumBytes),
                 checked((nuint)limits.MaximumBytes), limits.Flags))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+            throw new Win32Exception(Marshal.GetLastWin32Error(),
+                $"Could not set telemetry working set minimum={limits.MinimumBytes}, maximum={limits.MaximumBytes}, flags={limits.Flags}.");
     }
 
     [DllImport("kernel32.dll")] private static extern nint GetCurrentProcess();

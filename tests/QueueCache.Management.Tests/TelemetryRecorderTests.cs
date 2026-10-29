@@ -119,7 +119,7 @@ internal static class TelemetryRecorderTests
         var current = original;
         var writes = new List<WorkingSetLimits>();
         var lease = new TelemetryWorkingSet(() => current, value => { current = value; writes.Add(value); });
-        Check(current.MinimumBytes == 64UL << 20 && current.MaximumBytes == current.MinimumBytes &&
+        Check(current.MinimumBytes == 64UL << 20 && current.MaximumBytes == 128UL << 20 &&
               (current.Flags & 1) != 0, "Only the observer receives a bounded 64 MiB resident minimum.");
         try { TelemetryWorkingSet.Validate(lease.Evidence); throw new Exception("Missing restoration accepted."); }
         catch (InvalidDataException) { }
@@ -166,6 +166,8 @@ internal static class TelemetryRecorderTests
             throw new Exception("Existing hard maximum silently relaxed.");
         }
         catch (InvalidOperationException) { }
+        Check(TelemetryWorkingSet.Requested(new(204800, 96UL << 20, 4)).MaximumBytes == 96UL << 20,
+            "A sufficient existing hard maximum is kept exactly, with a smaller resident minimum.");
 
         if (OperatingSystem.IsWindows())
         {
