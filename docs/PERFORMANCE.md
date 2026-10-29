@@ -246,6 +246,16 @@ record a queued control's input length and, for the buffered dataset IOCTL, its
 action. That interface carries TRIM and other actions; its IOCTL number alone
 does not identify the operation. I/O handling is unchanged.
 
+On 0.4.903.1 the pressure-conditioned diagnostic collected 4,287 telemetry and
+8,060 heartbeat samples with full coverage; maximum gaps were 0.533 / 0.522 s.
+It wrote 112,333 flushed files in 300.002 s after the recorded five-minute
+pressure phase, without reproducing the original 234 s gap. The overall run is
+**RESTORATION_FAILED**, not an accepted repetition: ordering selection returned
+ERROR_BUSY after draining/disabling, and a separate recovery attempt chose the
+wrong baseline by losing the recorded suite. All 1,902 exported records were
+hash-verified. Scoped runner fixes and live recovery validation precede any new
+cost window; no cost or crash-safety verdict changes.
+
 ### C: paging under an artificial drain delay (#32, October 29)
 
 On native/controller 0.4.896.1 under Driver Verifier, the first guarded two-minute

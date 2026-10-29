@@ -1617,6 +1617,29 @@ internal static class VerificationRunnerTests
             Reject(() => store.Add(new("one", "PASS", "", DateTimeOffset.UtcNow, 1)));
             var executable = Environment.ProcessPath!;
             string[] prefix = Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase) ? [Assembly.GetEntryAssembly()!.Location] : [];
+            foreach (var suite in new[] { "system-paging-ordering", "system-ordering-drain", "system-paging-ordering-drain", "system-active-image" })
+            {
+                var failedRun = new RunStorage(store.DirectoryPath);
+                var recordedOptions = new VerificationOptions("C:", suite, BudgetMiB: 2048);
+                var savedTarget = new QueueCache.Operations.DiskTarget('C', 99998, 100L << 30, "fixture-system")
+                    { IsBoot = true, IsSystem = true, DiskBytes = 100L << 30 };
+                failedRun.Write("manifest.json", new { Options = recordedOptions });
+                failedRun.Write("recovery.json", original with { Target = savedTarget });
+                failedRun.Write("results.json", Array.Empty<CaseResult>());
+                File.WriteAllText(failedRun.PathFor("run.lock"), "");
+                File.WriteAllText(failedRun.PathFor("FINISHED.txt"), "RESTORATION_FAILED");
+                var recoveryRunner = new VerificationRunner(executable, [.. prefix, "--fake-verification", "success"], Path.Combine(store.DirectoryPath, "recovery-leases"));
+                Check(await recoveryRunner.RecoverAsync(failedRun.DirectoryPath, CancellationToken.None) == 0, "guarded recovery succeeds with fake owned children");
+                var recoveryJobs = Directory.GetFiles(recoveryRunner.DirectoryPath!, "*.job.json")
+                    .Select(file => JsonSerializer.Deserialize<WorkerJob>(File.ReadAllText(file))!).ToArray();
+                var restoreJob = recoveryJobs.Single(job => job.Operation is "restore" or "system-restore");
+                Check(restoreJob.Operation == (suite == "system-active-image" ? "system-restore" : "restore") &&
+                    restoreJob.Suite == suite && restoreJob.BudgetMiB == 2048 && restoreJob.RecoverableVm &&
+                    restoreJob.SystemInstance == savedTarget.Instance && restoreJob.SystemBytes == savedTarget.DiskBytes &&
+                    File.Exists(Path.Combine(recoveryRunner.DirectoryPath!, "recovery-result.json")) &&
+                    File.ReadAllText(failedRun.PathFor("FINISHED.txt")) == "RESTORATION_FAILED",
+                    "recovery routes the recorded suite with full guards and preserves the failed run: " + suite);
+            }
             var process = await OwnedProcess.RunAsync(executable, [.. prefix, "--runner-child", "two words", "--argument", "Q:\\a b.dat"], store.PathFor("child"), TimeSpan.FromSeconds(20), CancellationToken.None);
             Check(process.ExitCode == 0 && process.Error.Contains("captured stderr"), "stdout/stderr persisted");
             Check(JsonSerializer.Deserialize<string[]>(process.Output)!.SequenceEqual(["two words", "--argument", "Q:\\a b.dat"]), "exact argument vector");

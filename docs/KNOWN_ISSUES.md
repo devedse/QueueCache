@@ -168,6 +168,16 @@ heartbeat and queue telemetry through the final flush/cleanup. On 0.4.902.1 it
 completed/restored with maximum telemetry/heartbeat gaps 0.242 / 0.127 s;
 flush-only work did not reproduce the earlier gap. Plan 214 adds the preceding
 memory-pressure condition as a separate diagnostic. The cause is still open.
+On 0.4.903.1 the pressure-conditioned workload also completed with full monitoring
+coverage (maximum heartbeat gap 0.522 s), but its overall run failed restoration:
+an ordering-mode control returned ERROR_BUSY after the cache was disabled and
+drained. Inspection found an empty paused cache with no recorded errors. The
+recovery command then selected the image-only disabled/released restoration path
+because it discarded the recorded suite. The candidate fix preserves that suite
+and budget, and shares bounded, health-checked ordering selection with configuration
+changes. Host contracts cover transient BUSY, faults, changed identity/errors and
+recovery routing; live recovery validation is pending. The original failed run
+remains failed, and this result does not qualify the cost comparison or C: cuts.
 
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on

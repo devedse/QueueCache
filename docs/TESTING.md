@@ -511,6 +511,13 @@ result. If restoration fails, stop: check the recorded owned processes have
 exited, then run `qcache developer verify-recover <run>`, which refuses an
 identity mismatch or a live owned process. The runner never formats, reboots or
 deletes test data on its own.
+Recovery preserves the original manifest's suite and budget: guarded suites that
+temporarily change C:'s cache use ordinary cache restoration, including an originally
+enabled profile; image-only suites use their disabled/released system baseline.
+Restoring ordering waits up to five seconds only for ERROR_BUSY on the same healthy,
+disabled, empty cache. Faults, changed identity/error counts and other errors stop
+immediately. A successful recovery writes a separate recovery result; the failed
+run's original completion and case records stay unchanged.
 
 ## 6. Deciding whether a change is faster
 

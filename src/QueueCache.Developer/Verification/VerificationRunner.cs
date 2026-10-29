@@ -86,6 +86,13 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
+    public static VerificationOptions RecoveryOptions(RecoverySnapshot snapshot, VerificationOptions recorded, string directory)
+    {
+        var system = IsSystemRecoveryTarget(snapshot.Target);
+        return new($"{snapshot.Target.Letter}:", recorded.Suite, directory, BudgetMiB: recorded.BudgetMiB,
+            SystemInstance: system ? snapshot.Target.Instance : null,
+            SystemBytes: system ? snapshot.Target.DiskBytes : null, RecoverableVm: system);
+    }
     // Leases are per physical disk (one verification per disk), not per cached volume.
     private static string LeaseKey(DiskTarget target) => $"PhysicalDrive{target.Number}";
     private static string SystemLeaseName(DiskTarget target) => "Global\\QueueCache-SystemVerify-" + LeaseKey(target);
@@ -1691,6 +1698,10 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         }
         var snapshotPath = Path.Combine(path, "recovery.json");
         original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(snapshotPath, token))!;
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
+        var recordedOptions = manifest.RootElement.GetProperty("Options").Deserialize<VerificationOptions>()
+            ?? throw new InvalidDataException("The run manifest has no options.");
+        var suite = recordedOptions.Suite ?? throw new InvalidDataException("The run manifest has no suite.");
         var systemRecovery = IsSystemRecoveryTarget(original.Target);
         FileStream? diskLease = null;
         Semaphore? systemLease = null;
@@ -1711,10 +1722,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Directory.CreateDirectory(leases);
             diskLease = new FileStream(Path.Combine(leases, LeaseKey(original.Target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
-        options = systemRecovery
-            ? new($"{original.Target.Letter}:", "system-active-image", path,
-                SystemInstance: original.Target.Instance, SystemBytes: original.Target.DiskBytes, RecoverableVm: true)
-            : new($"{original.Target.Letter}:", Output: path);
+        options = RecoveryOptions(original, recordedOptions, path);
         fileTarget = systemRecovery ? original.Target : null;
         storage = new RunStorage(path);
         progressSink = progress;
@@ -1725,9 +1733,6 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             foreach (var ownership in new[] { "ram-read-reference-owned.json", StressOwnership }.Select(name => Path.Combine(path, name)))
                 if (File.Exists(ownership))
                     await Worker(Job("ram-read-cleanup") with { OraclePath = ownership }, token, 300);
-            using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
-            var suite = manifest.RootElement.GetProperty("Options").GetProperty("Suite").GetString()
-                ?? throw new InvalidDataException("The run manifest has no suite.");
             var mutatesCopyFlags = suite is "cache-read-misses" or "cache-read-bookkeeping" or "tree-decision" or "read-tail-decision";
             ulong? recoveryCopyFlags = null;
             if (mutatesCopyFlags && original.CopyFlags is null && suite == "cache-read-misses")

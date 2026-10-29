@@ -8,6 +8,21 @@ using QueueCache.Operations;
 
 internal static class DiagnosticContracts
 {
+    private sealed class OrderingControl(WriteCacheState state) : ICacheControl
+    {
+        public WriteCacheState State = state;
+        public readonly List<ulong> Modes = [];
+        public Action<OrderingControl> OnSelect = _ => { };
+        public WriteCacheState GetWriteCacheState() => State;
+        public bool? ReadWriteOrdering() => false;
+        public void SetOptions(CacheOptions options) => throw new Exception("Ordering selection changed options.");
+        public void Control(WriteCacheAction action, ulong budgetBytes = 0, ulong value = 0)
+        {
+            if (action != WriteCacheAction.FlushOrder) throw new Exception("Ordering selection issued an unrelated control.");
+            Modes.Add(value); OnSelect(this);
+        }
+    }
+
     private sealed class InlineProgress(Action<string> report) : IProgress<string>
     {
         public void Report(string message) => report(message);
@@ -22,6 +37,40 @@ internal static class DiagnosticContracts
             throw new Exception("Expected diagnostic evidence rejection.");
         }
         Check(VerificationPlan.Version == 214, "plan 214 conditions final-write-out diagnosis with recorded memory pressure");
+        var recoveryState = new WriteCacheState(0, 0, 100UL << 30, 2048UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 3 };
+        var recoveryTarget = new DiskTarget('C', 0, 100L << 30, "fixture-system")
+            { IsBoot = true, IsSystem = true, DiskBytes = 100L << 30 };
+        var recoverySnapshot = new RecoverySnapshot(1, recoveryTarget, recoveryState, false, "[]", DateTimeOffset.UtcNow, "fixture");
+        foreach (var suite in new[] { "system-paging-ordering", "system-ordering-drain", "system-paging-ordering-drain", "system-active-image" })
+        {
+            var restoredOptions = VerificationRunner.RecoveryOptions(recoverySnapshot,
+                new("C:", suite, BudgetMiB: 2048), "Q:\\evidence");
+            Check(restoredOptions.Suite == suite && restoredOptions.BudgetMiB == 2048 && restoredOptions.Volume == "C:" &&
+                restoredOptions.SystemInstance == recoveryTarget.Instance && restoredOptions.SystemBytes == recoveryTarget.DiskBytes &&
+                restoredOptions.RecoverableVm && SystemPreflightGuard.ChangesSystemCache(restoredOptions.Suite) == (suite != "system-active-image"),
+                "recovery preserves the recorded suite, budget and guarded identity: " + suite);
+        }
+        var ordering = new OrderingControl(recoveryState);
+        ordering.OnSelect = control => { if (control.Modes.Count < 3) throw new System.ComponentModel.Win32Exception(170); };
+        ConfigurationManager.SelectWriteOrdering(ordering, 2UL);
+        Check(ordering.Modes.SequenceEqual(new ulong[] { 2, 2, 2 }), "ordering restoration retries transient BUSY and preserves exact lab mode");
+        foreach (var changed in new[] { recoveryState with { Flags = 2, LastError = 1 }, recoveryState with { Errors = 1 },
+            recoveryState with { Instance = 4 }, recoveryState with { DeviceBytes = 1 }, recoveryState with { Flags = 1 },
+            recoveryState with { DirtyBytes = 4096 }, recoveryState with { InFlightBytes = 4096 }, recoveryState with { Flags = 4 } })
+        {
+            ordering = new(recoveryState) { OnSelect = control => { control.State = changed; throw new System.ComponentModel.Win32Exception(170); } };
+            try { ConfigurationManager.SelectWriteOrdering(ordering, 0UL); throw new Exception("Unsafe ordering retry accepted."); }
+            catch (IOException) { }
+            Check(ordering.Modes.Count == 1, "ordering restoration never retries faults, changed identity/errors, enabled or pending state");
+        }
+        ordering = new(recoveryState) { OnSelect = _ => throw new System.ComponentModel.Win32Exception(170) };
+        try { ConfigurationManager.SelectWriteOrdering(ordering, 0UL, TimeSpan.Zero); throw new Exception("Unbounded ordering retry accepted."); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 170) { }
+        Check(ordering.Modes.Count == 1, "ordering BUSY retry has an independent deadline");
+        ordering = new(recoveryState) { OnSelect = _ => throw new System.ComponentModel.Win32Exception(5) };
+        try { ConfigurationManager.SelectWriteOrdering(ordering, 0UL); throw new Exception("Non-BUSY ordering error accepted."); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5) { }
+        Check(ordering.Modes.Count == 1, "ordering restoration preserves non-BUSY errors without retry");
         // V28 is append-only; older driver evidence remains unavailable rather than fabricated zero.
         var pagingWire = new byte[CacheDiagnostics.PagingOrderWireSize];
         BinaryPrimitives.WriteUInt32LittleEndian(pagingWire, 28);

@@ -227,17 +227,37 @@ public static class ConfigurationManager
 
     // The driver refuses briefly (ERROR_BUSY) while a lower TRIM or group flush it already sent finishes.
     internal static void SelectWriteOrdering(ICacheControl device, bool ordering)
+        => SelectWriteOrdering(device, ordering ? 1UL : 0UL);
+
+    internal static void SelectWriteOrdering(ICacheControl device, ulong mode, TimeSpan? timeout = null)
     {
-        for (var attempt = 1; ; attempt++)
+        if (mode > 2) throw new ArgumentOutOfRangeException(nameof(mode));
+        var limit = timeout ?? TimeSpan.FromSeconds(5);
+        if (limit < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(timeout));
+        var baseline = device.GetWriteCacheState();
+        void Validate()
         {
+            var current = device.GetWriteCacheState();
+            EnsureHealthy(current);
+            if (current.Instance != baseline.Instance || current.DeviceBytes != baseline.DeviceBytes ||
+                current.Errors != baseline.Errors || current.Enabled || current.DirtyBytes != 0 || current.InFlightBytes != 0)
+                throw new IOException("Ordering selection requires the same healthy, disabled, empty cache with unchanged errors.");
+        }
+        EnsureHealthy(baseline);
+        var timer = Stopwatch.StartNew();
+        for (;;)
+        {
+            Validate();
             try
             {
-                device.Control(WriteCacheAction.FlushOrder, value: ordering ? 1UL : 0UL);
+                device.Control(WriteCacheAction.FlushOrder, value: mode);
                 return;
             }
-            catch (Win32Exception exception) when (exception.NativeErrorCode == 170 && attempt < 50)
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 170)
             {
-                Thread.Sleep(100);
+                Validate(); // A driver fault also returns BUSY; never retry that as a transient flush.
+                if (timer.Elapsed >= limit) throw;
+                Thread.Sleep(TimeSpan.FromMilliseconds(Math.Max(1, Math.Min(100, (limit - timer.Elapsed).TotalMilliseconds))));
             }
         }
     }
