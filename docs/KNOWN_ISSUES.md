@@ -127,6 +127,25 @@ duration, heartbeat limit and final-byte requirements. **A growing paging file
 can still pause Windows behind a large flush backlog.** The bounded test does not
 remove or qualify that limitation. C: reset qualification remains pending.
 
+On 0.4.897.1 under Driver Verifier, all 22 targeted ordering checks completed
+and restored. The bounded plan-210 C: pressure check also completed and restored:
+10.125 GiB locked RAM, a 4 GiB pager and 240 acknowledged flushed writes over
+two minutes. All 128 files held their latest acknowledged bytes after release;
+886 page-file bypasses occurred, including while earlier saves were held.
+There were no unidentified barriers, safe-range overlaps or cache errors;
+the longest heartbeat gap was 0.484 s and complete telemetry's largest gap
+was 1.211 s. Ordered paging recognition had zero reference misses and exact
+program-file reads; that short recognition window itself saw no page-file
+writes. These are live correctness results, not C: crash qualification.
+
+The cost comparison remains unqualified. Its first window had leaked browser
+processes and missing telemetry. The corrected off control's heartbeat met the
+limit, but the resident observer still missed coverage while checking its stop
+file. Plan 211 moves that filesystem poll off the sampling thread and retains
+the strict coverage requirements. The incomplete attempts are preserved;
+original settings/apps were restored and no C: reset followed.
+[Evidence and limits](PERFORMANCE.md#c-ordering-cost-observer-32).
+
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
   0.4.865.1 (plan 196). The earlier variants
@@ -552,6 +571,19 @@ written, and everything else reads back exactly.
 Correctness checks and their evidence. Performance evidence is in [performance](PERFORMANCE.md).
 
 ### Correctness qualification
+
+**Issue #32, bounded C: ordering (2026-10-29):** native/controller 0.4.897.1,
+clean source `52d4af2`, passed all 22 targeted ordering checks under Verifier
+`0x209bb`; completion validation accepted the experiment. Guarded C: pressure
+case `system-paging-ordering-v210` completed/restored with all 128 latest-byte
+files exact, 886 page-file bypasses, zero safe overlaps or errors and a
+0.484 s maximum heartbeat gap. All 627 monotonic observations covered the
+worker interval. Ordered recognition also completed with zero reference
+misses, 217 program files exact and ten normal child processes. Actual loaded
+native/controller hashes and finalized raw records were checked; evidence
+exports were independently hash-verified. The earlier unbounded pressure run
+remains incomplete, with its growth/backlog pause unresolved. No C: reset or
+final release campaign is credited.
 
 **Issue #13, current ordering and final regression (2026-10-28):** native
 0.4.882.1 passed 14/14 targeted checks under Verifier `0x209bb`, six ordering-on

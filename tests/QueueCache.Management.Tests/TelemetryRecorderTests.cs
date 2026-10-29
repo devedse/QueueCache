@@ -35,6 +35,41 @@ internal static class TelemetryRecorderTests
         await recording.WaitAsync(TimeSpan.FromSeconds(5));
         Check(values.SequenceEqual([1, 2, 3, 4, 5]), "Every collected point is persisted once in its original order.");
 
+        // A real synchronous filesystem poll must not trap sampling either.
+        // Start the poll only after RecordAsync has returned to its caller.
+        entered = Signal(); release = Signal(); captured = Signal();
+        values = []; count = 0;
+        var stop = new TelemetryStopSignal(() =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            return true;
+        });
+        var polling = TelemetryRecorder.RecordAsync(_ =>
+        {
+            var stopping = stop.Requested;
+            var value = ++count;
+            if (value == 2) entered.Task.GetAwaiter().GetResult();
+            if (value == 5) captured.TrySetResult();
+            return new TelemetryCapture<int>(value, stopping);
+        }, async (value, _) =>
+        {
+            await Task.Yield();
+            values.Add(value);
+            stop.Poll();
+        }, TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(5));
+        try
+        {
+            await captured.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Check(!stop.Requested && !polling.IsCompleted && count >= 5,
+                "A blocked synchronous stop-file poll does not block real sampling or infer stop completion.");
+        }
+        finally { release.TrySetResult(); }
+        await polling.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(stop.Requested && stop.LastPollMilliseconds is >= 0 && values.Count >= 6 &&
+              values.SequenceEqual(Enumerable.Range(1, count)),
+            "Stop polling retains every actual sample and a trailing observation after the stop signal.");
+
         entered = Signal();
         var never = Signal();
         count = 0;

@@ -430,6 +430,12 @@ Current contracts (plan 149):
   full process interval with no gap over two seconds. Buffer overflow, a real
   coverage gap or missing counters fails collection; timestamps are never filled.
   Per-stage timings distinguish collection delay from serialization/persistence.
+  Plan 211 moves stop-file polling to the persistence callback: metadata lookup
+  can itself wait for disk under memory pressure. Sampling reads a published
+  stop flag and still records a trailing sample. `StopFileMilliseconds` is zero
+  for the sampling path; `PreviousStopFileMilliseconds` records the previous
+  persister's actual poll (null before one completed). The cadence, bounded
+  buffer, readiness, full coverage and two-second gap limit are unchanged.
 - **Drain completion (plan 132):** `drain-decision` allows 300 seconds for process
   completion because an explicit flush may hold the final I/O beyond the unchanged
   score window. Full-process telemetry and independent restoration still apply.

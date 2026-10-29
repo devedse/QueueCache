@@ -5,6 +5,23 @@ namespace QueueCache.Developer.Verification;
 
 public sealed record TelemetryCapture<T>(T Sample, bool Stop);
 
+/// <summary>A persisted-sample callback polls the filesystem; the sampling thread
+/// reads only the published flag and still captures a final trailing observation.</summary>
+public sealed class TelemetryStopSignal(Func<bool> poll)
+{
+    private int requested;
+    public bool Requested => Volatile.Read(ref requested) != 0;
+    public double? LastPollMilliseconds { get; private set; }
+
+    public void Poll()
+    {
+        var timer = Stopwatch.StartNew();
+        var stop = poll();
+        LastPollMilliseconds = timer.Elapsed.TotalMilliseconds;
+        if (stop) Volatile.Write(ref requested, 1);
+    }
+}
+
 /// <summary>Observe on an owned sampling thread while serialization and disk writes
 /// run separately. Every actual sample must be persisted; capacity exhaustion fails.</summary>
 public static class TelemetryRecorder

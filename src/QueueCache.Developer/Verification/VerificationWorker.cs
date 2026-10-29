@@ -32,7 +32,8 @@ public sealed record ReadPassResult(long Bytes, long Requests, double Seconds);
 /// <summary>Actual observer stages; these diagnose gaps without filling or accepting missing samples.</summary>
 public sealed record TelemetryStageTiming(double StopFileMilliseconds, double StateMilliseconds,
     double PerformanceMilliseconds, double DiagnosticsMilliseconds,
-    double? PreviousPersistenceMilliseconds, double? PreviousDelayMilliseconds);
+    double? PreviousPersistenceMilliseconds, double? PreviousDelayMilliseconds,
+    double? PreviousStopFileMilliseconds = null);
 public sealed record TelemetrySnapshot(DateTimeOffset Utc, double ElapsedSeconds,
     WriteCacheState State, CachePerformance Performance, CacheDiagnostics Diagnostics,
     TelemetryStageTiming StageTiming, TelemetryClock? Clock = null);
@@ -1231,13 +1232,14 @@ public static class VerificationWorker
                     var timer = Stopwatch.StartNew();
                     double? persistenceMilliseconds = null;
                     var readyPublished = false;
+                    var stop = new TelemetryStopSignal(() => File.Exists(job.StopFile));
                     TelemetryCapture<TelemetrySnapshot> Capture(double? delayMilliseconds)
                     {
                         // On stop, take one final sample covering workload completion.
+                        // File metadata can require disk I/O under RAM pressure;
+                        // only the separate persister polls it, never this thread.
+                        var stopping = stop.Requested;
                         var stage = Stopwatch.StartNew();
-                        var stopping = File.Exists(job.StopFile);
-                        var stopMilliseconds = stage.Elapsed.TotalMilliseconds;
-                        stage.Restart();
                         var observedState = device.GetWriteCacheState();
                         var stateMilliseconds = stage.Elapsed.TotalMilliseconds;
                         stage.Restart();
@@ -1247,7 +1249,7 @@ public static class VerificationWorker
                         var observedDiagnostics = device.GetDiagnostics();
                         var diagnosticsMilliseconds = stage.Elapsed.TotalMilliseconds;
                         return new(new(DateTimeOffset.UtcNow, timer.Elapsed.TotalSeconds, observedState,
-                            observedPerformance, observedDiagnostics, new(stopMilliseconds, stateMilliseconds,
+                            observedPerformance, observedDiagnostics, new(0, stateMilliseconds,
                                 performanceMilliseconds, diagnosticsMilliseconds, null, delayMilliseconds),
                             TelemetryClock.Capture()), stopping);
                     }
@@ -1255,7 +1257,8 @@ public static class VerificationWorker
                     {
                         var stage = Stopwatch.StartNew();
                         var output = sample with { StageTiming = sample.StageTiming with
-                            { PreviousPersistenceMilliseconds = persistenceMilliseconds } };
+                            { PreviousPersistenceMilliseconds = persistenceMilliseconds,
+                              PreviousStopFileMilliseconds = stop.LastPollMilliseconds } };
                         await writer.WriteLineAsync(JsonSerializer.Serialize(output).AsMemory(), token);
                         await writer.FlushAsync(token);
                         persistenceMilliseconds = stage.Elapsed.TotalMilliseconds;
@@ -1265,6 +1268,7 @@ public static class VerificationWorker
                                 Ready = true
                             });
                         readyPublished = true;
+                        stop.Poll();
                     }
                     await TelemetryRecorder.RecordAsync(Capture, Persist, TimeSpan.FromSeconds(job.Seconds),
                         TimeSpan.FromMilliseconds(200));
