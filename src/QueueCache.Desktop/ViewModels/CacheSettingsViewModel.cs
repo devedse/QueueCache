@@ -16,11 +16,10 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
     private readonly int[] sizes;
     private readonly bool newCache;
     private readonly bool enabled;
-    // The driver refuses ordering where Windows keeps its paging, hibernation or crash dump file.
-    private readonly bool orderingBlocked;
+    private readonly bool orderingBlocked, systemVolume;
 
     public CacheSettingsViewModel(VolumeDescription volume, WriteCacheState state, bool persistent, int availableMiB = 4096,
-        bool showStartup = true, bool writeOrdering = false)
+        bool showStartup = true, bool writeOrdering = false, bool systemOrderingSupported = false)
     {
         if (availableMiB is < 1 or > MemoryBudget.MaximumMiB)
             throw new ArgumentOutOfRangeException(nameof(availableMiB));
@@ -56,7 +55,8 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
         selectedBatch = Array.IndexOf(Batches, options.BatchKiB) is var batch and >= 0 ? batch : Batches.Length; // Keeps CLI batch sizes not in the list.
         customBatchKiB = options.BatchKiB;
         parallelism = options.Parallelism;
-        orderingBlocked = volume.IsPaging || volume.IsBoot || volume.IsSystem;
+        systemVolume = volume.IsPaging || volume.IsBoot || volume.IsSystem;
+        orderingBlocked = systemVolume && !systemOrderingSupported;
         this.writeOrdering = writeOrdering && !orderingBlocked;
     }
 
@@ -109,10 +109,11 @@ public sealed partial class CacheSettingsViewModel : ObservableObject
     }
     public bool CanOrderWrites => IsFast && !orderingBlocked;
     public string OrderingText => orderingBlocked
-        ? "Not available on this volume: ordering has not been tested with Windows paging, hibernation or crash-dump I/O. " +
-          "This also excludes the Windows drive (normally C:), even with the page file disabled."
+        ? "Update QueueCache to use write ordering on this drive."
         : !IsFast
             ? "Fast only. Strict already waits until each save is on the disk."
+            : systemVolume
+                ? "Windows-drive ordering is being qualified on a recoverable VM. Recent changes can still be lost. Hibernation and Fast Startup have not been tested."
             : "Passed every power-cut test without NTFS damage. Recent writes can still be lost. " +
               "Frequent saves can slow down once the cache fills.";
     public bool IsFixedAllocation => Allocation == 1;

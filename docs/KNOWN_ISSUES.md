@@ -18,8 +18,8 @@ still to do. Open items link to their details.
 
 | Issue | Fixed | Build or status |
 |---|:-:|---|
-| [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Turn it on per cache (not available on C:) to keep NTFS healthy; see the fixed #13 row below |
-| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Baseline paging recognition and traffic limits passed; safe-range driver changes are not yet VM-qualified. The app still refuses ordering on the Windows volume. |
+| [Fast mode without write ordering: a crash can damage the file system](#fast-mode-without-write-ordering-can-damage-the-file-system-in-a-crash) | ❌ | By design: write ordering stays off by default because programs that flush very often slow down. Qualified for NTFS data drives; C: qualification is tracked below. See the fixed #13 row |
+| [Write ordering on C:](https://github.com/devedse/QueueCache/issues/32) | ❌ | Qualification in progress. Baseline paging recognition and traffic limits passed; safe-range driver changes are not yet VM-qualified. The app offers it only with a matching V28 driver. |
 | [High-watermark pressure check stopped the plan-189 release campaign](#high-watermark-pressure-check-stopped-the-plan-189-release-campaign) | ❌ | Not reproduced, [#30](https://github.com/devedse/QueueCache/issues/30): two standalone runs and the complete plan-192 release campaign (11/11 phases, 106/106 cases, restored) passed it with exact counters; the original cause is unproven |
 | [The driver and installer are test-signed](#the-driver-is-test-signed) | ❌ | Production signing not done |
 | [Raw disk reads and writes bypass the cache](#raw-disk-reads-and-writes-bypass-the-cache-by-design) | ❌ | By design |
@@ -38,7 +38,7 @@ still to do. Open items link to their details.
 | [Recovery of interrupted suites beyond `read-tail-decision`](#not-yet-proven) | ❌ | Shared restore path, host-tested |
 | [Hard disks, SATA and NVMe SSDs](#not-yet-proven) | ❌ | One Ceph-backed VM measured; one iSCSI-booted PC ran functional checks |
 | [Test-VM fixture margins (RAM-disk headroom, fragmented lab volume)](#not-yet-proven) | ❌ | Test harness only |
-| A crash in Fast mode could damage NTFS, with no setting to prevent it ([#13](https://github.com/devedse/QueueCache/issues/13)) | ✅ | 0.4.882.1 with write ordering on (off by default; not on C:): seven VM power cuts on an NTFS data volume left NTFS clean, while the same test with ordering off damaged it. Physical power loss and other file systems are not tested |
+| A crash in Fast mode could damage NTFS, with no setting to prevent it ([#13](https://github.com/devedse/QueueCache/issues/13)) | ✅ | 0.4.882.1 with write ordering on (off by default; that release did not support C:): seven VM power cuts on an NTFS data volume left NTFS clean, while the same test with ordering off damaged it. Physical power loss and other file systems are not tested |
 | Write ordering only: a TRIM arriving while ordering was selected on a disabled cache could leave drainer zero's group flush in flight across a cache release, which then reported the draining group past the open group (found by plan 197) | ✅ | 0.4.868.1 (release waits for the group flush; a finished group flush never moves past the open group). No lab hook forces the race; the sustained suite that hit it passed afterwards |
 | Strict stopped all writing for 100 s or more after a burst of random writes: every flush (NTFS sends them on its own) waited for the whole backlog ([#16](https://github.com/devedse/QueueCache/issues/16)) | ✅ | 0.4.825.1 (backlog limited to about 2 s of write-out; 0.4.810.1 sent write-through writes direct) |
 | Files read through Windows' file cache (Explorer copies, most programs) and mapped files never entered the read cache ([#19](https://github.com/devedse/QueueCache/issues/19)) | ✅ | 0.4.810.1 (page-ins of file data are kept from a driver-owned copy of the disk data; a 1 GiB re-read after Windows' standby memory is purged: 275 → 2,254 MiB/s) |
@@ -98,10 +98,10 @@ sealed before each write-through, and mode 2, which woke every drain thread for 
 write, were removed. It is an advanced per-cache setting, off by default, in the
 app's Advanced tuning and as `qcache policy apply --write-ordering`; saved profiles
 keep it ([details](CACHE_POLICIES.md#fast-write-ordering-13)). It is
-refused on volumes that hold a paging, hibernation or crash dump file, and so on
-the Windows volume: on the test VM, Windows registered C: for paging at every boot
-even with the page file and crash dumps off. Moving the page file and dump file to
-Q: was refused by Windows there, because the VM's disks are hot-pluggable.
+being qualified on the Windows volume in [#32](https://github.com/devedse/QueueCache/issues/32),
+with a matching V28 driver required. Older drivers refuse volumes registered for
+paging, hibernation or dumps. Windows registered C: for paging even with page files
+and crash dumps off; moving them to Q: was refused because the VM disks are hot-pluggable.
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
@@ -180,11 +180,12 @@ Q: was refused by Windows there, because the VM's disks are hot-pluggable.
   ([attempts and contract](PERFORMANCE.md#release-203-read-preparation)).
 
 The follow-up audit found that a new paging/hibernation/dump registration could
-arrive after ordering was selected. The guard now serializes selection and
-registration under the routing lock and refuses the new registration, preserving
-the non-special-file scope. Ordinary mode-zero behavior is unchanged. Compile-time
-policy contracts cover either reservation order; a real new special-file
-registration with ordering on has not yet been exercised on Windows.
+arrive after ordering was selected. Selection and registration were serialized under the routing lock and new
+registrations refused for the data-volume-only scope. The #32 candidate now permits
+ordinary ordered registrations, clears safe extents and runs the existing full
+boundary before registration. Lab FUA mode remains data-volume-only. Compile-time
+contracts cover both reservation orders; a real new special-file registration
+with ordering on has not yet been exercised on Windows.
 
 **Decided 2026-10-25: no separate QueueCache journal.** A write-ahead journal on
 the disk was considered as a way to speed up ordered write-out and rejected.

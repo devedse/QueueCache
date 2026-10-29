@@ -300,14 +300,25 @@ test with ordering off damaged NTFS), which closed #13 on 2026-10-28. Physical
 power loss, other file systems and other storage are not tested (see
 [known issues](KNOWN_ISSUES.md)). It stays off by default because programs that
 flush very often slow down once the cache fills. It applies to Fast only;
-Strict already waits for the disk, so Strict with ordering is refused. Apply refuses
-it, before draining anything, on a volume that holds a paging, hibernation or crash
-dump file. That always includes the Windows volume: on the test VM, Windows' Session
-Manager (`smss.exe`) registered C: for paging at every boot even with the page file
-and crash dumps turned off (two registrations on each of two boots, October 26).
-These system-critical I/O paths are outside ordering's tested
-scope, so the Windows drive (normally C:) stays unavailable even when the page
-file is disabled. The question-mark help states this restriction and its reason.
+Strict already waits for the disk, so Strict with ordering is refused. The Windows
+volume requires a matching loaded driver with Diagnostics V28. Older drivers are
+refused before draining, with an update message. C: paging and reset qualification
+is in progress ([#32](https://github.com/devedse/QueueCache/issues/32)); the proven
+crash scope above remains NTFS data volumes. Hibernation, Fast Startup and physical
+power loss have not been qualified.
+
+Page-file data is not retained in the cache. With ordering on, a page-file write
+can skip the full-cache boundary only inside an established safe extent. A new
+extent first writes out all earlier saves; overlapping cached writes, other direct
+writes or TRIM invalidate the safe set. This prevents page-file growth from
+writing over a deleted file whose deletion is still waiting in RAM. Page-ins keep
+the immediate dispatch path so lower drivers can fault pages while the worker waits.
+When an ordered cache is enabled or restored, management tries to seed current
+page-file extents behind a full boundary. A generation token rejects a layout
+captured across intervening writes. Layout discovery/staleness is nonfatal: the
+ordered direct path learns ranges instead. A real disk/cache error is still reported.
+The set holds at most 256 merged extents; capacity exhaustion takes the slow path.
+
 Like the preset, it changes only while the
 cache is disabled and empty, which Apply arranges; a brief busy answer while a lower
 TRIM or group flush finishes is retried for up to 5 s. A saved profile keeps the

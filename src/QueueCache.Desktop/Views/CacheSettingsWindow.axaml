@@ -144,7 +144,7 @@
                           <TextBlock TextWrapping="Wrap" Text="Saves still finish in RAM when space is available, so a crash or power cut can still lose recent changes. With ordering on, NTFS stayed undamaged in every power-cut test; with it off, a test cut damaged NTFS. Tested on NTFS data drives with simulated power cuts, not on every disk or file system." />
                           <TextBlock TextWrapping="Wrap" Text="Each group adds a disk wait. Programs that flush very often, such as some databases and installers, can become much slower once the cache fills. Ordinary file copies may see little difference." />
                           <TextBlock TextWrapping="Wrap" Text="Fast only. Strict already waits for the disk." />
-                          <TextBlock TextWrapping="Wrap" Text="Unavailable on the Windows drive (normally C:). Windows can register it for paging even with the page file disabled. Ordering has not been tested with paging, hibernation or crash-dump I/O, so QueueCache blocks it on those volumes." />
+                          <TextBlock TextWrapping="Wrap" Text="The Windows drive requires a matching driver with paging-safe ordering support. Its C: paging and VM-reset qualification is in progress. Hibernation and Fast Startup have not been tested." />
                           <TextBlock TextWrapping="Wrap" Text="Save applies the change after draining pending writes. Start with Windows remembers the choice; pause and resume keep it. Flush now always writes pending data to disk, with this setting on or off." />
                         </StackPanel>
                       </ToolTip>

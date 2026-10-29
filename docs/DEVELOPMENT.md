@@ -29,7 +29,9 @@ target with the same activation path as other disks. Fast mode's volatility
 With write ordering off (the default), filesystem damage after a crash remains
 a risk. Write ordering keeps NTFS healthy instead: it passed power-cut tests on
 NTFS data volumes, which closed [#13](https://github.com/devedse/QueueCache/issues/13)
-([scope](PERFORMANCE.md#release-206)); it is not available on the Windows volume. Silent corruption, stale reads and wrong
+([scope](PERFORMANCE.md#release-206)). Windows-volume ordering now requires a matching
+V28 driver and is being qualified in [#32](https://github.com/devedse/QueueCache/issues/32).
+Silent corruption, stale reads and wrong
 write ordering during normal operation are defects.
 
 ## Product model

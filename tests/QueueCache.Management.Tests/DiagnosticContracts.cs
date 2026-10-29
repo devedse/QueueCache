@@ -121,6 +121,11 @@ internal static class DiagnosticContracts
             try { VerificationPlan.Validate(invalid); throw new Exception("Invalid growth variant accepted"); }
             catch (ArgumentException) { }
         }
+        ConfigurationManager.RequireOrderingSupport(true, true, pagingBefore with { FlushOrder = new(0, 1, 1, 0, 0, 0, 0, 0, 0) });
+        ConfigurationManager.RequireOrderingSupport(false, true, pagingBefore with { PagingOrder = null });
+        try { ConfigurationManager.RequireOrderingSupport(true, true, pagingBefore with { FlushOrder = new(0, 1, 1, 0, 0, 0, 0, 0, 0), PagingOrder = null });
+            throw new Exception("Legacy driver offered C: ordering"); }
+        catch (NotSupportedException ex) { Check(ex.Message.StartsWith("Update QueueCache"), "C: ordering capability asks for a driver update before changing state"); }
         var clockStart = new TelemetryClock(10_000_000, 1_000_000);
         var clockEnd = clockStart with { Timestamp = 12_000_000 };
         TelemetryClock?[] coveredClocks = [clockStart, clockStart with { Timestamp = 11_000_000 }, clockEnd];

@@ -110,12 +110,10 @@ public static class ConfigurationManager
         var usagePaths = device.GetStatistics().PagingPathCount;
         ActivationSafety.ValidateTarget(usagePaths);
         var control = new CacheDeviceControl(device);
-        var ordering = control.ReadWriteOrdering();
-        if (configuration.WriteOrdering == true && ordering is null)
-            throw new NotSupportedException("The loaded driver does not support write ordering. Install the newer driver and restart Windows first.");
-        // The driver refuses ordering on these volumes; say why before draining anything.
-        if (configuration.WriteOrdering == true && usagePaths > 0)
-            throw new NotSupportedException("Write ordering is not available on a volume that holds a paging, hibernation or crash dump file (such as the Windows volume).");
+        var diagnostics = device.GetDiagnostics();
+        bool? ordering = diagnostics.FlushOrder is { } order ? order.Mode != 0 : null;
+        var systemOrdering = usagePaths > 0 || target.IsBoot || target.IsSystem || target.IsPaging;
+        RequireOrderingSupport(configuration.WriteOrdering == true, systemOrdering, diagnostics);
         // Reject an unsupported new policy before disabling/draining the existing cache.
         if ((configuration.Options.Drain == DrainAlgorithm.Deferred || configuration.Options.MaxDirtyAgeMs > 300000) && !state.SupportsDeferredDrain)
             throw new NotSupportedException("The loaded driver does not support Deferred draining/one-hour ages. Install the newer driver and restart Windows first.");
@@ -128,7 +126,35 @@ public static class ConfigurationManager
             (!configuration.Enabled || state.Operational))
             return state;
         MemoryBudget.ValidateIncrease(state.BudgetBytes, budget);
-        return ApplySteps(control, state, configuration, progress);
+        var applied = ApplySteps(control, state, configuration, progress);
+        if (configuration.Enabled && (configuration.WriteOrdering ?? ordering ?? false) && systemOrdering && diagnostics.PagingOrder is not null)
+        {
+            try
+            {
+                // Read the token before the layout. A write or lifecycle change
+                // during discovery makes the driver reject the stale seed.
+                var sequence = device.GetDiagnostics().PagingOrder!.SeedSequence;
+                var map = SpecialFileMap.PagingFiles(target);
+                if (map.Ranges.Count != 0) device.SetSpecialRanges(map.Ranges, SpecialRangeKind.SafePaging, sequence);
+            }
+            catch (Exception ex) when (ex is IOException or Win32Exception or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+            {
+                // Layout discovery/staleness is optional; real driver faults are
+                // not hidden. Cold paging ranges retain their ordered slow path.
+                applied = WaitForHealthyState(device.GetWriteCacheState, applied, progress);
+                progress?.Report("Paging locations will be checked as they are used: " + ex.Message);
+            }
+        }
+        return applied;
+    }
+
+    internal static void RequireOrderingSupport(bool requested, bool systemVolume, CacheDiagnostics diagnostics)
+    {
+        if (!requested) return;
+        if (diagnostics.FlushOrder is null)
+            throw new NotSupportedException("The loaded driver does not support write ordering. Install the newer driver and restart Windows first.");
+        if (systemVolume && diagnostics.PagingOrder is null)
+            throw new NotSupportedException("Update QueueCache to use write ordering on this drive.");
     }
 
     internal static WriteCacheState ApplySteps(ICacheControl device, WriteCacheState state,

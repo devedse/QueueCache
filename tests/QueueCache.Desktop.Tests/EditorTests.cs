@@ -50,7 +50,13 @@ internal static class EditorTests
         Check(current.WriteOrdering && current.Result()?.Configuration.WriteOrdering == true, "the editor shows a cache's current write ordering");
         var windows = new CacheSettingsViewModel(volumes.Volumes[1] with { IsBoot = true, IsPaging = true }, volumes.State, true, 8192, writeOrdering: true);
         Check(!windows.CanOrderWrites && !windows.WriteOrdering && windows.Result()?.Configuration.WriteOrdering == false &&
-            windows.OrderingText.StartsWith("Not available on this volume"), "the Windows volume cannot use write ordering");
+            windows.OrderingText.StartsWith("Update QueueCache"), "older drivers cannot offer system-volume ordering");
+        var capableWindows = new CacheSettingsViewModel(volumes.Volumes[1] with { IsBoot = true, IsPaging = true },
+            volumes.State, true, 8192, writeOrdering: true, systemOrderingSupported: true);
+        Check(capableWindows.CanOrderWrites && capableWindows.WriteOrdering && capableWindows.Result()?.Configuration.WriteOrdering == true &&
+            capableWindows.OrderingText.Contains("qualified", StringComparison.Ordinal), "V28 permits Windows-volume ordering and states the pending qualification");
+        capableWindows.IsStrict = true;
+        Check(!capableWindows.CanOrderWrites && capableWindows.Result()?.Configuration.WriteOrdering == false, "system ordering remains Fast-only");
         var remembered = new CacheSettingsViewModel(stick, new CacheConfiguration(64) { WriteOrdering = true });
         Check(remembered.WriteOrdering, "a disk image's remembered cache keeps its write ordering");
 

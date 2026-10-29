@@ -7,6 +7,8 @@ namespace QueueCache.Desktop.Services;
 
 // The view depends on task operations, never on a CLI process. This also lets
 // headless UI tests exercise real screens without opening physical disks.
+public sealed record CacheOrderingStatus(bool Enabled, bool SupportsSystemVolume);
+
 public interface ICacheTaskService
 {
     // One cache per volume; several volumes can share a disk.
@@ -19,6 +21,8 @@ public interface ICacheTaskService
     Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.FromResult<CacheLayoutMap?>(null);
     /// <summary>Whether the cache's write ordering is on; false when the driver cannot report it.</summary>
     Task<bool> ReadWriteOrderingAsync(VolumeDescription volume) => Task.FromResult(false);
+    Task<CacheOrderingStatus> ReadOrderingStatusAsync(VolumeDescription volume) => ReadLegacyOrderingStatusAsync(volume);
+    private async Task<CacheOrderingStatus> ReadLegacyOrderingStatusAsync(VolumeDescription volume) => new(await ReadWriteOrderingAsync(volume), false);
     bool IsPersistent(VolumeDescription volume);
     Task SaveAsync(VolumeDescription volume, CacheConfiguration configuration, bool persistent, IProgress<string> progress);
     Task SetEnabledAsync(VolumeDescription volume, bool enabled, bool persistent);
@@ -54,11 +58,13 @@ public sealed class WindowsCacheTaskService : ICacheTaskService
         ValidateVolume(volume);
         return sampled;
     });
-    public Task<bool> ReadWriteOrderingAsync(VolumeDescription volume) => Task.Run(() =>
+    public async Task<bool> ReadWriteOrderingAsync(VolumeDescription volume) => (await ReadOrderingStatusAsync(volume)).Enabled;
+    public Task<CacheOrderingStatus> ReadOrderingStatusAsync(VolumeDescription volume) => Task.Run(() =>
     {
         ValidateVolume(volume);
         using var device = new CacheDevice(volume.Volume);
-        return device.GetDiagnostics().FlushOrder?.Mode is > 0;
+        var diagnostics = device.GetDiagnostics();
+        return new CacheOrderingStatus(diagnostics.FlushOrder?.Mode is > 0, diagnostics.PagingOrder is not null);
     });
     public Task<CacheLayoutMap?> ReadLayoutMapAsync(VolumeDescription volume) => Task.Run<CacheLayoutMap?>(() =>
     {
