@@ -36,7 +36,7 @@ public static class PagingOrderScenario
     {
         var a = Order(before); var b = Order(after);
         if (a.SafeRanges == 0 || b.SafeRanges != 0 || b.Clears != a.Clears + 1 || b.LastClearReason != reason)
-            throw new InvalidDataException("Overlapping effect did not invalidate the entire safe set with its reason.");
+            throw new InvalidDataException($"Overlapping effect did not invalidate the entire safe set with reason {reason}. Before: {a}; after: {b}.");
     }
     private static void Reset(CacheDevice d)
     {
@@ -135,6 +135,7 @@ public static class PagingOrderScenario
 
             d.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
             before = d.GetDiagnostics(); file.Write(Offset + 2 * Block, Pattern(8)); var cleared = d.GetDiagnostics();
+            RunStorage.AtomicJson(evidence + ".paging-cached-clear.json", new { Before = before, After = cleared });
             ValidateClear(before, cleared, 7);
             d.SetSpecialRanges([c], SpecialRangeKind.LabPaging);
             before = d.GetDiagnostics(); MapWrite(path, Offset + 2 * Block, Pattern(9)); learned = d.GetDiagnostics();
@@ -143,20 +144,24 @@ public static class PagingOrderScenario
             checks.Add(new("flush-order/paging-cached-overlap-clears", "PASS", "Cached overlap cleared all extents; the next direct write learned behind a barrier."));
 
             before = d.GetDiagnostics(); file.Trim(Offset + 2 * Block, Block); cleared = d.GetDiagnostics();
+            RunStorage.AtomicJson(evidence + ".paging-trim-clear.json", new { Before = before, After = cleared });
             ValidateClear(before, cleared, 9);
             before = d.GetDiagnostics(); MapWrite(path, Offset + 2 * Block, Pattern(10)); learned = d.GetDiagnostics();
             ValidateLearn(before, learned, held: false); Bytes(file, Offset + 2 * Block, Pattern(10));
             RunStorage.AtomicJson(evidence + ".paging-trim-invalidation.json", new { Cleared = cleared, Learned = learned });
             checks.Add(new("flush-order/paging-trim-overlap-clears", "PASS", "TRIM cleared all extents; a later paging write took the learning barrier and matched."));
-            // A disabled cache can still learn direct page-file ranges. Other
-            // forwarded writes must invalidate them too, before any later enable.
+            // The explicit lab override keeps worker routing active while
+            // disabled, so both learning and the other direct write are real
+            // worker operations rather than inactive dispatch pass-through.
             d.Control(WriteCacheAction.Disable); d.Control(WriteCacheAction.Release);
             MapWrite(path, Offset + 2 * Block, Pattern(11));
             before = d.GetDiagnostics(); file.Write(Offset + 2 * Block, Pattern(12)); cleared = d.GetDiagnostics();
-            ValidateClear(before, cleared, 8); Bytes(file, Offset + 2 * Block, Pattern(12));
             RunStorage.AtomicJson(evidence + ".paging-disabled-invalidation.json", new { Before = before, After = cleared });
+            ValidateClear(before, cleared, 8); Bytes(file, Offset + 2 * Block, Pattern(12));
             checks.Add(new("flush-order/paging-disabled-overlap-clears", "PASS", "Other direct writes invalidate learned ranges while the cache is disabled."));
-            if (Order(learned).OverlapFound != 0 || Order(learned).TableFull != 0)
+            var final = d.GetDiagnostics();
+            RunStorage.AtomicJson(evidence + ".paging-final.json", final);
+            if (Order(final).OverlapFound != 0 || Order(final).TableFull != 0)
                 throw new IOException("Safe-range overlap or unexpected capacity exhaustion was recorded.");
             checks.Add(new("flush-order/paging-no-safe-overlap", "PASS", "No safe-range pending overlap was observed; hooks are cleared on exit."));
         }

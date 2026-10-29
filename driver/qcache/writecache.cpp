@@ -982,7 +982,7 @@ static NTSTATUS SetSpecialRanges(QC_CACHE* c, PIRP irp)
     KeAcquireSpinLock(&c->RangeLock, &irql);
     if (header.Flags == QcRangesForceDirect || header.Flags == QcRangesLabPaging)
     {
-        c->ForceDirectPaging = header.Flags == QcRangesLabPaging;
+        c->ForceDirectPaging = header.Flags == QcRangesLabPaging && header.Count != 0;
         RtlCopyMemory(c->ForceDirect, ranges, header.Count * sizeof(QC_SPECIAL_RANGE));
         c->ForceDirectCount = header.Count;
     }

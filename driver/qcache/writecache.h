@@ -604,7 +604,7 @@ struct QC_CACHE
     // set at up to DISPATCH_LEVEL for classification counters.
     KSPIN_LOCK RangeLock;
     ULONG ForceDirectCount, ReferenceCount;
-    BOOLEAN ForceDirectPaging; // RangeLock, lab-only classification override.
+    volatile LONG ForceDirectPaging; // RangeLock writes; idle routing reads, lab-only override.
     QC_SAFE_PAGING SafePaging; // Mutex; never read from dispatch.
     volatile LONG64 PagingFileWriteRequests, PagingWriteNoFileObject, PagingWriteHighIrql;
     QC_SPECIAL_RANGE ForceDirect[QcSpecialRangeMax], Reference[QcSpecialRangeMax];

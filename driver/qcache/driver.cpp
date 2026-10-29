@@ -734,7 +734,8 @@ static void RequestWorker(PVOID context)
             QcCacheSnapshot(&ext->Cache, &state);
             // Direct I/O must not overtake an offloaded paging read still in flight.
             if (!ext->PendingControls && !(state.Flags & (1UL | 4UL | 16UL)) && !state.DirtyBytes &&
-                NT_SUCCESS(state.LastError) && !QcCachePagingReadsOutstanding(&ext->Cache))
+                NT_SUCCESS(state.LastError) && !QcCachePagingReadsOutstanding(&ext->Cache) &&
+                !ReadNoFence(&ext->Cache.ForceDirectPaging))
                 ext->Routing = FALSE;
 #else
             ext->Routing = FALSE;

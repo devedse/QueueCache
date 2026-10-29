@@ -123,9 +123,12 @@ it finish. Results go to a new folder under `--output`.
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
-Plan 207 adds eight paging-ordering checks to standalone `flush-order` (case `flush-order-v207`):
+Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
 seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
-cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. Diagnostics V28 is append-only; V27 remains
+cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. The explicit synthetic-paging
+lab override keeps worker routing active while armed, including when the cache is disabled; normal inactive
+pass-through is unchanged. Plan 207's last fixture had not kept routing active and failed before the new
+case could complete. Invalidation snapshots are saved before assertions. Diagnostics V28 is append-only; V27 remains
 the FUA layout. C: durability write/churn/verify are accepted only with the guarded system identity,
 recoverable-VM opt-in, a QueueCache product label and evidence/oracles on another physical disk.
 `--growth-markers` selects a distinct schema-6 C: durability workload: 2,000 markers reach an explicit

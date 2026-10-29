@@ -108,6 +108,13 @@ and checks the last acknowledged write in each file after releasing the cache.
 Plan 207's identical rewrites could miss lost writes; that test gap was found and
 fixed before any VM run was credited. C: qualification is still pending.
 
+The first plan-208 targeted run stopped in the disabled-cache lab fixture:
+inactive pass-through prevented its synthetic page-file write from reaching the
+worker, so it never learned the range the check expected to invalidate. Its run
+was incomplete and restoration succeeded. Plan 209 keeps worker routing active
+only while the explicit synthetic-paging lab override is armed and records
+invalidation counters before asserting. Production inactive routing is unchanged.
+
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on
   0.4.865.1 (plan 196). The earlier variants
