@@ -1135,6 +1135,11 @@ public static class VerificationWorker
                 RunStorage.AtomicJson(job.Reply, orderChecks);
                 ReportFailures(orderChecks, Console.Error);
                 return orderChecks.Count > 0 && orderChecks.All(c => c.Result == "PASS") ? 0 : 1;
+            case PagingReadProgressScenario.Suite:
+                var progressChecks = await PagingReadProgressScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply);
+                RunStorage.AtomicJson(job.Reply, progressChecks);
+                PagingReadProgressScenario.ValidateChecks(progressChecks);
+                return 0;
             case "flush-order-fua":
                 var fuaChecks = await FlushOrderScenario.RunAsync(target, device, job.WorkDirectory!, job.Reply, FlushOrderScenario.WriteThrough);
                 RunStorage.AtomicJson(job.Reply, fuaChecks);

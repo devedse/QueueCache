@@ -61,6 +61,13 @@ drain settings. Background age starts scheduling and is not a durability deadlin
 Explicit QueueCache flush, Pause, Remove and lifecycle boundaries still drain.
 Capacity exhaustion still applies backpressure.
 
+While an explicit flush drains a healthy enabled Fast cache, independent reads
+may pass queued application flushes. Those flushes remain queued and cannot finish
+early. Read selection still checks every older write for overlap and stops at
+controls or TRIM; Strict, disabled, faulted, suspended and removed states retain
+their flush fences. The `paging-read-progress` lab regression holds a drain,
+queues a file flush and requires a real mapped page-in plus exact read/write bytes.
+
 See [cache policies](CACHE_POLICIES.md) for the complete contract.
 
 ## Managed disks

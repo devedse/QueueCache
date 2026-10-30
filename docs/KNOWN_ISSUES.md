@@ -182,6 +182,25 @@ native drivers restored the original cache, policies and saved profiles without
 a reboot. All 1,937 exported records were hash-verified. The original failed run
 remains failed, and this result does not qualify the cost comparison or C: cuts.
 
+The fresh 0.4.905.1 cost attempt again stopped before its final off control:
+ordering-on telemetry remained complete, but the independent heartbeat lost
+261.738 s during final write-out. A separate diagnostic trace reproduced long
+page-in waits (143.895 s for the heartbeat's runtime page, then 29.181 s for
+another page). The telemetry GC thread also waited on a page-in during its
+81.252 s runtime suspension. The trace lost no events and restoration succeeded.
+Detailed selection timing had been turned off by the workload's desktop launch;
+its older read-size rejection is not evidence of the later blockage. The exact
+read fence remains under investigation. A reduced official lab case on unchanged
+0.4.905.1 reproduced a page-in waiting behind a queued application flush during
+an explicit drain: the 64 KiB paging read arrived, both flushes stayed pending,
+and no service read completed before the five-second hold ended. Published final
+timing recorded 49 fence rejections with the last selection an application flush.
+Restoration succeeded. The candidate allows independent reads across those
+queued flushes in a healthy enabled Fast drain; it retains older-write overlap,
+control/TRIM and Strict/lifecycle fences. Native validation and a fresh complete
+cost window are required before calling the original pause resolved. Cost, C:
+cuts and release qualification remain pending; no reset or repair has been used.
+
 
 - **Checks:** 14/14 targeted live-driver checks passed under Driver Verifier on
   0.4.882.1 (plan 203), on a disposable non-OS NTFS volume; 13/13 passed on

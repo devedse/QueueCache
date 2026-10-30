@@ -246,6 +246,34 @@ record a queued control's input length and, for the buffered dataset IOCTL, its
 action. That interface carries TRIM and other actions; its IOCTL number alone
 does not identify the operation. I/O handling is unchanged.
 
+The fresh 0.4.905.1 cost window also stopped before the final off control.
+The first off arm completed with maximum telemetry/heartbeat gaps 0.696 / 0.662 s.
+The on arm's telemetry stayed complete (0.294 s maximum), but its independent
+heartbeat missed 261.738 s during final write-out. The earlier pressure-only
+heartbeat had already finished. This is an invalid comparison; completed timed
+workloads do not qualify responsiveness through cleanup. Original policies and
+profiles were restored, with no reset; all 2,161 exported records were verified.
+
+A separate traced repetition of that existing on arm reproduced a 173.249 s
+heartbeat gap and 81.253 s telemetry gap, with zero lost trace events. The heartbeat
+thread waited 143.895 s for a page of the installed runtime, followed by another
+29.181 s page fault. The telemetry runtime's 81.252 s suspension included a page
+fault on its GC thread. Recorded lower-disk reads in that interval completed in
+under one second; the evidence establishes blocked page-ins, not slow GC work.
+Detailed timing had switched off when the workload launched the desktop app,
+so unchanged selection counters and its old 1.7 MiB rejection cannot identify
+the later queue fence. That proposed size-limit explanation was discarded.
+The trace is diagnostic only, restoration succeeded, and its 2,226 exported
+records were verified. The focused plan-215 held-flush regression on unchanged
+0.4.905.1 reproduced a blocked 64 KiB page-in behind a queued file flush. Both
+flushes remained pending at the two-second failure, and final published timing
+recorded 49 fence rejections with an application flush last selected. The run
+failed its check and restored. The candidate changes only the healthy enabled
+Fast drain's application-flush exception; it does not acknowledge either flush,
+bypass older overlapping writes, or cross control/TRIM fences. A native regression
+and full new untraced cost window are still required. This controlled reproduction
+does not identify every fence in the original trace. No C: cut or cost pass is credited.
+
 On 0.4.903.1 the pressure-conditioned diagnostic collected 4,287 telemetry and
 8,060 heartbeat samples with full coverage; maximum gaps were 0.533 / 0.522 s.
 It wrote 112,333 flushed files in 300.002 s after the recorded five-minute

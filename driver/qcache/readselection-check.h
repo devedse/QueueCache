@@ -286,20 +286,25 @@ constexpr bool FlushChecks(unsigned flags, unsigned conflictAt, bool hardFence)
         if (q.Visits > 64)
             return false;
         if (found)
-            return !conflictAt && !hardFence && flags == 33 && found == &q.Nodes[140] &&
+            return !conflictAt && !hardFence && (flags == 33 || flags == 41) && found == &q.Nodes[140] &&
                    q.Nodes[69].Next == &q.Nodes[70]; // Flush was never removed.
         if (!more)
-            return conflictAt || hardFence || flags != 33;
+            return conflictAt || hardFence || (flags != 33 && flags != 41);
     }
     return false;
 }
 static_assert(FlushChecks(33, 0, false), "Fast reads cross multiple flushes beyond entry 64");
+static_assert(FlushChecks(41, 0, false), "Fast reads still cross queued flushes during an explicit drain");
 static_assert(FlushChecks(1, 0, false), "Strict flush remains a fence");
-static_assert(FlushChecks(32, 0, false), "Disabled cache cannot cross flush");
-static_assert(FlushChecks(35, 0, false) && FlushChecks(37, 0, false) && FlushChecks(41, 0, false) &&
-                  FlushChecks(49, 0, false),
+static_assert(FlushChecks(9, 0, false), "Strict flush remains a fence during drain");
+static_assert(FlushChecks(32, 0, false) && FlushChecks(40, 0, false), "Disabled cache cannot cross flush");
+static_assert(FlushChecks(35, 0, false) && FlushChecks(37, 0, false) && FlushChecks(43, 0, false) &&
+                  FlushChecks(45, 0, false) && FlushChecks(49, 0, false) && FlushChecks(57, 0, false),
               "Unhealthy cache cannot cross flush");
 static_assert(FlushChecks(33, 20, false) && FlushChecks(33, 120, false),
               "Overlaps before and after flush still block read");
-static_assert(FlushChecks(33, 0, true), "Fast flush exception never bypasses other barriers");
+static_assert(FlushChecks(41, 20, false) && FlushChecks(41, 120, false),
+              "Drain exception preserves older write overlap checks on both sides of a queued flush");
+static_assert(FlushChecks(33, 0, true) && FlushChecks(41, 0, true),
+              "Fast flush exception never bypasses other barriers");
 } // namespace QcSelectionChecks

@@ -12,11 +12,14 @@ constexpr Node* QcReadReinsertPosition(Node* head, Next next, Before before)
     return position;
 }
 
-// QC_STATE flag contract: enabled + Fast, without fault/suspend/barrier/removal.
-// Only application flushes use this exception; controls/TRIM never do.
+// QC_STATE flag contract: enabled + Fast, without fault/suspend/removal.
+// A drain barrier does not change read coherence: independent page-ins must
+// still cross queued application flushes while an explicit flush waits for
+// older writes. The flush IRPs stay queued/unacknowledged; every older write
+// is checked for overlap. Controls/TRIM remain fences, and disable clears enabled.
 constexpr bool QcReadMayPassApplicationFlush(unsigned flags)
 {
-    return (flags & 33u) == 33u && (flags & 30u) == 0;
+    return (flags & 33u) == 33u && (flags & 22u) == 0;
 }
 
 // Intrusive queue cursors, accessed ONLY while the queue lock is held. The owner

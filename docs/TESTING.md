@@ -123,6 +123,18 @@ it finish. Results go to a new folder under `--output`.
 Use the smallest thing that answers the question: a single suite or `experiment`
 while iterating, `focused` when a change touches the retained correctness paths,
 and `release-performance` once on the final build.
+Plan 215 adds the standalone `paging-read-progress` regression on the disposable
+non-OS NTFS lab (`--budget-mib 256`, no DiskSpd). It holds an owned dirty block
+inside an explicit cache flush, starts a newer application flush and witnesses
+increased native queue depth/arrival count, then reads a fresh 64 KiB file mapping
+behind it. Both flushes
+must remain pending while a real page-in completes within two seconds with exact
+bytes; the held write must also match after release. Native request/service counters,
+queue evidence and the hold state are required. Detailed selection fields publish
+only when cache state changes; they are not an arrival witness during a fully held
+drain. Missing paging or queue witnesses
+fail rather than crediting a resident read. The hold is cleared and all owned tasks
+joined before restoration. It does not qualify C: power loss or change the retained matrix.
 Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
 seed boundary, stale layout token refusal, safe bypass while an older write is held, new-range learning,
 cached-write, disabled direct-write and TRIM invalidation, and zero safe overlaps. The explicit synthetic-paging

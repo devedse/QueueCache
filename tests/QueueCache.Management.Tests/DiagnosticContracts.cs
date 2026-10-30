@@ -36,7 +36,44 @@ internal static class DiagnosticContracts
             try { action(); } catch (InvalidDataException) { return; }
             throw new Exception("Expected diagnostic evidence rejection.");
         }
-        Check(VerificationPlan.Version == 214, "plan 214 conditions final-write-out diagnosis with recorded memory pressure");
+        Check(VerificationPlan.Version == 215, "plan 215 requires a real page-in behind a queued flush during held explicit writeout");
+        var progressOptions = new VerificationOptions("W:", PagingReadProgressScenario.Suite, BudgetMiB: 256);
+        VerificationPlan.Validate(progressOptions);
+        Check(VerificationPlan.Integrity(progressOptions).Single().Id == "paging-read-progress-v215" &&
+            !VerificationWorker.AllowsSystemUsagePaths(PagingReadProgressScenario.Suite), "isolated page-in case excludes the OS disk");
+        foreach (var invalid in new[] { progressOptions with { BudgetMiB = 1024 }, progressOptions with { DiskSpd = "unused.exe" },
+            progressOptions with { CaseFilter = "unused" } })
+        {
+            try { VerificationPlan.Validate(invalid); throw new Exception("Invalid read-progress options accepted."); }
+            catch (ArgumentException) { }
+        }
+        var readBefore = new CacheDiagnostics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+        {
+            PagingIo = new(0, 0, 0, 0, 0, 0, 0, 0, 0), PagingProgress = new(0, 0, 0, 0, 0, 0),
+            PagingOffload = new(0, 0, 0, 0, 0, 0)
+        };
+        var readDuring = readBefore with
+        {
+            PagingIo = readBefore.PagingIo with { ReadRequests = 1, ReadBytes = 65536 },
+            PagingProgress = readBefore.PagingProgress with { ServicedReadMisses = 1, MaxReadLength = 65536 },
+            LabGate = new(2, 1, 1, 2, 0, 0, 0, 0)
+        };
+        var readHeld = new WriteCacheState(41, 0, 1UL << 30, 256UL << 20, 256UL << 20, 4096, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        PagingReadProgressScenario.Validate(readBefore, readDuring, readHeld, .01, false, false);
+        foreach (var missing in new[] { readDuring with { PagingIo = null }, readDuring with { PagingProgress = null },
+            readDuring with { PagingOffload = null }, readDuring with { PagingIo = readBefore.PagingIo },
+            readDuring with { PagingProgress = readDuring.PagingProgress with { ServicedReadMisses = 0 } },
+            readDuring with { LabGate = readDuring.LabGate with { State = 0 } } })
+            Reject(() => PagingReadProgressScenario.Validate(readBefore, missing, readHeld, .01, false, false));
+        Reject(() => PagingReadProgressScenario.Validate(readBefore, readDuring, readHeld, .01, true, false));
+        Reject(() => PagingReadProgressScenario.Validate(readBefore, readDuring, readHeld, .01, false, true));
+        foreach (var seconds in new[] { double.NaN, double.PositiveInfinity, -1, 2.01 })
+            Reject(() => PagingReadProgressScenario.Validate(readBefore, readDuring, readHeld, seconds, false, false));
+        var progressChecks = new CheckResult[] { new("paging-read-progress/flush-fence-page-in", "PASS", "fixture"),
+            new("paging-read-progress/durable-write", "PASS", "fixture") };
+        PagingReadProgressScenario.ValidateChecks(progressChecks);
+        Reject(() => PagingReadProgressScenario.ValidateChecks([]));
+        Reject(() => PagingReadProgressScenario.ValidateChecks([progressChecks[0], progressChecks[0]]));
         var recoveryState = new WriteCacheState(0, 0, 100UL << 30, 2048UL << 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) { Instance = 3 };
         var recoveryTarget = new DiskTarget('C', 0, 100L << 30, "fixture-system")
             { IsBoot = true, IsSystem = true, DiskBytes = 100L << 30 };

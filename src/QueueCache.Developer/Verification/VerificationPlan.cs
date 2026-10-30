@@ -46,7 +46,7 @@ public sealed record TreeDecisionCase(
 /// <summary>Versioned scenarios are data; they never choose filenames themselves.</summary>
 public static class VerificationPlan
 {
-    public const int Version = 214;
+    public const int Version = 215;
     public const string ParallelCopiesSuite = "parallel-copies";
     public const int StressDefaultSeconds = 240;
     /// <summary>Suites that raise the cache's lifetime error count on purpose through lab faults and recover each with
@@ -86,6 +86,7 @@ public static class VerificationPlan
         "policies",
         "cache-allocation",
         "paging-coherence",
+        PagingReadProgressScenario.Suite,
         "ordering-faults",
         "flush-order",
         "flush-order-cost",
@@ -229,6 +230,7 @@ public static class VerificationPlan
         "policies" => [new("policy-integrity", "policies")],
         "cache-allocation" => [new("cache-allocation-bounds", "cache-allocation")],
         "paging-coherence" => [new("paging-coherence", "paging-coherence")],
+        PagingReadProgressScenario.Suite => [new("paging-read-progress-v215", PagingReadProgressScenario.Suite)],
         "cache-concurrency" => [new("concurrent-neighbor-sectors", "concurrent-sectors")],
         "partial-read-accounting" => [new("partial-read-accounting", "partial-read-accounting")],
         var suite when IsRamReadSuite(suite) => [new("ram-read-reference", "ram-read-reference")],
@@ -510,6 +512,9 @@ public static class VerificationPlan
     /// </summary>
     public static void Validate(VerificationOptions options)
     {
+        if (options.Suite == PagingReadProgressScenario.Suite &&
+            (options.BudgetMiB != PagingReadProgressScenario.BudgetMiB || options.DiskSpd is not null || options.CaseFilter is not null))
+            throw new ArgumentException("paging-read-progress requires --budget-mib 256, a fresh disposable NTFS lab, and no DiskSpd/case filter.");
         if (!Suites.Contains(options.Suite))
         {
             throw new ArgumentException("Unknown verification suite.");
