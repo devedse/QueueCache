@@ -514,6 +514,8 @@ deletes test data on its own.
 Recovery preserves the original manifest's suite and budget: guarded suites that
 temporarily change C:'s cache use ordinary cache restoration, including an originally
 enabled profile; image-only suites use their disabled/released system baseline.
+Missing or invalid recorded suite/budget fields are rejected instead of supplying
+constructor defaults.
 Restoring ordering waits up to five seconds only for ERROR_BUSY on the same healthy,
 disabled, empty cache. Faults, changed identity/error counts and other errors stop
 immediately. A successful recovery writes a separate recovery result; the failed

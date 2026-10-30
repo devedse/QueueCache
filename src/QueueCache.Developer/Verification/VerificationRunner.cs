@@ -86,10 +86,16 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         "system-preflight" or "system-files" or "system-post-restart" or "system-image-baseline" or "system-active-image" or "system-paging-recognition" or "system-app-session" or "system-paging-ordering" or "system-ordering-drain" or "system-paging-ordering-drain";
     public static bool IsSystemRecoveryTarget(DiskTarget target) =>
         target.Letter == 'C' && target.IsBoot && target.IsSystem;
-    public static VerificationOptions RecoveryOptions(RecoverySnapshot snapshot, VerificationOptions recorded, string directory)
+    public static VerificationOptions RecoveryOptions(RecoverySnapshot snapshot, JsonElement recorded, string directory)
     {
+        if (recorded.ValueKind != JsonValueKind.Object ||
+            !recorded.TryGetProperty("Suite", out var suiteField) || suiteField.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(suiteField.GetString()) ||
+            !recorded.TryGetProperty("BudgetMiB", out var budgetField) || budgetField.ValueKind != JsonValueKind.Number ||
+            !budgetField.TryGetInt32(out var budget) || budget is < 1 or > MemoryBudget.MaximumMiB)
+            throw new InvalidDataException("Recovery requires the recorded suite and valid RAM budget; missing options are not inferred.");
         var system = IsSystemRecoveryTarget(snapshot.Target);
-        return new($"{snapshot.Target.Letter}:", recorded.Suite, directory, BudgetMiB: recorded.BudgetMiB,
+        return new($"{snapshot.Target.Letter}:", suiteField.GetString()!, directory, BudgetMiB: budget,
             SystemInstance: system ? snapshot.Target.Instance : null,
             SystemBytes: system ? snapshot.Target.DiskBytes : null, RecoverableVm: system);
     }
@@ -1699,9 +1705,8 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
         var snapshotPath = Path.Combine(path, "recovery.json");
         original = JsonSerializer.Deserialize<RecoverySnapshot>(await File.ReadAllTextAsync(snapshotPath, token))!;
         using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(path, "manifest.json"), token));
-        var recordedOptions = manifest.RootElement.GetProperty("Options").Deserialize<VerificationOptions>()
-            ?? throw new InvalidDataException("The run manifest has no options.");
-        var suite = recordedOptions.Suite ?? throw new InvalidDataException("The run manifest has no suite.");
+        var recordedOptions = RecoveryOptions(original, manifest.RootElement.GetProperty("Options"), path);
+        var suite = recordedOptions.Suite;
         var systemRecovery = IsSystemRecoveryTarget(original.Target);
         FileStream? diskLease = null;
         Semaphore? systemLease = null;
@@ -1722,7 +1727,7 @@ public sealed partial class VerificationRunner(string executable, IReadOnlyList<
             Directory.CreateDirectory(leases);
             diskLease = new FileStream(Path.Combine(leases, LeaseKey(original.Target) + ".lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         }
-        options = RecoveryOptions(original, recordedOptions, path);
+        options = recordedOptions;
         fileTarget = systemRecovery ? original.Target : null;
         storage = new RunStorage(path);
         progressSink = progress;

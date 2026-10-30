@@ -254,7 +254,10 @@ pressure phase, without reproducing the original 234 s gap. The overall run is
 ERROR_BUSY after draining/disabling, and a separate recovery attempt chose the
 wrong baseline by losing the recorded suite. All 1,902 exported records were
 hash-verified. Scoped runner fixes and live recovery validation precede any new
-cost window; no cost or crash-safety verdict changes.
+cost window; no cost or crash-safety verdict changes. Separate official recovery
+with the verified 0.4.904.1 controller restored the original 0.4.903.1 native
+installation's cache/profile state without rebooting. The failed run's original
+completion and case records are unchanged; 1,937 exported records were hash-verified.
 
 ### C: paging under an artificial drain delay (#32, October 29)
 

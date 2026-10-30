@@ -176,7 +176,10 @@ recovery command then selected the image-only disabled/released restoration path
 because it discarded the recorded suite. The candidate fix preserves that suite
 and budget, and shares bounded, health-checked ordering selection with configuration
 changes. Host contracts cover transient BUSY, faults, changed identity/errors and
-recovery routing; live recovery validation is pending. The original failed run
+recovery routing, including rejection of missing suite/budget fields. Official
+recovery with the verified 0.4.904.1 controller against the unchanged 0.4.903.1
+native drivers restored the original cache, policies and saved profiles without
+a reboot. All 1,937 exported records were hash-verified. The original failed run
 remains failed, and this result does not qualify the cost comparison or C: cuts.
 
 

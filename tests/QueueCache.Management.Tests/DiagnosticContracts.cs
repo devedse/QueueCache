@@ -44,11 +44,19 @@ internal static class DiagnosticContracts
         foreach (var suite in new[] { "system-paging-ordering", "system-ordering-drain", "system-paging-ordering-drain", "system-active-image" })
         {
             var restoredOptions = VerificationRunner.RecoveryOptions(recoverySnapshot,
-                new("C:", suite, BudgetMiB: 2048), "Q:\\evidence");
+                JsonSerializer.SerializeToElement(new VerificationOptions("C:", suite, BudgetMiB: 2048)), "Q:\\evidence");
             Check(restoredOptions.Suite == suite && restoredOptions.BudgetMiB == 2048 && restoredOptions.Volume == "C:" &&
                 restoredOptions.SystemInstance == recoveryTarget.Instance && restoredOptions.SystemBytes == recoveryTarget.DiskBytes &&
                 restoredOptions.RecoverableVm && SystemPreflightGuard.ChangesSystemCache(restoredOptions.Suite) == (suite != "system-active-image"),
                 "recovery preserves the recorded suite, budget and guarded identity: " + suite);
+        }
+        foreach (var incomplete in new[] { "{}", "{\"Suite\":\"system-paging-ordering\"}", "{\"BudgetMiB\":2048}",
+            "{\"Suite\":null,\"BudgetMiB\":2048}", "{\"Suite\":\"\",\"BudgetMiB\":2048}",
+            "{\"Suite\":\"system-paging-ordering\",\"BudgetMiB\":0}",
+            "{\"Suite\":\"system-paging-ordering\",\"BudgetMiB\":\"2048\"}" })
+        {
+            using var manifestOptions = JsonDocument.Parse(incomplete);
+            Reject(() => VerificationRunner.RecoveryOptions(recoverySnapshot, manifestOptions.RootElement, "Q:\\evidence"));
         }
         var ordering = new OrderingControl(recoveryState);
         ordering.OnSelect = control => { if (control.Modes.Count < 3) throw new System.ComponentModel.Win32Exception(170); };
