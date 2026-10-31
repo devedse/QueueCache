@@ -115,6 +115,10 @@ public static class PagingOrderScenario
         var checks = new List<CheckResult>();
         Reset(d);
         var path = OrderingFaultScenarios.CreateOwned(work, "paging-order.bin");
+        // The later request of the plan-219 learner check uses its own file: NTFS serialises a non-cached write with a
+        // pending paging write to the same file (the first VM run waited 3.99 s there, outside the cache), whereas the
+        // real page file shares no file with other requests.
+        var otherPath = OrderingFaultScenarios.CreateOwned(work, "paging-order-other.bin");
         var b = new DiskRange(PagingCoherenceScenarios.DiskOffsetOf(path, Offset, target.Root), Block);
         var a = new DiskRange(PagingCoherenceScenarios.DiskOffsetOf(path, Offset + Block, target.Root), Block);
         var c = new DiskRange(PagingCoherenceScenarios.DiskOffsetOf(path, Offset + 2 * Block, target.Root), Block);
@@ -166,7 +170,7 @@ public static class PagingOrderScenario
             checks.Add(new("flush-order/paging-new-range-learns", "PASS", "New range submitted after older retirement; its next write bypassed and bytes matched."));
 
             // Plan 219 (#32): the first write into a new page-file range waits for the held earlier group off the
-            // request worker, so a later write and read of another block complete meanwhile.
+            // request worker, so a later write and read in another file complete meanwhile.
             d.SetSpecialRanges([e], SpecialRangeKind.LabPaging); Gate(4000);
             file.Write(Offset + Block, Pattern(13)); file.Flush(); await Held(d);
             before = d.GetDiagnostics();
@@ -183,8 +187,9 @@ public static class PagingOrderScenario
                 await Task.Delay(10);
             }
             const long laterOffset = Offset + 6 * Block;
+            using var other = new AlignedFile(otherPath, Block, create: false, shareAll: true);
             var clock = Stopwatch.StartNew();
-            file.Write(laterOffset, Pattern(15)); Bytes(file, laterOffset, Pattern(15));
+            other.Write(laterOffset, Pattern(15)); Bytes(other, laterOffset, Pattern(15));
             var seconds = clock.Elapsed.TotalSeconds;
             var moving = d.GetDiagnostics(); var learnWaiting = !learning.IsCompleted;
             RunStorage.AtomicJson(evidence + ".paging-learn-moving.json", new { Before = before, Pending = pending, Moving = moving, Seconds = seconds, LearnWaiting = learnWaiting });
@@ -197,9 +202,9 @@ public static class PagingOrderScenario
             before = d.GetDiagnostics(); MapWrite(path, Offset + 3 * Block, Pattern(16)); second = d.GetDiagnostics();
             if (Order(second).Bypasses != Order(before).Bypasses + 1 || Order(second).LearnBarriers != Order(before).LearnBarriers)
                 throw new IOException("The range learned off the request worker did not bypass on its next write.");
-            Bytes(file, Offset + 3 * Block, Pattern(16)); Bytes(file, laterOffset, Pattern(15)); Bytes(file, Offset + Block, Pattern(13));
+            Bytes(file, Offset + 3 * Block, Pattern(16)); Bytes(other, laterOffset, Pattern(15)); Bytes(file, Offset + Block, Pattern(13));
             checks.Add(new("flush-order/paging-learn-leaves-requests-moving", "PASS",
-                $"The first write into a new range waited for the held earlier group off the request worker; a later write and read of another block completed in {seconds:F3}s meanwhile. It was submitted after the held write retired, flushed, learned (its next write bypassed), and every block matched."));
+                $"The first write into a new range waited for the held earlier group off the request worker; a later write and read in another file completed in {seconds:F3}s meanwhile. It was submitted after the held write retired, flushed, learned (its next write bypassed), and every block matched."));
 
             d.SetSpecialRanges([], SpecialRangeKind.ForceDirect);
             before = d.GetDiagnostics(); file.Write(Offset + 2 * Block, Pattern(8)); var cleared = d.GetDiagnostics();

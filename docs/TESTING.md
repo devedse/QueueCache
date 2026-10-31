@@ -173,8 +173,9 @@ behind a barrier that records its action, finishing only after the held write
 retired. The lower stack may refuse these requests; their results are recorded. In
 the paging-order set, `flush-order/paging-learn-leaves-requests-moving` writes to a new
 page-file range while an earlier group is held: V31 must show it waiting off the
-request worker (offloaded +1, one waiting, no fallback), and a write and read of
-another block must complete within one second meanwhile. It must be submitted after
+request worker (offloaded +1, one waiting, no fallback), and a write and read in
+another file must complete within one second meanwhile (NTFS itself serialises a
+non-cached write with a pending paging write to the same file). It must be submitted after
 the held write retired and flushed, be learned (its next write bypasses), and every
 block must match. Missing V31 evidence fails both.
 Plan 207 added eight paging-ordering checks to standalone `flush-order`. Plan 209 uses case `flush-order-v209`:
